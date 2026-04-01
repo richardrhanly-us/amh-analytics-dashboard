@@ -1,0 +1,14 @@
+{
+  "last_run": "2026-03-31T11:10:03",
+  "checkins_rows": 529,
+  "rejects_rows": 12,
+  "checkins_bad_datetime_rows": 0,
+  "rejects_bad_datetime_rows": 0,
+  "transit_items": 55,
+  "problem_items": 0,
+  "destination_breakdown": {
+    "Main": 474,
+    "Westside": 49,
+    "Library Express": 6
+  }
+}
