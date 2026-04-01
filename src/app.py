@@ -29,7 +29,7 @@ from metrics import get_date_filtered_df, get_today_metrics, get_overall_metrics
 from reject_logic import simplify_error
 from alerts import get_system_alerts
 
-from transit_logic import *
+from src.transit_logic import *
 
 
 
