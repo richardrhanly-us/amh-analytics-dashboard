@@ -23,6 +23,7 @@ st.markdown("""
 }
 </style>
 """, unsafe_allow_html=True)
+st.caption(f"Data max checkin timestamp: {df_raw['datetime'].max()}")
 
 from data_loader import load_checkins_df, load_rejects_df, load_pipeline_status
 from metrics import get_date_filtered_df, get_today_metrics, get_overall_metrics, get_historical_reject_baseline
@@ -1214,7 +1215,7 @@ if selected_view == "Reports":
             st.info("No throughput data available for the selected date range.")
 
     with st.expander("Today vs Typical Hourly Pattern", expanded=False):
-        today = df_raw["datetime"].dt.date.max()
+        today = datetime.now().date()
 
         today_df_report = df_raw[df_raw["datetime"].dt.date == today].copy()
         historical_df_report = df_raw[df_raw["datetime"].dt.date < today].copy()
