@@ -1,0 +1,80 @@
+barcode,error_message,date,time,datetime,date_only,hour,day_of_week,error_simple
+,No Item Found,3/31/2026,8:28:10 AM,2026-03-31 08:28:10,2026-03-31,8,Tuesday,Other
+,No Item Found,3/31/2026,9:17:11 AM,2026-03-31 09:17:11,2026-03-31,9,Tuesday,Other
+,No Item Found,3/31/2026,9:17:20 AM,2026-03-31 09:17:20,2026-03-31,9,Tuesday,Other
+,No Item Found,3/31/2026,9:33:05 AM,2026-03-31 09:33:05,2026-03-31,9,Tuesday,Other
+,No Item Found,3/31/2026,9:34:49 AM,2026-03-31 09:34:49,2026-03-31,9,Tuesday,Other
+,No Item Found,3/31/2026,9:37:58 AM,2026-03-31 09:37:58,2026-03-31,9,Tuesday,Other
+,ACS Check-in error,3/31/2026,10:10:33 AM,2026-03-31 10:10:33,2026-03-31,10,Tuesday,ILS / ACS Failure
+,ACS check-in failed,3/31/2026,10:10:33 AM,2026-03-31 10:10:33,2026-03-31,10,Tuesday,ILS / ACS Failure
+33472004479244,ACS check-in failed,3/31/2026,10:12:44 AM,2026-03-31 10:12:44,2026-03-31,10,Tuesday,ILS / ACS Failure
+,No Item Found,3/31/2026,10:14:32 AM,2026-03-31 10:14:32,2026-03-31,10,Tuesday,Other
+,ACS Check-in error,3/31/2026,10:55:34 AM,2026-03-31 10:55:34,2026-03-31,10,Tuesday,ILS / ACS Failure
+,ACS check-in failed,3/31/2026,10:55:34 AM,2026-03-31 10:55:34,2026-03-31,10,Tuesday,ILS / ACS Failure
+,Multiple RFID tags found,3/31/2026,11:17:44 AM,2026-03-31 11:17:44,2026-03-31,11,Tuesday,RFID Collision
+,Multiple RFID tags found,3/31/2026,11:17:45 AM,2026-03-31 11:17:45,2026-03-31,11,Tuesday,RFID Collision
+33472001684242,ACS check-in failed,3/31/2026,12:36:56 PM,2026-03-31 12:36:56,2026-03-31,12,Tuesday,ILS / ACS Failure
+33472002885889,ACS check-in failed,3/31/2026,12:36:59 PM,2026-03-31 12:36:59,2026-03-31,12,Tuesday,ILS / ACS Failure
+33472001569104,ACS check-in failed,3/31/2026,12:37:02 PM,2026-03-31 12:37:02,2026-03-31,12,Tuesday,ILS / ACS Failure
+33472001635210,ACS check-in failed,3/31/2026,12:37:04 PM,2026-03-31 12:37:04,2026-03-31,12,Tuesday,ILS / ACS Failure
+33472003087790,ACS check-in failed,3/31/2026,12:37:06 PM,2026-03-31 12:37:06,2026-03-31,12,Tuesday,ILS / ACS Failure
+33472003781483,ACS check-in failed,3/31/2026,12:37:08 PM,2026-03-31 12:37:08,2026-03-31,12,Tuesday,ILS / ACS Failure
+,No Item Found,3/31/2026,12:57:43 PM,2026-03-31 12:57:43,2026-03-31,12,Tuesday,Other
+,No Item Found,3/31/2026,12:57:53 PM,2026-03-31 12:57:53,2026-03-31,12,Tuesday,Other
+,No Item Found,3/31/2026,12:58:00 PM,2026-03-31 12:58:00,2026-03-31,12,Tuesday,Other
+,No Item Found,3/31/2026,1:20:15 PM,2026-03-31 13:20:15,2026-03-31,13,Tuesday,Other
+,No Item Found,3/31/2026,1:34:12 PM,2026-03-31 13:34:12,2026-03-31,13,Tuesday,Other
+,No Item Found,3/31/2026,1:45:07 PM,2026-03-31 13:45:07,2026-03-31,13,Tuesday,Other
+,No Item Found,3/31/2026,2:52:35 PM,2026-03-31 14:52:35,2026-03-31,14,Tuesday,Other
+33472002281899,ACS check-in failed,3/31/2026,3:25:19 PM,2026-03-31 15:25:19,2026-03-31,15,Tuesday,ILS / ACS Failure
+33472003513019,ACS check-in failed,3/31/2026,3:25:36 PM,2026-03-31 15:25:36,2026-03-31,15,Tuesday,ILS / ACS Failure
+33472002057323,ACS check-in failed,3/31/2026,3:26:04 PM,2026-03-31 15:26:04,2026-03-31,15,Tuesday,ILS / ACS Failure
+,No Item Found,3/31/2026,4:36:54 PM,2026-03-31 16:36:54,2026-03-31,16,Tuesday,Other
+,No Item Found,3/31/2026,5:23:40 PM,2026-03-31 17:23:40,2026-03-31,17,Tuesday,Other
+,No Item Found,3/31/2026,5:55:38 PM,2026-03-31 17:55:38,2026-03-31,17,Tuesday,Other
+,Multiple RFID tags found,3/31/2026,6:32:13 PM,2026-03-31 18:32:13,2026-03-31,18,Tuesday,RFID Collision
+,Multiple RFID tags found,3/31/2026,6:32:14 PM,2026-03-31 18:32:14,2026-03-31,18,Tuesday,RFID Collision
+33472003425826,ACS check-in failed,4/1/2026,9:23:01 AM,2026-04-01 09:23:01,2026-04-01,9,Wednesday,ILS / ACS Failure
+,No Item Found,4/1/2026,9:23:09 AM,2026-04-01 09:23:09,2026-04-01,9,Wednesday,Other
+,No Item Found,4/1/2026,9:23:20 AM,2026-04-01 09:23:20,2026-04-01,9,Wednesday,Other
+,No Item Found,4/1/2026,9:23:32 AM,2026-04-01 09:23:32,2026-04-01,9,Wednesday,Other
+,No Item Found,4/1/2026,9:23:39 AM,2026-04-01 09:23:39,2026-04-01,9,Wednesday,Other
+,No Item Found,4/1/2026,9:23:46 AM,2026-04-01 09:23:46,2026-04-01,9,Wednesday,Other
+,No Item Found,4/1/2026,9:23:55 AM,2026-04-01 09:23:55,2026-04-01,9,Wednesday,Other
+,No Item Found,4/1/2026,9:24:04 AM,2026-04-01 09:24:04,2026-04-01,9,Wednesday,Other
+,No Item Found,4/1/2026,9:24:13 AM,2026-04-01 09:24:13,2026-04-01,9,Wednesday,Other
+,No Item Found,4/1/2026,9:24:20 AM,2026-04-01 09:24:20,2026-04-01,9,Wednesday,Other
+,No Item Found,4/1/2026,9:24:27 AM,2026-04-01 09:24:27,2026-04-01,9,Wednesday,Other
+,No Item Found,4/1/2026,9:24:35 AM,2026-04-01 09:24:35,2026-04-01,9,Wednesday,Other
+33472004362374,ACS check-in failed,4/1/2026,10:05:31 AM,2026-04-01 10:05:31,2026-04-01,10,Wednesday,ILS / ACS Failure
+,No Item Found,4/1/2026,10:18:47 AM,2026-04-01 10:18:47,2026-04-01,10,Wednesday,Other
+,No Item Found,4/1/2026,10:19:04 AM,2026-04-01 10:19:04,2026-04-01,10,Wednesday,Other
+33472002691600,ACS check-in failed,4/1/2026,10:19:08 AM,2026-04-01 10:19:08,2026-04-01,10,Wednesday,ILS / ACS Failure
+33472004307221,ACS check-in failed,4/1/2026,10:19:26 AM,2026-04-01 10:19:26,2026-04-01,10,Wednesday,ILS / ACS Failure
+,No Item Found,4/1/2026,10:47:31 AM,2026-04-01 10:47:31,2026-04-01,10,Wednesday,Other
+,No Item Found,4/1/2026,10:47:37 AM,2026-04-01 10:47:37,2026-04-01,10,Wednesday,Other
+,No Item Found,4/1/2026,10:51:28 AM,2026-04-01 10:51:28,2026-04-01,10,Wednesday,Other
+,No Item Found,4/1/2026,10:51:34 AM,2026-04-01 10:51:34,2026-04-01,10,Wednesday,Other
+,No Item Found,4/1/2026,11:12:43 AM,2026-04-01 11:12:43,2026-04-01,11,Wednesday,Other
+,No Item Found,4/1/2026,11:16:58 AM,2026-04-01 11:16:58,2026-04-01,11,Wednesday,Other
+,No Item Found,4/1/2026,11:17:04 AM,2026-04-01 11:17:04,2026-04-01,11,Wednesday,Other
+,No Item Found,4/1/2026,11:17:11 AM,2026-04-01 11:17:11,2026-04-01,11,Wednesday,Other
+33472004240653,ACS check-in failed,4/1/2026,11:57:16 AM,2026-04-01 11:57:16,2026-04-01,11,Wednesday,ILS / ACS Failure
+,No Item Found,4/1/2026,11:57:31 AM,2026-04-01 11:57:31,2026-04-01,11,Wednesday,Other
+,No Item Found,4/1/2026,12:15:38 PM,2026-04-01 12:15:38,2026-04-01,12,Wednesday,Other
+,No Item Found,4/1/2026,12:15:45 PM,2026-04-01 12:15:45,2026-04-01,12,Wednesday,Other
+,No Item Found,4/1/2026,12:15:52 PM,2026-04-01 12:15:52,2026-04-01,12,Wednesday,Other
+,ACS Check-in error,4/1/2026,12:18:13 PM,2026-04-01 12:18:13,2026-04-01,12,Wednesday,ILS / ACS Failure
+,ACS check-in failed,4/1/2026,12:18:13 PM,2026-04-01 12:18:13,2026-04-01,12,Wednesday,ILS / ACS Failure
+,No Item Found,4/1/2026,12:19:13 PM,2026-04-01 12:19:13,2026-04-01,12,Wednesday,Other
+,No Item Found,4/1/2026,12:21:06 PM,2026-04-01 12:21:06,2026-04-01,12,Wednesday,Other
+,No Item Found,4/1/2026,12:33:10 PM,2026-04-01 12:33:10,2026-04-01,12,Wednesday,Other
+,No Item Found,4/1/2026,12:33:17 PM,2026-04-01 12:33:17,2026-04-01,12,Wednesday,Other
+33472003723378,"Collection code/call number not found: MLTHEME 2\GN BIO KAHLO, FRIDA",4/1/2026,1:17:26 PM,2026-04-01 13:17:26,2026-04-01,13,Wednesday,Call Number / Config Error
+33472003723378,"Collection code/call number not found: MLTHEME 2\GN BIO KAHLO, FRIDA",4/1/2026,1:19:05 PM,2026-04-01 13:19:05,2026-04-01,13,Wednesday,Call Number / Config Error
+33472003513431,Collection code/call number not found: MLTHEME 2\FIC ATWOOD,4/1/2026,1:38:40 PM,2026-04-01 13:38:40,2026-04-01,13,Wednesday,Call Number / Config Error
+33472004067361,Collection code/call number not found: MLTHEME 2\FIC SCHULT,4/1/2026,1:52:33 PM,2026-04-01 13:52:33,2026-04-01,13,Wednesday,Call Number / Config Error
+,No Item Found,4/1/2026,2:02:36 PM,2026-04-01 14:02:36,2026-04-01,14,Wednesday,Other
+,Multiple RFID tags found,4/1/2026,2:17:17 PM,2026-04-01 14:17:17,2026-04-01,14,Wednesday,RFID Collision
+33472004282101,ACS check-in failed,4/1/2026,2:48:07 PM,2026-04-01 14:48:07,2026-04-01,14,Wednesday,ILS / ACS Failure
+33472004587855,ACS check-in failed,4/1/2026,2:48:10 PM,2026-04-01 14:48:10,2026-04-01,14,Wednesday,ILS / ACS Failure
