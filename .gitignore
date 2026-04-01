@@ -12,9 +12,14 @@ __pycache__/
 logs/
 *.log
 
-# data files
+# raw data files
 data/raw/
-data/processed/
+
+# processed data
+data/processed/*
+!data/processed/checkins_history.csv
+!data/processed/rejects_history.csv
+!data/processed/pipeline_status.json
 
 # editor / OS
 .vscode/
