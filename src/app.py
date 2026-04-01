@@ -328,7 +328,7 @@ if len(rejects_df) > 0:
     peak_failure_window_text = format_hour(peak_failure_hour)
     peak_failure_window_subtitle = f"{peak_failure_count:,} rejects ({peak_failure_pct:.1f}% of failures)"
 
-today = max_date
+today = datetime.now().date()
 
 today_metrics = get_today_metrics(df_raw, rejects_raw, today)
 
