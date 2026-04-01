@@ -13,10 +13,26 @@ def get_today_metrics(df, rejects_df, today):
     today_rejects_df = rejects_df[rejects_df["datetime"].dt.date == today].copy()
 
     today_checkins = len(today_df)
+    # --- Throughput metrics ---
+    if len(today_df) > 0:
+        hourly_counts = today_df["datetime"].dt.hour.value_counts().sort_index()
+        current_hour = pd.Timestamp.now().hour
+
+        current_speed = int(hourly_counts.get(current_hour, 0))
+        peak_speed = int(hourly_counts.max())
+    else:
+        current_speed = 0
+        peak_speed = 0
+    
+    
     today_rejects = len(today_rejects_df)
 
-    today_westside = (today_df["destination"] == "Westside").sum()
-    today_library_express = (today_df["destination"] == "Library Express").sum()
+    MANUAL_RATE = 120  # items per hour (conservative estimate)
+    staff_hours_saved = today_checkins / MANUAL_RATE if today_checkins > 0 else 0
+
+    today_westside = today_df["destination"].astype(str).str.upper().str.contains("WESTSIDE", na=False).sum()
+    today_library_express = today_df["destination"].astype(str).str.upper().str.contains("LIBRARY EXPRESS", na=False).sum()
+    today_total_transit = today_westside + today_library_express
 
     if today_checkins > 0:
         today_peak_hour_counts = today_df["datetime"].dt.hour.value_counts().sort_index()
@@ -41,6 +57,10 @@ def get_today_metrics(df, rejects_df, today):
         "today_peak_hour_count": today_peak_hour_count,
         "today_peak_hour_pct": today_peak_hour_pct,
         "today_reject_rate": today_reject_rate,
+        "staff_hours_saved": staff_hours_saved,
+        "current_speed": current_speed,
+        "peak_speed": peak_speed,
+        "today_total_transit": int(today_total_transit),
     }
 
 
@@ -58,10 +78,10 @@ def get_overall_metrics(df, rejects_df):
     reject_count = len(rejects_df)
     reject_pct = (reject_count / len(df) * 100) if len(df) > 0 else 0
 
-    westside_count = (df["destination"] == "Westside").sum() if len(df) > 0 else 0
+    westside_count = df["destination"].astype(str).str.upper().str.contains("WESTSIDE", na=False).sum() if len(df) > 0 else 0
     westside_pct = (westside_count / len(df) * 100) if len(df) > 0 else 0
 
-    library_express_count = (df["destination"] == "Library Express").sum() if len(df) > 0 else 0
+    library_express_count = df["destination"].astype(str).str.upper().str.contains("LIBRARY EXPRESS", na=False).sum() if len(df) > 0 else 0
     library_express_pct = (library_express_count / len(df) * 100) if len(df) > 0 else 0
 
     return {
