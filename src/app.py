@@ -7,8 +7,22 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 import altair as alt
+from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(layout="wide")
+st_autorefresh(interval=60000, key="amh_auto_refresh")
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Luckiest+Guy&display=swap');
+
+.sortview-title {
+    font-family: 'Luckiest Guy', cursive;
+    font-size: 48px;
+    color: #111;
+    letter-spacing: 1px;
+}
+</style>
+""", unsafe_allow_html=True)
 
 from data_loader import load_checkins_df, load_rejects_df, load_pipeline_status
 from metrics import get_date_filtered_df, get_today_metrics, get_overall_metrics, get_historical_reject_baseline
@@ -147,22 +161,29 @@ def render_chart(chart):
     
 
 
-FILE = "data/processed/checkins_clean.csv"
-REJECTS_FILE = "data/processed/rejects_clean.csv"
+CHECKINS_FILE = "data/processed/checkins_history.csv"
+REJECTS_FILE = "data/processed/rejects_history.csv"
+STATUS_FILE = "data/processed/pipeline_status.json"
 
-checkins_updated = get_file_updated_time(FILE)
+checkins_updated = get_file_updated_time(CHECKINS_FILE)
 rejects_updated = get_file_updated_time(REJECTS_FILE)
+status_updated = get_file_updated_time(STATUS_FILE)
 
-df_raw = load_checkins_df()
-rejects_raw = load_rejects_df()
-pipeline_status = load_pipeline_status()
+checkins_mtime = checkins_updated.timestamp() if checkins_updated else 0
+rejects_mtime = rejects_updated.timestamp() if rejects_updated else 0
+status_mtime = status_updated.timestamp() if status_updated else 0
+
+df_raw = load_checkins_df(mtime=checkins_mtime)
+rejects_raw = load_rejects_df(mtime=rejects_mtime)
+pipeline_status = load_pipeline_status(mtime=status_mtime)
 
 rejects_raw["error_simple"] = rejects_raw["error_message"].apply(simplify_error)
 
 min_date = df_raw["datetime"].min().date()
 max_date = df_raw["datetime"].max().date()
 
-st.title("AMH Analytics Dashboard")
+st.caption("Hanly Analytics")
+st.markdown('<div class="sortview-title">SortView</div>', unsafe_allow_html=True)
 st.caption("Operational overview of AMH performance, failure patterns, and transit routing")
 
 if pipeline_status:
@@ -326,6 +347,7 @@ today_df = today_metrics["today_df"]
 today_rejects_df = today_metrics["today_rejects_df"]
 today_checkins = today_metrics["today_checkins"]
 today_rejects = today_metrics["today_rejects"]
+today_total_transit = today_metrics["today_total_transit"]
 today_westside = today_metrics["today_westside"]
 today_library_express = today_metrics["today_library_express"]
 today_peak_hour = today_metrics["today_peak_hour"]
@@ -338,11 +360,13 @@ historical_checkins_df = df_raw[df_raw["datetime"].dt.date < today].copy()
 
 if len(historical_checkins_df) > 0:
     historical_westside_pct = (
-        (historical_checkins_df["destination"] == "Westside").sum() / len(historical_checkins_df)
+        historical_checkins_df["destination"].astype(str).str.upper().str.contains("WESTSIDE", na=False).sum()
+        / len(historical_checkins_df)
     ) * 100
 
     historical_library_express_pct = (
-        (historical_checkins_df["destination"] == "Library Express").sum() / len(historical_checkins_df)
+        historical_checkins_df["destination"].astype(str).str.upper().str.contains("LIBRARY EXPRESS", na=False).sum()
+        / len(historical_checkins_df)
     ) * 100
 else:
     historical_westside_pct = None
@@ -357,7 +381,31 @@ today_hourly_rejects = today_rejects_df["datetime"].dt.hour.value_counts().sort_
 
 historical_baseline = get_historical_reject_baseline(df_raw, rejects_raw, today)
 
-historical_daily_avg_reject = historical_baseline.get("historical_daily_avg_reject", 0)
+historical_daily_avg_reject = historical_baseline.get("historical_daily_avg_reject")
+
+if historical_daily_avg_reject is None or historical_daily_avg_reject == 0:
+    # fallback: compute manually from historical data
+    historical_df = df_raw[df_raw["datetime"].dt.date < today]
+
+    if len(historical_df) > 0:
+        daily_checkins = historical_df["datetime"].dt.date.value_counts()
+        daily_rejects = rejects_raw[rejects_raw["datetime"].dt.date < today]["datetime"].dt.date.value_counts()
+
+        combined = pd.DataFrame({
+            "checkins": daily_checkins,
+            "rejects": daily_rejects
+        }).fillna(0)
+
+        combined = combined[combined["checkins"] > 0]
+
+        if len(combined) > 0:
+            combined["reject_rate"] = (combined["rejects"] / combined["checkins"]) * 100
+            historical_daily_avg_reject = combined["reject_rate"].mean()
+        else:
+            historical_daily_avg_reject = 0
+    else:
+        historical_daily_avg_reject = 0
+
 live_reject_deviation = today_reject_rate - historical_daily_avg_reject
 
 live_reject_card_border = "#e5e7eb"
@@ -445,43 +493,111 @@ if alerts:
 
 
 if selected_view == "Live Today":
-    st.header(f"Live Today: {today.strftime('%A, %b %d')}")
+    top_left, top_right = st.columns([1, 1.45])
 
-    if checkins_updated is not None:
+    with top_left:
+        st.header(f"{today.strftime('%A, %b %d')}")
+
+        if checkins_updated is not None:
+            st.markdown(
+                f"""
+                <div style="
+                    margin-top: -10px;
+                    margin-bottom: 12px;
+                    color: #6b7280;
+                    font-size: 0.95rem;
+                ">
+                    Last updated: {checkins_updated.strftime('%b %d, %Y %I:%M %p')}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(
+                """
+                <div style="
+                    margin-top: -10px;
+                    margin-bottom: 12px;
+                    color: #6b7280;
+                    font-size: 0.95rem;
+                ">
+                    Last updated time unavailable.
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+        if st.button("Refresh Live Data"):
+            st.rerun()
+
+    with top_right:
+        if today_checkins == 0:
+            readout_text = "No AMH activity has been logged for today yet."
+        else:
+            current_throughput = today_metrics["current_speed"]
+            staff_hours = today_metrics["staff_hours_saved"]
+            total_transit_pct = (today_total_transit / today_checkins * 100) if today_checkins > 0 else 0
+
+            readout_text = (
+                f"The AMH has processed {today_checkins:,} items with a reject rate of "
+                f"{today_reject_rate:.2f}%. Current throughput is {current_throughput:,} items this hour. "
+                f"Busiest hour: {format_hour(today_peak_hour)} with {today_peak_hour_count:,} checkins. "
+            )
+
         st.markdown(
             f"""
             <div style="
-                margin-top: -10px;
-                margin-bottom: 12px;
-                color: #6b7280;
-                font-size: 0.95rem;
+                border-left: 4px solid #2563eb;
+                background-color: #f9fafb;
+                padding: 14px 16px;
+                border-radius: 8px;
+                margin-top: 0px;
+                margin-bottom: 10px;
             ">
-                Last updated: {checkins_updated.strftime('%b %d, %Y %I:%M %p')}
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-    else:
-        st.markdown(
-            """
-            <div style="
-                margin-top: -10px;
-                margin-bottom: 12px;
-                color: #6b7280;
-                font-size: 0.95rem;
-            ">
-                Last updated time unavailable.
+                <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                    Operational Readout
+                </div>
+                <div style="color: #4b5563; line-height: 1.4;">
+                    {readout_text}
+                </div>
             </div>
             """,
             unsafe_allow_html=True
         )
 
-    if st.button("Refresh Live Data"):
-        st.rerun()
+        if len(today_hourly_checkins) > 0:
+            peak_hours_df = today_hourly_checkins.sort_values(ascending=False).head(3).reset_index()
+            peak_hours_df.columns = ["hour", "checkins"]
+            peak_hours_df["hour_label"] = peak_hours_df["hour"].apply(format_hour_plain)
+
+            peak_hours_text = "<br>".join(
+                [f"{row['hour_label']} — {int(row['checkins']):,} items" for _, row in peak_hours_df.iterrows()]
+            )
+
+            st.markdown(
+                f"""
+                <div style="
+                    border-left: 4px solid #2563eb;
+                    background-color: #f9fafb;
+                    padding: 14px 16px;
+                    border-radius: 8px;
+                    margin-top: 0px;
+                    margin-bottom: 8px;
+                ">
+                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                        Peak Hours Today
+                    </div>
+                    <div style="color: #4b5563; line-height: 1.6;">
+                        {peak_hours_text}
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
     st.markdown("### Today at a Glance")
 
-    live1, live2, live3, live4, live5, live6 = st.columns(6)
+    live1, live2, live3, live4, live5, live6, live7, live8, live9 = st.columns(9)
 
     with live1:
         render_kpi_card("Checkins", f"{today_checkins:,}", "Processed today", "#6b7280")
@@ -508,6 +624,14 @@ if selected_view == "Live Today":
         )
 
     with live4:
+        render_kpi_card(
+            "Current Throughput",
+            f"{today_metrics['current_speed']}",
+            "Items this hour",
+            "#6b7280"
+        )
+
+    with live5:
         if today_peak_hour is not None:
             render_kpi_card(
                 "Busiest Hour",
@@ -519,11 +643,39 @@ if selected_view == "Live Today":
         else:
             render_kpi_card("Busiest Hour", "N/A", "No activity yet", "#6b7280")
 
-    with live5:
-        render_kpi_card("To Westside", f"{today_westside:,}", f"{today_westside_pct:.1f}% of today", "#6b7280")
-
     with live6:
-        render_kpi_card("To Library Express", f"{today_library_express:,}", f"{today_library_express_pct:.1f}% of today", "#6b7280")
+        staff_hours = today_metrics["staff_hours_saved"]
+        render_kpi_card(
+            "Staff Hours Saved Today",
+            f"{staff_hours:.1f}",
+            "Equivalent manual labor hours",
+            "#6b7280"
+        )
+
+    with live7:
+        total_transit_pct = (today_total_transit / today_checkins * 100) if today_checkins > 0 else 0
+        render_kpi_card(
+            "Total Transit",
+            f"{today_total_transit:,}",
+            f"{total_transit_pct:.1f}% of today",
+            "#6b7280"
+        )
+
+    with live8:
+        render_kpi_card(
+            "Westside Transit",
+            f"{today_westside:,}",
+            f"{today_westside_pct:.1f}% of today",
+            "#6b7280"
+        )
+
+    with live9:
+        render_kpi_card(
+            "Library Express Transit",
+            f"{today_library_express:,}",
+            f"{today_library_express_pct:.1f}% of today",
+            "#6b7280"
+        )
 
     if show_live_alert:
         st.markdown(
@@ -547,40 +699,7 @@ if selected_view == "Live Today":
             unsafe_allow_html=True
         )
 
-    if today_checkins == 0:
-        readout_text = "No AMH activity has been logged for today yet."
-    elif today_rejects == 0:
-        readout_text = (
-            f"AMH activity is running clean so far. Busiest hour: {format_hour(today_peak_hour)} "
-            f"with {today_peak_hour_count:,} checkins."
-        )
-    else:
-        readout_text = (
-            f"So far today, the AMH has processed {today_checkins:,} items with a reject rate of "
-            f"{today_reject_rate:.2f}%. Busiest hour: {format_hour(today_peak_hour)} with "
-            f"{today_peak_hour_count:,} checkins."
-        )
 
-    st.markdown(
-        f"""
-        <div style="
-            border-left: 4px solid #2563eb;
-            background-color: #f9fafb;
-            padding: 14px 16px;
-            border-radius: 8px;
-            margin-top: 18px;
-            margin-bottom: 8px;
-        ">
-            <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                Operational Readout
-            </div>
-            <div style="color: #4b5563; line-height: 1.4;">
-                {readout_text}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
 
     st.divider()
 
@@ -613,7 +732,13 @@ if selected_view == "Live Today":
     else:
         st.info("No checkins found for today.")
 
+    
+
+
+
+    
     st.subheader("Bin Volume")
+    st.caption("Distribution of items across sort bins for today.")
     if "bin" in today_df.columns:
         today_bin_kpi_df = today_df.copy()
         today_bin_kpi_df = today_bin_kpi_df[today_bin_kpi_df["bin"].notna()].copy()
@@ -632,27 +757,6 @@ if selected_view == "Live Today":
             ).round(2)
 
             today_top_bin_row = today_bin_summary.loc[today_bin_summary["checkins"].idxmax()]
-
-            live_bin_k2, live_bin_k3 = st.columns(2)
-
-
-            with live_bin_k2:
-                render_kpi_card(
-                    "Top Bin",
-                    f"Bin {today_top_bin_row['bin']}",
-                    f"{int(today_top_bin_row['checkins']):,} items today",
-                    "#6b7280",
-                    value_font_size="2.2rem"
-                )
-
-            with live_bin_k3:
-                render_kpi_card(
-                    "Top Bin Share",
-                    f"{today_top_bin_row['pct_of_total']:.2f}%",
-                    "Of today's binned checkins",
-                    "#6b7280",
-                    value_font_size="2.2rem"
-                )
 
             bin_bar_df = today_bin_summary.copy()
             bin_bar_df["bin_label"] = bin_bar_df["bin"].apply(lambda b: f"Bin {b}")
@@ -956,27 +1060,16 @@ if selected_view == "Overview":
 
 if selected_view == "Reports":
     st.header("Reports")
-    st.caption("Select a report to view focused metrics, charts, and exportable tables.")
-
-    report_name = st.selectbox(
-        "Select Report",
-        [
-            "Daily Volume",
-            "Hourly Volume",
-            "Reject Reasons",
-            "Destination Breakdown",
-            "Today vs Typical Hourly Pattern",
-            "Bin Volume",
-            "Exceptions / Overflow",
-        ],
-        key="reports_main_select"
-    )
-
+    st.caption("Reports are grouped by type so staff can browse insights more naturally.")
     st.markdown("---")
 
-    if report_name == "Daily Volume":
-        st.subheader("Daily Volume")
+    # -----------------------------
+    # Volume & Capacity
+    # -----------------------------
+    st.subheader("Volume & Capacity")
+    st.caption("How much the AMH is processing, when demand peaks, and how current volume compares to normal patterns.")
 
+    with st.expander("Daily Volume", expanded=False):
         daily_volume = df["datetime"].dt.date.value_counts().sort_index()
         daily_df = daily_volume.reset_index()
         daily_df.columns = ["date", "count"]
@@ -1015,9 +1108,7 @@ if selected_view == "Reports":
         else:
             st.info("No daily volume data available for the selected date range.")
 
-    elif report_name == "Hourly Volume":
-        st.subheader("Hourly Volume")
-
+    with st.expander("Hourly Volume", expanded=False):
         hourly_volume = df["datetime"].dt.hour.value_counts().sort_index()
         hourly_df = hourly_volume.reset_index()
         hourly_df.columns = ["hour", "count"]
@@ -1056,55 +1147,17 @@ if selected_view == "Reports":
         else:
             st.info("No hourly volume data available for the selected date range.")
 
-    elif report_name == "Reject Reasons":
-        st.subheader("Top Reject Reasons")
+    with st.expander("Throughput", expanded=False):
+        st.caption("Shows how quickly the AMH processes items by hour, helping quantify peak handling capacity and operational demand.")
 
-        reject_counts = rejects_df["error_simple"].value_counts().reset_index()
-        reject_counts.columns = ["reason", "count"]
+        hourly_volume = df["datetime"].dt.hour.value_counts().sort_index()
+        hourly_df = hourly_volume.reset_index()
+        hourly_df.columns = ["hour", "items_per_hour"]
+        hourly_df["hour_label"] = hourly_df["hour"].apply(format_hour_plain)
 
-        if len(reject_counts) > 0:
-            top_reason_row = reject_counts.loc[reject_counts["count"].idxmax()]
-            top_reason_pct = (top_reason_row["count"] / reject_counts["count"].sum()) * 100
-
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #dc2626;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-top: 8px;
-                    margin-bottom: 16px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Report Summary
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.4;">
-                        Top reject reason: {top_reason_row["reason"]} with {int(top_reason_row["count"]):,} rejects
-                        ({top_reason_pct:.1f}% of all failures).
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            chart_df = reject_counts.set_index("reason")["count"]
-            st.bar_chart(chart_df)
-
-            st.dataframe(reject_counts, use_container_width=True)
-            download_button(reject_counts, "reject_reasons.csv")
-        else:
-            st.info("No reject reason data available for the selected date range.")
-
-    elif report_name == "Destination Breakdown":
-        st.subheader("Destination Breakdown")
-
-        destination_counts = df["destination"].value_counts().reset_index()
-        destination_counts.columns = ["destination", "count"]
-
-        if len(destination_counts) > 0:
-            top_destination_row = destination_counts.loc[destination_counts["count"].idxmax()]
-            top_destination_pct = (top_destination_row["count"] / destination_counts["count"].sum()) * 100
+        if len(hourly_df) > 0:
+            peak_row = hourly_df.loc[hourly_df["items_per_hour"].idxmax()]
+            avg_throughput = hourly_df["items_per_hour"].mean()
 
             st.markdown(
                 f"""
@@ -1120,25 +1173,58 @@ if selected_view == "Reports":
                         Report Summary
                     </div>
                     <div style="color: #4b5563; line-height: 1.4;">
-                        Top destination: {top_destination_row["destination"]} with {int(top_destination_row["count"]):,} items
-                        ({top_destination_pct:.1f}% of all checkins).
+                        Peak throughput: {int(peak_row["items_per_hour"]):,} items/hour at {peak_row["hour_label"]}.
+                        Average throughput across active hours: {avg_throughput:,.1f} items/hour.
                     </div>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
 
-            chart_df = destination_counts.set_index("destination")["count"]
+            k1, k2, k3 = st.columns(3)
+
+            with k1:
+                render_kpi_card(
+                    "Peak Throughput",
+                    f"{int(peak_row['items_per_hour']):,}",
+                    f"At {peak_row['hour_label']}",
+                    "#6b7280",
+                    value_font_size="1.6rem"
+                )
+
+            with k2:
+                render_kpi_card(
+                    "Avg Throughput",
+                    f"{avg_throughput:,.1f}",
+                    "Items per active hour",
+                    "#6b7280",
+                    value_font_size="1.6rem"
+                )
+
+            with k3:
+                active_hours_count = len(hourly_df)
+                render_kpi_card(
+                    "Active Hours",
+                    f"{active_hours_count}",
+                    "Hours with recorded activity",
+                    "#6b7280",
+                    value_font_size="1.6rem"
+                )
+
+            chart_df = hourly_df.set_index("hour_label")["items_per_hour"]
             st.bar_chart(chart_df)
 
-            st.dataframe(destination_counts, use_container_width=True)
-            download_button(destination_counts, "destination_breakdown.csv")
+            display_df = hourly_df.rename(columns={
+                "hour_label": "Hour",
+                "items_per_hour": "Items Per Hour"
+            })[["Hour", "Items Per Hour"]]
+
+            st.dataframe(display_df, use_container_width=True)
+            download_button(display_df, "throughput_report.csv")
         else:
-            st.info("No destination data available for the selected date range.")
+            st.info("No throughput data available for the selected date range.")
 
-    elif report_name == "Today vs Typical Hourly Pattern":
-        st.subheader("Today vs Typical Hourly Pattern")
-
+    with st.expander("Today vs Typical Hourly Pattern", expanded=False):
         today = df_raw["datetime"].dt.date.max()
 
         today_df_report = df_raw[df_raw["datetime"].dt.date == today].copy()
@@ -1200,27 +1286,111 @@ if selected_view == "Reports":
         else:
             st.info("Not enough data available to compare today versus the typical hourly pattern.")
 
-    elif report_name == "Bin Volume":
-        st.subheader("Bin Volume")
+    st.markdown("---")
 
-        if "bin" not in df.columns:
-            st.warning("No bin column found in the current dataset. Add bin parsing to your cleaned checkins file first.")
-        else:
-            bin_df = df.copy()
-            bin_df = bin_df[bin_df["bin"].notna()].copy()
-            bin_df["bin"] = bin_df["bin"].astype(str)
+    # -----------------------------
+    # Labor & Efficiency
+    # -----------------------------
+    st.subheader("Labor & Efficiency")
+    st.caption("Translates machine activity into estimated staff effort replaced by automation.")
 
-            bin_summary = (
-                bin_df["bin"]
-                .value_counts()
-                .sort_index()
-                .reset_index()
+    with st.expander("Staff Time Equivalent", expanded=False):
+        st.caption("This report shows how many staff hours the AMH is saving by handling check-ins automatically. It helps put the machine’s impact into simple terms—how much manual work it replaces each day.")
+
+        MANUAL_RATE = 120  # items per hour
+
+        daily_volume = df["datetime"].dt.date.value_counts().sort_index()
+        staff_df = daily_volume.reset_index()
+        staff_df.columns = ["date", "checkins"]
+        staff_df["staff_hours_saved"] = (staff_df["checkins"] / MANUAL_RATE).round(2)
+        staff_df["staff_shifts_saved"] = (staff_df["staff_hours_saved"] / 8).round(2)
+
+        if len(staff_df) > 0:
+            peak_hours_row = staff_df.loc[staff_df["staff_hours_saved"].idxmax()]
+            avg_hours_saved = staff_df["staff_hours_saved"].mean()
+
+            st.markdown(
+                f"""
+                <div style="
+                    border-left: 4px solid #059669;
+                    background-color: #f9fafb;
+                    padding: 14px 16px;
+                    border-radius: 8px;
+                    margin-top: 8px;
+                    margin-bottom: 16px;
+                ">
+                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                        Report Summary
+                    </div>
+                    <div style="color: #4b5563; line-height: 1.4;">
+                        Peak labor equivalent day: {pd.to_datetime(peak_hours_row["date"]).strftime("%a, %b %d")}
+                        with {peak_hours_row["staff_hours_saved"]:.2f} staff hours saved.
+                        Average daily labor equivalent saved: {avg_hours_saved:.2f} hours.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
             )
-            bin_summary.columns = ["bin", "checkins"]
-            bin_summary["pct_of_total"] = (bin_summary["checkins"] / bin_summary["checkins"].sum() * 100).round(2)
 
-            top_bin_row = bin_summary.loc[bin_summary["checkins"].idxmax()]
-            low_bin_row = bin_summary.loc[bin_summary["checkins"].idxmin()]
+            k1, k2, k3 = st.columns(3)
+
+            with k1:
+                render_kpi_card(
+                    "Avg Staff Hours Saved",
+                    f"{avg_hours_saved:.2f}",
+                    "Average daily manual labor equivalent",
+                    "#6b7280",
+                    value_font_size="1.6rem"
+                )
+
+            with k2:
+                render_kpi_card(
+                    "Peak Staff Hours Saved",
+                    f"{peak_hours_row['staff_hours_saved']:.2f}",
+                    pd.to_datetime(peak_hours_row["date"]).strftime("%b %d, %Y"),
+                    "#6b7280",
+                    value_font_size="1.6rem"
+                )
+
+            with k3:
+                render_kpi_card(
+                    "Peak Staff Shifts Saved",
+                    f"{peak_hours_row['staff_shifts_saved']:.2f}",
+                    "Based on 8-hour shifts",
+                    "#6b7280",
+                    value_font_size="1.6rem"
+                )
+
+            chart_df = staff_df.set_index("date")["staff_hours_saved"]
+            st.line_chart(chart_df)
+
+            display_df = staff_df.rename(columns={
+                "date": "Date",
+                "checkins": "Checkins",
+                "staff_hours_saved": "Staff Hours Saved",
+                "staff_shifts_saved": "Staff Shifts Saved (8 hr)"
+            })
+
+            st.dataframe(display_df, use_container_width=True)
+            download_button(display_df, "staff_time_equivalent.csv")
+        else:
+            st.info("No data available for the selected date range.")
+
+    st.markdown("---")
+
+    # -----------------------------
+    # Routing & Destinations
+    # -----------------------------
+    st.subheader("Routing & Destinations")
+    st.caption("Shows where items are being sent after check-in and highlights routing concentration.")
+
+    with st.expander("Destination Breakdown", expanded=False):
+        destination_counts = df["destination"].value_counts().reset_index()
+        destination_counts.columns = ["destination", "count"]
+
+        if len(destination_counts) > 0:
+            top_destination_row = destination_counts.loc[destination_counts["count"].idxmax()]
+            top_destination_pct = (top_destination_row["count"] / destination_counts["count"].sum()) * 100
 
             st.markdown(
                 f"""
@@ -1236,107 +1406,69 @@ if selected_view == "Reports":
                         Report Summary
                     </div>
                     <div style="color: #4b5563; line-height: 1.4;">
-                        Most-used bin: {top_bin_row["bin"]} with {int(top_bin_row["checkins"]):,} items
-                        ({top_bin_row["pct_of_total"]:.2f}% of all binned checkins).
-                        Lowest-volume bin: {low_bin_row["bin"]} with {int(low_bin_row["checkins"]):,} items.
+                        Top destination: {top_destination_row["destination"]} with {int(top_destination_row["count"]):,} items
+                        ({top_destination_pct:.1f}% of all checkins).
                     </div>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
 
-            k1, k2, k3 = st.columns(3)
-            with k1:
-                render_kpi_card(
-                    "Binned Checkins",
-                    f"{int(bin_summary['checkins'].sum()):,}",
-                    "Items with a detected bin",
-                    "#6b7280"
-                )
-            with k2:
-                render_kpi_card(
-                    "Top Bin",
-                    f"Bin {top_bin_row['bin']}",
-                    f"{int(top_bin_row['checkins']):,} items",
-                    "#6b7280",
-                    value_font_size="1.4rem"
-                )
-            with k3:
-                render_kpi_card(
-                    "Top Bin Share",
-                    f"{top_bin_row['pct_of_total']:.2f}%",
-                    "Of all binned checkins",
-                    "#6b7280",
-                    value_font_size="1.4rem"
-                )
-
-            chart_df = bin_summary.set_index("bin")["checkins"]
+            chart_df = destination_counts.set_index("destination")["count"]
             st.bar_chart(chart_df)
 
-            # Define hour range (7 AM → 8 PM)
-            hour_range = list(range(7, 21))
+            st.dataframe(destination_counts, use_container_width=True)
+            download_button(destination_counts, "destination_breakdown.csv")
+        else:
+            st.info("No destination data available for the selected date range.")
 
-            hourly_bin = (
-                bin_df.groupby([bin_df["datetime"].dt.hour, "bin"])
-                .size()
-                .unstack(fill_value=0)
+    st.markdown("---")
+
+    # -----------------------------
+    # Errors & Exceptions
+    # -----------------------------
+    st.subheader("Errors & Exceptions")
+    st.caption("Tracks failure types, exception routing, and patterns that may indicate operational issues.")
+
+    with st.expander("Reject Reasons", expanded=False):
+        reject_counts = rejects_df["error_simple"].value_counts().reset_index()
+        reject_counts.columns = ["reason", "count"]
+
+        if len(reject_counts) > 0:
+            top_reason_row = reject_counts.loc[reject_counts["count"].idxmax()]
+            top_reason_pct = (top_reason_row["count"] / reject_counts["count"].sum()) * 100
+
+            st.markdown(
+                f"""
+                <div style="
+                    border-left: 4px solid #dc2626;
+                    background-color: #f9fafb;
+                    padding: 14px 16px;
+                    border-radius: 8px;
+                    margin-top: 8px;
+                    margin-bottom: 16px;
+                ">
+                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                        Report Summary
+                    </div>
+                    <div style="color: #4b5563; line-height: 1.4;">
+                        Top reject reason: {top_reason_row["reason"]} with {int(top_reason_row["count"]):,} rejects
+                        ({top_reason_pct:.1f}% of all failures).
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
             )
 
-            # Force only 7 AM through 8 PM
-            hourly_bin = hourly_bin.reindex(hour_range, fill_value=0)
+            chart_df = reject_counts.set_index("reason")["count"]
+            st.bar_chart(chart_df)
 
-            # Remove hours with no activity at all
-            hourly_bin = hourly_bin.loc[hourly_bin.sum(axis=1) > 0]
+            st.dataframe(reject_counts, use_container_width=True)
+            download_button(reject_counts, "reject_reasons.csv")
+        else:
+            st.info("No reject reason data available for the selected date range.")
 
-            if len(hourly_bin) > 0:
-                st.subheader("Bin Volume by Hour")
-
-                hourly_bin_chart = hourly_bin.copy()
-                hourly_bin_chart.columns = [f"Bin {col}" for col in hourly_bin_chart.columns]
-
-                hourly_bin_chart_display = hourly_bin_chart.copy().reset_index()
-                hourly_bin_chart_display.columns = ["hour"] + list(hourly_bin_chart_display.columns[1:])
-
-                hourly_bin_chart_display["hour_label"] = hourly_bin_chart_display["hour"].apply(
-                    lambda h: pd.to_datetime(f"{int(h):02d}:00").strftime("%I%p").lstrip("0")
-                )
-
-                hourly_bin_long = hourly_bin_chart_display.melt(
-                    id_vars=["hour", "hour_label"],
-                    var_name="bin",
-                    value_name="checkins"
-                )
-
-                bin_chart = (
-                    alt.Chart(hourly_bin_long)
-                    .mark_line(point=False)
-                    .encode(
-                        x=alt.X(
-                            "hour_label:N",
-                            sort=hourly_bin_chart_display["hour_label"].tolist(),
-                            title="Hour",
-                            axis=alt.Axis(labelAngle=0)
-                        ),
-                        y=alt.Y("checkins:Q", title="Checkins"),
-                        color=alt.Color("bin:N", title="Bin"),
-                        tooltip=["hour_label", "bin", "checkins"]
-                    )
-                    .properties(height=350)
-                )
-
-                bin_chart = bin_chart.interactive(False)
-
-                st.altair_chart(bin_chart, use_container_width=True)
-
-                hourly_bin_display = hourly_bin_chart.copy().reset_index()
-                hourly_bin_display.columns = ["hour"] + [str(col) for col in hourly_bin_display.columns[1:]]
-                hourly_bin_display["hour"] = hourly_bin_display["hour"].apply(format_hour_plain)
-
-                st.dataframe(hourly_bin_display, use_container_width=True)
-
-    elif report_name == "Exceptions / Overflow":
-        st.subheader("Exceptions / Overflow")
-
+    with st.expander("Exceptions / Overflow", expanded=False):
         if "bin" not in df.columns:
             st.warning("No bin column found in the current dataset. Add bin parsing to your cleaned checkins file first.")
         else:
@@ -1462,6 +1594,142 @@ if selected_view == "Reports":
                 download_button(hourly_exception_display, "exception_bin_hourly_report.csv")
             else:
                 st.info("No exception-bin items found for the selected date range.")
+
+    st.markdown("---")
+
+    # -----------------------------
+    # Bin Activity
+    # -----------------------------
+    st.subheader("Bin Activity")
+    st.caption("Shows how items are distributed across physical bins and which bins are handling the most traffic.")
+
+    with st.expander("Bin Volume", expanded=False):
+        if "bin" not in df.columns:
+            st.warning("No bin column found in the current dataset. Add bin parsing to your cleaned checkins file first.")
+        else:
+            bin_df = df.copy()
+            bin_df = bin_df[bin_df["bin"].notna()].copy()
+            bin_df["bin"] = bin_df["bin"].astype(str)
+
+            bin_summary = (
+                bin_df["bin"]
+                .value_counts()
+                .sort_index()
+                .reset_index()
+            )
+            bin_summary.columns = ["bin", "checkins"]
+            bin_summary["pct_of_total"] = (bin_summary["checkins"] / bin_summary["checkins"].sum() * 100).round(2)
+
+            top_bin_row = bin_summary.loc[bin_summary["checkins"].idxmax()]
+            low_bin_row = bin_summary.loc[bin_summary["checkins"].idxmin()]
+
+            st.markdown(
+                f"""
+                <div style="
+                    border-left: 4px solid #2563eb;
+                    background-color: #f9fafb;
+                    padding: 14px 16px;
+                    border-radius: 8px;
+                    margin-top: 8px;
+                    margin-bottom: 16px;
+                ">
+                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                        Report Summary
+                    </div>
+                    <div style="color: #4b5563; line-height: 1.4;">
+                        Most-used bin: {top_bin_row["bin"]} with {int(top_bin_row["checkins"]):,} items
+                        ({top_bin_row["pct_of_total"]:.2f}% of all binned checkins).
+                        Lowest-volume bin: {low_bin_row["bin"]} with {int(low_bin_row["checkins"]):,} items.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            k1, k2, k3 = st.columns(3)
+            with k1:
+                render_kpi_card(
+                    "Binned Checkins",
+                    f"{int(bin_summary['checkins'].sum()):,}",
+                    "Items with a detected bin",
+                    "#6b7280"
+                )
+            with k2:
+                render_kpi_card(
+                    "Top Bin",
+                    f"Bin {top_bin_row['bin']}",
+                    f"{int(top_bin_row['checkins']):,} items",
+                    "#6b7280",
+                    value_font_size="1.4rem"
+                )
+            with k3:
+                render_kpi_card(
+                    "Top Bin Share",
+                    f"{top_bin_row['pct_of_total']:.2f}%",
+                    "Of all binned checkins",
+                    "#6b7280",
+                    value_font_size="1.4rem"
+                )
+
+            chart_df = bin_summary.set_index("bin")["checkins"]
+            st.bar_chart(chart_df)
+
+            hour_range = list(range(7, 21))
+
+            hourly_bin = (
+                bin_df.groupby([bin_df["datetime"].dt.hour, "bin"])
+                .size()
+                .unstack(fill_value=0)
+            )
+
+            hourly_bin = hourly_bin.reindex(hour_range, fill_value=0)
+            hourly_bin = hourly_bin.loc[hourly_bin.sum(axis=1) > 0]
+
+            if len(hourly_bin) > 0:
+                st.subheader("Bin Volume by Hour")
+
+                hourly_bin_chart = hourly_bin.copy()
+                hourly_bin_chart.columns = [f"Bin {col}" for col in hourly_bin_chart.columns]
+
+                hourly_bin_chart_display = hourly_bin_chart.copy().reset_index()
+                hourly_bin_chart_display.columns = ["hour"] + list(hourly_bin_chart_display.columns[1:])
+
+                hourly_bin_chart_display["hour_label"] = hourly_bin_chart_display["hour"].apply(
+                    lambda h: pd.to_datetime(f"{int(h):02d}:00").strftime("%I%p").lstrip("0")
+                )
+
+                hourly_bin_long = hourly_bin_chart_display.melt(
+                    id_vars=["hour", "hour_label"],
+                    var_name="bin",
+                    value_name="checkins"
+                )
+
+                bin_chart = (
+                    alt.Chart(hourly_bin_long)
+                    .mark_line(point=False)
+                    .encode(
+                        x=alt.X(
+                            "hour_label:N",
+                            sort=hourly_bin_chart_display["hour_label"].tolist(),
+                            title="Hour",
+                            axis=alt.Axis(labelAngle=0)
+                        ),
+                        y=alt.Y("checkins:Q", title="Checkins"),
+                        color=alt.Color("bin:N", title="Bin"),
+                        tooltip=["hour_label", "bin", "checkins"]
+                    )
+                    .properties(height=350)
+                )
+
+                bin_chart = bin_chart.interactive(False)
+
+                st.altair_chart(bin_chart, use_container_width=True)
+
+                hourly_bin_display = hourly_bin_chart.copy().reset_index()
+                hourly_bin_display.columns = ["hour"] + [str(col) for col in hourly_bin_display.columns[1:]]
+                hourly_bin_display["hour"] = hourly_bin_display["hour"].apply(format_hour_plain)
+
+                st.dataframe(hourly_bin_display, use_container_width=True)
 
 
 
