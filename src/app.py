@@ -150,8 +150,8 @@ def render_chart(chart):
     
 
 
-CHECKINS_FILE = "data/processed/checkins_history.csv"
-REJECTS_FILE = "data/processed/rejects_history.csv"
+CHECKINS_FILE = "data/processed/checkins_clean.csv"
+REJECTS_FILE = "data/processed/rejects_clean.csv"
 STATUS_FILE = "data/processed/pipeline_status.json"
 
 checkins_updated = get_file_updated_time(CHECKINS_FILE)
