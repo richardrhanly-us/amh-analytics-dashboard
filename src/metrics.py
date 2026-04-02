@@ -9,14 +9,19 @@ def get_date_filtered_df(df, start_date, end_date):
 
 
 def get_today_metrics(df, rejects_df, today):
-    today_df = df[df["datetime"].dt.date == today].copy()
+    today_df = df[
+        df["datetime"].dt.tz_localize(None).dt.date == today
+    ].copy()
     today_rejects_df = rejects_df[rejects_df["datetime"].dt.date == today].copy()
 
     today_checkins = len(today_df)
     # --- Throughput metrics ---
     if len(today_df) > 0:
         hourly_counts = today_df["datetime"].dt.hour.value_counts().sort_index()
-        current_hour = pd.Timestamp.now().hour
+        from zoneinfo import ZoneInfo
+        from datetime import datetime
+        
+        current_hour = datetime.now(ZoneInfo("America/Chicago")).hour
 
         current_speed = int(hourly_counts.get(current_hour, 0))
         peak_speed = int(hourly_counts.max())
