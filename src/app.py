@@ -356,7 +356,6 @@ df_raw = load_checkins_df(mtime=checkins_mtime)
 rejects_raw = load_rejects_df(mtime=rejects_mtime)
 pipeline_status = load_pipeline_status(mtime=status_mtime)
 
-st.caption(f"Data max checkin timestamp: {df_raw['datetime'].max()}")
 
 rejects_raw["error_simple"] = rejects_raw["error_message"].apply(simplify_error)
 
