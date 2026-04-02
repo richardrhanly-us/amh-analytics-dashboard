@@ -19,6 +19,8 @@ data/raw/
 data/processed/*
 !data/processed/checkins_clean.csv
 !data/processed/rejects_clean.csv
+!data/processed/checkins_history.csv
+!data/processed/rejects_history.csv
 !data/processed/pipeline_status.json
 
 # editor / OS
