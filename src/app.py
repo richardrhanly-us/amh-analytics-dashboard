@@ -1793,9 +1793,9 @@ This estimate compares how long it would take staff to process items manually ve
 
 Step 1 — Manual Processing Time
 
-Manual rate = 50 check-ins p/hr
+Manual rate = {MANUAL_RATE:.0f} check-ins p/hr
 
-**Manual time = check-ins ÷ {MANUAL_RATE:.0f}**
+**Manual time = check-ins ÷ **
 
 This dashboard uses a manual processing baseline of {MANUAL_RATE:.0f} items per hour.
 That baseline comes from observed staff check-in pace from Westside circulation check-in reporting, and is used here as a reasonable manual processing benchmark.
