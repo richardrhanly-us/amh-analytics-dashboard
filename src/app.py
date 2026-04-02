@@ -401,7 +401,7 @@ if selected_view in ["Overview", "Reports", "Transits"]:
 
     range_mode = st.sidebar.radio(
         "Date Range",
-        ["Single Day", "Last 7 Days", "Last 30 Days", "Month to Date", "All Data", "Custom"],
+        ["Single Day", "Last 7 Days", "Last 30 Days", "Month to Date", "All Time", "Custom"],
         index=1
     )
 
