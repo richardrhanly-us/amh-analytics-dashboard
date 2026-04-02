@@ -2042,8 +2042,24 @@ if selected_view == "Reports":
                     value_font_size="1.4rem"
                 )
 
-            chart_df = bin_summary.set_index("bin")["checkins"]
-            st.bar_chart(chart_df)
+            bin_volume_display = bin_summary.rename(columns={
+                "bin": "Bin",
+                "checkins": "Checkins",
+                "pct_of_total": "% of Total"
+            })
+            
+            st.dataframe(bin_volume_display, use_container_width=True)
+            
+            render_report_exports(
+                bin_volume_display,
+                "Bin Volume Report",
+                html_summary=(
+                    f"Most-used bin: {top_bin_row['bin']} with "
+                    f"{int(top_bin_row['checkins']):,} items. "
+                    f"Lowest-volume bin: {low_bin_row['bin']} with "
+                    f"{int(low_bin_row['checkins']):,} items."
+                )
+            )
 
             hour_range = list(range(7, 21))
 
@@ -2101,6 +2117,11 @@ if selected_view == "Reports":
                 hourly_bin_display["hour"] = hourly_bin_display["hour"].apply(format_hour_plain)
 
                 st.dataframe(hourly_bin_display, use_container_width=True)
+                render_report_exports(
+                    hourly_bin_display,
+                    "Bin Volume by Hour Report",
+                    html_summary="Hourly checkin distribution across bins from 7 AM to 8 PM."
+                )
 
 
 
@@ -2191,6 +2212,11 @@ if selected_view == "Transits":
             "avg_minutes": "Avg Transit Time (min)"
         })
         st.dataframe(display_df, use_container_width=True)
+        render_report_exports(
+            display_df,
+            "Average Transit Time Report",
+            html_summary="Average transit time by destination for the selected date range."
+        )
     else:
         st.info("Not enough data to calculate transit times.")
 
@@ -2204,6 +2230,11 @@ if selected_view == "Transits":
             "pct_of_total_items": "% of Total Items"
         })
         st.dataframe(transit_display, use_container_width=True)
+        render_report_exports(
+            transit_display,
+            "Transit by Destination Report",
+            html_summary="Transit item counts and share by destination."
+        )
     else:
         st.info("No transit destination activity found for the selected date range.")
 
@@ -2221,6 +2252,11 @@ if selected_view == "Transits":
             "top_reason_pct_of_destination_rejects": "Top Reason % of Destination Rejects"
         })
         st.dataframe(diagnostics_display, use_container_width=True)
+        render_report_exports(
+            diagnostics_display,
+            "Destination Transit Diagnostics Report",
+            html_summary="Transit-linked reject and destination diagnostics for the selected date range."
+        )
     else:
         st.info("No destination-level transit reject data available for the selected date range.")
     
@@ -2268,6 +2304,11 @@ if selected_view == "Transits":
     
         weekday_display = destination_weekday_mix.round(1)
         st.dataframe(weekday_display, use_container_width=True)
+        render_report_exports(
+            weekday_display,
+            "Transit by Destination by Weekday Report",
+            html_summary="Weekday transit mix by destination."
+        )
     else:
         st.info("No destination weekday mix data available for the selected date range.")
     
@@ -2286,7 +2327,16 @@ if selected_view == "Transits":
         render_chart(daily_transit_chart)
     else:
         st.info("No transit items found for the selected date range.")
-
+        daily_transit_display = daily_transit.copy()
+        daily_transit_display["date"] = pd.to_datetime(daily_transit_display["date"]).dt.strftime("%Y-%m-%d")
+        
+        st.dataframe(daily_transit_display, use_container_width=True)
+        
+        render_report_exports(
+            daily_transit_display,
+            "Daily Transit Volume Report",
+            html_summary="Daily transit volume for the selected date range."
+        )
     st.subheader("Transit Mix by Day")
     if len(transit_df) > 0:
         transit_mix = (
@@ -2305,6 +2355,16 @@ if selected_view == "Transits":
             series_col="transit_destination"
         )
         render_chart(transit_mix_chart)
+        transit_mix_display = transit_mix.copy()
+        transit_mix_display["date"] = pd.to_datetime(transit_mix_display["date"]).dt.strftime("%Y-%m-%d")
+        
+        st.dataframe(transit_mix_display, use_container_width=True)
+        
+        render_report_exports(
+            transit_mix_display,
+            "Transit Mix by Day Report",
+            html_summary="Daily transit mix by destination."
+        )
     else:
         st.info("No transit mix data available for the selected date range.")
 
@@ -2314,5 +2374,10 @@ if selected_view == "Transits":
         comparison_display["Avg Transit Items / Day"] = comparison_display["Avg Transit Items / Day"].round(1)
         comparison_display["Avg Reject Rate %"] = comparison_display["Avg Reject Rate %"].round(2)
         st.dataframe(comparison_display, use_container_width=True)
+        render_report_exports(
+            comparison_display,
+            "Transit vs Reject Pattern by Weekday Report",
+            html_summary="Weekday comparison of transit volume and reject rate."
+        )
     else:
         st.info("No weekday comparison data available for the selected date range.")
