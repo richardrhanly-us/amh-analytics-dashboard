@@ -8,10 +8,10 @@ from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import altair as alt
-from streamlit_autorefresh import st_autorefresh
-
 st.set_page_config(layout="wide")
-st_autorefresh(interval=60000, key="amh_auto_refresh")
+# from streamlit_autorefresh import st_autorefresh
+# st_autorefresh(interval=60000, key="amh_auto_refresh")
+
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Luckiest+Guy&display=swap');
