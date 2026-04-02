@@ -132,7 +132,6 @@ def format_hour_plain(hour_value):
 
     return pd.to_datetime(f"{int(hour_value):02d}:00").strftime("%I:%M %p")
         
-
 def download_button(df, filename, key=None):
     csv = df.to_csv(index=False).encode("utf-8")
 
@@ -144,7 +143,7 @@ def download_button(df, filename, key=None):
             data=csv,
             file_name=filename,
             mime="text/csv",
-            key=key or filename
+            key=key or f"{filename}_download"
         )
     
  
@@ -2290,22 +2289,34 @@ with st.expander("Volume & Activity", expanded=False):
     st.subheader("Daily Transfer Summary")
     if len(df) > 0:
         daily_total = df.groupby(df["datetime"].dt.date).size()
-        daily_ws = df[df["transit_destination"] == "Westside"].groupby(df[df["transit_destination"] == "Westside"]["datetime"].dt.date).size()
-        daily_le = df[df["transit_destination"] == "Library Express"].groupby(df[df["transit_destination"] == "Library Express"]["datetime"].dt.date).size()
+        daily_ws = df[df["transit_destination"] == "Westside"].groupby(
+            df[df["transit_destination"] == "Westside"]["datetime"].dt.date
+        ).size()
+        daily_le = df[df["transit_destination"] == "Library Express"].groupby(
+            df[df["transit_destination"] == "Library Express"]["datetime"].dt.date
+        ).size()
         daily_no_agency = df[
             df["destination"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False)
-        ].groupby(df[
-            df["destination"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False)
-        ]["datetime"].dt.date).size()
+        ].groupby(
+            df[
+                df["destination"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False)
+            ]["datetime"].dt.date
+        ).size()
 
         daily_transfer_summary = pd.DataFrame({
             "Date": pd.to_datetime(daily_total.index),
             "Total Checkins": daily_total.values
         })
 
-        daily_transfer_summary["Transit to Westside"] = daily_transfer_summary["Date"].dt.date.map(daily_ws).fillna(0).astype(int)
-        daily_transfer_summary["Transit to Library Express"] = daily_transfer_summary["Date"].dt.date.map(daily_le).fillna(0).astype(int)
-        daily_transfer_summary["To No Agency Destination"] = daily_transfer_summary["Date"].dt.date.map(daily_no_agency).fillna(0).astype(int)
+        daily_transfer_summary["Transit to Westside"] = (
+            daily_transfer_summary["Date"].dt.date.map(daily_ws).fillna(0).astype(int)
+        )
+        daily_transfer_summary["Transit to Library Express"] = (
+            daily_transfer_summary["Date"].dt.date.map(daily_le).fillna(0).astype(int)
+        )
+        daily_transfer_summary["To No Agency Destination"] = (
+            daily_transfer_summary["Date"].dt.date.map(daily_no_agency).fillna(0).astype(int)
+        )
         daily_transfer_summary["Total Transit Items"] = (
             daily_transfer_summary["Transit to Westside"] +
             daily_transfer_summary["Transit to Library Express"]
@@ -2317,7 +2328,11 @@ with st.expander("Volume & Activity", expanded=False):
         daily_transfer_summary["Date"] = daily_transfer_summary["Date"].dt.strftime("%Y-%m-%d")
 
         st.dataframe(daily_transfer_summary, use_container_width=True)
-        download_button(daily_transfer_summary, "daily_transfer_summary_report.csv")
+        download_button(
+            daily_transfer_summary,
+            "daily_transfer_summary_report.csv",
+            key="daily_transfer_summary_report_download"
+        )
     else:
         st.info("No daily transfer summary data available for the selected date range.")
 
@@ -2336,9 +2351,15 @@ with st.expander("Volume & Activity", expanded=False):
         )
         render_chart(transit_hourly_chart)
 
-        transit_hourly_display = transit_hourly[["hour_label", "Transit Items"]].rename(columns={"hour_label": "Hour"})
+        transit_hourly_display = transit_hourly[["hour_label", "Transit Items"]].rename(
+            columns={"hour_label": "Hour"}
+        )
         st.dataframe(transit_hourly_display, use_container_width=True)
-        download_button(transit_hourly_display, "transit_by_hour_report.csv")
+        download_button(
+            transit_hourly_display,
+            "transit_by_hour_report.csv",
+            key="transit_by_hour_report_download"
+        )
     else:
         st.info("No hourly transit data available for the selected date range.")
 
@@ -2371,7 +2392,11 @@ with st.expander("Volume & Activity", expanded=False):
         })
 
         st.dataframe(transit_mix_display, use_container_width=True)
-        download_button(transit_mix_display, "transit_trends_over_time_report.csv")
+        download_button(
+            transit_mix_display,
+            "transit_trends_over_time_report.csv",
+            key="transit_trends_over_time_report_download"
+        )
     else:
         st.info("No transit trends data available for the selected date range.")
 
@@ -2400,7 +2425,11 @@ with st.expander("Distribution & Flow", expanded=False):
         })
 
         st.dataframe(transit_distribution_display, use_container_width=True)
-        download_button(transit_distribution_display, "transit_distribution_report.csv")
+        download_button(
+            transit_distribution_display,
+            "transit_distribution_report.csv",
+            key="transit_distribution_report_download"
+        )
     else:
         st.info("No transit distribution data available for the selected date range.")
 
@@ -2426,7 +2455,11 @@ with st.expander("Distribution & Flow", expanded=False):
         })
 
         st.dataframe(routing_distribution_display, use_container_width=True)
-        download_button(routing_distribution_display, "routing_distribution_report.csv")
+        download_button(
+            routing_distribution_display,
+            "routing_distribution_report.csv",
+            key="routing_distribution_report_download"
+        )
     else:
         st.info("No routing distribution data available for the selected date range.")
 
@@ -2467,7 +2500,11 @@ with st.expander("Distribution & Flow", expanded=False):
         })
 
         st.dataframe(routing_pct_display, use_container_width=True)
-        download_button(routing_pct_display, "percentage_routing_over_time_report.csv")
+        download_button(
+            routing_pct_display,
+            "percentage_routing_over_time_report.csv",
+            key="percentage_routing_over_time_report_download"
+        )
     else:
         st.info("No percentage routing data available for the selected date range.")
 
@@ -2487,7 +2524,11 @@ with st.expander("Exceptions & Failures", expanded=False):
             "top_reason_pct_of_destination_rejects": "Top Reason % of Destination Rejects"
         })
         st.dataframe(diagnostics_display, use_container_width=True)
-        download_button(diagnostics_display, "exception_report.csv")
+        download_button(
+            diagnostics_display,
+            "exception_report.csv",
+            key="exception_report_download"
+        )
     else:
         st.info("No destination-level transit reject data available for the selected date range.")
 
@@ -2555,7 +2596,11 @@ with st.expander("Exceptions & Failures", expanded=False):
         )
 
         st.dataframe(no_agency_display, use_container_width=True)
-        download_button(no_agency_display, "no_agency_destination_deep_dive_report.csv")
+        download_button(
+            no_agency_display,
+            "no_agency_destination_deep_dive_report.csv",
+            key="no_agency_destination_deep_dive_report_download"
+        )
     else:
         st.info("No No Agency Destination items found for the selected date range.")
 
@@ -2617,6 +2662,10 @@ with st.expander("Diagnostics & Insights", expanded=False):
         }])
 
         st.dataframe(baseline_df, use_container_width=True)
-        download_button(baseline_df, "baseline_comparison_report.csv")
+        download_button(
+            baseline_df,
+            "baseline_comparison_report.csv",
+            key="baseline_comparison_report_download"
+        )
     else:
-        st.info("Not enough current and historical data available for baseline comparison.")    
+        st.info("Not enough current and historical data available for baseline comparison.")
