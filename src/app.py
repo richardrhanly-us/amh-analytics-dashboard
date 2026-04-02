@@ -1585,7 +1585,7 @@ if selected_view == "Reports":
                     <div style="color: #4b5563; line-height: 1.4;">
                         Based on {days_in_range} day(s) in the selected range, the busiest average hour was {peak_row["hour_label"]}
                         at {peak_row["avg_items_per_hour"]:,.1f} checkins per day.
-                        Average checkins per active hour: {avg_items_per_hour:,.1f}.
+                        Average checkins per active hour: {avg_items_per_hour:,.1f}.  
                         Average during busiest hours: {peak_times_avg:,.1f}.
                     </div>
                 </div>
@@ -1593,18 +1593,10 @@ if selected_view == "Reports":
                 unsafe_allow_html=True
             )
 
-            k1, k2, k3, k4 = st.columns(4)
+            k1, k2, k3,  = st.columns(3)
+
 
             with k1:
-                render_kpi_card(
-                    "Peak Avg Hour",
-                    f"{peak_row['avg_items_per_hour']:,.1f}",
-                    f"At {peak_row['hour_label']}",
-                    "#6b7280",
-                    value_font_size="1.6rem"
-                )
-
-            with k2:
                 render_kpi_card(
                     "Avg Checkins / Hour",
                     f"{avg_items_per_hour:,.1f}",
@@ -1613,7 +1605,7 @@ if selected_view == "Reports":
                     value_font_size="1.6rem"
                 )
 
-            with k3:
+            with k2:
                 render_kpi_card(
                     "Peak Hours Avg",
                     f"{peak_times_avg:,.1f}",
@@ -1622,7 +1614,7 @@ if selected_view == "Reports":
                     value_font_size="1.6rem"
                 )
 
-            with k4:
+            with k3:
                 render_kpi_card(
                     "Days in Range",
                     f"{days_in_range}",
