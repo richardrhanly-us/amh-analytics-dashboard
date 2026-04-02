@@ -390,8 +390,7 @@ def render_report_exports(df, report_title, html_summary=""):
         "Export",
         ["Select option...", "Download CSV", "Download HTML", "Print View"],
         label_visibility="collapsed",
-        key=f"{report_title}_export",
-        width="content"
+        key=f"{report_title}_export"
     )
     if option == "Download CSV":
         st.download_button(
