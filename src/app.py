@@ -1801,9 +1801,11 @@ That baseline comes from observed staff check-in pace from Westside circulation 
 
 
 Step 2 — AMH Processing Time
+
 Instead of guessing machine speed, this dashboard uses the AMH’s observed all-time busiest-hour average.
 Current AMH rate used = {AMH_RATE:.1f} items per hour
-AMH time = checkins ÷ {AMH_RATE:.1f}
+
+**AMH time = checkins ÷ {AMH_RATE:.1f}**
 
 Step 3 — Time Saved
 Staff time saved = (checkins ÷ {MANUAL_RATE:.0f}) − (checkins ÷ {AMH_RATE:.1f})
