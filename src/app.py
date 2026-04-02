@@ -205,26 +205,73 @@ end_date = max_date
 
 
 
+local_today = datetime.now(ZoneInfo("America/Chicago")).date()
+
+start_date = min_date
+end_date = min(max_date, local_today)
+
 if selected_view in ["Overview", "Reports", "Transits"]:
     st.sidebar.header("Filters")
 
-    date_selection = st.sidebar.date_input(
-        "Select Date Range",
-        value=(min_date, max_date),
-        min_value=min_date,
-        max_value=max_date
+    max_allowed_date = min(max_date, local_today)
+
+    range_mode = st.sidebar.radio(
+        "Date Range",
+        ["Single Day", "Last 7 Days", "Last 30 Days", "Month to Date", "All Data", "Custom"],
+        index=1
     )
 
-    if isinstance(date_selection, (list, tuple)):
-        if len(date_selection) == 2:
-            start_date, end_date = date_selection
-        elif len(date_selection) == 1:
-            start_date = end_date = date_selection[0]
+    if range_mode == "Single Day":
+        selected_day = st.sidebar.date_input(
+            "Choose Day",
+            value=max_allowed_date,
+            min_value=min_date,
+            max_value=max_allowed_date
+        )
+        start_date = selected_day
+        end_date = selected_day
+
+    elif range_mode == "Last 7 Days":
+        end_date = max_allowed_date
+        start_date = max(min_date, end_date - pd.Timedelta(days=6))
+
+    elif range_mode == "Last 30 Days":
+        end_date = max_allowed_date
+        start_date = max(min_date, end_date - pd.Timedelta(days=29))
+
+    elif range_mode == "Month to Date":
+        end_date = max_allowed_date
+        start_date = max(min_date, end_date.replace(day=1))
+
+    elif range_mode == "All Data":
+        start_date = min_date
+        end_date = max_allowed_date
+
+    elif range_mode == "Custom":
+        custom_range = st.sidebar.date_input(
+            "Custom Range",
+            value=(max(min_date, max_allowed_date - pd.Timedelta(days=6)), max_allowed_date),
+            min_value=min_date,
+            max_value=max_allowed_date
+        )
+
+        if isinstance(custom_range, (list, tuple)):
+            if len(custom_range) == 2:
+                start_date, end_date = custom_range
+            elif len(custom_range) == 1:
+                start_date = custom_range[0]
+                end_date = custom_range[0]
+            else:
+                start_date = max(min_date, max_allowed_date - pd.Timedelta(days=6))
+                end_date = max_allowed_date
         else:
-            start_date = min_date
-            end_date = max_date
-    else:
-        start_date = end_date = date_selection
+            start_date = custom_range
+            end_date = custom_range
+
+        if start_date > end_date:
+            start_date, end_date = end_date, start_date
+
+    st.sidebar.caption(f"Showing: {start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}")
 
 df = get_date_filtered_df(df_raw, start_date, end_date)
 rejects_df = get_date_filtered_df(rejects_raw, start_date, end_date)
