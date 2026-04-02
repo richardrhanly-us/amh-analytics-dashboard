@@ -1765,38 +1765,38 @@ if selected_view == "Reports":
                 )
 
 
-            st.markdown(
-                """
-<div style="
-    border-left: 4px solid #2563eb;
-    background-color: #f9fafb;
-    padding: 14px 16px;
-    border-radius: 8px;
-    margin-top: 16px;
-    margin-bottom: 16px;
-">
-    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-        How This Is Calculated
+                st.markdown(
+                    """
+    <div style="
+        border-left: 4px solid #2563eb;
+        background-color: #f9fafb;
+        padding: 14px 16px;
+        border-radius: 8px;
+        margin-top: 16px;
+        margin-bottom: 16px;
+    ">
+        <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+            How This Is Calculated
+        </div>
+        <div style="color: #4b5563; line-height: 1.5;">
+            Staff time equivalent is estimated by dividing the number of AMH checkins by an assumed manual processing rate.<br><br>
+    
+            To determine a realistic rate, we analyzed circulation data from the Westside Branch, which operates without an automated materials handler (AMH).
+            Using transaction-level data, we calculated hourly check-in activity and identified typical processing speeds under real working conditions.<br><br>
+    
+            The observed manual processing rate ranged between approximately <b>26–34 items per hour</b>, reflecting frontline conditions where staff balance multiple responsibilities.<br><br>
+    
+            To better represent a focused workflow and align with the higher and more consistent volume handled by the AMH at this branch,
+            we normalize this value to a working range of <b>40–60 items per hour</b>. This reflects a reasonable estimate of sustained manual processing capacity under dedicated handling conditions.<br><br>
+    
+            Formula: <b>staff hours saved = checkins ÷ manual rate</b><br><br>
+    
+            This approach ensures the estimate is grounded in both real-world branch data and adjusted for differences in workload intensity between manual and automated environments.
+        </div>
     </div>
-    <div style="color: #4b5563; line-height: 1.5;">
-        Staff time equivalent is estimated by dividing the number of AMH checkins by an assumed manual processing rate.<br><br>
-
-        To determine a realistic rate, we analyzed circulation data from the Westside Branch, which operates without an automated materials handler (AMH).
-        Using transaction-level data, we calculated hourly check-in activity and identified typical processing speeds under real working conditions.<br><br>
-
-        The observed manual processing rate ranged between approximately <b>26–34 items per hour</b>, reflecting frontline conditions where staff balance multiple responsibilities.<br><br>
-
-        To better represent a focused workflow and align with the higher and more consistent volume handled by the AMH at this branch,
-        we normalize this value to a working range of <b>40–60 items per hour</b>. This reflects a reasonable estimate of sustained manual processing capacity under dedicated handling conditions.<br><br>
-
-        Formula: <b>staff hours saved = checkins ÷ manual rate</b><br><br>
-
-        This approach ensures the estimate is grounded in both real-world branch data and adjusted for differences in workload intensity between manual and automated environments.
-    </div>
-</div>
-                """,
-                unsafe_allow_html=True
-            )
+                    """,
+                    unsafe_allow_html=True
+                )
 
             
             staff_df["date"] = pd.to_datetime(staff_df["date"])
