@@ -323,90 +323,20 @@ def build_hourly_line_chart(df, value_col, title_y, series_col=None, start_hour=
 import base64
 from io import BytesIO
 
-def render_report_exports(df, report_title, html_summary=""):
-    import base64
-
+def render_report_exports(df, report_title):
     safe_name = report_title.lower().replace(" ", "_")
 
     csv_bytes = df.to_csv(index=False).encode("utf-8")
-    csv_b64 = base64.b64encode(csv_bytes).decode()
 
-    html_table = df.to_html(index=False, border=0)
-
-    print_doc = f"""
-    <html>
-    <head>
-        <title>{report_title}</title>
-        <style>
-            body {{
-                font-family: Arial, sans-serif;
-                margin: 24px;
-                color: #111;
-            }}
-            h1 {{
-                margin-bottom: 6px;
-            }}
-            .summary {{
-                margin-bottom: 18px;
-                color: #444;
-            }}
-            table {{
-                border-collapse: collapse;
-                width: 100%;
-                margin-top: 12px;
-            }}
-            th, td {{
-                border: 1px solid #d1d5db;
-                padding: 8px 10px;
-                text-align: left;
-            }}
-            th {{
-                background: #f3f4f6;
-            }}
-        </style>
-    </head>
-    <body onload="window.print()">
-        <h1>{report_title}</h1>
-        <div class="summary">{html_summary}</div>
-        {html_table}
-    </body>
-    </html>
-    """
-
-    print_b64 = base64.b64encode(print_doc.encode("utf-8")).decode()
-
-    csv_col, print_col, _ = st.columns([1, 1, 8])
+    csv_col, _ = st.columns([1, 10])
 
     with csv_col:
-        st.markdown(
-            f'''
-            <a href="data:text/csv;base64,{csv_b64}" download="{safe_name}.csv">
-                <button style="
-                    background:#f3f4f6;
-                    border:1px solid #d1d5db;
-                    border-radius:8px;
-                    padding:0.5rem 1rem;
-                    cursor:pointer;
-                ">Download CSV</button>
-            </a>
-            ''',
-            unsafe_allow_html=True
-        )
-
-    with print_col:
-        st.markdown(
-            f'''
-            <a href="data:text/html;base64,{print_b64}" target="_blank">
-                <button style="
-                    background:#f3f4f6;
-                    border:1px solid #d1d5db;
-                    border-radius:8px;
-                    padding:0.5rem 1rem;
-                    cursor:pointer;
-                ">Print View</button>
-            </a>
-            ''',
-            unsafe_allow_html=True
+        st.download_button(
+            "Download CSV",
+            data=csv_bytes,
+            file_name=f"{safe_name}.csv",
+            mime="text/csv",
+            key=f"{safe_name}_csv"
         )
 
 CHECKINS_FILE = "data/processed/checkins_clean.csv"
