@@ -1811,9 +1811,13 @@ Current AMH rate used = {AMH_RATE:.1f} items per hour (based on all check-ins fr
 
 Step 3 — Time Saved
 
-**Staff time saved = (checkins ÷ {MANUAL_RATE:.0f}) − (checkins ÷ {AMH_RATE:.1f})**
+**Average Daily Staff time saved = (checkins ÷ {MANUAL_RATE:.0f}) − (checkins ÷ {AMH_RATE:.1f})**
   
-Staff time saved = ({avg_daily_checkins:,.1f}/50) - ({avg_daily_checkins:,.1f}/131.6)
+Average Daily Staff time saved = ({avg_daily_checkins:,.1f}p/hr ÷ 50 check-ins p/hr) - ({avg_daily_checkins:,.1f}p/hr ÷ 131.6 p/hr)
+
+Average Daily Staff time saved = 26.12 manual hours - 9.92 AMH hours
+
+**Average Daily Staff time saved = 16.20 hours**
 
 Example Using the Current Selected Range
 
