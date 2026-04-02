@@ -150,7 +150,83 @@ def render_chart(chart):
     st.altair_chart(chart, use_container_width=True)
     
     
+def get_hour_range_df(start_hour=7, end_hour=20):
+    hour_df = pd.DataFrame({"hour": list(range(start_hour, end_hour + 1))})
+    hour_df["hour_label"] = hour_df["hour"].apply(format_hour_plain)
+    return hour_df
 
+
+def build_hourly_bar_chart(df, value_col, title_y, start_hour=7, end_hour=20):
+    hour_base = get_hour_range_df(start_hour, end_hour)
+    merged = hour_base.merge(df, on=["hour", "hour_label"], how="left").fillna(0)
+
+    chart = (
+        alt.Chart(merged)
+        .mark_bar()
+        .encode(
+            x=alt.X(
+                "hour_label:N",
+                sort=merged["hour_label"].tolist(),
+                title="Hour",
+                axis=alt.Axis(labelAngle=0)
+            ),
+            y=alt.Y(f"{value_col}:Q", title=title_y),
+            tooltip=["hour_label", value_col]
+        )
+        .properties(height=350)
+    )
+    return chart
+
+
+def build_hourly_line_chart(df, value_col, title_y, series_col=None, start_hour=7, end_hour=20):
+    hour_base = get_hour_range_df(start_hour, end_hour)
+
+    if series_col:
+        series_values = df[series_col].dropna().unique().tolist()
+        expanded = pd.MultiIndex.from_product(
+            [hour_base["hour"].tolist(), series_values],
+            names=["hour", series_col]
+        ).to_frame(index=False)
+
+        expanded = expanded.merge(hour_base, on="hour", how="left")
+        merged = expanded.merge(df, on=["hour", "hour_label", series_col], how="left").fillna(0)
+
+        chart = (
+            alt.Chart(merged)
+            .mark_line(point=False)
+            .encode(
+                x=alt.X(
+                    "hour_label:N",
+                    sort=hour_base["hour_label"].tolist(),
+                    title="Hour",
+                    axis=alt.Axis(labelAngle=0)
+                ),
+                y=alt.Y(f"{value_col}:Q", title=title_y),
+                color=alt.Color(f"{series_col}:N"),
+                tooltip=["hour_label", series_col, value_col]
+            )
+            .properties(height=350)
+        )
+    else:
+        merged = hour_base.merge(df, on=["hour", "hour_label"], how="left").fillna(0)
+
+        chart = (
+            alt.Chart(merged)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X(
+                    "hour_label:N",
+                    sort=merged["hour_label"].tolist(),
+                    title="Hour",
+                    axis=alt.Axis(labelAngle=0)
+                ),
+                y=alt.Y(f"{value_col}:Q", title=title_y),
+                tooltip=["hour_label", value_col]
+            )
+            .properties(height=350)
+        )
+
+    return chart
 
 CHECKINS_FILE = "data/processed/checkins_clean.csv"
 REJECTS_FILE = "data/processed/rejects_clean.csv"
@@ -1178,8 +1254,9 @@ if selected_view == "Reports":
                 unsafe_allow_html=True
             )
 
-            chart_df = hourly_df.set_index("hour_label")["count"]
-            st.bar_chart(chart_df)
+            hourly_df = hourly_df[(hourly_df["hour"] >= 7) & (hourly_df["hour"] <= 20)].copy()
+            hourly_chart = build_hourly_bar_chart(hourly_df, "count", "Checkins")
+            render_chart(hourly_chart)
 
             display_df = hourly_df[["hour_label", "count"]].rename(columns={"hour_label": "hour"})
             st.dataframe(display_df, use_container_width=True)
@@ -1250,9 +1327,10 @@ if selected_view == "Reports":
                     "#6b7280",
                     value_font_size="1.6rem"
                 )
-
-            chart_df = hourly_df.set_index("hour_label")["items_per_hour"]
-            st.bar_chart(chart_df)
+            
+            hourly_df = hourly_df[(hourly_df["hour"] >= 7) & (hourly_df["hour"] <= 20)].copy()
+            throughput_chart = build_hourly_bar_chart(hourly_df, "items_per_hour", "Items Per Hour")
+            render_chart(throughput_chart)
 
             display_df = hourly_df.rename(columns={
                 "hour_label": "Hour",
@@ -1265,7 +1343,7 @@ if selected_view == "Reports":
             st.info("No throughput data available for the selected date range.")
 
     with st.expander("Today vs Typical Hourly Pattern", expanded=False):
-        today = datetime.now().date()
+        today = datetime.now(ZoneInfo("America/Chicago")).date()
 
         today_df_report = df_raw[df_raw["datetime"].dt.date == today].copy()
         historical_df_report = df_raw[df_raw["datetime"].dt.date < today].copy()
@@ -1315,8 +1393,17 @@ if selected_view == "Reports":
                 unsafe_allow_html=True
             )
 
-            chart_df = compare_df.set_index("hour_label")[["today", "typical"]]
-            st.line_chart(chart_df)
+            compare_df = compare_df[(compare_df["hour"] >= 7) & (compare_df["hour"] <= 20)].copy()
+            
+            compare_long = compare_df.melt(
+                id_vars=["hour", "hour_label"],
+                value_vars=["today", "typical"],
+                var_name="series",
+                value_name="items"
+            )
+            
+            compare_chart = build_hourly_line_chart(compare_long, "items", "Items", series_col="series")
+            render_chart(compare_chart)
 
             display_df = compare_df[["hour_label", "today", "typical", "delta"]].rename(
                 columns={"hour_label": "hour"}
@@ -1624,8 +1711,12 @@ if selected_view == "Reports":
 
             if len(hourly_exception_df) > 0:
                 st.subheader("Exception Bin Volume by Hour")
-                chart_df = hourly_exception_df.set_index("hour_label")["exception_items"]
-                st.bar_chart(chart_df)
+                hourly_exception_df = hourly_exception_df[
+                    (hourly_exception_df["hour"] >= 7) & (hourly_exception_df["hour"] <= 20)
+                ].copy()
+                
+                exception_chart = build_hourly_bar_chart(hourly_exception_df, "exception_items", "Exception Items")
+                render_chart(exception_chart)
 
                 hourly_exception_display = hourly_exception_df[["hour_label", "exception_items"]].rename(
                     columns={"hour_label": "hour"}
