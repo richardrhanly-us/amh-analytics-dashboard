@@ -2329,9 +2329,9 @@ with st.expander("Volume & Activity", expanded=False):
 
         st.dataframe(daily_transfer_summary, use_container_width=True)
         download_button(
-            daily_transfer_summary,
-            "daily_transfer_summary_report.csv",
-            key="daily_transfer_summary_report_download"
+            transit_hourly_display,
+            "transit_by_hour_report.csv",
+            key="transit_reports_volume_activity_transit_by_hour_download"
         )
     else:
         st.info("No daily transfer summary data available for the selected date range.")
