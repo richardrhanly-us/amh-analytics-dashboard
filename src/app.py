@@ -796,6 +796,7 @@ if selected_view == "Live Today":
             )
 
         if st.button("Refresh Live Data"):
+            st.cache_data.clear()
             st.rerun()
 
     with top_right:
