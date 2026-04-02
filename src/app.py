@@ -1510,66 +1510,66 @@ if len(hourly_df) > 0:
     peak_hours_df = hourly_df[hourly_df["items_per_hour"] >= peak_threshold].copy()
     peak_window_avg = peak_hours_df["items_per_hour"].mean() if len(peak_hours_df) > 0 else 0
 
-        st.markdown(
-            f"""
-            <div style="
-                border-left: 4px solid #2563eb;
-                background-color: #f9fafb;
-                padding: 14px 16px;
-                border-radius: 8px;
-                margin-top: 8px;
-                margin-bottom: 16px;
-            ">
-                <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                    Report Summary
+            st.markdown(
+                f"""
+                <div style="
+                    border-left: 4px solid #2563eb;
+                    background-color: #f9fafb;
+                    padding: 14px 16px;
+                    border-radius: 8px;
+                    margin-top: 8px;
+                    margin-bottom: 16px;
+                ">
+                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                        Report Summary
+                    </div>
+                    <div style="color: #4b5563; line-height: 1.4;">
+                        Peak throughput: {int(peak_row["items_per_hour"]):,} items/hour at {peak_row["hour_label"]}.
+                        Average throughput across active hours: {avg_throughput:,.1f} items/hour.
+                        Average throughput during peak hours: {peak_window_avg:,.1f} items/hour.
+                    </div>
                 </div>
-                <div style="color: #4b5563; line-height: 1.4;">
-                    Peak throughput: {int(peak_row["items_per_hour"]):,} items/hour at {peak_row["hour_label"]}.
-                    Average throughput across active hours: {avg_throughput:,.1f} items/hour.
-                    Average throughput during peak hours: {peak_window_avg:,.1f} items/hour.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-    
-        k1, k2, k3, k4 = st.columns(4)
-    
-        with k1:
-            render_kpi_card(
-                "Peak Throughput",
-                f"{int(peak_row['items_per_hour']):,}",
-                f"At {peak_row['hour_label']}",
-                "#6b7280",
-                value_font_size="1.6rem"
+                """,
+                unsafe_allow_html=True
             )
-    
-        with k2:
-            render_kpi_card(
-                "Avg Items / Hour",
-                f"{overall_avg_throughput:,.1f}",
-                "Average across active hours",
-                "#6b7280",
-                value_font_size="1.6rem"
-            )
-    
-        with k3:
-            render_kpi_card(
-                "Peak Hours Avg",
-                f"{peak_window_avg:,.1f}",
-                "Average during peak hours",
-                "#6b7280",
-                value_font_size="1.6rem"
-            )
-    
-        with k4:
-            render_kpi_card(
-                "Active Hours",
-                f"{active_hours_count}",
-                "Hours with recorded activity",
-                "#6b7280",
-                value_font_size="1.6rem"
-            )
+        
+            k1, k2, k3, k4 = st.columns(4)
+        
+            with k1:
+                render_kpi_card(
+                    "Peak Throughput",
+                    f"{int(peak_row['items_per_hour']):,}",
+                    f"At {peak_row['hour_label']}",
+                    "#6b7280",
+                    value_font_size="1.6rem"
+                )
+        
+            with k2:
+                render_kpi_card(
+                    "Avg Items / Hour",
+                    f"{overall_avg_throughput:,.1f}",
+                    "Average across active hours",
+                    "#6b7280",
+                    value_font_size="1.6rem"
+                )
+        
+            with k3:
+                render_kpi_card(
+                    "Peak Hours Avg",
+                    f"{peak_window_avg:,.1f}",
+                    "Average during peak hours",
+                    "#6b7280",
+                    value_font_size="1.6rem"
+                )
+        
+            with k4:
+                render_kpi_card(
+                    "Active Hours",
+                    f"{active_hours_count}",
+                    "Hours with recorded activity",
+                    "#6b7280",
+                    value_font_size="1.6rem"
+                )
             
             hourly_df = hourly_df[(hourly_df["hour"] >= 7) & (hourly_df["hour"] <= 20)].copy()
             throughput_chart = build_hourly_bar_chart(hourly_df, "items_per_hour", "Items Per Hour")
