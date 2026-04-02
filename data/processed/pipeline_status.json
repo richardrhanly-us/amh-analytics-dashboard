@@ -1,13 +1,15 @@
 {
-  "last_run": "2026-04-02T08:24:24",
-  "checkins_rows": 2436,
+  "last_run": "2026-04-02T08:39:25",
+  "checkins_rows": 2439,
   "rejects_rows": 95,
+  "checkins_history_rows": 58421,
+  "rejects_history_rows": 2096,
   "checkins_bad_datetime_rows": 0,
   "rejects_bad_datetime_rows": 0,
   "transit_items": 298,
   "problem_items": 0,
   "destination_breakdown": {
-    "Main": 2138,
+    "Main": 2141,
     "Westside": 241,
     "Library Express": 57
   }

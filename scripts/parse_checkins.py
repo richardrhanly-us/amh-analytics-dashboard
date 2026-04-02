@@ -2,7 +2,7 @@ import pandas as pd
 from pathlib import Path
 from src.logger_config import get_logger
 
-RAW_CHECKINS_FILE = "data/raw/checkins.txt"
+RAW_CHECKINS_FILE = r"C:\TLCFinalDlls\Checkins.txt"
 PROCESSED_CHECKINS_FILE = "data/processed/checkins_clean.csv"
 
 logger = get_logger("parse_checkins")

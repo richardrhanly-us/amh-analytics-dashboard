@@ -2,7 +2,7 @@ import pandas as pd
 from pathlib import Path
 from src.logger_config import get_logger
 
-REJECTS_FILE = "data/raw/Rejects.txt"
+REJECTS_FILE = r"C:\TLCFinalDlls\Rejects.txt"
 PROCESSED_REJECTS_FILE = "data/processed/rejects_clean.csv"
 
 logger = get_logger("parse_rejects")
