@@ -958,7 +958,6 @@ if selected_view == "Live Today":
         render_kpi_card(
             "Estimated Holds",
             f"{today_estimated_holds:,}",
-            "Bin 0 minus rejects and Library Express",
             "#6b7280"
         )
     
