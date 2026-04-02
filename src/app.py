@@ -33,6 +33,18 @@ from alerts import get_system_alerts
 
 from transit_logic import *
 
+st.markdown("""
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&display=swap" rel="stylesheet">
+
+<style>
+.sortview-title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 48px;
+    font-weight: 800;
+    letter-spacing: 2px;
+}
+</style>
+""", unsafe_allow_html=True)
 
 def render_kpi_card(
     title,
@@ -354,7 +366,7 @@ max_date = df_raw["datetime"].max().date()
 
 
 st.caption("Hanly Analytics")
-st.markdown('<div class="sortview-title">SortView</div>', unsafe_allow_html=True)
+st.markdown('<div class="sortview-title">SORTVIEW</div>', unsafe_allow_html=True)
 st.caption("Operational overview of AMH performance, failure patterns, and transit routing")
 
 if pipeline_status:
