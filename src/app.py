@@ -1812,6 +1812,8 @@ Current AMH rate used = {AMH_RATE:.1f} items per hour (based on all check-ins fr
 Step 3 — Time Saved
 
 **Staff time saved = (checkins ÷ {MANUAL_RATE:.0f}) − (checkins ÷ {AMH_RATE:.1f})**
+  
+Staff time saved = ({avg_daily_checkins:,.1f}/50) - ({avg_daily_checkins:,.1f}/131.6)
 
 Example Using the Current Selected Range
 
