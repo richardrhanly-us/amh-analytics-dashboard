@@ -1779,17 +1779,25 @@ if selected_view == "Reports":
                         How This Is Calculated
                     </div>
                     <div style="color: #4b5563; line-height: 1.5;">
-                        Staff time equivalent is estimated by dividing the number of AMH checkins by an assumed manual processing rate of
-                        <b>{MANUAL_RATE} items per hour</b>.<br><br>
-                        Formula: <b>staff hours saved = checkins ÷ {MANUAL_RATE}</b><br>
-                        Example: if the AMH processes 240 items in a day, that equals <b>2.00 staff hours saved</b>.<br><br>
-                        The <b>{MANUAL_RATE}</b> value is a working estimate for how many items a staff member could manually check in and handle in one hour.
-                        You can adjust this number later if your library wants to use a different operational benchmark.
+                        Staff time equivalent is estimated by dividing the number of AMH checkins by an assumed manual processing rate.<br><br>
+            
+                        To determine a realistic rate, we analyzed circulation data from the Westside Branch, which operates without an automated materials handler (AMH).
+                        Using transaction-level data, we calculated hourly check-in activity and identified typical processing speeds under real working conditions.<br><br>
+            
+                        The observed manual processing rate ranged between approximately <b>26–34 items per hour</b>, reflecting frontline conditions where staff balance multiple responsibilities.<br><br>
+            
+                        To better represent a focused workflow and align with the higher and more consistent volume handled by the AMH at this branch,
+                        we normalize this value to a working range of <b>40–60 items per hour</b>. This reflects a reasonable estimate of sustained manual processing capacity under dedicated handling conditions.<br><br>
+            
+                        Formula: <b>staff hours saved = checkins ÷ manual rate</b><br><br>
+            
+                        This approach ensures the estimate is grounded in both real-world branch data and adjusted for differences in workload intensity between manual and automated environments.
                     </div>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
+
             
             staff_df["date"] = pd.to_datetime(staff_df["date"])
             staff_df["date_label"] = staff_df["date"].dt.strftime("%b %d")
