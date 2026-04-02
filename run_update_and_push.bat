@@ -5,17 +5,13 @@ echo ==============================
 echo AMH update started
 echo ==============================
 
-git pull --rebase origin main
-if errorlevel 1 goto :error
-
-python -m scripts.parse_checkins
-if errorlevel 1 goto :error
-
-python -m scripts.parse_rejects
+python -m scripts.run_pipeline
 if errorlevel 1 goto :error
 
 git add data\processed\checkins_clean.csv
+git add data\processed\checkins_history.csv
 git add data\processed\rejects_clean.csv
+git add data\processed\rejects_history.csv
 git add data\processed\pipeline_status.json
 
 git diff --cached --quiet
