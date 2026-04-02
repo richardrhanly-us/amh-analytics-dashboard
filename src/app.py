@@ -823,36 +823,6 @@ if selected_view == "Live Today":
                 f"Busiest hour: {format_hour(today_peak_hour)} with {today_peak_hour_count:,} checkins. "
             )
 
-            st.markdown(
-                f"""
-How Staff Time Saved Is Calculated
-
-This estimate compares how long it would take staff to process items manually versus how long the AMH processes the same workload.
-
-Step 1 — Manual Processing Time  
-This dashboard uses a manual processing rate of {MANUAL_RATE:.0f} items per hour.  
-Manual time = checkins ÷ {MANUAL_RATE:.0f}
-
-Step 2 — AMH Processing Time  
-Instead of guessing machine speed, this dashboard uses the AMH’s observed all-time busiest-hour average.  
-Current AMH rate used = {AMH_RATE:.1f} items per hour  
-AMH time = checkins ÷ {AMH_RATE:.1f}
-
-Step 3 — Time Saved  
-Staff time saved = (checkins ÷ {MANUAL_RATE:.0f}) − (checkins ÷ {AMH_RATE:.1f})
-
-Example Using the Current Selected Range  
-Average daily checkins: {avg_daily_checkins:,.1f}  
-Average daily manual time: {avg_daily_manual_hours:,.2f} hours  
-Average daily AMH time: {avg_daily_amh_hours:,.2f} hours  
-Average daily staff time saved: {avg_saved:,.2f} hours
-
-What This Means  
-- Uses actual AMH performance from historical data  
-- Compares manual processing time against AMH processing time  
-- Produces a more realistic estimate than treating all checkins as fully saved labor
-                """
-            )
 
         if len(today_hourly_checkins) > 0:
             peak_hours_df = today_hourly_checkins.sort_values(ascending=False).head(3).reset_index()
@@ -1349,10 +1319,9 @@ if selected_view == "Reports":
 
     with st.expander("Weekday & Peak Analysis", expanded=False):
         st.caption("Shows volume trends by day of week and identifies peak operating times.")
-    
-        # ----- Day of Week Volume -----
+
         dow_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-    
+
         dow_counts = (
             df.groupby("day_of_week")
               .size()
@@ -1360,10 +1329,10 @@ if selected_view == "Reports":
               .fillna(0)
               .reset_index(name="count")
         )
-    
+
         if len(dow_counts) > 0:
             busiest_day = dow_counts.sort_values("count", ascending=False).iloc[0]
-    
+
             st.markdown(
                 f"""
                 <div style="
@@ -1384,7 +1353,7 @@ if selected_view == "Reports":
                 """,
                 unsafe_allow_html=True
             )
-    
+
             dow_chart = build_category_bar_chart(
                 dow_counts,
                 "day_of_week",
@@ -1393,25 +1362,23 @@ if selected_view == "Reports":
                 "Day of Week"
             )
             render_chart(dow_chart)
-    
+
             st.dataframe(dow_counts, use_container_width=True)
             download_button(dow_counts, "weekday_volume.csv")
-    
         else:
             st.info("No weekday data available for selected range.")
-    
-        # ----- Hourly Volume -----
+
         st.subheader("Peak Hour Analysis")
-    
+
         hour_counts = (
             df.groupby("hour")
               .size()
               .reset_index(name="count")
         )
-    
+
         if len(hour_counts) > 0:
             busiest_hour = hour_counts.sort_values("count", ascending=False).iloc[0]
-    
+
             st.markdown(
                 f"""
                 <div style="
@@ -1432,76 +1399,75 @@ if selected_view == "Reports":
                 """,
                 unsafe_allow_html=True
             )
-    
+
             hour_counts["hour_label"] = hour_counts["hour"].apply(format_hour_plain)
             hour_counts = hour_counts[(hour_counts["hour"] >= 7) & (hour_counts["hour"] <= 20)]
-    
+
             hourly_chart = build_hourly_bar_chart(hour_counts, "count", "Checkins")
             render_chart(hourly_chart)
-    
+
             display_df = hour_counts[["hour_label", "count"]].rename(columns={"hour_label": "hour"})
             st.dataframe(display_df, use_container_width=True)
             download_button(display_df, "peak_hour_analysis.csv")
-    
         else:
             st.info("No hourly data available for selected range.")
-        
-        with st.expander("Daily Volume", expanded=False):
-            daily_volume = df["datetime"].dt.date.value_counts().sort_index()
-            daily_df = daily_volume.reset_index()
-            daily_df.columns = ["date", "count"]
-    
-            if len(daily_df) > 0:
-                peak_day = daily_df.loc[daily_df["count"].idxmax()]
-                avg_daily = daily_df["count"].mean()
-    
-                st.markdown(
-                    f"""
-                    <div style="
-                        border-left: 4px solid #2563eb;
-                        background-color: #f9fafb;
-                        padding: 14px 16px;
-                        border-radius: 8px;
-                        margin-top: 8px;
-                        margin-bottom: 16px;
-                    ">
-                        <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                            Report Summary
-                        </div>
-                        <div style="color: #4b5563; line-height: 1.4;">
-                            Peak day: {pd.to_datetime(peak_day["date"]).strftime("%a, %b %d")} with {int(peak_day["count"]):,} checkins.
-                            Average daily volume: {avg_daily:,.0f} checkins.
-                        </div>
+
+    with st.expander("Daily Volume", expanded=False):
+        daily_volume = df["datetime"].dt.date.value_counts().sort_index()
+        daily_df = daily_volume.reset_index()
+        daily_df.columns = ["date", "count"]
+
+        if len(daily_df) > 0:
+            peak_day = daily_df.loc[daily_df["count"].idxmax()]
+            avg_daily = daily_df["count"].mean()
+
+            st.markdown(
+                f"""
+                <div style="
+                    border-left: 4px solid #2563eb;
+                    background-color: #f9fafb;
+                    padding: 14px 16px;
+                    border-radius: 8px;
+                    margin-top: 8px;
+                    margin-bottom: 16px;
+                ">
+                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                        Report Summary
                     </div>
-                    """,
-                    unsafe_allow_html=True
+                    <div style="color: #4b5563; line-height: 1.4;">
+                        Peak day: {pd.to_datetime(peak_day["date"]).strftime("%a, %b %d")} with {int(peak_day["count"]):,} checkins.
+                        Average daily volume: {avg_daily:,.0f} checkins.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            daily_df["date"] = pd.to_datetime(daily_df["date"])
+            daily_df["date_label"] = daily_df["date"].dt.strftime("%b %d")
+
+            daily_volume_chart = (
+                alt.Chart(daily_df)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X(
+                        "date_label:N",
+                        sort=daily_df["date_label"].tolist(),
+                        title="Date",
+                        axis=alt.Axis(labelAngle=0)
+                    ),
+                    y=alt.Y("count:Q", title="Checkins"),
+                    tooltip=["date_label", "count"]
                 )
-    
-                daily_df["date"] = pd.to_datetime(daily_df["date"])
-                daily_df["date_label"] = daily_df["date"].dt.strftime("%b %d")
-                
-                daily_volume_chart = (
-                    alt.Chart(daily_df)
-                    .mark_line(point=True)
-                    .encode(
-                        x=alt.X(
-                            "date_label:N",
-                            sort=daily_df["date_label"].tolist(),
-                            title="Date",
-                            axis=alt.Axis(labelAngle=0)
-                        ),
-                        y=alt.Y("count:Q", title="Checkins"),
-                        tooltip=["date_label", "count"]
-                    )
-                    .properties(height=350)
-                )
-                
-                render_chart(daily_volume_chart)
-    
-                st.dataframe(daily_df, use_container_width=True)
-                download_button(daily_df, "daily_volume_report.csv")
-            else:
-                st.info("No daily volume data available for the selected date range.")
+                .properties(height=350)
+            )
+
+            render_chart(daily_volume_chart)
+
+            st.dataframe(daily_df, use_container_width=True)
+            download_button(daily_df, "daily_volume_report.csv")
+        else:
+            st.info("No daily volume data available for the selected date range.")
 
     with st.expander("Hourly Volume", expanded=False):
         hourly_volume = df["datetime"].dt.hour.value_counts().sort_index()
@@ -1647,7 +1613,7 @@ if selected_view == "Reports":
 
     with st.expander("Today vs Typical Hourly Pattern", expanded=False):
         today = datetime.now(ZoneInfo("America/Chicago")).date()
-        
+
         today_df_report = df_live_raw[df_live_raw["datetime"].dt.date == today].copy()
         historical_df_report = df_history_raw[df_history_raw["datetime"].dt.date < today].copy()
 
@@ -1695,14 +1661,14 @@ if selected_view == "Reports":
             )
 
             compare_df = compare_df[(compare_df["hour"] >= 7) & (compare_df["hour"] <= 20)].copy()
-            
+
             compare_long = compare_df.melt(
                 id_vars=["hour", "hour_label"],
                 value_vars=["today", "typical"],
                 var_name="series",
                 value_name="items"
             )
-            
+
             compare_chart = build_hourly_line_chart(compare_long, "items", "Items", series_col="series")
             render_chart(compare_chart)
 
@@ -1723,7 +1689,7 @@ if selected_view == "Reports":
     with st.expander("Staff Time Equivalent", expanded=False):
         st.caption("Estimates staff time saved by comparing manual processing time against observed AMH processing time.")
 
-        MANUAL_RATE = 50  # items/hour per staff member
+        MANUAL_RATE = 50
 
         if len(df) > 0 and len(df_history_raw) > 0:
             all_time_df = df_history_raw.copy()
@@ -1802,12 +1768,7 @@ if selected_view == "Reports":
             k1, k2, k3 = st.columns(3)
 
             with k1:
-                render_kpi_card(
-                    "Avg Hours Saved",
-                    f"{avg_saved:,.2f}",
-                    "Per day",
-                    "#6b7280"
-                )
+                render_kpi_card("Avg Hours Saved", f"{avg_saved:,.2f}", "Per day", "#6b7280")
 
             with k2:
                 render_kpi_card(
@@ -1825,59 +1786,33 @@ if selected_view == "Reports":
                     "#6b7280"
                 )
 
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #2563eb;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-top: 16px;
-                    margin-bottom: 16px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 10px;">
-                        How Staff Time Saved Is Calculated
-                    </div>
+            st.info(
+                f"""How Staff Time Saved Is Calculated
 
-                    <div style="color: #4b5563; line-height: 1.6;">
-                        This estimate compares how long it would take staff to process items manually versus how long the AMH processes the same workload.
-                    </div>
+This estimate compares how long it would take staff to process items manually versus how long the AMH processes the same workload.
 
-                    <div style="color: #4b5563; line-height: 1.6; margin-top: 14px;">
-                        <b>Step 1 — Manual Processing Time</b><br>
-                        This dashboard uses a manual processing rate of <b>{MANUAL_RATE:.0f} items per hour</b>.<br>
-                        Manual time = <b>checkins ÷ {MANUAL_RATE:.0f}</b>
-                    </div>
+Step 1 — Manual Processing Time
+This dashboard uses a manual processing rate of {MANUAL_RATE:.0f} items per hour.
+Manual time = checkins ÷ {MANUAL_RATE:.0f}
 
-                    <div style="color: #4b5563; line-height: 1.6; margin-top: 14px;">
-                        <b>Step 2 — AMH Processing Time</b><br>
-                        Instead of guessing machine speed, this dashboard uses the AMH’s observed all-time busiest-hour average.<br>
-                        Current AMH rate used = <b>{AMH_RATE:.1f} items per hour</b><br>
-                        AMH time = <b>checkins ÷ {AMH_RATE:.1f}</b>
-                    </div>
+Step 2 — AMH Processing Time
+Instead of guessing machine speed, this dashboard uses the AMH’s observed all-time busiest-hour average.
+Current AMH rate used = {AMH_RATE:.1f} items per hour
+AMH time = checkins ÷ {AMH_RATE:.1f}
 
-                    <div style="color: #4b5563; line-height: 1.6; margin-top: 14px;">
-                        <b>Step 3 — Time Saved</b><br>
-                        Staff time saved = <b>(checkins ÷ {MANUAL_RATE:.0f}) − (checkins ÷ {AMH_RATE:.1f})</b>
-                    </div>
+Step 3 — Time Saved
+Staff time saved = (checkins ÷ {MANUAL_RATE:.0f}) − (checkins ÷ {AMH_RATE:.1f})
 
-                    <div style="color: #4b5563; line-height: 1.6; margin-top: 14px;">
-                        <b>Example Using the Current Selected Range</b><br>
-                        Average daily checkins: <b>{avg_daily_checkins:,.1f}</b><br>
-                        Average daily manual time: <b>{avg_daily_manual_hours:,.2f} hours</b><br>
-                        Average daily AMH time: <b>{avg_daily_amh_hours:,.2f} hours</b><br>
-                        Average daily staff time saved: <b>{avg_saved:,.2f} hours</b>
-                    </div>
+Example Using the Current Selected Range
+Average daily checkins: {avg_daily_checkins:,.1f}
+Average daily manual time: {avg_daily_manual_hours:,.2f} hours
+Average daily AMH time: {avg_daily_amh_hours:,.2f} hours
+Average daily staff time saved: {avg_saved:,.2f} hours
 
-                    <div style="color: #4b5563; line-height: 1.6; margin-top: 14px;">
-                        <b>What This Means</b><br>
-                        Uses actual AMH performance from historical data.<br>
-                        Compares manual processing time against AMH processing time.<br>
-                        Produces a more realistic estimate than treating all checkins as fully saved labor.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
+What This Means
+- Uses actual AMH performance from historical data
+- Compares manual processing time against AMH processing time
+- Produces a more realistic estimate than treating all checkins as fully saved labor"""
             )
 
             staff_chart_df = staff_df.copy()
@@ -1910,7 +1845,6 @@ if selected_view == "Reports":
 
             st.dataframe(display_df, use_container_width=True)
             download_button(display_df, "staff_time_equivalent.csv")
-
         else:
             st.info("Not enough data is available to calculate staff time savings for the selected date range.")
 
@@ -1965,7 +1899,7 @@ if selected_view == "Reports":
                 )
                 .properties(height=350)
             )
-            
+
             render_chart(destination_chart)
 
             st.dataframe(destination_counts, use_container_width=True)
@@ -1980,15 +1914,15 @@ if selected_view == "Reports":
     # -----------------------------
     st.subheader("Errors & Exceptions")
     st.caption("Tracks failure types, exception routing, and patterns that may indicate operational issues.")
-    
+
     with st.expander("Reject Reasons", expanded=False):
         reject_counts = rejects_df["error_simple"].value_counts().reset_index()
         reject_counts.columns = ["reason", "count"]
-    
+
         if len(reject_counts) > 0:
             top_reason_row = reject_counts.loc[reject_counts["count"].idxmax()]
             top_reason_pct = (top_reason_row["count"] / reject_counts["count"].sum()) * 100
-    
+
             st.markdown(
                 f"""
                 <div style="
@@ -2010,7 +1944,7 @@ if selected_view == "Reports":
                 """,
                 unsafe_allow_html=True
             )
-    
+
             reject_chart = (
                 alt.Chart(reject_counts)
                 .mark_bar()
@@ -2026,31 +1960,30 @@ if selected_view == "Reports":
                 )
                 .properties(height=350)
             )
-    
+
             render_chart(reject_chart)
-    
+
             st.dataframe(reject_counts, use_container_width=True)
             download_button(reject_counts, "reject_reasons.csv")
         else:
             st.info("No reject reason data available for the selected date range.")
-    
-    
+
     with st.expander("Worst Days (Top 5 by Reject Rate)", expanded=False):
         worst_table = pd.DataFrame({
             "checkins": checkins_daily,
             "rejects": rejects_daily
         }).fillna(0)
-    
+
         worst_table = worst_table[worst_table["checkins"] > 0]
-    
+
         if len(worst_table) > 0:
             worst_table["reject_rate"] = (worst_table["rejects"] / worst_table["checkins"]) * 100
             worst_table.index = pd.to_datetime(worst_table.index)
             worst_table["day_of_week"] = worst_table.index.day_name()
             worst_table = worst_table.sort_values("reject_rate", ascending=False).head(5)
-    
+
             worst_day_row = worst_table.iloc[0]
-    
+
             st.markdown(
                 f"""
                 <div style="
@@ -2072,11 +2005,11 @@ if selected_view == "Reports":
                 """,
                 unsafe_allow_html=True
             )
-    
+
             worst_table_display = worst_table.copy()
             worst_table_display["reject_rate"] = worst_table_display["reject_rate"].round(2)
             worst_table_display = worst_table_display[["day_of_week", "checkins", "rejects", "reject_rate"]]
-    
+
             st.dataframe(worst_table_display, use_container_width=True)
             download_button(
                 worst_table_display,
@@ -2085,60 +2018,53 @@ if selected_view == "Reports":
             )
         else:
             st.info("No worst-day data available for the selected date range.")
-    
-    
+
     with st.expander("Exceptions / Overflow", expanded=False):
         if "bin" not in df.columns:
             st.warning("No bin column found in the current dataset. Add bin parsing to your cleaned checkins file first.")
         else:
             exception_bin = "6"
-    
+
             bin_df = df.copy()
             bin_df = bin_df[bin_df["bin"].notna()].copy()
             bin_df["bin"] = bin_df["bin"].astype(str)
-    
+
             exception_df = bin_df[bin_df["bin"] == exception_bin].copy()
             total_binned = len(bin_df)
             exception_count = len(exception_df)
             exception_pct = (exception_count / total_binned * 100) if total_binned > 0 else 0
-    
+
             library_express_count = int(
                 df["destination"].astype(str).str.upper().str.contains("LIBRARY EXPRESS", na=False).sum()
             )
-    
+
             estimated_holds = max(
                 exception_count - len(rejects_df) - library_express_count,
                 0
             )
-    
+
             estimated_holds_pct = (estimated_holds / exception_count * 100) if exception_count > 0 else 0
-    
-            daily_exception = (
-                exception_df["datetime"].dt.date.value_counts().sort_index()
-            )
-            daily_total = (
-                bin_df["datetime"].dt.date.value_counts().sort_index()
-            )
-    
+
+            daily_exception = exception_df["datetime"].dt.date.value_counts().sort_index()
+            daily_total = bin_df["datetime"].dt.date.value_counts().sort_index()
+
             overflow_daily = pd.DataFrame({
                 "total_binned": daily_total,
                 "exception_bin_items": daily_exception
             }).fillna(0)
-    
+
             overflow_daily["exception_rate_pct"] = (
                 overflow_daily["exception_bin_items"] / overflow_daily["total_binned"] * 100
             ).round(2)
-    
+
             peak_exception_day_label = "N/A"
             peak_exception_rate = 0
             if len(overflow_daily) > 0:
                 peak_exception_day = overflow_daily["exception_rate_pct"].idxmax()
                 peak_exception_day_label = pd.to_datetime(peak_exception_day).strftime("%a, %b %d")
                 peak_exception_rate = overflow_daily["exception_rate_pct"].max()
-    
-            hourly_exception = (
-                exception_df["datetime"].dt.hour.value_counts().sort_index()
-            )
+
+            hourly_exception = exception_df["datetime"].dt.hour.value_counts().sort_index()
             hourly_exception_df = hourly_exception.reset_index()
             hourly_exception_df.columns = ["hour", "exception_items"]
             if len(hourly_exception_df) > 0:
@@ -2149,14 +2075,14 @@ if selected_view == "Reports":
             else:
                 peak_exception_hour_text = "N/A"
                 peak_exception_hour_count = 0
-    
+
             insight_text = (
                 f"Exception bin {exception_bin} handled {exception_count:,} items "
                 f"({exception_pct:.2f}% of all binned checkins). "
                 f"Peak exception day: {peak_exception_day_label} at {peak_exception_rate:.2f}%. "
                 f"Peak exception hour: {peak_exception_hour_text} with {peak_exception_hour_count:,} items."
             )
-    
+
             st.markdown(
                 f"""
                 <div style="
@@ -2177,7 +2103,7 @@ if selected_view == "Reports":
                 """,
                 unsafe_allow_html=True
             )
-    
+
             k1, k2, k3, k4 = st.columns(4)
             with k1:
                 render_kpi_card(
@@ -2202,7 +2128,6 @@ if selected_view == "Reports":
                     "#6b7280",
                     value_font_size="1.4rem"
                 )
-    
             with k4:
                 render_kpi_card(
                     "Estimated Holds",
@@ -2210,12 +2135,12 @@ if selected_view == "Reports":
                     f"{estimated_holds_pct:.1f}% of Bin 6",
                     "#6b7280"
                 )
-    
+
             if len(overflow_daily) > 0:
                 st.subheader("Exception Bin Rate by Day")
                 chart_df = overflow_daily["exception_rate_pct"]
                 st.line_chart(chart_df)
-    
+
                 overflow_daily_display = overflow_daily.reset_index().rename(columns={"index": "date"})
                 st.dataframe(overflow_daily_display, use_container_width=True)
                 download_button(
@@ -2223,16 +2148,16 @@ if selected_view == "Reports":
                     "exception_bin_rate_by_day_report.csv",
                     key="exception_bin_rate_by_day_report_download"
                 )
-    
+
             if len(hourly_exception_df) > 0:
                 st.subheader("Exception Bin Volume by Hour")
                 hourly_exception_df = hourly_exception_df[
                     (hourly_exception_df["hour"] >= 7) & (hourly_exception_df["hour"] <= 20)
                 ].copy()
-    
+
                 exception_chart = build_hourly_bar_chart(hourly_exception_df, "exception_items", "Exception Items")
                 render_chart(exception_chart)
-    
+
                 hourly_exception_display = hourly_exception_df[["hour_label", "exception_items"]].rename(
                     columns={"hour_label": "hour"}
                 )
@@ -2326,7 +2251,7 @@ if selected_view == "Reports":
                 "checkins": "Checkins",
                 "pct_of_total": "% of Total"
             })
-            
+
             st.dataframe(bin_volume_display, use_container_width=True)
             download_button(bin_volume_display, "bin_volume_report.csv")
 
