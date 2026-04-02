@@ -131,14 +131,19 @@ def format_hour_plain(hour_value):
     return pd.to_datetime(f"{int(hour_value):02d}:00").strftime("%I:%M %p")
         
 
-def download_button(df, filename):
+def download_button(df, filename, key=None):
     csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        label="Download CSV",
-        data=csv,
-        file_name=filename,
-        mime="text/csv"
-    )
+
+    left, _ = st.columns([1, 10])
+
+    with left:
+        st.download_button(
+            label="Download CSV",
+            data=csv,
+            file_name=filename,
+            mime="text/csv",
+            key=key or filename
+        )
     
  
 
@@ -320,24 +325,7 @@ def build_hourly_line_chart(df, value_col, title_y, series_col=None, start_hour=
 
     return chart
 
-import base64
-from io import BytesIO
 
-def render_report_exports(df, report_title, html_summary=""):
-    safe_name = report_title.lower().replace(" ", "_").replace("/", "_")
-
-    csv_bytes = df.to_csv(index=False).encode("utf-8")
-
-    left, _ = st.columns([1, 10])
-
-    with left:
-        st.download_button(
-            "Download CSV",
-            data=csv_bytes,
-            file_name=f"{safe_name}.csv",
-            mime="text/csv",
-            key=f"{safe_name}_csv_download"
-        )
 
 CHECKINS_FILE = "data/processed/checkins_clean.csv"
 REJECTS_FILE = "data/processed/rejects_clean.csv"
