@@ -2278,113 +2278,68 @@ if selected_view == "Transits":
     else:
         st.info("No hourly transit data available for the selected date range.")
     
-    st.markdown("---")
+st.markdown("---")
 st.subheader("Transit Reports")
 st.caption("Additional transit reports organized by data type.")
 
-with st.expander("Destination Reports", expanded=False):
-    st.subheader("Transit by Destination")
-    if len(transit_summary) > 0:
-        transit_display = transit_summary.copy()
-        transit_display["transit_items"] = transit_display["transit_items"].astype(int)
-        transit_display = transit_display.rename(columns={
-            "destination": "Destination",
-            "transit_items": "Transit Items",
-            "pct_of_total_items": "% of Total Items"
-        })
-        st.dataframe(transit_display, use_container_width=True)
-        download_button(transit_display, "transit_by_destination_report.csv")
-    else:
-        st.info("No transit destination activity found for the selected date range.")
+with st.expander("Volume & Activity", expanded=False):
+    st.subheader("Daily Transfer Summary")
+    if len(df) > 0:
+        daily_total = df.groupby(df["datetime"].dt.date).size()
+        daily_ws = df[df["transit_destination"] == "Westside"].groupby(df[df["transit_destination"] == "Westside"]["datetime"].dt.date).size()
+        daily_le = df[df["transit_destination"] == "Library Express"].groupby(df[df["transit_destination"] == "Library Express"]["datetime"].dt.date).size()
+        daily_no_agency = df[
+            df["destination"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False)
+        ].groupby(df[
+            df["destination"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False)
+        ]["datetime"].dt.date).size()
 
-    st.subheader("Destination Transit Diagnostics")
-    if len(destination_reject_summary) > 0:
-        diagnostics_display = destination_reject_summary.copy()
-        diagnostics_display = diagnostics_display.rename(columns={
-            "destination": "Destination",
-            "transit_items": "Transit Items",
-            "pct_of_total_items": "% of Total Items",
-            "reject_count": "Transit-Linked Rejects",
-            "reject_rate_pct": "Reject Rate %",
-            "top_reject_reason": "Top Reject Reason",
-            "reason_count": "Top Reason Count",
-            "top_reason_pct_of_destination_rejects": "Top Reason % of Destination Rejects"
+        daily_transfer_summary = pd.DataFrame({
+            "Date": pd.to_datetime(daily_total.index),
+            "Total Checkins": daily_total.values
         })
-        st.dataframe(diagnostics_display, use_container_width=True)
-        download_button(diagnostics_display, "destination_transit_diagnostics_report.csv")
-    else:
-        st.info("No destination-level transit reject data available for the selected date range.")
 
-    st.subheader("Transit by Destination by Weekday")
-    if len(destination_weekday_mix) > 0:
-        weekday_chart = destination_weekday_mix.copy().reset_index()
-        weekday_chart = weekday_chart.rename(columns={"index": "day_of_week"})
-        weekday_long = weekday_chart.melt(
-            id_vars=["day_of_week"],
-            var_name="destination",
-            value_name="transit_items"
+        daily_transfer_summary["Transit to Westside"] = daily_transfer_summary["Date"].dt.date.map(daily_ws).fillna(0).astype(int)
+        daily_transfer_summary["Transit to Library Express"] = daily_transfer_summary["Date"].dt.date.map(daily_le).fillna(0).astype(int)
+        daily_transfer_summary["To No Agency Destination"] = daily_transfer_summary["Date"].dt.date.map(daily_no_agency).fillna(0).astype(int)
+        daily_transfer_summary["Total Transit Items"] = (
+            daily_transfer_summary["Transit to Westside"] +
+            daily_transfer_summary["Transit to Library Express"]
         )
+        daily_transfer_summary["Transit % of Total"] = (
+            daily_transfer_summary["Total Transit Items"] / daily_transfer_summary["Total Checkins"] * 100
+        ).round(2)
 
-        weekday_altair = (
-            alt.Chart(weekday_long)
-            .mark_line(point=True)
-            .encode(
-                x=alt.X(
-                    "day_of_week:N",
-                    sort=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
-                    title="Weekday",
-                    axis=alt.Axis(labelAngle=0)
-                ),
-                y=alt.Y("transit_items:Q", title="Transit Items"),
-                color=alt.Color("destination:N", title="Destination"),
-                tooltip=["day_of_week", "destination", "transit_items"]
-            )
-            .properties(height=350)
-        )
-        render_chart(weekday_altair)
+        daily_transfer_summary["Date"] = daily_transfer_summary["Date"].dt.strftime("%Y-%m-%d")
 
-        weekday_display = destination_weekday_mix.round(1)
-        st.dataframe(weekday_display, use_container_width=True)
-        download_button(weekday_display, "transit_by_destination_by_weekday_report.csv")
+        st.dataframe(daily_transfer_summary, use_container_width=True)
+        download_button(daily_transfer_summary, "daily_transfer_summary_report.csv")
     else:
-        st.info("No destination weekday mix data available for the selected date range.")
+        st.info("No daily transfer summary data available for the selected date range.")
 
-
-with st.expander("Time-Based Reports", expanded=False):
-    st.subheader("Average Transit Time")
-    if len(transit_time_summary) > 0:
-        display_df = transit_time_summary[["destination", "avg_minutes"]].rename(columns={
-            "destination": "Destination",
-            "avg_minutes": "Avg Transit Time (min)"
-        })
-        st.dataframe(display_df, use_container_width=True)
-        download_button(display_df, "average_transit_time_report.csv")
-    else:
-        st.info("Not enough data to calculate transit times.")
-
-    st.subheader("Daily Transit Volume")
+    st.subheader("Transit By Hour")
+    st.caption("Shows how item transfers are distributed throughout the day to reveal peak routing times.")
     if len(transit_df) > 0:
-        daily_transit = transit_df["datetime"].dt.date.value_counts().sort_index().reset_index()
-        daily_transit.columns = ["date", "transit_items"]
-        daily_transit["date"] = pd.to_datetime(daily_transit["date"])
+        transit_hourly = transit_df["datetime"].dt.hour.value_counts().sort_index().reset_index()
+        transit_hourly.columns = ["hour", "Transit Items"]
+        transit_hourly["hour_label"] = transit_hourly["hour"].apply(format_hour_plain)
+        transit_hourly = transit_hourly[(transit_hourly["hour"] >= 7) & (transit_hourly["hour"] <= 20)].copy()
 
-        daily_transit_chart = build_date_line_chart(
-            daily_transit,
-            "date",
+        transit_hourly_chart = build_hourly_bar_chart(
+            transit_hourly.rename(columns={"Transit Items": "transit_items"}),
             "transit_items",
             "Transit Items"
         )
-        render_chart(daily_transit_chart)
+        render_chart(transit_hourly_chart)
 
-        daily_transit_display = daily_transit.copy()
-        daily_transit_display["date"] = pd.to_datetime(daily_transit_display["date"]).dt.strftime("%Y-%m-%d")
-
-        st.dataframe(daily_transit_display, use_container_width=True)
-        download_button(daily_transit_display, "daily_transit_volume_report.csv")
+        transit_hourly_display = transit_hourly[["hour_label", "Transit Items"]].rename(columns={"hour_label": "Hour"})
+        st.dataframe(transit_hourly_display, use_container_width=True)
+        download_button(transit_hourly_display, "transit_by_hour_report.csv")
     else:
-        st.info("No transit items found for the selected date range.")
+        st.info("No hourly transit data available for the selected date range.")
 
-    st.subheader("Transit Mix by Day")
+    st.subheader("Transit Trends Over Time")
+    st.caption("Tells how transits to different branches change over time. Helps identify patterns in routing.")
     if len(transit_df) > 0:
         transit_mix = (
             transit_df.groupby([transit_df["datetime"].dt.date, "transit_destination"])
@@ -2405,34 +2360,259 @@ with st.expander("Time-Based Reports", expanded=False):
 
         transit_mix_display = transit_mix.copy()
         transit_mix_display["date"] = pd.to_datetime(transit_mix_display["date"]).dt.strftime("%Y-%m-%d")
+        transit_mix_display = transit_mix_display.rename(columns={
+            "date": "Date",
+            "transit_destination": "Destination",
+            "transit_items": "Transit Items"
+        })
 
         st.dataframe(transit_mix_display, use_container_width=True)
-        download_button(transit_mix_display, "transit_mix_by_day_report.csv")
+        download_button(transit_mix_display, "transit_trends_over_time_report.csv")
     else:
-        st.info("No transit mix data available for the selected date range.")
-
-    st.subheader("Transit vs Reject Pattern by Weekday")
-    if len(transit_weekday_comparison) > 0:
-        comparison_display = transit_weekday_comparison.copy()
-        comparison_display["Avg Transit Items / Day"] = comparison_display["Avg Transit Items / Day"].round(1)
-        comparison_display["Avg Reject Rate %"] = comparison_display["Avg Reject Rate %"].round(2)
-        st.dataframe(comparison_display, use_container_width=True)
-        download_button(comparison_display, "transit_vs_reject_pattern_by_weekday_report.csv")
-    else:
-        st.info("No weekday comparison data available for the selected date range.")
+        st.info("No transit trends data available for the selected date range.")
 
 
-with st.expander("Distribution / Share Charts", expanded=False):
-    st.subheader("Transit Destination Share")
+with st.expander("Distribution & Flow", expanded=False):
+    st.subheader("Transit Distribution")
+    st.caption("Visualizes total item counts sent to each destination for quick comparison.")
     if len(transit_summary) > 0:
-        transit_share_df = transit_summary[["destination", "transit_items"]].copy()
-        transit_share_chart = build_category_bar_chart(
-            transit_share_df,
+        transit_distribution_df = transit_summary.copy()
+        transit_distribution_df["transit_items"] = transit_distribution_df["transit_items"].astype(int)
+
+        transit_distribution_chart_df = transit_distribution_df[["destination", "transit_items"]].copy()
+        transit_distribution_chart = build_category_bar_chart(
+            transit_distribution_chart_df,
             "destination",
             "transit_items",
             "Transit Items",
             "Destination"
         )
-        render_chart(transit_share_chart)
+        render_chart(transit_distribution_chart)
+
+        transit_distribution_display = transit_distribution_df.rename(columns={
+            "destination": "Destination",
+            "transit_items": "Transit Items",
+            "pct_of_total_items": "% of Total Items"
+        })
+
+        st.dataframe(transit_distribution_display, use_container_width=True)
+        download_button(transit_distribution_display, "transit_distribution_report.csv")
     else:
-        st.info("No transit destination data available for charting.")
+        st.info("No transit distribution data available for the selected date range.")
+
+    st.subheader("Routing Distribution")
+    st.caption("Displays how items are proportionally distributed across all destinations.")
+    if len(transit_summary) > 0:
+        routing_distribution = transit_summary.copy()
+        routing_distribution["pct_of_total_items"] = routing_distribution["pct_of_total_items"].round(2)
+
+        routing_distribution_chart = build_category_bar_chart(
+            routing_distribution.rename(columns={"pct_of_total_items": "routing_pct"}),
+            "destination",
+            "routing_pct",
+            "% of Total Items",
+            "Destination"
+        )
+        render_chart(routing_distribution_chart)
+
+        routing_distribution_display = routing_distribution.rename(columns={
+            "destination": "Destination",
+            "transit_items": "Transit Items",
+            "pct_of_total_items": "% of Total Items"
+        })
+
+        st.dataframe(routing_distribution_display, use_container_width=True)
+        download_button(routing_distribution_display, "routing_distribution_report.csv")
+    else:
+        st.info("No routing distribution data available for the selected date range.")
+
+    st.subheader("Percentage Routing Over Time")
+    st.caption("Gives the percentage of total items sent to each location over time.")
+    if len(df) > 0 and len(transit_df) > 0:
+        daily_total = df.groupby(df["datetime"].dt.date).size().rename("total_checkins")
+        daily_routing = (
+            transit_df.groupby([transit_df["datetime"].dt.date, "transit_destination"])
+            .size()
+            .reset_index(name="transit_items")
+        )
+        daily_routing.columns = ["date", "destination", "transit_items"]
+        daily_routing["date"] = pd.to_datetime(daily_routing["date"])
+
+        daily_routing["total_checkins"] = daily_routing["date"].dt.date.map(daily_total)
+        daily_routing["routing_pct"] = (
+            daily_routing["transit_items"] / daily_routing["total_checkins"] * 100
+        ).round(2)
+
+        routing_pct_chart = build_date_line_chart(
+            daily_routing,
+            "date",
+            "routing_pct",
+            "% of Total Items",
+            series_col="destination"
+        )
+        render_chart(routing_pct_chart)
+
+        routing_pct_display = daily_routing.copy()
+        routing_pct_display["date"] = routing_pct_display["date"].dt.strftime("%Y-%m-%d")
+        routing_pct_display = routing_pct_display.rename(columns={
+            "date": "Date",
+            "destination": "Destination",
+            "transit_items": "Transit Items",
+            "total_checkins": "Total Checkins",
+            "routing_pct": "Routing %"
+        })
+
+        st.dataframe(routing_pct_display, use_container_width=True)
+        download_button(routing_pct_display, "percentage_routing_over_time_report.csv")
+    else:
+        st.info("No percentage routing data available for the selected date range.")
+
+
+with st.expander("Exceptions & Failures", expanded=False):
+    st.subheader("Exception Report")
+    if len(destination_reject_summary) > 0:
+        diagnostics_display = destination_reject_summary.copy()
+        diagnostics_display = diagnostics_display.rename(columns={
+            "destination": "Destination",
+            "transit_items": "Transit Items",
+            "pct_of_total_items": "% of Total Items",
+            "reject_count": "Transit-Linked Rejects",
+            "reject_rate_pct": "Reject Rate %",
+            "top_reject_reason": "Top Reject Reason",
+            "reason_count": "Top Reason Count",
+            "top_reason_pct_of_destination_rejects": "Top Reason % of Destination Rejects"
+        })
+        st.dataframe(diagnostics_display, use_container_width=True)
+        download_button(diagnostics_display, "exception_report.csv")
+    else:
+        st.info("No destination-level transit reject data available for the selected date range.")
+
+    st.subheader('"No Agency Destination" Deep Dive')
+    st.caption("Looks at items that failed routing to highlight system or configuration issues.")
+    no_agency_df = df[
+        df["destination"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False)
+    ].copy()
+
+    if len(no_agency_df) > 0:
+        no_agency_total = len(no_agency_df)
+        no_agency_daily = no_agency_df["datetime"].dt.date.value_counts().sort_index().reset_index()
+        no_agency_daily.columns = ["date", "count"]
+        no_agency_daily["date"] = pd.to_datetime(no_agency_daily["date"])
+
+        no_agency_daily_chart = build_date_line_chart(
+            no_agency_daily,
+            "date",
+            "count",
+            "No Agency Destination Items"
+        )
+        render_chart(no_agency_daily_chart)
+
+        no_agency_hourly = no_agency_df["datetime"].dt.hour.value_counts().sort_index().reset_index()
+        no_agency_hourly.columns = ["hour", "count"]
+        no_agency_hourly["hour_label"] = no_agency_hourly["hour"].apply(format_hour_plain)
+        no_agency_hourly = no_agency_hourly[(no_agency_hourly["hour"] >= 7) & (no_agency_hourly["hour"] <= 20)].copy()
+
+        if len(no_agency_hourly) > 0:
+            no_agency_hourly_chart = build_hourly_bar_chart(
+                no_agency_hourly,
+                "count",
+                "No Agency Destination Items"
+            )
+            render_chart(no_agency_hourly_chart)
+
+        no_agency_display = no_agency_df[["datetime", "title", "barcode", "destination"]].copy()
+        no_agency_display["datetime"] = pd.to_datetime(no_agency_display["datetime"]).dt.strftime("%Y-%m-%d %I:%M %p")
+        no_agency_display = no_agency_display.rename(columns={
+            "datetime": "Datetime",
+            "title": "Title",
+            "barcode": "Barcode",
+            "destination": "Destination"
+        })
+
+        st.markdown(
+            f"""
+            <div style="
+                border-left: 4px solid #d97706;
+                background-color: #f9fafb;
+                padding: 14px 16px;
+                border-radius: 8px;
+                margin-top: 8px;
+                margin-bottom: 16px;
+            ">
+                <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                    Report Summary
+                </div>
+                <div style="color: #4b5563; line-height: 1.4;">
+                    {no_agency_total:,} items were routed to No Agency Destination in the selected date range.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        st.dataframe(no_agency_display, use_container_width=True)
+        download_button(no_agency_display, "no_agency_destination_deep_dive_report.csv")
+    else:
+        st.info("No No Agency Destination items found for the selected date range.")
+
+
+with st.expander("Diagnostics & Insights", expanded=False):
+    st.subheader("Baseline Comparison")
+    st.caption("Compares recent data against historical data to detect anomalous activity.")
+
+    historical_df = df_raw[df_raw["datetime"].dt.date < today].copy()
+
+    if len(df) > 0 and len(historical_df) > 0:
+        current_total_transit = len(transit_df)
+        current_ws_pct = westside_pct
+        current_le_pct = library_express_pct
+        current_no_agency = int(
+            df["destination"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False).sum()
+        )
+
+        historical_transit_df = historical_df[
+            historical_df["destination"].apply(normalize_transit_destination).isin(valid_transit_destinations)
+        ].copy()
+
+        historical_total_transit_avg = (
+            historical_transit_df.groupby(historical_transit_df["datetime"].dt.date).size().mean()
+            if len(historical_transit_df) > 0 else 0
+        )
+
+        historical_no_agency_avg = (
+            historical_df[
+                historical_df["destination"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False)
+            ].groupby(
+                historical_df[
+                    historical_df["destination"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False)
+                ]["datetime"].dt.date
+            ).size().mean()
+            if len(historical_df) > 0 else 0
+        )
+
+        baseline_df = pd.DataFrame([{
+            "Metric": "Total Transit Items",
+            "Current": round(current_total_transit, 2),
+            "Historical Avg": round(historical_total_transit_avg, 2),
+            "Delta": round(current_total_transit - historical_total_transit_avg, 2)
+        }, {
+            "Metric": "Westside Routing %",
+            "Current": round(current_ws_pct, 2),
+            "Historical Avg": round(historical_westside_pct or 0, 2),
+            "Delta": round(current_ws_pct - (historical_westside_pct or 0), 2)
+        }, {
+            "Metric": "Library Express Routing %",
+            "Current": round(current_le_pct, 2),
+            "Historical Avg": round(historical_library_express_pct or 0, 2),
+            "Delta": round(current_le_pct - (historical_library_express_pct or 0), 2)
+        }, {
+            "Metric": "No Agency Destination",
+            "Current": round(current_no_agency, 2),
+            "Historical Avg": round(historical_no_agency_avg if pd.notna(historical_no_agency_avg) else 0, 2),
+            "Delta": round(current_no_agency - (historical_no_agency_avg if pd.notna(historical_no_agency_avg) else 0), 2)
+        }])
+
+        st.dataframe(baseline_df, use_container_width=True)
+        download_button(baseline_df, "baseline_comparison_report.csv")
+    else:
+        st.info("Not enough current and historical data available for baseline comparison.")    
