@@ -96,3 +96,6 @@ barcode,error_message,date,time,datetime,date_only,hour,day_of_week,error_simple
 ,No Item Found,4/2/2026,7:33:19 AM,2026-04-02 07:33:19,2026-04-02,7,Thursday,Other
 ,No Item Found,4/2/2026,10:31:34 AM,2026-04-02 10:31:34,2026-04-02,10,Thursday,Other
 ,No Item Found,4/2/2026,11:31:28 AM,2026-04-02 11:31:28,2026-04-02,11,Thursday,Other
+,No Item Found,4/2/2026,11:43:04 AM,2026-04-02 11:43:04,2026-04-02,11,Thursday,Other
+,No Item Found,4/2/2026,11:43:11 AM,2026-04-02 11:43:11,2026-04-02,11,Thursday,Other
+,No Item Found,4/2/2026,11:45:23 AM,2026-04-02 11:45:23,2026-04-02,11,Thursday,Other
