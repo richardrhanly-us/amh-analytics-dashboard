@@ -1701,6 +1701,7 @@ if selected_view == "Reports":
         if len(staff_df) > 0:
             peak_hours_row = staff_df.loc[staff_df["staff_hours_saved"].idxmax()]
             avg_hours_saved = staff_df["staff_hours_saved"].mean()
+            total_hours_saved = staff_df["staff_hours_saved"].sum()
 
             st.markdown(
                 f"""
@@ -1725,7 +1726,7 @@ if selected_view == "Reports":
                 unsafe_allow_html=True
             )
 
-            k1, k2, k3 = st.columns(3)
+            k1, k2, k3, k4 = st.columns(4)
 
             with k1:
                 render_kpi_card(
@@ -1754,6 +1755,42 @@ if selected_view == "Reports":
                     value_font_size="1.6rem"
                 )
 
+            with k4:
+                render_kpi_card(
+                    "Total Staff Hours Saved",
+                    f"{total_hours_saved:.2f}",
+                    "Across selected date range",
+                    "#6b7280",
+                    value_font_size="1.6rem"
+                )
+
+
+            st.markdown(
+                f"""
+                <div style="
+                    border-left: 4px solid #2563eb;
+                    background-color: #f9fafb;
+                    padding: 14px 16px;
+                    border-radius: 8px;
+                    margin-top: 16px;
+                    margin-bottom: 16px;
+                ">
+                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                        How This Is Calculated
+                    </div>
+                    <div style="color: #4b5563; line-height: 1.5;">
+                        Staff time equivalent is estimated by dividing the number of AMH checkins by an assumed manual processing rate of
+                        <b>{MANUAL_RATE} items per hour</b>.<br><br>
+                        Formula: <b>staff hours saved = checkins ÷ {MANUAL_RATE}</b><br>
+                        Example: if the AMH processes 240 items in a day, that equals <b>2.00 staff hours saved</b>.<br><br>
+                        The <b>{MANUAL_RATE}</b> value is a working estimate for how many items a staff member could manually check in and handle in one hour.
+                        You can adjust this number later if your library wants to use a different operational benchmark.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            
             staff_df["date"] = pd.to_datetime(staff_df["date"])
             staff_df["date_label"] = staff_df["date"].dt.strftime("%b %d")
             
