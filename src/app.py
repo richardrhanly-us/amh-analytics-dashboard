@@ -1807,8 +1807,8 @@ This approach ensures the estimate is grounded in both real-world branch data an
 
 
             
-            staff_df["date"] = pd.to_datetime(staff_df["date"])
-            staff_df["date_label"] = staff_df["date"].dt.strftime("%b %d")
+        staff_df["date"] = pd.to_datetime(staff_df["date"])
+        staff_df["date_label"] = staff_df["date"].dt.strftime("%b %d")
             
             staff_time_chart = (
                 alt.Chart(staff_df)
