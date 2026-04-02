@@ -354,7 +354,7 @@ status_mtime = status_updated.timestamp() if status_updated else 0
 
 df_live_raw = load_checkins_df(mtime=checkins_mtime)
 df_history_raw = load_checkins_history_df()   # no mtime needed for now
-st.write("History min/max:", df_history_raw["datetime"].min(), df_history_raw["datetime"].max(), "rows:", len(df_history_raw))
+
 rejects_raw = load_rejects_df(mtime=rejects_mtime)
 pipeline_status = load_pipeline_status(mtime=status_mtime)
 
