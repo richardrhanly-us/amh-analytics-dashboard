@@ -1787,12 +1787,13 @@ if selected_view == "Reports":
                 )
 
             st.info(
-                f"""How Staff Time Saved Is Calculated
+    f"""How Staff Time Saved Is Calculated
 
 This estimate compares how long it would take staff to process items manually versus how long the AMH processes the same workload.
 
 Step 1 — Manual Processing Time
-This dashboard uses a manual processing rate of {MANUAL_RATE:.0f} items per hour.
+This dashboard uses a manual processing baseline of {MANUAL_RATE:.0f} items per hour.
+That baseline comes from observed staff check-in pace from Westside circulation check-in reporting, and is used here as a reasonable manual processing benchmark.
 Manual time = checkins ÷ {MANUAL_RATE:.0f}
 
 Step 2 — AMH Processing Time
@@ -1810,10 +1811,11 @@ Average daily AMH time: {avg_daily_amh_hours:,.2f} hours
 Average daily staff time saved: {avg_saved:,.2f} hours
 
 What This Means
+- Uses an observed manual staff benchmark rather than an arbitrary guess
 - Uses actual AMH performance from historical data
 - Compares manual processing time against AMH processing time
 - Produces a more realistic estimate than treating all checkins as fully saved labor"""
-            )
+)
 
             staff_chart_df = staff_df.copy()
             staff_chart_df["date"] = pd.to_datetime(staff_chart_df["date"])
