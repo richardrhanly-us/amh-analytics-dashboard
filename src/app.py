@@ -1805,17 +1805,22 @@ Step 2 — AMH Processing Time
 
 Instead of guessing machine speed, this dashboard uses the AMH’s observed all-time busiest-hour average.
 
-**Current AMH rate used = {AMH_RATE:.1f} items per hour** (based on all check-in from 1/31/26 - 4/2/26)
+Current AMH rate used = {AMH_RATE:.1f} items per hour (based on all check-ins from 1/31/26 - 4/2/26)
 
 **AMH time = checkins ÷ {AMH_RATE:.1f}**
 
 Step 3 — Time Saved
-Staff time saved = (checkins ÷ {MANUAL_RATE:.0f}) − (checkins ÷ {AMH_RATE:.1f})
+
+**Staff time saved = (checkins ÷ {MANUAL_RATE:.0f}) − (checkins ÷ {AMH_RATE:.1f})**
 
 Example Using the Current Selected Range
+
 Average daily checkins: {avg_daily_checkins:,.1f}
+
 Average daily manual time: {avg_daily_manual_hours:,.2f} hours
+
 Average daily AMH time: {avg_daily_amh_hours:,.2f} hours
+
 Average daily staff time saved: {avg_saved:,.2f} hours
 
 What This Means
