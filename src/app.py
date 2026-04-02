@@ -446,23 +446,35 @@ def render_report_exports(df, report_title, html_summary=""):
         unsafe_allow_html=True
     )
 
-    st.markdown(
-        f"""
-        <div class="report-export-row">
+    csv_col, html_col, print_col, _ = st.columns([1, 1, 1, 6])
+    
+    with csv_col:
+        st.markdown(
+            f'''
             <a href="data:text/csv;base64,{csv_b64}" download="{safe_name}.csv">
-                <span class="report-export-btn">Download CSV</span>
+                <button style="
+                    background:#f3f4f6;
+                    border:1px solid #d1d5db;
+                    border-radius:8px;
+                    padding:0.5rem 1rem;
+                    cursor:pointer;
+                ">Download CSV</button>
             </a>
-            <a href="data:text/html;base64,{html_b64}" target="_blank">
-                <span class="report-export-btn">View HTML</span>
-            </a>
-            <a href="data:text/html;base64,{print_b64}" target="_blank">
-                <span class="report-export-btn">Print View</span>
-            </a>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
+            ''',
+            unsafe_allow_html=True
+        )
+    
+    with html_col:
+        st.link_button(
+            "View HTML",
+            f"data:text/html;base64,{html_b64}"
+        )
+    
+    with print_col:
+        st.link_button(
+            "Print View",
+            f"data:text/html;base64,{print_b64}"
+        )
 
 CHECKINS_FILE = "data/processed/checkins_clean.csv"
 REJECTS_FILE = "data/processed/rejects_clean.csv"
