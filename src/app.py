@@ -394,8 +394,6 @@ end_date = max_date
 
 local_today = datetime.now(ZoneInfo("America/Chicago")).date()
 
-today_metrics = get_today_metrics(df_live_raw, rejects_raw, today)
-
 start_date = min_date
 end_date = min(max_date, local_today)
 
@@ -569,8 +567,9 @@ if len(rejects_df) > 0:
     peak_failure_window_subtitle = f"{peak_failure_count:,} rejects ({peak_failure_pct:.1f}% of failures)"
 
 today = datetime.now(ZoneInfo("America/Chicago")).date()
+today_metrics = get_today_metrics(df_live_raw, rejects_raw, today)
 
-df = get_date_filtered_df(df_history_raw, start_date, end_date)
+today_df = today_metrics["today_df"]
 
 today_df = today_metrics["today_df"]
 today_rejects_df = today_metrics["today_rejects_df"]
@@ -623,7 +622,7 @@ historical_daily_avg_reject = historical_baseline.get("historical_daily_avg_reje
 
 if historical_daily_avg_reject is None or historical_daily_avg_reject == 0:
     # fallback: compute manually from historical data
-    historical_df = df_raw[df_raw["datetime"].dt.date < today]
+    historical_df = df_history_raw[df_history_raw["datetime"].dt.date < today]
 
     if len(historical_df) > 0:
         daily_checkins = historical_df["datetime"].dt.date.value_counts()
@@ -1503,9 +1502,9 @@ if selected_view == "Reports":
 
     with st.expander("Today vs Typical Hourly Pattern", expanded=False):
         today = datetime.now(ZoneInfo("America/Chicago")).date()
-
-        today_df_report = df_raw[df_raw["datetime"].dt.date == today].copy()
-        historical_df_report = df_raw[df_raw["datetime"].dt.date < today].copy()
+        
+        today_df_report = df_live_raw[df_live_raw["datetime"].dt.date == today].copy()
+        historical_df_report = df_history_raw[df_history_raw["datetime"].dt.date < today].copy()
 
         today_hourly = today_df_report["datetime"].dt.hour.value_counts().sort_index()
 
@@ -2659,7 +2658,7 @@ if selected_view == "Transits":
         st.subheader("Baseline Comparison")
         st.caption("Compares recent data against historical data to detect anomalous activity.")
     
-        historical_df = df_raw[df_raw["datetime"].dt.date < today].copy()
+        historical_df = df_history_raw[df_history_raw["datetime"].dt.date < today].copy()
     
         if len(df) > 0 and len(historical_df) > 0:
             current_total_transit = len(transit_df)
