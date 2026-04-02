@@ -1795,11 +1795,10 @@ Step 1 — Manual Processing Time
 
 Manual rate = {MANUAL_RATE:.0f} check-ins p/hr
 
-**Manual time = check-ins ÷ Manual rate**
-
 This dashboard uses a manual processing baseline of {MANUAL_RATE:.0f} items per hour.
 That baseline comes from observed staff check-in pace from Westside circulation check-in reporting, and is used here as a reasonable manual processing benchmark.
 
+**Manual time = check-ins ÷ Manual rate**
 
 
 Step 2 — AMH Processing Time
