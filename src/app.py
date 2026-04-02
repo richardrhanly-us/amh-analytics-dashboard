@@ -2276,7 +2276,7 @@ if selected_view == "Transits":
         download_button(
             transit_hourly_display,
             "transit_by_hour_report.csv",
-            key="transit_by_hour_report_download"
+            key="transit_reports_volume_activity_transit_by_hour_download"
         )
     else:
         st.info("No hourly transit data available for the selected date range.")
@@ -2395,7 +2395,7 @@ with st.expander("Volume & Activity", expanded=False):
         download_button(
             transit_mix_display,
             "transit_trends_over_time_report.csv",
-            key="transit_trends_over_time_report_download"
+            key="transit_reports_volume_activity_transit_trends_over_time_download"
         )
     else:
         st.info("No transit trends data available for the selected date range.")
@@ -2428,7 +2428,7 @@ with st.expander("Distribution & Flow", expanded=False):
         download_button(
             transit_distribution_display,
             "transit_distribution_report.csv",
-            key="transit_distribution_report_download"
+            key="transit_reports_distribution_flow_transit_distribution_download"
         )
     else:
         st.info("No transit distribution data available for the selected date range.")
@@ -2458,7 +2458,7 @@ with st.expander("Distribution & Flow", expanded=False):
         download_button(
             routing_distribution_display,
             "routing_distribution_report.csv",
-            key="routing_distribution_report_download"
+            key="transit_reports_distribution_flow_routing_distribution_download"
         )
     else:
         st.info("No routing distribution data available for the selected date range.")
@@ -2503,7 +2503,7 @@ with st.expander("Distribution & Flow", expanded=False):
         download_button(
             routing_pct_display,
             "percentage_routing_over_time_report.csv",
-            key="percentage_routing_over_time_report_download"
+            key="transit_reports_distribution_flow_percentage_routing_over_time_download"
         )
     else:
         st.info("No percentage routing data available for the selected date range.")
@@ -2527,7 +2527,7 @@ with st.expander("Exceptions & Failures", expanded=False):
         download_button(
             diagnostics_display,
             "exception_report.csv",
-            key="exception_report_download"
+            key="transit_reports_exceptions_failures_exception_report_download"
         )
     else:
         st.info("No destination-level transit reject data available for the selected date range.")
@@ -2599,7 +2599,7 @@ with st.expander("Exceptions & Failures", expanded=False):
         download_button(
             no_agency_display,
             "no_agency_destination_deep_dive_report.csv",
-            key="no_agency_destination_deep_dive_report_download"
+            key="transit_reports_exceptions_failures_no_agency_deep_dive_download"
         )
     else:
         st.info("No No Agency Destination items found for the selected date range.")
@@ -2665,7 +2665,7 @@ with st.expander("Diagnostics & Insights", expanded=False):
         download_button(
             baseline_df,
             "baseline_comparison_report.csv",
-            key="baseline_comparison_report_download"
+            key="transit_reports_diagnostics_insights_baseline_comparison_download"
         )
     else:
         st.info("Not enough current and historical data available for baseline comparison.")
