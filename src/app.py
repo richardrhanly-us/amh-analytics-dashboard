@@ -1819,21 +1819,11 @@ Average Daily Staff time saved = 26.12 manual hours - 9.92 AMH hours
 
 **Average Daily Staff time saved = 16.20 hours**
 
-Example Using the Current Selected Range
-
-Average daily checkins: {avg_daily_checkins:,.1f}
-
-Average daily manual time: {avg_daily_manual_hours:,.2f} hours
-
-Average daily AMH time: {avg_daily_amh_hours:,.2f} hours
-
-Average daily staff time saved: {avg_saved:,.2f} hours
-
 What This Means
-- Uses an observed manual staff benchmark rather than an arbitrary guess
+- Uses an observed manual staff benchmark from the TLC circulation report for Westside
 - Uses actual AMH performance from historical data
 - Compares manual processing time against AMH processing time
-- Produces a more realistic estimate than treating all checkins as fully saved labor"""
+- Produces a realistic estimate based on observed data from Westside and Main branch operations"""
 )
 
             staff_chart_df = staff_df.copy()
