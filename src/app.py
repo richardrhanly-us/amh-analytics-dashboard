@@ -388,12 +388,11 @@ def render_report_exports(df, report_title, html_summary=""):
     # --- dropdown ---
     option = st.selectbox(
         "Export",
-        ["Export...", "Download CSV", "Download HTML", "Print View"],
+        ["Select option...", "Download CSV", "Download HTML", "Print View"],
         label_visibility="collapsed",
         key=f"{report_title}_export",
         width="content"
     )
-
     if option == "Download CSV":
         st.download_button(
             "Download CSV",
