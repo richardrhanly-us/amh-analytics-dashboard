@@ -1730,8 +1730,23 @@ if selected_view == "Reports":
                 unsafe_allow_html=True
             )
 
-            chart_df = reject_counts.set_index("reason")["count"]
-            st.bar_chart(chart_df)
+            reject_chart = (
+                alt.Chart(reject_counts)
+                .mark_bar()
+                .encode(
+                    x=alt.X(
+                        "reason:N",
+                        sort=reject_counts["reason"].tolist(),
+                        title="Reject Reason",
+                        axis=alt.Axis(labelAngle=0)
+                    ),
+                    y=alt.Y("count:Q", title="Count"),
+                    tooltip=["reason", "count"]
+                )
+                .properties(height=350)
+            )
+            
+            render_chart(reject_chart)
 
             st.dataframe(reject_counts, use_container_width=True)
             download_button(reject_counts, "reject_reasons.csv")
