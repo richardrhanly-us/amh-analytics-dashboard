@@ -5,6 +5,9 @@ echo ==============================
 echo AMH update started
 echo ==============================
 
+git pull --rebase origin main
+if errorlevel 1 goto :error
+
 python -m scripts.parse_checkins
 if errorlevel 1 goto :error
 
