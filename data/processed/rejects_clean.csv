@@ -127,3 +127,5 @@ barcode,error_message,date,time,datetime,date_only,hour,day_of_week,error_simple
 ,No Item Found,4/2/2026,1:37:46 PM,2026-04-02 13:37:46,2026-04-02,13,Thursday,Other
 33472003424209,Collection code/call number not found: MLTHEME 2\FIC SIMONS,4/2/2026,1:38:34 PM,2026-04-02 13:38:34,2026-04-02,13,Thursday,Call Number / Config Error
 ,No Item Found,4/2/2026,1:39:46 PM,2026-04-02 13:39:46,2026-04-02,13,Thursday,Other
+,No Item Found,4/2/2026,2:25:26 PM,2026-04-02 14:25:26,2026-04-02,14,Thursday,Other
+,No Item Found,4/2/2026,2:31:02 PM,2026-04-02 14:31:02,2026-04-02,14,Thursday,Other
