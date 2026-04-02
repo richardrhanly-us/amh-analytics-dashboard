@@ -1751,15 +1751,15 @@ if selected_view == "Reports":
     # -----------------------------
     st.subheader("Errors & Exceptions")
     st.caption("Tracks failure types, exception routing, and patterns that may indicate operational issues.")
-
+    
     with st.expander("Reject Reasons", expanded=False):
         reject_counts = rejects_df["error_simple"].value_counts().reset_index()
         reject_counts.columns = ["reason", "count"]
-
+    
         if len(reject_counts) > 0:
             top_reason_row = reject_counts.loc[reject_counts["count"].idxmax()]
             top_reason_pct = (top_reason_row["count"] / reject_counts["count"].sum()) * 100
-
+    
             st.markdown(
                 f"""
                 <div style="
@@ -1781,7 +1781,7 @@ if selected_view == "Reports":
                 """,
                 unsafe_allow_html=True
             )
-
+    
             reject_chart = (
                 alt.Chart(reject_counts)
                 .mark_bar()
@@ -1797,63 +1797,116 @@ if selected_view == "Reports":
                 )
                 .properties(height=350)
             )
-            
+    
             render_chart(reject_chart)
-
+    
             st.dataframe(reject_counts, use_container_width=True)
             download_button(reject_counts, "reject_reasons.csv")
         else:
             st.info("No reject reason data available for the selected date range.")
-
+    
+    
+    with st.expander("Worst Days (Top 5 by Reject Rate)", expanded=False):
+        worst_table = pd.DataFrame({
+            "checkins": checkins_daily,
+            "rejects": rejects_daily
+        }).fillna(0)
+    
+        worst_table = worst_table[worst_table["checkins"] > 0]
+    
+        if len(worst_table) > 0:
+            worst_table["reject_rate"] = (worst_table["rejects"] / worst_table["checkins"]) * 100
+            worst_table.index = pd.to_datetime(worst_table.index)
+            worst_table["day_of_week"] = worst_table.index.day_name()
+            worst_table = worst_table.sort_values("reject_rate", ascending=False).head(5)
+    
+            worst_day_row = worst_table.iloc[0]
+    
+            st.markdown(
+                f"""
+                <div style="
+                    border-left: 4px solid #dc2626;
+                    background-color: #f9fafb;
+                    padding: 14px 16px;
+                    border-radius: 8px;
+                    margin-top: 8px;
+                    margin-bottom: 16px;
+                ">
+                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                        Report Summary
+                    </div>
+                    <div style="color: #4b5563; line-height: 1.4;">
+                        Worst day in the selected range: {worst_day_row['day_of_week']} with a reject rate of
+                        {worst_day_row['reject_rate']:.2f}%.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+    
+            worst_table_display = worst_table.copy()
+            worst_table_display["reject_rate"] = worst_table_display["reject_rate"].round(2)
+            worst_table_display = worst_table_display[["day_of_week", "checkins", "rejects", "reject_rate"]]
+    
+            st.dataframe(worst_table_display, use_container_width=True)
+            download_button(
+                worst_table_display,
+                "worst_days_top_5_reject_rate.csv",
+                key="worst_days_top_5_reject_rate_download"
+            )
+        else:
+            st.info("No worst-day data available for the selected date range.")
+    
+    
     with st.expander("Exceptions / Overflow", expanded=False):
         if "bin" not in df.columns:
             st.warning("No bin column found in the current dataset. Add bin parsing to your cleaned checkins file first.")
         else:
             exception_bin = "6"
-
+    
             bin_df = df.copy()
             bin_df = bin_df[bin_df["bin"].notna()].copy()
             bin_df["bin"] = bin_df["bin"].astype(str)
-
+    
             exception_df = bin_df[bin_df["bin"] == exception_bin].copy()
             total_binned = len(bin_df)
             exception_count = len(exception_df)
             exception_pct = (exception_count / total_binned * 100) if total_binned > 0 else 0
-
+    
             library_express_count = int(
                 df["destination"].astype(str).str.upper().str.contains("LIBRARY EXPRESS", na=False).sum()
             )
-            
+    
             estimated_holds = max(
                 exception_count - len(rejects_df) - library_express_count,
                 0
             )
-            
+    
             estimated_holds_pct = (estimated_holds / exception_count * 100) if exception_count > 0 else 0
-
+    
             daily_exception = (
                 exception_df["datetime"].dt.date.value_counts().sort_index()
             )
             daily_total = (
                 bin_df["datetime"].dt.date.value_counts().sort_index()
             )
-
+    
             overflow_daily = pd.DataFrame({
                 "total_binned": daily_total,
                 "exception_bin_items": daily_exception
             }).fillna(0)
-
+    
             overflow_daily["exception_rate_pct"] = (
                 overflow_daily["exception_bin_items"] / overflow_daily["total_binned"] * 100
             ).round(2)
-
+    
             peak_exception_day_label = "N/A"
             peak_exception_rate = 0
             if len(overflow_daily) > 0:
                 peak_exception_day = overflow_daily["exception_rate_pct"].idxmax()
                 peak_exception_day_label = pd.to_datetime(peak_exception_day).strftime("%a, %b %d")
                 peak_exception_rate = overflow_daily["exception_rate_pct"].max()
-
+    
             hourly_exception = (
                 exception_df["datetime"].dt.hour.value_counts().sort_index()
             )
@@ -1867,14 +1920,14 @@ if selected_view == "Reports":
             else:
                 peak_exception_hour_text = "N/A"
                 peak_exception_hour_count = 0
-
+    
             insight_text = (
                 f"Exception bin {exception_bin} handled {exception_count:,} items "
                 f"({exception_pct:.2f}% of all binned checkins). "
                 f"Peak exception day: {peak_exception_day_label} at {peak_exception_rate:.2f}%. "
                 f"Peak exception hour: {peak_exception_hour_text} with {peak_exception_hour_count:,} items."
             )
-
+    
             st.markdown(
                 f"""
                 <div style="
@@ -1895,7 +1948,7 @@ if selected_view == "Reports":
                 """,
                 unsafe_allow_html=True
             )
-
+    
             k1, k2, k3, k4 = st.columns(4)
             with k1:
                 render_kpi_card(
@@ -1920,7 +1973,7 @@ if selected_view == "Reports":
                     "#6b7280",
                     value_font_size="1.4rem"
                 )
-
+    
             with k4:
                 render_kpi_card(
                     "Estimated Holds",
@@ -1928,55 +1981,40 @@ if selected_view == "Reports":
                     f"{estimated_holds_pct:.1f}% of Bin 6",
                     "#6b7280"
                 )
-
+    
             if len(overflow_daily) > 0:
                 st.subheader("Exception Bin Rate by Day")
                 chart_df = overflow_daily["exception_rate_pct"]
                 st.line_chart(chart_df)
-
+    
                 overflow_daily_display = overflow_daily.reset_index().rename(columns={"index": "date"})
                 st.dataframe(overflow_daily_display, use_container_width=True)
-                download_button(overflow_daily_display, "exception_bin_rate_by_day_report.csv")
-
+                download_button(
+                    overflow_daily_display,
+                    "exception_bin_rate_by_day_report.csv",
+                    key="exception_bin_rate_by_day_report_download"
+                )
+    
             if len(hourly_exception_df) > 0:
                 st.subheader("Exception Bin Volume by Hour")
                 hourly_exception_df = hourly_exception_df[
                     (hourly_exception_df["hour"] >= 7) & (hourly_exception_df["hour"] <= 20)
                 ].copy()
-                
+    
                 exception_chart = build_hourly_bar_chart(hourly_exception_df, "exception_items", "Exception Items")
                 render_chart(exception_chart)
-
+    
                 hourly_exception_display = hourly_exception_df[["hour_label", "exception_items"]].rename(
                     columns={"hour_label": "hour"}
                 )
                 st.dataframe(hourly_exception_display, use_container_width=True)
-                download_button(hourly_exception_display, "exception_bin_volume_by_hour_report.csv")
+                download_button(
+                    hourly_exception_display,
+                    "exception_bin_volume_by_hour_report.csv",
+                    key="exception_bin_volume_by_hour_report_download"
+                )
             else:
                 st.info("No exception-bin items found for the selected date range.")
-
-
-
-            st.subheader("Worst Days (Top 5 by Reject Rate)")
-            worst_table = pd.DataFrame({
-                "checkins": checkins_daily,
-                "rejects": rejects_daily
-            }).fillna(0)
-        
-            worst_table = worst_table[worst_table["checkins"] > 0]
-        
-            if len(worst_table) > 0:
-                worst_table["reject_rate"] = (worst_table["rejects"] / worst_table["checkins"]) * 100
-                worst_table.index = pd.to_datetime(worst_table.index)
-                worst_table["day_of_week"] = worst_table.index.day_name()
-                worst_table = worst_table.sort_values("reject_rate", ascending=False).head(5)
-        
-                worst_table_display = worst_table.copy()
-                worst_table_display["reject_rate"] = worst_table_display["reject_rate"].round(2)
-                worst_table_display = worst_table_display[["day_of_week", "checkins", "rejects", "reject_rate"]]
-                st.dataframe(worst_table_display, use_container_width=True)
-            else:
-                st.info("No worst-day data available for the selected date range.")
 
     st.markdown("---")
 
