@@ -78,3 +78,16 @@ barcode,error_message,date,time,datetime,date_only,hour,day_of_week,error_simple
 ,Multiple RFID tags found,4/1/2026,2:17:17 PM,2026-04-01 14:17:17,2026-04-01,14,Wednesday,RFID Collision
 33472004282101,ACS check-in failed,4/1/2026,2:48:07 PM,2026-04-01 14:48:07,2026-04-01,14,Wednesday,ILS / ACS Failure
 33472004587855,ACS check-in failed,4/1/2026,2:48:10 PM,2026-04-01 14:48:10,2026-04-01,14,Wednesday,ILS / ACS Failure
+,Multiple RFID tags found,4/1/2026,3:41:17 PM,2026-04-01 15:41:17,2026-04-01,15,Wednesday,RFID Collision
+,Multiple RFID tags found,4/1/2026,3:41:23 PM,2026-04-01 15:41:23,2026-04-01,15,Wednesday,RFID Collision
+,No Item Found,4/1/2026,4:23:49 PM,2026-04-01 16:23:49,2026-04-01,16,Wednesday,Other
+33472003513431,Collection code/call number not found: MLTHEME 2\FIC ATWOOD,4/1/2026,4:36:28 PM,2026-04-01 16:36:28,2026-04-01,16,Wednesday,Call Number / Config Error
+33472004067361,Collection code/call number not found: MLTHEME 2\FIC SCHULT,4/1/2026,4:36:31 PM,2026-04-01 16:36:31,2026-04-01,16,Wednesday,Call Number / Config Error
+,No Item Found,4/1/2026,4:54:31 PM,2026-04-01 16:54:31,2026-04-01,16,Wednesday,Other
+,ACS Check-in error,4/1/2026,4:57:06 PM,2026-04-01 16:57:06,2026-04-01,16,Wednesday,ILS / ACS Failure
+,ACS check-in failed,4/1/2026,4:57:06 PM,2026-04-01 16:57:06,2026-04-01,16,Wednesday,ILS / ACS Failure
+,No Item Found,4/1/2026,4:57:17 PM,2026-04-01 16:57:17,2026-04-01,16,Wednesday,Other
+,No Item Found,4/1/2026,5:15:24 PM,2026-04-01 17:15:24,2026-04-01,17,Wednesday,Other
+33472003513431,Collection code/call number not found: MLTHEME 2\FIC ATWOOD,4/1/2026,5:15:36 PM,2026-04-01 17:15:36,2026-04-01,17,Wednesday,Call Number / Config Error
+,No Item Found,4/1/2026,5:15:53 PM,2026-04-01 17:15:53,2026-04-01,17,Wednesday,Other
+,No Item Found,4/1/2026,5:16:22 PM,2026-04-01 17:16:22,2026-04-01,17,Wednesday,Other
