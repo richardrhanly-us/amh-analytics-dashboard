@@ -1697,7 +1697,10 @@ if selected_view == "Reports":
         staff_df.columns = ["date", "checkins"]
         staff_df["staff_hours_saved"] = (staff_df["checkins"] / MANUAL_RATE).round(2)
         staff_df["staff_shifts_saved"] = (staff_df["staff_hours_saved"] / 8).round(2)
-
+        example_checkins = int(staff_df["checkins"].sum())
+        example_hours = round(example_checkins / MANUAL_RATE, 2)
+        example_shifts = round(example_hours / 8, 2)
+        
         if len(staff_df) > 0:
             peak_hours_row = staff_df.loc[staff_df["staff_hours_saved"].idxmax()]
             avg_hours_saved = staff_df["staff_hours_saved"].mean()
@@ -1765,8 +1768,8 @@ if selected_view == "Reports":
                 )
 
 
-            st.markdown(
-                """
+st.markdown(
+    f"""
 <div style="
     border-left: 4px solid #2563eb;
     background-color: #f9fafb;
@@ -1780,16 +1783,28 @@ if selected_view == "Reports":
     </div>
     <div style="color: #4b5563; line-height: 1.5;">
 Staff time equivalent is estimated by dividing the number of AMH checkins by an assumed manual processing rate.<br><br>
+
 To determine a realistic rate, we analyzed circulation data from the Westside Branch, which operates without an automated materials handler (AMH). Using transaction-level data, we calculated hourly check-in activity and identified typical processing speeds under real working conditions.<br><br>
+
 The observed manual processing rate ranged between approximately <b>26–34 items per hour</b>, reflecting frontline conditions where staff balance multiple responsibilities.<br><br>
-To better represent a focused workflow and align with the higher and more consistent volume handled by the AMH at this branch, we normalize this value to a working range of 40–60 items per hour. This reflects a reasonable estimate of sustained manual processing capacity under dedicated handling conditions. Current items per hour value use for caluclation is <b>50 items per hour</b><br><br>
+
+To better represent a focused workflow and align with the higher and more consistent volume handled by the AMH at this branch,
+we normalize this value to a working range of <b>40–60 items per hour</b>. The current value used for calculation is <b>{MANUAL_RATE} items per hour</b>.<br><br>
+
 Formula: <b>staff hours saved = checkins ÷ manual rate</b><br><br>
+
+<b>Example (based on selected date range):</b><br>
+{example_checkins:,} checkins ÷ {MANUAL_RATE} = <b>{example_hours:,.2f} staff hours saved</b><br>
+{example_hours:,.2f} hours ÷ 8 = <b>{example_shifts:,.2f} staff shifts</b><br><br>
+
 This approach ensures the estimate is grounded in both real-world branch data and adjusted for differences in workload intensity between manual and automated environments.
     </div>
 </div>
-                """,
-                unsafe_allow_html=True
-            )
+    """,
+    unsafe_allow_html=True
+)
+
+
 
             
             staff_df["date"] = pd.to_datetime(staff_df["date"])
