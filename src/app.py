@@ -1309,18 +1309,20 @@ if selected_view == "Reports":
             )
 
             daily_df["date"] = pd.to_datetime(daily_df["date"])
+            daily_df["date_label"] = daily_df["date"].dt.strftime("%b %d")
             
             daily_volume_chart = (
                 alt.Chart(daily_df)
                 .mark_line(point=True)
                 .encode(
                     x=alt.X(
-                        "date:T",
+                        "date_label:N",
+                        sort=daily_df["date_label"].tolist(),
                         title="Date",
-                        axis=alt.Axis(labelAngle=0, format="%b %d")
+                        axis=alt.Axis(labelAngle=0)
                     ),
                     y=alt.Y("count:Q", title="Checkins"),
-                    tooltip=["date:T", "count:Q"]
+                    tooltip=["date_label", "count"]
                 )
                 .properties(height=350)
             )
