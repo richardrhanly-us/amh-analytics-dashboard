@@ -823,26 +823,36 @@ if selected_view == "Live Today":
                 f"Busiest hour: {format_hour(today_peak_hour)} with {today_peak_hour_count:,} checkins. "
             )
 
-        st.markdown(
-            f"""
-            <div style="
-                border-left: 4px solid #2563eb;
-                background-color: #f9fafb;
-                padding: 14px 16px;
-                border-radius: 8px;
-                margin-top: 0px;
-                margin-bottom: 10px;
-            ">
-                <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                    Operational Readout
-                </div>
-                <div style="color: #4b5563; line-height: 1.4;">
-                    {readout_text}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+            st.markdown(
+                f"""
+How Staff Time Saved Is Calculated
+
+This estimate compares how long it would take staff to process items manually versus how long the AMH processes the same workload.
+
+Step 1 — Manual Processing Time  
+This dashboard uses a manual processing rate of {MANUAL_RATE:.0f} items per hour.  
+Manual time = checkins ÷ {MANUAL_RATE:.0f}
+
+Step 2 — AMH Processing Time  
+Instead of guessing machine speed, this dashboard uses the AMH’s observed all-time busiest-hour average.  
+Current AMH rate used = {AMH_RATE:.1f} items per hour  
+AMH time = checkins ÷ {AMH_RATE:.1f}
+
+Step 3 — Time Saved  
+Staff time saved = (checkins ÷ {MANUAL_RATE:.0f}) − (checkins ÷ {AMH_RATE:.1f})
+
+Example Using the Current Selected Range  
+Average daily checkins: {avg_daily_checkins:,.1f}  
+Average daily manual time: {avg_daily_manual_hours:,.2f} hours  
+Average daily AMH time: {avg_daily_amh_hours:,.2f} hours  
+Average daily staff time saved: {avg_saved:,.2f} hours
+
+What This Means  
+- Uses actual AMH performance from historical data  
+- Compares manual processing time against AMH processing time  
+- Produces a more realistic estimate than treating all checkins as fully saved labor
+                """
+            )
 
         if len(today_hourly_checkins) > 0:
             peak_hours_df = today_hourly_checkins.sort_values(ascending=False).head(3).reset_index()
