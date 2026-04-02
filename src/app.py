@@ -958,6 +958,7 @@ if selected_view == "Live Today":
         render_kpi_card(
             "Estimated Holds",
             f"{today_estimated_holds:,}",
+            "",
             "#6b7280"
         )
     
