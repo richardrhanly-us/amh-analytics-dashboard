@@ -34,22 +34,16 @@ def get_system_alerts(
     if historical_westside_pct is not None:
         if westside_pct >= historical_westside_pct + 3:
             alerts.append({
-                "level": "warning",
-                "text": f"Westside routing is elevated today ({westside_pct:.2f}% vs typical {historical_westside_pct:.2f}%)."
+                "level": "info",
+                "text": f"Westside routing is trending above typical levels ({westside_pct:.2f}% vs typical {historical_westside_pct:.2f}%)."
             })
 
     if historical_library_express_pct is not None:
         if library_express_pct <= max(historical_library_express_pct - 1, 0):
             alerts.append({
-                "level": "warning",
-                "text": f"Library Express routing is below typical levels ({library_express_pct:.2f}% vs typical {historical_library_express_pct:.2f}%)."
+                "level": "info",
+                "text": f"Library Express routing is trending below typical levels ({library_express_pct:.2f}% vs typical {historical_library_express_pct:.2f}%)."
             })
-
-    if library_express_pct > 0 and westside_pct > library_express_pct * 3:
-        alerts.append({
-            "level": "warning",
-            "text": "Transit imbalance: Westside dominating over Library Express."
-        })
 
     if not alerts:
         alerts.append({
