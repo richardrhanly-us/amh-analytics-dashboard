@@ -1669,8 +1669,23 @@ if selected_view == "Reports":
                 unsafe_allow_html=True
             )
 
-            chart_df = destination_counts.set_index("destination")["count"]
-            st.bar_chart(chart_df)
+            destination_chart = (
+                alt.Chart(destination_counts)
+                .mark_bar()
+                .encode(
+                    x=alt.X(
+                        "destination:N",
+                        sort=destination_counts["destination"].tolist(),
+                        title="Destination",
+                        axis=alt.Axis(labelAngle=0)
+                    ),
+                    y=alt.Y("count:Q", title="Items"),
+                    tooltip=["destination", "count"]
+                )
+                .properties(height=350)
+            )
+            
+            render_chart(destination_chart)
 
             st.dataframe(destination_counts, use_container_width=True)
             download_button(destination_counts, "destination_breakdown.csv")
