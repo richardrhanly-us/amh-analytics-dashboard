@@ -1,57 +1,41 @@
 @echo off
 cd /d C:\amh_analytics
 
-echo ========================================
-echo AMH update started %date% %time%
-echo ========================================
+echo ==============================
+echo AMH update started
+echo ==============================
 
-echo Running pipeline...
-python -m scripts.run_pipeline
-if errorlevel 1 (
-    echo Pipeline failed.
-    goto end
-)
+python -m scripts.parse_checkins
+if errorlevel 1 goto :error
 
-echo Adding app + gitignore + processed files...
-git add .gitignore
-git add src\app.py
-git add src\data_loader.py
-git add scripts\run_pipeline.py
-git add scripts\parse_checkins.py
-git add scripts\parse_rejects.py
+python -m scripts.parse_rejects
+if errorlevel 1 goto :error
+
 git add data\processed\checkins_clean.csv
 git add data\processed\rejects_clean.csv
-git add data\processed\checkins_history.csv
-git add data\processed\rejects_history.csv
 git add data\processed\pipeline_status.json
 
-echo Checking for staged changes...
 git diff --cached --quiet
-if %errorlevel%==0 (
-    echo No changes to commit.
-    goto pull_only
-)
+if %errorlevel%==0 goto :nochanges
 
-echo Committing changes...
-git commit -m "AMH refresh and app updates"
+git commit -m "Auto-update AMH processed data"
+if errorlevel 1 goto :error
 
-:pull_only
-echo Pulling latest repo...
-git pull --rebase origin main
-if errorlevel 1 (
-    echo Git pull/rebase failed.
-    goto end
-)
-
-echo Pushing to GitHub...
 git push origin main
-if errorlevel 1 (
-    echo Git push failed.
-    goto end
-)
+if errorlevel 1 goto :error
+
+echo.
+echo Update complete and pushed to GitHub.
+goto :end
+
+:nochanges
+echo.
+echo No data changes detected. Nothing to commit.
+goto :end
+
+:error
+echo.
+echo Update failed.
+pause
 
 :end
-echo ========================================
-echo AMH update finished %date% %time%
-echo ========================================
-pause
