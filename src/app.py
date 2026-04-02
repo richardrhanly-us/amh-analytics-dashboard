@@ -100,11 +100,13 @@ def render_kpi_card(
 
 
 
-
 def get_file_updated_time(path):
     file_path = Path(path)
     if file_path.exists():
-        return datetime.fromtimestamp(file_path.stat().st_mtime)
+        return datetime.fromtimestamp(
+            file_path.stat().st_mtime,
+            tz=ZoneInfo("America/Chicago")
+        )
     return None
 
 
