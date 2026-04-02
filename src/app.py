@@ -2274,7 +2274,11 @@ if selected_view == "Transits":
         )
     
         st.dataframe(transit_hourly_display, use_container_width=True)
-        download_button(transit_hourly_display, "transit_by_hour_report.csv")
+        download_button(
+            transit_hourly_display,
+            "transit_by_hour_report.csv",
+            key="transit_by_hour_report_download"
+        )
     else:
         st.info("No hourly transit data available for the selected date range.")
     
