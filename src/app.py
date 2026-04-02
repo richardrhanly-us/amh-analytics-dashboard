@@ -378,16 +378,8 @@ def render_report_exports(df, report_title, html_summary=""):
     html_bytes = html_doc.encode("utf-8")
     html_b64 = base64.b64encode(html_bytes).decode()
 
-    c1, c2, c3 = st.columns([1,1,1])
+    c1, c2, c3, _ = st.columns([1, 1, 1, 6])
     
-    with c1:
-        st.download_button("CSV", data=csv_bytes, file_name=..., key=...)
-    
-    with c2:
-        st.download_button("HTML", data=html_bytes, file_name=..., key=...)
-    
-    with c3:
-        st.markdown(print_html, unsafe_allow_html=True)
 
     with c1:
         st.download_button(
