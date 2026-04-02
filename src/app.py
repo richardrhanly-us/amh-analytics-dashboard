@@ -2130,19 +2130,51 @@ if selected_view == "Transits":
             f"({float(top_row['pct_of_total_items']):.2f}% of total)"
         )
 
-    transit1, transit2, transit3, transit4 = st.columns(4)
-
+    today_no_agency_dest = int(
+        df["destination"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False).sum()
+    )
+    
+    transit1, transit2, transit3, transit4, transit5 = st.columns(5)
+    
     with transit1:
-        render_kpi_card("Total Transit Items", f"{total_transit_items:,}", f"{total_transit_pct:.2f}% of all checkins", "#6b7280")
-
+        render_kpi_card(
+            "Total Transit Items",
+            f"{total_transit_items:,}",
+            f"{total_transit_pct:.2f}% of all checkins",
+            "#6b7280"
+        )
+    
     with transit2:
-        render_kpi_card("Transit Destinations", f"{transit_destination_count}", "Unique routed destinations in range", "#6b7280")
-
+        render_kpi_card(
+            "Transit to Westside",
+            f"{westside_count:,}",
+            f"{westside_pct:.2f}% of all checkins",
+            "#6b7280"
+        )
+    
     with transit3:
-        render_kpi_card("Top Destination", top_transit_destination, top_transit_subtitle, "#6b7280")
-
+        render_kpi_card(
+            "Transit to Library Express",
+            f"{library_express_count:,}",
+            f"{library_express_pct:.2f}% of all checkins",
+            "#6b7280"
+        )
+    
     with transit4:
-        render_kpi_card("Peak Avg Transit Day", peak_transit_day_label, peak_transit_day_subtitle, "#6b7280")
+        render_kpi_card(
+            "To No Agency Destination",
+            f"{today_no_agency_dest:,}",
+            "Missing destination routing",
+            "#6b7280"
+        )
+    
+    with transit5:
+        render_kpi_card(
+            "Peak Avg Transit Day",
+            peak_transit_day_label,
+            peak_transit_day_subtitle,
+            "#6b7280"
+        )
 
     st.markdown(
         f"""
@@ -2188,6 +2220,37 @@ if selected_view == "Transits":
 
     st.divider()
 
+    
+    st.markdown("---")
+    st.subheader("Transit Distribution")
+    st.caption("Breakdown of transit volume by destination.")
+    
+    if len(transit_summary) > 0:
+        transit_distribution_df = transit_summary.copy()
+        transit_distribution_df["transit_items"] = transit_distribution_df["transit_items"].astype(int)
+    
+        transit_distribution_chart_df = transit_distribution_df[["destination", "transit_items"]].copy()
+    
+        transit_distribution_chart = build_category_bar_chart(
+            transit_distribution_chart_df,
+            "destination",
+            "transit_items",
+            "Transit Items",
+            "Destination"
+        )
+        render_chart(transit_distribution_chart)
+    
+        transit_distribution_display = transit_distribution_df.rename(columns={
+            "destination": "Destination",
+            "transit_items": "Transit Items",
+            "pct_of_total_items": "% of Total Items"
+        })
+    
+        st.dataframe(transit_distribution_display, use_container_width=True)
+        download_button(transit_distribution_display, "transit_distribution_report.csv")
+    else:
+        st.info("No transit distribution data available for the selected date range.")
+    
     st.subheader("Average Transit Time")
 
     if len(transit_time_summary) > 0:
