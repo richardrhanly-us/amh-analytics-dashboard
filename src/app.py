@@ -1329,113 +1329,22 @@ if selected_view == "Reports":
     st.caption("How much the AMH is processing, when demand peaks, and how current volume compares to normal patterns.")
 
     with st.expander("Weekday & Peak Analysis", expanded=False):
-    st.caption("Shows volume trends by day of week and identifies peak operating times.")
-
-    # ----- Day of Week Volume -----
-    dow_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-
-    dow_counts = (
-        df.groupby("day_of_week")
-          .size()
-          .reindex(dow_order)
-          .fillna(0)
-          .reset_index(name="count")
-    )
-
-    if len(dow_counts) > 0:
-        busiest_day = dow_counts.sort_values("count", ascending=False).iloc[0]
-
-        st.markdown(
-            f"""
-            <div style="
-                border-left: 4px solid #2563eb;
-                background-color: #f9fafb;
-                padding: 14px 16px;
-                border-radius: 8px;
-                margin-top: 8px;
-                margin-bottom: 16px;
-            ">
-                <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                    Report Summary
-                </div>
-                <div style="color: #4b5563; line-height: 1.4;">
-                    Busiest day: {busiest_day['day_of_week']} with {int(busiest_day['count']):,} items processed.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        dow_chart = build_category_bar_chart(
-            dow_counts,
-            "day_of_week",
-            "count",
-            "Checkins",
-            "Day of Week"
-        )
-        render_chart(dow_chart)
-
-        st.dataframe(dow_counts, use_container_width=True)
-        download_button(dow_counts, "weekday_volume.csv")
-
-    else:
-        st.info("No weekday data available for selected range.")
-
-    # ----- Hourly Volume -----
-    st.subheader("Peak Hour Analysis")
-
-    hour_counts = (
-        df.groupby("hour")
-          .size()
-          .reset_index(name="count")
-    )
-
-    if len(hour_counts) > 0:
-        busiest_hour = hour_counts.sort_values("count", ascending=False).iloc[0]
-
-        st.markdown(
-            f"""
-            <div style="
-                border-left: 4px solid #2563eb;
-                background-color: #f9fafb;
-                padding: 14px 16px;
-                border-radius: 8px;
-                margin-top: 8px;
-                margin-bottom: 16px;
-            ">
-                <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                    Report Summary
-                </div>
-                <div style="color: #4b5563; line-height: 1.4;">
-                    Busiest hour: {format_hour_plain(busiest_hour['hour'])} with {int(busiest_hour['count']):,} items.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        hour_counts["hour_label"] = hour_counts["hour"].apply(format_hour_plain)
-        hour_counts = hour_counts[(hour_counts["hour"] >= 7) & (hour_counts["hour"] <= 20)]
-
-        hourly_chart = build_hourly_bar_chart(hour_counts, "count", "Checkins")
-        render_chart(hourly_chart)
-
-        display_df = hour_counts[["hour_label", "count"]].rename(columns={"hour_label": "hour"})
-        st.dataframe(display_df, use_container_width=True)
-        download_button(display_df, "peak_hour_analysis.csv")
-
-    else:
-        st.info("No hourly data available for selected range.")
+        st.caption("Shows volume trends by day of week and identifies peak operating times.")
     
-    with st.expander("Daily Volume", expanded=False):
-        daily_volume = df["datetime"].dt.date.value_counts().sort_index()
-        daily_df = daily_volume.reset_index()
-        daily_df.columns = ["date", "count"]
-
-        if len(daily_df) > 0:
-            peak_day = daily_df.loc[daily_df["count"].idxmax()]
-            avg_daily = daily_df["count"].mean()
-
+        # ----- Day of Week Volume -----
+        dow_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    
+        dow_counts = (
+            df.groupby("day_of_week")
+              .size()
+              .reindex(dow_order)
+              .fillna(0)
+              .reset_index(name="count")
+        )
+    
+        if len(dow_counts) > 0:
+            busiest_day = dow_counts.sort_values("count", ascending=False).iloc[0]
+    
             st.markdown(
                 f"""
                 <div style="
@@ -1450,39 +1359,130 @@ if selected_view == "Reports":
                         Report Summary
                     </div>
                     <div style="color: #4b5563; line-height: 1.4;">
-                        Peak day: {pd.to_datetime(peak_day["date"]).strftime("%a, %b %d")} with {int(peak_day["count"]):,} checkins.
-                        Average daily volume: {avg_daily:,.0f} checkins.
+                        Busiest day: {busiest_day['day_of_week']} with {int(busiest_day['count']):,} items processed.
                     </div>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
-
-            daily_df["date"] = pd.to_datetime(daily_df["date"])
-            daily_df["date_label"] = daily_df["date"].dt.strftime("%b %d")
-            
-            daily_volume_chart = (
-                alt.Chart(daily_df)
-                .mark_line(point=True)
-                .encode(
-                    x=alt.X(
-                        "date_label:N",
-                        sort=daily_df["date_label"].tolist(),
-                        title="Date",
-                        axis=alt.Axis(labelAngle=0)
-                    ),
-                    y=alt.Y("count:Q", title="Checkins"),
-                    tooltip=["date_label", "count"]
-                )
-                .properties(height=350)
+    
+            dow_chart = build_category_bar_chart(
+                dow_counts,
+                "day_of_week",
+                "count",
+                "Checkins",
+                "Day of Week"
             )
-            
-            render_chart(daily_volume_chart)
-
-            st.dataframe(daily_df, use_container_width=True)
-            download_button(daily_df, "daily_volume_report.csv")
+            render_chart(dow_chart)
+    
+            st.dataframe(dow_counts, use_container_width=True)
+            download_button(dow_counts, "weekday_volume.csv")
+    
         else:
-            st.info("No daily volume data available for the selected date range.")
+            st.info("No weekday data available for selected range.")
+    
+        # ----- Hourly Volume -----
+        st.subheader("Peak Hour Analysis")
+    
+        hour_counts = (
+            df.groupby("hour")
+              .size()
+              .reset_index(name="count")
+        )
+    
+        if len(hour_counts) > 0:
+            busiest_hour = hour_counts.sort_values("count", ascending=False).iloc[0]
+    
+            st.markdown(
+                f"""
+                <div style="
+                    border-left: 4px solid #2563eb;
+                    background-color: #f9fafb;
+                    padding: 14px 16px;
+                    border-radius: 8px;
+                    margin-top: 8px;
+                    margin-bottom: 16px;
+                ">
+                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                        Report Summary
+                    </div>
+                    <div style="color: #4b5563; line-height: 1.4;">
+                        Busiest hour: {format_hour_plain(busiest_hour['hour'])} with {int(busiest_hour['count']):,} items.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+    
+            hour_counts["hour_label"] = hour_counts["hour"].apply(format_hour_plain)
+            hour_counts = hour_counts[(hour_counts["hour"] >= 7) & (hour_counts["hour"] <= 20)]
+    
+            hourly_chart = build_hourly_bar_chart(hour_counts, "count", "Checkins")
+            render_chart(hourly_chart)
+    
+            display_df = hour_counts[["hour_label", "count"]].rename(columns={"hour_label": "hour"})
+            st.dataframe(display_df, use_container_width=True)
+            download_button(display_df, "peak_hour_analysis.csv")
+    
+        else:
+            st.info("No hourly data available for selected range.")
+        
+        with st.expander("Daily Volume", expanded=False):
+            daily_volume = df["datetime"].dt.date.value_counts().sort_index()
+            daily_df = daily_volume.reset_index()
+            daily_df.columns = ["date", "count"]
+    
+            if len(daily_df) > 0:
+                peak_day = daily_df.loc[daily_df["count"].idxmax()]
+                avg_daily = daily_df["count"].mean()
+    
+                st.markdown(
+                    f"""
+                    <div style="
+                        border-left: 4px solid #2563eb;
+                        background-color: #f9fafb;
+                        padding: 14px 16px;
+                        border-radius: 8px;
+                        margin-top: 8px;
+                        margin-bottom: 16px;
+                    ">
+                        <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                            Report Summary
+                        </div>
+                        <div style="color: #4b5563; line-height: 1.4;">
+                            Peak day: {pd.to_datetime(peak_day["date"]).strftime("%a, %b %d")} with {int(peak_day["count"]):,} checkins.
+                            Average daily volume: {avg_daily:,.0f} checkins.
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+    
+                daily_df["date"] = pd.to_datetime(daily_df["date"])
+                daily_df["date_label"] = daily_df["date"].dt.strftime("%b %d")
+                
+                daily_volume_chart = (
+                    alt.Chart(daily_df)
+                    .mark_line(point=True)
+                    .encode(
+                        x=alt.X(
+                            "date_label:N",
+                            sort=daily_df["date_label"].tolist(),
+                            title="Date",
+                            axis=alt.Axis(labelAngle=0)
+                        ),
+                        y=alt.Y("count:Q", title="Checkins"),
+                        tooltip=["date_label", "count"]
+                    )
+                    .properties(height=350)
+                )
+                
+                render_chart(daily_volume_chart)
+    
+                st.dataframe(daily_df, use_container_width=True)
+                download_button(daily_df, "daily_volume_report.csv")
+            else:
+                st.info("No daily volume data available for the selected date range.")
 
     with st.expander("Hourly Volume", expanded=False):
         hourly_volume = df["datetime"].dt.hour.value_counts().sort_index()
