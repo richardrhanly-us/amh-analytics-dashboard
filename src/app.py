@@ -2278,18 +2278,11 @@ if selected_view == "Transits":
     else:
         st.info("No hourly transit data available for the selected date range.")
     
-    st.subheader("Average Transit Time")
+    st.markdown("---")
+st.subheader("Transit Reports")
+st.caption("Additional transit reports organized by data type.")
 
-    if len(transit_time_summary) > 0:
-        display_df = transit_time_summary[["destination", "avg_minutes"]].rename(columns={
-            "destination": "Destination",
-            "avg_minutes": "Avg Transit Time (min)"
-        })
-        st.dataframe(display_df, use_container_width=True)
-        download_button(display_df, "average_transit_time_report.csv")
-    else:
-        st.info("Not enough data to calculate transit times.")
-
+with st.expander("Destination Reports", expanded=False):
     st.subheader("Transit by Destination")
     if len(transit_summary) > 0:
         transit_display = transit_summary.copy()
@@ -2321,20 +2314,6 @@ if selected_view == "Transits":
         download_button(diagnostics_display, "destination_transit_diagnostics_report.csv")
     else:
         st.info("No destination-level transit reject data available for the selected date range.")
-    
-    st.subheader("Transit Destination Share")
-    if len(transit_summary) > 0:
-        transit_share_df = transit_summary[["destination", "transit_items"]].copy()
-        transit_share_chart = build_category_bar_chart(
-            transit_share_df,
-            "destination",
-            "transit_items",
-            "Transit Items",
-            "Destination"
-        )
-        render_chart(transit_share_chart)
-    else:
-        st.info("No transit destination data available for charting.")
 
     st.subheader("Transit by Destination by Weekday")
     if len(destination_weekday_mix) > 0:
@@ -2345,7 +2324,7 @@ if selected_view == "Transits":
             var_name="destination",
             value_name="transit_items"
         )
-    
+
         weekday_altair = (
             alt.Chart(weekday_long)
             .mark_line(point=True)
@@ -2363,19 +2342,32 @@ if selected_view == "Transits":
             .properties(height=350)
         )
         render_chart(weekday_altair)
-    
+
         weekday_display = destination_weekday_mix.round(1)
         st.dataframe(weekday_display, use_container_width=True)
         download_button(weekday_display, "transit_by_destination_by_weekday_report.csv")
     else:
         st.info("No destination weekday mix data available for the selected date range.")
-    
+
+
+with st.expander("Time-Based Reports", expanded=False):
+    st.subheader("Average Transit Time")
+    if len(transit_time_summary) > 0:
+        display_df = transit_time_summary[["destination", "avg_minutes"]].rename(columns={
+            "destination": "Destination",
+            "avg_minutes": "Avg Transit Time (min)"
+        })
+        st.dataframe(display_df, use_container_width=True)
+        download_button(display_df, "average_transit_time_report.csv")
+    else:
+        st.info("Not enough data to calculate transit times.")
+
     st.subheader("Daily Transit Volume")
     if len(transit_df) > 0:
         daily_transit = transit_df["datetime"].dt.date.value_counts().sort_index().reset_index()
         daily_transit.columns = ["date", "transit_items"]
         daily_transit["date"] = pd.to_datetime(daily_transit["date"])
-    
+
         daily_transit_chart = build_date_line_chart(
             daily_transit,
             "date",
@@ -2383,15 +2375,15 @@ if selected_view == "Transits":
             "Transit Items"
         )
         render_chart(daily_transit_chart)
-    
+
         daily_transit_display = daily_transit.copy()
         daily_transit_display["date"] = pd.to_datetime(daily_transit_display["date"]).dt.strftime("%Y-%m-%d")
-    
+
         st.dataframe(daily_transit_display, use_container_width=True)
         download_button(daily_transit_display, "daily_transit_volume_report.csv")
     else:
         st.info("No transit items found for the selected date range.")
-        
+
     st.subheader("Transit Mix by Day")
     if len(transit_df) > 0:
         transit_mix = (
@@ -2401,7 +2393,7 @@ if selected_view == "Transits":
         )
         transit_mix.columns = ["date", "transit_destination", "transit_items"]
         transit_mix["date"] = pd.to_datetime(transit_mix["date"])
-    
+
         transit_mix_chart = build_date_line_chart(
             transit_mix,
             "date",
@@ -2410,9 +2402,10 @@ if selected_view == "Transits":
             series_col="transit_destination"
         )
         render_chart(transit_mix_chart)
+
         transit_mix_display = transit_mix.copy()
         transit_mix_display["date"] = pd.to_datetime(transit_mix_display["date"]).dt.strftime("%Y-%m-%d")
-        
+
         st.dataframe(transit_mix_display, use_container_width=True)
         download_button(transit_mix_display, "transit_mix_by_day_report.csv")
     else:
@@ -2427,3 +2420,19 @@ if selected_view == "Transits":
         download_button(comparison_display, "transit_vs_reject_pattern_by_weekday_report.csv")
     else:
         st.info("No weekday comparison data available for the selected date range.")
+
+
+with st.expander("Distribution / Share Charts", expanded=False):
+    st.subheader("Transit Destination Share")
+    if len(transit_summary) > 0:
+        transit_share_df = transit_summary[["destination", "transit_items"]].copy()
+        transit_share_chart = build_category_bar_chart(
+            transit_share_df,
+            "destination",
+            "transit_items",
+            "Transit Items",
+            "Destination"
+        )
+        render_chart(transit_share_chart)
+    else:
+        st.info("No transit destination data available for charting.")
