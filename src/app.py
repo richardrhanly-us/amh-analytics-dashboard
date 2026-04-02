@@ -26,7 +26,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-from data_loader import load_checkins_df, load_rejects_df, load_pipeline_status
+from data_loader import load_checkins_df, load_checkins_history_df, load_rejects_df, load_pipeline_status
 from metrics import get_date_filtered_df, get_today_metrics, get_overall_metrics, get_historical_reject_baseline
 from reject_logic import simplify_error
 from alerts import get_system_alerts
