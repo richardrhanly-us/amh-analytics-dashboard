@@ -4,8 +4,8 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-CHECKINS_FILE = "data/processed/checkins_history.csv"
-REJECTS_FILE = "data/processed/rejects_history.csv"
+CHECKINS_FILE = "data/processed/checkins_clean.csv"
+REJECTS_FILE = "data/processed/rejects_clean.csv"
 STATUS_FILE = "data/processed/pipeline_status.json"
 
 
@@ -20,7 +20,9 @@ def get_file_mtime(path):
 def load_checkins_df(path=CHECKINS_FILE, mtime=None):
     df = pd.read_csv(path, low_memory=False)
 
-    if "checkin_datetime" in df.columns:
+    if "datetime" in df.columns:
+        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+    elif "checkin_datetime" in df.columns:
         df["datetime"] = pd.to_datetime(df["checkin_datetime"], errors="coerce")
 
     if "bin" not in df.columns and "sort_bin" in df.columns:
