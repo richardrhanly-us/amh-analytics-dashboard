@@ -129,3 +129,12 @@ barcode,error_message,date,time,datetime,date_only,hour,day_of_week,error_simple
 ,No Item Found,4/2/2026,1:39:46 PM,2026-04-02 13:39:46,2026-04-02,13,Thursday,Other
 ,No Item Found,4/2/2026,2:25:26 PM,2026-04-02 14:25:26,2026-04-02,14,Thursday,Other
 ,No Item Found,4/2/2026,2:31:02 PM,2026-04-02 14:31:02,2026-04-02,14,Thursday,Other
+33472004397966,ACS check-in failed,4/2/2026,5:04:04 PM,2026-04-02 17:04:04,2026-04-02,17,Thursday,ILS / ACS Failure
+33472004546307,ACS check-in failed,4/2/2026,5:04:06 PM,2026-04-02 17:04:06,2026-04-02,17,Thursday,ILS / ACS Failure
+33472003720010,ACS check-in failed,4/2/2026,5:04:07 PM,2026-04-02 17:04:07,2026-04-02,17,Thursday,ILS / ACS Failure
+33472004381036,ACS check-in failed,4/2/2026,5:04:09 PM,2026-04-02 17:04:09,2026-04-02,17,Thursday,ILS / ACS Failure
+33472003689942,ACS check-in failed,4/2/2026,5:04:13 PM,2026-04-02 17:04:13,2026-04-02,17,Thursday,ILS / ACS Failure
+33472009094808,ACS check-in failed,4/2/2026,5:04:15 PM,2026-04-02 17:04:15,2026-04-02,17,Thursday,ILS / ACS Failure
+33472003600170,ACS check-in failed,4/2/2026,5:04:17 PM,2026-04-02 17:04:17,2026-04-02,17,Thursday,ILS / ACS Failure
+33472003310069,ACS check-in failed,4/2/2026,5:04:18 PM,2026-04-02 17:04:18,2026-04-02,17,Thursday,ILS / ACS Failure
+33472004054872,ACS check-in failed,4/2/2026,5:04:20 PM,2026-04-02 17:04:20,2026-04-02,17,Thursday,ILS / ACS Failure

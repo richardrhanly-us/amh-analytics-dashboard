@@ -1,16 +1,16 @@
 {
-  "last_run": "2026-04-02T16:55:04",
-  "checkins_rows": 3194,
-  "rejects_rows": 130,
-  "checkins_history_rows": 60836,
-  "rejects_history_rows": 2261,
+  "last_run": "2026-04-02T17:05:05",
+  "checkins_rows": 3219,
+  "rejects_rows": 139,
+  "checkins_history_rows": 60864,
+  "rejects_history_rows": 2270,
   "checkins_bad_datetime_rows": 0,
   "rejects_bad_datetime_rows": 0,
-  "transit_items": 374,
+  "transit_items": 376,
   "problem_items": 0,
   "destination_breakdown": {
-    "Main": 2820,
-    "Westside": 315,
+    "Main": 2843,
+    "Westside": 317,
     "Library Express": 59
   }
 }
