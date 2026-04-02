@@ -1381,48 +1381,48 @@ with st.expander("Weekday & Peak Analysis", expanded=False):
     else:
         st.info("No weekday data available for selected range.")
 
-        # ----- Hourly Volume -----
-        st.subheader("Peak Hour Analysis")
-    
-        hour_counts = (
-            df.groupby("hour")
-              .size()
-              .reset_index(name="count")
-        )
-    
-        if len(hour_counts) > 0:
-            busiest_hour = hour_counts.sort_values("count", ascending=False).iloc[0]
-    
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #2563eb;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-top: 8px;
-                    margin-bottom: 16px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Report Summary
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.4;">
-                        Busiest hour: {format_hour_plain(busiest_hour['hour'])} with {int(busiest_hour['count']):,} items.
-                    </div>
+    # ----- Hourly Volume -----
+    st.subheader("Peak Hour Analysis")
+
+    hour_counts = (
+        df.groupby("hour")
+          .size()
+          .reset_index(name="count")
+    )
+
+    if len(hour_counts) > 0:
+        busiest_hour = hour_counts.sort_values("count", ascending=False).iloc[0]
+
+        st.markdown(
+            f"""
+            <div style="
+                border-left: 4px solid #2563eb;
+                background-color: #f9fafb;
+                padding: 14px 16px;
+                border-radius: 8px;
+                margin-top: 8px;
+                margin-bottom: 16px;
+            ">
+                <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                    Report Summary
                 </div>
-                """,
-                unsafe_allow_html=True
-            )
-    
-            hour_counts["hour_label"] = hour_counts["hour"].apply(format_hour_plain)
-            hour_counts = hour_counts[(hour_counts["hour"] >= 7) & (hour_counts["hour"] <= 20)]
-    
-            hourly_chart = build_hourly_bar_chart(hour_counts, "count", "Checkins")
-            render_chart(hourly_chart)
-    
-            display_df = hour_counts[["hour_label", "count"]].rename(columns={"hour_label": "hour"})
-            st.dataframe(display_df, use_container_width=True)
-            download_button(display_df, "peak_hour_analysis.csv")
+                <div style="color: #4b5563; line-height: 1.4;">
+                    Busiest hour: {format_hour_plain(busiest_hour['hour'])} with {int(busiest_hour['count']):,} items.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        hour_counts["hour_label"] = hour_counts["hour"].apply(format_hour_plain)
+        hour_counts = hour_counts[(hour_counts["hour"] >= 7) & (hour_counts["hour"] <= 20)]
+
+        hourly_chart = build_hourly_bar_chart(hour_counts, "count", "Checkins")
+        render_chart(hourly_chart)
+
+        display_df = hour_counts[["hour_label", "count"]].rename(columns={"hour_label": "hour"})
+        st.dataframe(display_df, use_container_width=True)
+        download_button(display_df, "peak_hour_analysis.csv")
 
     else:
         st.info("No hourly data available for selected range.")
