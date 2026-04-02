@@ -320,6 +320,97 @@ def build_hourly_line_chart(df, value_col, title_y, series_col=None, start_hour=
 
     return chart
 
+import base64
+from io import BytesIO
+
+def render_report_exports(df, report_title, html_summary=""):
+    csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+    html_table = df.to_html(index=False, border=0)
+    html_doc = f"""
+    <html>
+    <head>
+        <title>{report_title}</title>
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                margin: 24px;
+                color: #111;
+            }}
+            h1 {{
+                margin-bottom: 6px;
+            }}
+            .summary {{
+                margin-bottom: 18px;
+                color: #444;
+            }}
+            table {{
+                border-collapse: collapse;
+                width: 100%;
+                margin-top: 12px;
+            }}
+            th, td {{
+                border: 1px solid #d1d5db;
+                padding: 8px 10px;
+                text-align: left;
+            }}
+            th {{
+                background: #f3f4f6;
+            }}
+            @media print {{
+                body {{
+                    margin: 12px;
+                }}
+                .no-print {{
+                    display: none;
+                }}
+            }}
+        </style>
+    </head>
+    <body>
+        <h1>{report_title}</h1>
+        <div class="summary">{html_summary}</div>
+        {html_table}
+    </body>
+    </html>
+    """
+
+    html_bytes = html_doc.encode("utf-8")
+    html_b64 = base64.b64encode(html_bytes).decode()
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        st.download_button(
+            "Download CSV",
+            data=csv_bytes,
+            file_name=f"{report_title.lower().replace(' ', '_')}.csv",
+            mime="text/csv"
+        )
+
+    with c2:
+        st.download_button(
+            "Download HTML",
+            data=html_bytes,
+            file_name=f"{report_title.lower().replace(' ', '_')}.html",
+            mime="text/html"
+        )
+
+    with c3:
+        print_html = f"""
+        <a href="data:text/html;base64,{html_b64}" target="_blank">
+            <button style="
+                background:#f3f4f6;
+                border:1px solid #d1d5db;
+                border-radius:8px;
+                padding:0.5rem 1rem;
+                cursor:pointer;
+            ">Open Print View</button>
+        </a>
+        """
+        st.markdown(print_html, unsafe_allow_html=True)
+
+
 CHECKINS_FILE = "data/processed/checkins_clean.csv"
 REJECTS_FILE = "data/processed/rejects_clean.csv"
 STATUS_FILE = "data/processed/pipeline_status.json"
@@ -1352,7 +1443,15 @@ if selected_view == "Reports":
             render_chart(daily_volume_chart)
 
             st.dataframe(daily_df, use_container_width=True)
-            download_button(daily_df, "daily_volume.csv")
+            render_report_exports(
+                daily_df,
+                "Daily Volume Report",
+                html_summary=(
+                    f"Peak day: {pd.to_datetime(peak_day['date']).strftime('%a, %b %d')} "
+                    f"with {int(peak_day['count']):,} checkins. "
+                    f"Average daily volume: {avg_daily:,.0f} checkins."
+                )
+            )
         else:
             st.info("No daily volume data available for the selected date range.")
 
