@@ -1794,7 +1794,8 @@ This estimate compares how long it would take staff to process items manually ve
 Step 1 — Manual Processing Time
 This dashboard uses a manual processing baseline of {MANUAL_RATE:.0f} items per hour.
 That baseline comes from observed staff check-in pace from Westside circulation check-in reporting, and is used here as a reasonable manual processing benchmark.
-Manual time = checkins ÷ {MANUAL_RATE:.0f}
+
+**Manual time = checkins ÷ {MANUAL_RATE:.0f}**
 
 Step 2 — AMH Processing Time
 Instead of guessing machine speed, this dashboard uses the AMH’s observed all-time busiest-hour average.
