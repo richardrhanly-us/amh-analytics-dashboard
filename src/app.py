@@ -356,6 +356,11 @@ df_raw = load_checkins_df(mtime=checkins_mtime)
 rejects_raw = load_rejects_df(mtime=rejects_mtime)
 pipeline_status = load_pipeline_status(mtime=status_mtime)
 
+st.write("Min datetime:", df_raw["datetime"].min())
+st.write("Max datetime:", df_raw["datetime"].max())
+st.write("Today:", datetime.now(ZoneInfo("America/Chicago")).date())
+st.write("Unique dates:", df_raw["datetime"].dt.date.unique())
+
 
 rejects_raw["error_simple"] = rejects_raw["error_message"].apply(simplify_error)
 
