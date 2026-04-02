@@ -2279,3 +2279,4 @@ barcode,error_message,date,time,raw_line,snapshot_time,record_key,datetime,date_
 33472004054872.0,ACS check-in failed,4/2/2026,5:04:20 PM,,,,2026-04-02 17:04:20,2026-04-02,17,Thursday,ILS / ACS Failure
 33472004054872,ACS check-in failed,4/2/2026,5:04:20 PM,,,,2026-04-02 17:04:20,2026-04-02,17,Thursday,ILS / ACS Failure
 ,No Item Found,4/2/2026,5:38:59 PM,,,,2026-04-02 17:38:59,2026-04-02,17,Thursday,Other
+,No Item Found,4/2/2026,5:38:59 PM,,,,2026-04-02 17:38:59,2026-04-02,17,Thursday,Other
