@@ -1308,8 +1308,24 @@ if selected_view == "Reports":
                 unsafe_allow_html=True
             )
 
-            chart_df = daily_df.set_index("date")["count"]
-            st.line_chart(chart_df)
+            daily_df["date"] = pd.to_datetime(daily_df["date"])
+            
+            daily_volume_chart = (
+                alt.Chart(daily_df)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X(
+                        "date:T",
+                        title="Date",
+                        axis=alt.Axis(labelAngle=0, format="%b %d")
+                    ),
+                    y=alt.Y("count:Q", title="Checkins"),
+                    tooltip=["date:T", "count:Q"]
+                )
+                .properties(height=350)
+            )
+            
+            render_chart(daily_volume_chart)
 
             st.dataframe(daily_df, use_container_width=True)
             download_button(daily_df, "daily_volume.csv")
