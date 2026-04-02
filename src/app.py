@@ -27,7 +27,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-from data_loader import load_checkins_df, load_checkins_history_df, load_rejects_df, load_pipeline_status
+from data_loader import load_checkins_df, load_checkins_history_df, load_rejects_df, load_rejects_history_df, load_pipeline_status
 from metrics import get_date_filtered_df, get_today_metrics, get_overall_metrics, get_historical_reject_baseline
 from reject_logic import simplify_error
 from alerts import get_system_alerts
@@ -354,15 +354,18 @@ rejects_mtime = rejects_updated.timestamp() if rejects_updated else 0
 status_mtime = status_updated.timestamp() if status_updated else 0
 
 df_live_raw = load_checkins_df(mtime=checkins_mtime)
-df_history_raw = load_checkins_history_df()   # no mtime needed for now
+df_history_raw = load_checkins_history_df()
 
-rejects_raw = load_rejects_df(mtime=rejects_mtime)
+rejects_live_raw = load_rejects_df(mtime=rejects_mtime)
+rejects_history_raw = load_rejects_history_df()
+
 pipeline_status = load_pipeline_status(mtime=status_mtime)
 
 
 
 
-rejects_raw["error_simple"] = rejects_raw["error_message"].apply(simplify_error)
+rejects_live_raw["error_simple"] = rejects_live_raw["error_message"].apply(simplify_error)
+rejects_history_raw["error_simple"] = rejects_history_raw["error_message"].apply(simplify_error)
 
 min_date = df_history_raw["datetime"].min().date()
 max_date = df_history_raw["datetime"].max().date()
@@ -463,7 +466,7 @@ if selected_view in ["Overview", "Reports", "Transits"]:
     st.sidebar.caption(f"Showing: {start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}")
 
 df = get_date_filtered_df(df_history_raw, start_date, end_date)
-rejects_df = get_date_filtered_df(rejects_raw, start_date, end_date)
+rejects_df = get_date_filtered_df(rejects_history_raw, start_date, end_date)
 
 weekday_order = [
     "Monday", "Tuesday", "Wednesday", "Thursday",
@@ -569,7 +572,7 @@ if len(rejects_df) > 0:
     peak_failure_window_subtitle = f"{peak_failure_count:,} rejects ({peak_failure_pct:.1f}% of failures)"
 
 today = datetime.now(ZoneInfo("America/Chicago")).date()
-today_metrics = get_today_metrics(df_live_raw, rejects_raw, today)
+today_metrics = get_today_metrics(df_live_raw, rejects_live_raw, today)
 
 
 today_df = today_metrics["today_df"]
@@ -617,7 +620,8 @@ today_estimated_holds = max(
     today_bin0_count - today_rejects - today_library_express,
     0
 )
-historical_baseline = get_historical_reject_baseline(df_history_raw, rejects_raw, today)
+
+historical_baseline = get_historical_reject_baseline(df_history_raw, rejects_history_raw, today)
 
 historical_daily_avg_reject = historical_baseline.get("historical_daily_avg_reject")
 
@@ -627,7 +631,9 @@ if historical_daily_avg_reject is None or historical_daily_avg_reject == 0:
 
     if len(historical_df) > 0:
         daily_checkins = historical_df["datetime"].dt.date.value_counts()
-        daily_rejects = rejects_raw[rejects_raw["datetime"].dt.date < today]["datetime"].dt.date.value_counts()
+        daily_rejects = rejects_history_raw[
+            rejects_history_raw["datetime"].dt.date < today
+        ]["datetime"].dt.date.value_counts()
 
         combined = pd.DataFrame({
             "checkins": daily_checkins,
