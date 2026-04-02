@@ -323,7 +323,7 @@ def build_hourly_line_chart(df, value_col, title_y, series_col=None, start_hour=
 import base64
 from io import BytesIO
 
-def render_report_exports(df, report_title):
+def render_report_exports(df, report_title, html_summary=""):
     safe_name = report_title.lower().replace(" ", "_").replace("/", "_")
 
     csv_bytes = df.to_csv(index=False).encode("utf-8")
