@@ -178,6 +178,98 @@ def build_hourly_bar_chart(df, value_col, title_y, start_hour=7, end_hour=20):
     return chart
 
 
+def build_category_bar_chart(df, category_col, value_col, y_title, x_title=""):
+    chart = (
+        alt.Chart(df)
+        .mark_bar()
+        .encode(
+            x=alt.X(
+                f"{category_col}:N",
+                sort=df[category_col].tolist(),
+                title=x_title,
+                axis=alt.Axis(labelAngle=0)
+            ),
+            y=alt.Y(f"{value_col}:Q", title=y_title),
+            tooltip=[category_col, value_col]
+        )
+        .properties(height=350)
+    )
+    return chart
+
+
+def build_date_line_chart(df, date_col, value_col, y_title, series_col=None):
+    if series_col:
+        chart = (
+            alt.Chart(df)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X(
+                    f"{date_col}:T",
+                    title="Date",
+                    axis=alt.Axis(labelAngle=0, format="%b %d")
+                ),
+                y=alt.Y(f"{value_col}:Q", title=y_title),
+                color=alt.Color(f"{series_col}:N"),
+                tooltip=[date_col, series_col, value_col]
+            )
+            .properties(height=350)
+        )
+    else:
+        chart = (
+            alt.Chart(df)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X(
+                    f"{date_col}:T",
+                    title="Date",
+                    axis=alt.Axis(labelAngle=0, format="%b %d")
+                ),
+                y=alt.Y(f"{value_col}:Q", title=y_title),
+                tooltip=[date_col, value_col]
+            )
+            .properties(height=350)
+        )
+    return chart
+
+
+def build_weekday_line_chart(df, weekday_col, value_col, series_col=None):
+    weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+    if series_col:
+        chart = (
+            alt.Chart(df)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X(
+                    f"{weekday_col}:N",
+                    sort=weekday_order,
+                    title="Weekday",
+                    axis=alt.Axis(labelAngle=0)
+                ),
+                y=alt.Y(f"{value_col}:Q", title="Value"),
+                color=alt.Color(f"{series_col}:N"),
+                tooltip=[weekday_col, series_col, value_col]
+            )
+            .properties(height=350)
+        )
+    else:
+        chart = (
+            alt.Chart(df)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X(
+                    f"{weekday_col}:N",
+                    sort=weekday_order,
+                    title="Weekday",
+                    axis=alt.Axis(labelAngle=0)
+                ),
+                y=alt.Y(f"{value_col}:Q", title="Value"),
+                tooltip=[weekday_col, value_col]
+            )
+            .properties(height=350)
+        )
+    return chart
+
 def build_hourly_line_chart(df, value_col, title_y, series_col=None, start_hour=7, end_hour=20):
     hour_base = get_hour_range_df(start_hour, end_hour)
 
@@ -1983,27 +2075,67 @@ if selected_view == "Transits":
         st.dataframe(diagnostics_display, use_container_width=True)
     else:
         st.info("No destination-level transit reject data available for the selected date range.")
-
+    
     st.subheader("Transit Destination Share")
     if len(transit_summary) > 0:
-        chart_df = transit_summary.set_index("destination")["transit_items"]
-        st.bar_chart(chart_df)
+        transit_share_df = transit_summary[["destination", "transit_items"]].copy()
+        transit_share_chart = build_category_bar_chart(
+            transit_share_df,
+            "destination",
+            "transit_items",
+            "Transit Items",
+            "Destination"
+        )
+        render_chart(transit_share_chart)
     else:
         st.info("No transit destination data available for charting.")
 
     st.subheader("Transit by Destination by Weekday")
     if len(destination_weekday_mix) > 0:
-        weekday_chart = destination_weekday_mix.copy()
-        st.line_chart(weekday_chart)
-        weekday_display = weekday_chart.round(1)
+        weekday_chart = destination_weekday_mix.copy().reset_index()
+        weekday_chart = weekday_chart.rename(columns={"index": "day_of_week"})
+        weekday_long = weekday_chart.melt(
+            id_vars=["day_of_week"],
+            var_name="destination",
+            value_name="transit_items"
+        )
+    
+        weekday_altair = (
+            alt.Chart(weekday_long)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X(
+                    "day_of_week:N",
+                    sort=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+                    title="Weekday",
+                    axis=alt.Axis(labelAngle=0)
+                ),
+                y=alt.Y("transit_items:Q", title="Transit Items"),
+                color=alt.Color("destination:N", title="Destination"),
+                tooltip=["day_of_week", "destination", "transit_items"]
+            )
+            .properties(height=350)
+        )
+        render_chart(weekday_altair)
+    
+        weekday_display = destination_weekday_mix.round(1)
         st.dataframe(weekday_display, use_container_width=True)
     else:
         st.info("No destination weekday mix data available for the selected date range.")
-
+    
     st.subheader("Daily Transit Volume")
     if len(transit_df) > 0:
-        daily_transit = transit_df["datetime"].dt.date.value_counts().sort_index()
-        st.line_chart(daily_transit)
+        daily_transit = transit_df["datetime"].dt.date.value_counts().sort_index().reset_index()
+        daily_transit.columns = ["date", "transit_items"]
+        daily_transit["date"] = pd.to_datetime(daily_transit["date"])
+    
+        daily_transit_chart = build_date_line_chart(
+            daily_transit,
+            "date",
+            "transit_items",
+            "Transit Items"
+        )
+        render_chart(daily_transit_chart)
     else:
         st.info("No transit items found for the selected date range.")
 
@@ -2012,10 +2144,19 @@ if selected_view == "Transits":
         transit_mix = (
             transit_df.groupby([transit_df["datetime"].dt.date, "transit_destination"])
             .size()
-            .unstack(fill_value=0)
-            .sort_index()
+            .reset_index(name="transit_items")
         )
-        st.line_chart(transit_mix)
+        transit_mix.columns = ["date", "transit_destination", "transit_items"]
+        transit_mix["date"] = pd.to_datetime(transit_mix["date"])
+    
+        transit_mix_chart = build_date_line_chart(
+            transit_mix,
+            "date",
+            "transit_items",
+            "Transit Items",
+            series_col="transit_destination"
+        )
+        render_chart(transit_mix_chart)
     else:
         st.info("No transit mix data available for the selected date range.")
 
