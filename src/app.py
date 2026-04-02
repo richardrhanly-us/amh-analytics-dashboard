@@ -332,45 +332,6 @@ def render_report_exports(df, report_title, html_summary=""):
     csv_b64 = base64.b64encode(csv_bytes).decode()
 
     html_table = df.to_html(index=False, border=0)
-    html_doc = f"""
-    <html>
-    <head>
-        <title>{report_title}</title>
-        <style>
-            body {{
-                font-family: Arial, sans-serif;
-                margin: 24px;
-                color: #111;
-            }}
-            h1 {{
-                margin-bottom: 6px;
-            }}
-            .summary {{
-                margin-bottom: 18px;
-                color: #444;
-            }}
-            table {{
-                border-collapse: collapse;
-                width: 100%;
-                margin-top: 12px;
-            }}
-            th, td {{
-                border: 1px solid #d1d5db;
-                padding: 8px 10px;
-                text-align: left;
-            }}
-            th {{
-                background: #f3f4f6;
-            }}
-        </style>
-    </head>
-    <body>
-        <h1>{report_title}</h1>
-        <div class="summary">{html_summary}</div>
-        {html_table}
-    </body>
-    </html>
-    """
 
     print_doc = f"""
     <html>
@@ -412,42 +373,10 @@ def render_report_exports(df, report_title, html_summary=""):
     </html>
     """
 
-    html_b64 = base64.b64encode(html_doc.encode("utf-8")).decode()
     print_b64 = base64.b64encode(print_doc.encode("utf-8")).decode()
 
-    st.markdown(
-        """
-        <style>
-        .report-export-row {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-            margin-top: 8px;
-            margin-bottom: 8px;
-        }
-        .report-export-row a {
-            text-decoration: none;
-        }
-        .report-export-btn {
-            display: inline-block;
-            background: #f3f4f6;
-            border: 1px solid #d1d5db;
-            border-radius: 8px;
-            padding: 0.5rem 1rem;
-            color: #111827;
-            font-size: 0.95rem;
-            cursor: pointer;
-        }
-        .report-export-btn:hover {
-            background: #e5e7eb;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
+    csv_col, print_col, _ = st.columns([1, 1, 8])
 
-    csv_col, html_col, print_col, _ = st.columns([1, 1, 1, 6])
-    
     with csv_col:
         st.markdown(
             f'''
@@ -463,17 +392,21 @@ def render_report_exports(df, report_title, html_summary=""):
             ''',
             unsafe_allow_html=True
         )
-    
-    with html_col:
-        st.link_button(
-            "View HTML",
-            f"data:text/html;base64,{html_b64}"
-        )
-    
+
     with print_col:
-        st.link_button(
-            "Print View",
-            f"data:text/html;base64,{print_b64}"
+        st.markdown(
+            f'''
+            <a href="data:text/html;base64,{print_b64}" target="_blank">
+                <button style="
+                    background:#f3f4f6;
+                    border:1px solid #d1d5db;
+                    border-radius:8px;
+                    padding:0.5rem 1rem;
+                    cursor:pointer;
+                ">Print View</button>
+            </a>
+            ''',
+            unsafe_allow_html=True
         )
 
 CHECKINS_FILE = "data/processed/checkins_clean.csv"
