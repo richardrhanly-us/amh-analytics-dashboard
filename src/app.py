@@ -356,21 +356,7 @@ df_raw = load_checkins_df(mtime=checkins_mtime)
 rejects_raw = load_rejects_df(mtime=rejects_mtime)
 pipeline_status = load_pipeline_status(mtime=status_mtime)
 
-st.write("Min datetime:", df_raw["datetime"].min())
-st.write("Max datetime:", df_raw["datetime"].max())
-st.write("Today:", datetime.now(ZoneInfo("America/Chicago")).date())
-st.write("Unique dates:", df_raw["datetime"].dt.date.unique())
 
-st.write("Checkins file path:", Path(CHECKINS_FILE).resolve())
-st.write("Loaded row count:", len(df_raw))
-st.dataframe(
-    df_raw[["datetime", "title"]].sort_values("datetime").tail(10),
-    use_container_width=True
-)
-
-if st.button("Clear Cache"):
-    st.cache_data.clear()
-    st.rerun()
 
 
 rejects_raw["error_simple"] = rejects_raw["error_message"].apply(simplify_error)
