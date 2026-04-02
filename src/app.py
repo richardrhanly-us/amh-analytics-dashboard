@@ -1791,7 +1791,7 @@ if selected_view == "Reports":
 
 This estimate compares how long it would take staff to process items manually versus how long the AMH processes the same workload.
 
-Step 1 — Manual Processing Time
+## Step 1 — Manual Processing Time
 
 Manual rate = {MANUAL_RATE:.0f} check-ins p/hr
 
