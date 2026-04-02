@@ -570,7 +570,6 @@ if len(rejects_df) > 0:
 today = datetime.now(ZoneInfo("America/Chicago")).date()
 today_metrics = get_today_metrics(df_live_raw, rejects_raw, today)
 
-today_df = today_metrics["today_df"]
 
 today_df = today_metrics["today_df"]
 today_rejects_df = today_metrics["today_rejects_df"]
@@ -797,6 +796,7 @@ if selected_view == "Live Today":
 
         if st.button("Refresh Live Data"):
             st.cache_data.clear()
+            st.success("Live data cache cleared. Reloading latest available files...")
             st.rerun()
 
     with top_right:
