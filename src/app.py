@@ -1499,103 +1499,77 @@ if selected_view == "Reports":
         hourly_df.columns = ["hour", "count"]
         hourly_df["hour_label"] = hourly_df["hour"].apply(format_hour_plain)
 
-        if len(hourly_df) > 0:
-            peak_hour_row = hourly_df.loc[hourly_df["count"].idxmax()]
+if len(hourly_df) > 0:
+    peak_row = hourly_df.loc[hourly_df["items_per_hour"].idxmax()]
+    avg_throughput = hourly_df["items_per_hour"].mean()
+    active_hours_count = len(hourly_df)
 
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #2563eb;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-top: 8px;
-                    margin-bottom: 16px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Report Summary
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.4;">
-                        Peak hour: {peak_hour_row["hour_label"]} with {int(peak_hour_row["count"]):,} checkins.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+    overall_avg_throughput = hourly_df["items_per_hour"].mean()
 
-            hourly_df = hourly_df[(hourly_df["hour"] >= 7) & (hourly_df["hour"] <= 20)].copy()
-            hourly_chart = build_hourly_bar_chart(hourly_df, "count", "Checkins")
-            render_chart(hourly_chart)
+    peak_threshold = peak_row["items_per_hour"] * 0.75
+    peak_hours_df = hourly_df[hourly_df["items_per_hour"] >= peak_threshold].copy()
+    peak_window_avg = peak_hours_df["items_per_hour"].mean() if len(peak_hours_df) > 0 else 0
 
-            display_df = hourly_df[["hour_label", "count"]].rename(columns={"hour_label": "hour"})
-            st.dataframe(display_df, use_container_width=True)
-            download_button(display_df, "hourly_volume.csv")
-        else:
-            st.info("No hourly volume data available for the selected date range.")
+    st.markdown(
+        f"""
+        <div style="
+            border-left: 4px solid #2563eb;
+            background-color: #f9fafb;
+            padding: 14px 16px;
+            border-radius: 8px;
+            margin-top: 8px;
+            margin-bottom: 16px;
+        ">
+            <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                Report Summary
+            </div>
+            <div style="color: #4b5563; line-height: 1.4;">
+                Peak throughput: {int(peak_row["items_per_hour"]):,} items/hour at {peak_row["hour_label"]}.
+                Average throughput across active hours: {avg_throughput:,.1f} items/hour.
+                Average throughput during peak hours: {peak_window_avg:,.1f} items/hour.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
-    with st.expander("Throughput", expanded=False):
-        st.caption("Shows how quickly the AMH processes items by hour, helping quantify peak handling capacity and operational demand.")
+    k1, k2, k3, k4 = st.columns(4)
 
-        hourly_volume = df["datetime"].dt.hour.value_counts().sort_index()
-        hourly_df = hourly_volume.reset_index()
-        hourly_df.columns = ["hour", "items_per_hour"]
-        hourly_df["hour_label"] = hourly_df["hour"].apply(format_hour_plain)
+    with k1:
+        render_kpi_card(
+            "Peak Throughput",
+            f"{int(peak_row['items_per_hour']):,}",
+            f"At {peak_row['hour_label']}",
+            "#6b7280",
+            value_font_size="1.6rem"
+        )
 
-        if len(hourly_df) > 0:
-            peak_row = hourly_df.loc[hourly_df["items_per_hour"].idxmax()]
-            avg_throughput = hourly_df["items_per_hour"].mean()
+    with k2:
+        render_kpi_card(
+            "Avg Items / Hour",
+            f"{overall_avg_throughput:,.1f}",
+            "Average across active hours",
+            "#6b7280",
+            value_font_size="1.6rem"
+        )
 
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #2563eb;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-top: 8px;
-                    margin-bottom: 16px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Report Summary
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.4;">
-                        Peak throughput: {int(peak_row["items_per_hour"]):,} items/hour at {peak_row["hour_label"]}.
-                        Average throughput across active hours: {avg_throughput:,.1f} items/hour.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+    with k3:
+        render_kpi_card(
+            "Peak Hours Avg",
+            f"{peak_window_avg:,.1f}",
+            "Average during peak hours",
+            "#6b7280",
+            value_font_size="1.6rem"
+        )
 
-            k1, k2, k3 = st.columns(3)
-
-            with k1:
-                render_kpi_card(
-                    "Peak Throughput",
-                    f"{int(peak_row['items_per_hour']):,}",
-                    f"At {peak_row['hour_label']}",
-                    "#6b7280",
-                    value_font_size="1.6rem"
-                )
-
-            with k2:
-                render_kpi_card(
-                    "Avg Throughput",
-                    f"{avg_throughput:,.1f}",
-                    "Items per active hour",
-                    "#6b7280",
-                    value_font_size="1.6rem"
-                )
-
-            with k3:
-                active_hours_count = len(hourly_df)
-                render_kpi_card(
-                    "Active Hours",
-                    f"{active_hours_count}",
-                    "Hours with recorded activity",
-                    "#6b7280",
-                    value_font_size="1.6rem"
-                )
+    with k4:
+        render_kpi_card(
+            "Active Hours",
+            f"{active_hours_count}",
+            "Hours with recorded activity",
+            "#6b7280",
+            value_font_size="1.6rem"
+        )
             
             hourly_df = hourly_df[(hourly_df["hour"] >= 7) & (hourly_df["hour"] <= 20)].copy()
             throughput_chart = build_hourly_bar_chart(hourly_df, "items_per_hour", "Items Per Hour")
