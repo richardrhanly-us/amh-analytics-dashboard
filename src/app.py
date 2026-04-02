@@ -589,14 +589,14 @@ today_library_express_pct = (today_library_express / today_checkins * 100) if to
 today_hourly_checkins = today_df["datetime"].dt.hour.value_counts().sort_index()
 today_hourly_rejects = today_rejects_df["datetime"].dt.hour.value_counts().sort_index()
 
-today_bin6_count = 0
+today_bin0_count = 0
 if "bin" in today_df.columns:
-    today_bin6_count = (
-        today_df["bin"].astype(str).str.strip().eq("6").sum()
+    today_bin0_count = (
+        today_df["bin"].astype(str).str.contains("0", na=False).sum()
     )
 
 today_estimated_holds = max(
-    today_bin6_count - today_rejects - today_library_express,
+    today_bin0_count - today_rejects - today_library_express,
     0
 )
 
