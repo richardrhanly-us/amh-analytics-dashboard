@@ -51,6 +51,21 @@ def load_rejects_df(path=REJECTS_FILE, mtime=None):
 
 
 @st.cache_data
+def load_rejects_history_df(path="data/processed/rejects_history.csv", mtime=None):
+    file_path = Path(path)
+
+    if not file_path.exists():
+        return pd.DataFrame()
+
+    df = pd.read_csv(path, low_memory=False)
+
+    if "datetime" in df.columns:
+        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+
+    return df
+
+
+@st.cache_data
 def load_pipeline_status(path=STATUS_FILE, mtime=None):
     file_path = Path(path)
 
