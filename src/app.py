@@ -324,19 +324,19 @@ import base64
 from io import BytesIO
 
 def render_report_exports(df, report_title):
-    safe_name = report_title.lower().replace(" ", "_")
+    safe_name = report_title.lower().replace(" ", "_").replace("/", "_")
 
     csv_bytes = df.to_csv(index=False).encode("utf-8")
 
-    csv_col, _ = st.columns([1, 10])
+    left, _ = st.columns([1, 10])
 
-    with csv_col:
+    with left:
         st.download_button(
             "Download CSV",
             data=csv_bytes,
             file_name=f"{safe_name}.csv",
             mime="text/csv",
-            key=f"{safe_name}_csv"
+            key=f"{safe_name}_csv_download"
         )
 
 CHECKINS_FILE = "data/processed/checkins_clean.csv"
