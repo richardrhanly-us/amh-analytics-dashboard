@@ -1328,7 +1328,7 @@ if selected_view == "Reports":
     st.subheader("Volume & Capacity")
     st.caption("How much the AMH is processing, when demand peaks, and how current volume compares to normal patterns.")
 
-with st.expander("Weekday & Peak Analysis", expanded=False):
+    with st.expander("Weekday & Peak Analysis", expanded=False):
     st.caption("Shows volume trends by day of week and identifies peak operating times.")
 
     # ----- Day of Week Volume -----
