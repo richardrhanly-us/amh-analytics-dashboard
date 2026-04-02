@@ -1791,7 +1791,7 @@ if selected_view == "Reports":
 
 This estimate compares how long it would take staff to process items manually versus how long the AMH processes the same workload.
 
-### Step 1 — Manual Processing Time
+### Manual Processing Time
 
 Manual rate = {MANUAL_RATE:.0f} check-ins p/hr
 
@@ -1800,7 +1800,7 @@ That baseline comes from observed staff check-in pace from Westside circulation 
 
 **Manual time = check-ins ÷ Manual rate**
 
-### Step 2 — AMH Processing Time
+### AMH Processing Time
 
 This dashboard uses the AMH’s observed all-time busiest-hour average.
 
@@ -1808,7 +1808,7 @@ Current AMH rate used = {AMH_RATE:.1f} items per hour (based on all check-ins fr
 
 **AMH time = checkins ÷ {AMH_RATE:.1f}**
 
-### Step 3 — Time Saved
+### Time Saved
 
 **Average Daily Staff time saved = (checkins ÷ {MANUAL_RATE:.0f}) − (checkins ÷ {AMH_RATE:.1f})**
   
