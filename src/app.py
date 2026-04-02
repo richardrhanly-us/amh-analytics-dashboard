@@ -676,8 +676,72 @@ alerts = get_system_alerts(
 
 
 if alerts:
-    alert_has_critical = any(a["level"] == "critical" for a in alerts)
-    alert_has_warning = any(a["level"] == "warning" for a in alerts)
+    critical_alerts = [a for a in alerts if a["level"].lower() == "critical"]
+    warning_alerts = [a for a in alerts if a["level"].lower() == "warning"]
+    info_alerts = [a for a in alerts if a["level"].lower() in ["info", "trend"]]
+
+    if critical_alerts:
+        st.markdown(
+            f"""
+            <div style="
+                border-left: 5px solid #dc2626;
+                background-color: #fef2f2;
+                padding: 14px 16px;
+                border-radius: 8px;
+                margin-bottom: 16px;
+            ">
+                <div style="font-weight: 600; color: #991b1b; margin-bottom: 6px;">
+                    Critical Alerts
+                </div>
+                <ul style="margin: 0; padding-left: 18px; color: #7f1d1d;">
+                    {''.join(f"<li><b>{a['level'].upper()}</b>: {a['text']}</li>" for a in critical_alerts)}
+                </ul>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    if warning_alerts:
+        st.markdown(
+            f"""
+            <div style="
+                border-left: 5px solid #d97706;
+                background-color: #fffbeb;
+                padding: 14px 16px;
+                border-radius: 8px;
+                margin-bottom: 16px;
+            ">
+                <div style="font-weight: 600; color: #92400e; margin-bottom: 6px;">
+                    Warnings
+                </div>
+                <ul style="margin: 0; padding-left: 18px; color: #78350f;">
+                    {''.join(f"<li><b>{a['level'].upper()}</b>: {a['text']}</li>" for a in warning_alerts)}
+                </ul>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    if info_alerts:
+        st.markdown(
+            f"""
+            <div style="
+                border-left: 5px solid #2563eb;
+                background-color: #eff6ff;
+                padding: 14px 16px;
+                border-radius: 8px;
+                margin-bottom: 16px;
+            ">
+                <div style="font-weight: 600; color: #1d4ed8; margin-bottom: 6px;">
+                    Trends / Info
+                </div>
+                <ul style="margin: 0; padding-left: 18px; color: #1e3a8a;">
+                    {''.join(f"<li><b>{a['level'].upper()}</b>: {a['text']}</li>" for a in info_alerts)}
+                </ul>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
     if alert_has_critical:
         alert_border = "#dc2626"
