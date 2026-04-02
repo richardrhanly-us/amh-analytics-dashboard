@@ -1493,7 +1493,6 @@ if selected_view == "Reports":
             else:
                 st.info("No daily volume data available for the selected date range.")
 
-
     with st.expander("Hourly Volume", expanded=False):
         hourly_volume = df["datetime"].dt.hour.value_counts().sort_index()
         hourly_df = hourly_volume.reset_index()
@@ -1534,7 +1533,6 @@ if selected_view == "Reports":
         else:
             st.info("No hourly volume data available for the selected date range.")
 
-
     with st.expander("Throughput", expanded=False):
         st.caption("Shows average checkins per hour per day across the selected date range, so multi-day ranges do not overstate throughput.")
 
@@ -1543,14 +1541,12 @@ if selected_view == "Reports":
             throughput_df["date"] = throughput_df["datetime"].dt.date
             throughput_df["hour"] = throughput_df["datetime"].dt.hour
 
-            # count checkins per day per hour
             daily_hourly = (
                 throughput_df.groupby(["date", "hour"])
                 .size()
                 .reset_index(name="checkins")
             )
 
-            # average those hourly counts across days
             avg_hourly = (
                 daily_hourly.groupby("hour")["checkins"]
                 .mean()
@@ -1561,7 +1557,6 @@ if selected_view == "Reports":
 
             peak_row = avg_hourly.loc[avg_hourly["avg_items_per_hour"].idxmax()]
             avg_items_per_hour = avg_hourly["avg_items_per_hour"].mean()
-            active_hours_count = len(avg_hourly)
 
             peak_threshold = peak_row["avg_items_per_hour"] * 0.75
             peak_hours_df = avg_hourly[avg_hourly["avg_items_per_hour"] >= peak_threshold].copy()
@@ -1585,7 +1580,7 @@ if selected_view == "Reports":
                     <div style="color: #4b5563; line-height: 1.4;">
                         Based on {days_in_range} day(s) in the selected range, the busiest average hour was {peak_row["hour_label"]}
                         at {peak_row["avg_items_per_hour"]:,.1f} checkins per day.
-                        Average checkins per active hour: {avg_items_per_hour:,.1f}.  
+                        Average checkins per active hour: {avg_items_per_hour:,.1f}.
                         Average during busiest hours: {peak_times_avg:,.1f}.
                     </div>
                 </div>
@@ -1593,8 +1588,7 @@ if selected_view == "Reports":
                 unsafe_allow_html=True
             )
 
-            k1, k2, k3,  = st.columns(3)
-
+            k1, k2, k3 = st.columns(3)
 
             with k1:
                 render_kpi_card(
@@ -1659,9 +1653,7 @@ if selected_view == "Reports":
 
         all_hours = sorted(set(today_hourly.index).union(set(typical_hourly.index)))
 
-        compare_df = pd.DataFrame({
-            "hour": all_hours
-        })
+        compare_df = pd.DataFrame({"hour": all_hours})
         compare_df["today"] = compare_df["hour"].map(today_hourly).fillna(0)
         compare_df["typical"] = compare_df["hour"].map(typical_hourly).fillna(0).round(1)
         compare_df["delta"] = compare_df["today"] - compare_df["typical"]
@@ -1713,6 +1705,8 @@ if selected_view == "Reports":
             st.info("Not enough data available to compare today versus the typical hourly pattern.")
 
     # -----------------------------
+    # Labor & Efficiency
+    # -----------------------------
     st.subheader("Labor & Efficiency")
     st.caption("Translates machine activity into estimated staff effort replaced by automation.")
 
@@ -1722,7 +1716,6 @@ if selected_view == "Reports":
         MANUAL_RATE = 50  # items/hour per staff member
 
         if len(df) > 0 and len(df_history_raw) > 0:
-            # --- build all-time AMH rate from historical data ---
             all_time_df = df_history_raw.copy()
             all_time_df["date"] = all_time_df["datetime"].dt.date
             all_time_df["hour"] = all_time_df["datetime"].dt.hour
@@ -1756,7 +1749,6 @@ if selected_view == "Reports":
             else:
                 AMH_RATE = 130.0
 
-            # --- selected range daily totals ---
             daily_counts = df["datetime"].dt.date.value_counts().sort_index()
             staff_df = daily_counts.reset_index()
             staff_df.columns = ["date", "checkins"]
@@ -1833,40 +1825,45 @@ if selected_view == "Reports":
                     margin-top: 16px;
                     margin-bottom: 16px;
                 ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 10px;">
                         How Staff Time Saved Is Calculated
                     </div>
-                    <div style="color: #4b5563; line-height: 1.6;">
-                        This estimate compares how long it would take staff to process items manually versus how long the AMH
-                        processes the same workload.
-                        <br><br>
 
+                    <div style="color: #4b5563; line-height: 1.6;">
+                        This estimate compares how long it would take staff to process items manually versus how long the AMH processes the same workload.
+                    </div>
+
+                    <div style="color: #4b5563; line-height: 1.6; margin-top: 14px;">
                         <b>Step 1 — Manual Processing Time</b><br>
                         This dashboard uses a manual processing rate of <b>{MANUAL_RATE:.0f} items per hour</b>.<br>
                         Manual time = <b>checkins ÷ {MANUAL_RATE:.0f}</b>
-                        <br><br>
+                    </div>
 
+                    <div style="color: #4b5563; line-height: 1.6; margin-top: 14px;">
                         <b>Step 2 — AMH Processing Time</b><br>
                         Instead of guessing machine speed, this dashboard uses the AMH’s observed all-time busiest-hour average.<br>
                         Current AMH rate used = <b>{AMH_RATE:.1f} items per hour</b><br>
                         AMH time = <b>checkins ÷ {AMH_RATE:.1f}</b>
-                        <br><br>
+                    </div>
 
+                    <div style="color: #4b5563; line-height: 1.6; margin-top: 14px;">
                         <b>Step 3 — Time Saved</b><br>
                         Staff time saved = <b>(checkins ÷ {MANUAL_RATE:.0f}) − (checkins ÷ {AMH_RATE:.1f})</b>
-                        <br><br>
+                    </div>
 
+                    <div style="color: #4b5563; line-height: 1.6; margin-top: 14px;">
                         <b>Example Using the Current Selected Range</b><br>
                         Average daily checkins: <b>{avg_daily_checkins:,.1f}</b><br>
                         Average daily manual time: <b>{avg_daily_manual_hours:,.2f} hours</b><br>
                         Average daily AMH time: <b>{avg_daily_amh_hours:,.2f} hours</b><br>
                         Average daily staff time saved: <b>{avg_saved:,.2f} hours</b>
-                        <br><br>
+                    </div>
 
+                    <div style="color: #4b5563; line-height: 1.6; margin-top: 14px;">
                         <b>What This Means</b><br>
-                        • Uses actual AMH performance from historical data<br>
-                        • Compares manual processing time against AMH processing time<br>
-                        • Produces a more realistic estimate than treating all checkins as fully saved labor
+                        Uses actual AMH performance from historical data.<br>
+                        Compares manual processing time against AMH processing time.<br>
+                        Produces a more realistic estimate than treating all checkins as fully saved labor.
                     </div>
                 </div>
                 """,
@@ -1906,6 +1903,7 @@ if selected_view == "Reports":
 
         else:
             st.info("Not enough data is available to calculate staff time savings for the selected date range.")
+
     # -----------------------------
     # Routing & Destinations
     # -----------------------------
@@ -2320,7 +2318,6 @@ if selected_view == "Reports":
             })
             
             st.dataframe(bin_volume_display, use_container_width=True)
-            
             download_button(bin_volume_display, "bin_volume_report.csv")
 
             hour_range = list(range(7, 21))
