@@ -352,7 +352,8 @@ checkins_mtime = checkins_updated.timestamp() if checkins_updated else 0
 rejects_mtime = rejects_updated.timestamp() if rejects_updated else 0
 status_mtime = status_updated.timestamp() if status_updated else 0
 
-df_raw = load_checkins_df(mtime=checkins_mtime)
+df_live_raw = load_checkins_df(mtime=checkins_mtime)
+df_history_raw = load_checkins_history_df()   # no mtime needed for now
 rejects_raw = load_rejects_df(mtime=rejects_mtime)
 pipeline_status = load_pipeline_status(mtime=status_mtime)
 
@@ -361,8 +362,8 @@ pipeline_status = load_pipeline_status(mtime=status_mtime)
 
 rejects_raw["error_simple"] = rejects_raw["error_message"].apply(simplify_error)
 
-min_date = df_raw["datetime"].min().date()
-max_date = df_raw["datetime"].max().date()
+min_date = df_history_raw["datetime"].min().date()
+max_date = df_history_raw["datetime"].max().date()
 
 
 
@@ -392,6 +393,8 @@ end_date = max_date
 
 
 local_today = datetime.now(ZoneInfo("America/Chicago")).date()
+
+today_metrics = get_today_metrics(df_live_raw, rejects_raw, today)
 
 start_date = min_date
 end_date = min(max_date, local_today)
@@ -459,7 +462,7 @@ if selected_view in ["Overview", "Reports", "Transits"]:
 
     st.sidebar.caption(f"Showing: {start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}")
 
-df = get_date_filtered_df(df_raw, start_date, end_date)
+df = get_date_filtered_df(df_history_raw, start_date, end_date)
 rejects_df = get_date_filtered_df(rejects_raw, start_date, end_date)
 
 weekday_order = [
@@ -567,7 +570,7 @@ if len(rejects_df) > 0:
 
 today = datetime.now(ZoneInfo("America/Chicago")).date()
 
-today_metrics = get_today_metrics(df_raw, rejects_raw, today)
+df = get_date_filtered_df(df_history_raw, start_date, end_date)
 
 today_df = today_metrics["today_df"]
 today_rejects_df = today_metrics["today_rejects_df"]
@@ -581,8 +584,7 @@ today_peak_hour_count = today_metrics["today_peak_hour_count"]
 today_peak_hour_pct = today_metrics["today_peak_hour_pct"]
 today_reject_rate = today_metrics["today_reject_rate"]
 
-
-historical_checkins_df = df_raw[df_raw["datetime"].dt.date < today].copy()
+historical_checkins_df = df_history_raw[df_history_raw["datetime"].dt.date < today].copy()
 
 if len(historical_checkins_df) > 0:
     historical_westside_pct = (
@@ -615,8 +617,7 @@ today_estimated_holds = max(
     today_bin0_count - today_rejects - today_library_express,
     0
 )
-
-historical_baseline = get_historical_reject_baseline(df_raw, rejects_raw, today)
+historical_baseline = get_historical_reject_baseline(df_history_raw, rejects_raw, today)
 
 historical_daily_avg_reject = historical_baseline.get("historical_daily_avg_reject")
 
