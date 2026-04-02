@@ -2251,6 +2251,33 @@ if selected_view == "Transits":
     else:
         st.info("No transit distribution data available for the selected date range.")
     
+    
+    st.subheader("Transit by Hour")
+    st.caption("Hourly transit volume from 7 AM to 8 PM.")
+    
+    if len(transit_df) > 0:
+        transit_hourly = transit_df["datetime"].dt.hour.value_counts().sort_index().reset_index()
+        transit_hourly.columns = ["hour", "transit_items"]
+        transit_hourly["hour_label"] = transit_hourly["hour"].apply(format_hour_plain)
+    
+        transit_hourly = transit_hourly[(transit_hourly["hour"] >= 7) & (transit_hourly["hour"] <= 20)].copy()
+    
+        transit_hourly_chart = build_hourly_bar_chart(
+            transit_hourly,
+            "transit_items",
+            "Transit Items"
+        )
+        render_chart(transit_hourly_chart)
+    
+        transit_hourly_display = transit_hourly[["hour_label", "transit_items"]].rename(
+            columns={"hour_label": "Hour", "transit_items": "Transit Items"}
+        )
+    
+        st.dataframe(transit_hourly_display, use_container_width=True)
+        download_button(transit_hourly_display, "transit_by_hour_report.csv")
+    else:
+        st.info("No hourly transit data available for the selected date range.")
+    
     st.subheader("Average Transit Time")
 
     if len(transit_time_summary) > 0:
