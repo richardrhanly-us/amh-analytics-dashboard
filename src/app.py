@@ -324,6 +324,9 @@ import base64
 from io import BytesIO
 
 def render_report_exports(df, report_title, html_summary=""):
+    import base64
+
+    # --- build data ---
     csv_bytes = df.to_csv(index=False).encode("utf-8")
 
     html_table = df.to_html(index=False, border=0)
@@ -357,14 +360,6 @@ def render_report_exports(df, report_title, html_summary=""):
             th {{
                 background: #f3f4f6;
             }}
-            @media print {{
-                body {{
-                    margin: 12px;
-                }}
-                .no-print {{
-                    display: none;
-                }}
-            }}
         </style>
     </head>
     <body>
@@ -378,37 +373,45 @@ def render_report_exports(df, report_title, html_summary=""):
     html_bytes = html_doc.encode("utf-8")
     html_b64 = base64.b64encode(html_bytes).decode()
 
-    c1, c2, c3, _ = st.columns([1, 1, 1, 6])
-    
+    print_html = f"""
+    <a href="data:text/html;base64,{html_b64}" target="_blank">
+        <button style="
+            background:#f3f4f6;
+            border:1px solid #d1d5db;
+            border-radius:8px;
+            padding:0.4rem 0.8rem;
+            cursor:pointer;
+        ">Open Print View</button>
+    </a>
+    """
 
-    with c1:
+    # --- dropdown ---
+    option = st.selectbox(
+        "Export",
+        ["Select option...", "Download CSV", "Download HTML", "Print View"],
+        label_visibility="collapsed",
+        key=f"{report_title}_export"
+    )
+
+    if option == "Download CSV":
         st.download_button(
             "Download CSV",
             data=csv_bytes,
             file_name=f"{report_title.lower().replace(' ', '_')}.csv",
-            mime="text/csv"
+            mime="text/csv",
+            key=f"{report_title}_csv"
         )
 
-    with c2:
+    elif option == "Download HTML":
         st.download_button(
             "Download HTML",
             data=html_bytes,
             file_name=f"{report_title.lower().replace(' ', '_')}.html",
-            mime="text/html"
+            mime="text/html",
+            key=f"{report_title}_html"
         )
 
-    with c3:
-        print_html = f"""
-        <a href="data:text/html;base64,{html_b64}" target="_blank">
-            <button style="
-                background:#f3f4f6;
-                border:1px solid #d1d5db;
-                border-radius:8px;
-                padding:0.5rem 1rem;
-                cursor:pointer;
-            ">Open Print View</button>
-        </a>
-        """
+    elif option == "Print View":
         st.markdown(print_html, unsafe_allow_html=True)
 
 
