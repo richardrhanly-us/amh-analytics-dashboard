@@ -675,6 +675,8 @@ alerts = get_system_alerts(
 )
 
 
+
+
 if alerts:
     critical_alerts = [a for a in alerts if a["level"].lower() == "critical"]
     warning_alerts = [a for a in alerts if a["level"].lower() == "warning"]
@@ -741,50 +743,7 @@ if alerts:
             </div>
             """,
             unsafe_allow_html=True
-        )
-
-    if alert_has_critical:
-        alert_border = "#dc2626"
-        alert_bg = "#fef2f2"
-        alert_title_color = "#991b1b"
-        alert_text_color = "#7f1d1d"
-    elif alert_has_warning:
-        alert_border = "#d97706"
-        alert_bg = "#fffbeb"
-        alert_title_color = "#92400e"
-        alert_text_color = "#78350f"
-    else:
-        alert_border = "#2563eb"
-        alert_bg = "#eff6ff"
-        alert_title_color = "#1d4ed8"
-        alert_text_color = "#1e3a8a"
-
-    st.markdown(
-        f"""
-        <div style="
-            border-left: 5px solid {alert_border};
-            background-color: {alert_bg};
-            padding: 14px 16px;
-            border-radius: 8px;
-            margin-bottom: 16px;
-        ">
-            <div style="font-weight: 600; color: {alert_title_color}; margin-bottom: 6px;">
-                System Alerts
-            </div>
-            <ul style="margin: 0; padding-left: 18px; color: {alert_text_color};">
-                {''.join(
-                    f"<li style='color: "
-                    + ("#dc2626" if a["level"] == "critical"
-                       else "#d97706" if a["level"] == "warning"
-                       else "#2563eb")
-                    + f";'><b>{a['level'].upper()}</b>: {a['text']}</li>"
-                    for a in alerts
-                )}
-            </ul>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )       
+        )    
         
 
     
