@@ -1359,15 +1359,7 @@ if selected_view == "Reports":
             render_chart(daily_volume_chart)
 
             st.dataframe(daily_df, use_container_width=True)
-            render_report_exports(
-                daily_df,
-                "Daily Volume Report",
-                html_summary=(
-                    f"Peak day: {pd.to_datetime(peak_day['date']).strftime('%a, %b %d')} "
-                    f"with {int(peak_day['count']):,} checkins. "
-                    f"Average daily volume: {avg_daily:,.0f} checkins."
-                )
-            )
+            download_button(daily_df, "daily_volume_report.csv")
         else:
             st.info("No daily volume data available for the selected date range.")
 
@@ -1921,14 +1913,7 @@ if selected_view == "Reports":
 
                 overflow_daily_display = overflow_daily.reset_index().rename(columns={"index": "date"})
                 st.dataframe(overflow_daily_display, use_container_width=True)
-                render_report_exports(
-                    overflow_daily_display,
-                    "Exception Bin Rate by Day Report",
-                    html_summary=(
-                        f"Peak exception day: {peak_exception_day_label} at "
-                        f"{peak_exception_rate:.2f}%."
-                    )
-                )
+                download_button(overflow_daily_display, "exception_bin_rate_by_day_report.csv")
 
             if len(hourly_exception_df) > 0:
                 st.subheader("Exception Bin Volume by Hour")
@@ -1943,14 +1928,7 @@ if selected_view == "Reports":
                     columns={"hour_label": "hour"}
                 )
                 st.dataframe(hourly_exception_display, use_container_width=True)
-                render_report_exports(
-                    hourly_exception_display,
-                    "Exception Bin Volume by Hour Report",
-                    html_summary=(
-                        f"Peak exception hour: {peak_exception_hour_text} with "
-                        f"{peak_exception_hour_count:,} items."
-                    )
-                )
+                download_button(hourly_exception_display, "exception_bin_volume_by_hour_report.csv")
             else:
                 st.info("No exception-bin items found for the selected date range.")
 
@@ -2038,16 +2016,7 @@ if selected_view == "Reports":
             
             st.dataframe(bin_volume_display, use_container_width=True)
             
-            render_report_exports(
-                bin_volume_display,
-                "Bin Volume Report",
-                html_summary=(
-                    f"Most-used bin: {top_bin_row['bin']} with "
-                    f"{int(top_bin_row['checkins']):,} items. "
-                    f"Lowest-volume bin: {low_bin_row['bin']} with "
-                    f"{int(low_bin_row['checkins']):,} items."
-                )
-            )
+            download_button(bin_volume_display, "bin_volume_report.csv")
 
             hour_range = list(range(7, 21))
 
@@ -2105,12 +2074,7 @@ if selected_view == "Reports":
                 hourly_bin_display["hour"] = hourly_bin_display["hour"].apply(format_hour_plain)
 
                 st.dataframe(hourly_bin_display, use_container_width=True)
-                render_report_exports(
-                    hourly_bin_display,
-                    "Bin Volume by Hour Report",
-                    html_summary="Hourly checkin distribution across bins from 7 AM to 8 PM."
-                )
-
+                download_button(hourly_bin_display, "bin_volume_by_hour_report.csv")
 
 
 if selected_view == "Transits":
@@ -2200,11 +2164,7 @@ if selected_view == "Transits":
             "avg_minutes": "Avg Transit Time (min)"
         })
         st.dataframe(display_df, use_container_width=True)
-        render_report_exports(
-            display_df,
-            "Average Transit Time Report",
-            html_summary="Average transit time by destination for the selected date range."
-        )
+        download_button(display_df, "average_transit_time_report.csv")
     else:
         st.info("Not enough data to calculate transit times.")
 
@@ -2218,11 +2178,7 @@ if selected_view == "Transits":
             "pct_of_total_items": "% of Total Items"
         })
         st.dataframe(transit_display, use_container_width=True)
-        render_report_exports(
-            transit_display,
-            "Transit by Destination Report",
-            html_summary="Transit item counts and share by destination."
-        )
+        download_button(transit_display, "transit_by_destination_report.csv")
     else:
         st.info("No transit destination activity found for the selected date range.")
 
@@ -2240,11 +2196,7 @@ if selected_view == "Transits":
             "top_reason_pct_of_destination_rejects": "Top Reason % of Destination Rejects"
         })
         st.dataframe(diagnostics_display, use_container_width=True)
-        render_report_exports(
-            diagnostics_display,
-            "Destination Transit Diagnostics Report",
-            html_summary="Transit-linked reject and destination diagnostics for the selected date range."
-        )
+        download_button(diagnostics_display, "destination_transit_diagnostics_report.csv")
     else:
         st.info("No destination-level transit reject data available for the selected date range.")
     
@@ -2292,11 +2244,7 @@ if selected_view == "Transits":
     
         weekday_display = destination_weekday_mix.round(1)
         st.dataframe(weekday_display, use_container_width=True)
-        render_report_exports(
-            weekday_display,
-            "Transit by Destination by Weekday Report",
-            html_summary="Weekday transit mix by destination."
-        )
+        download_button(weekday_display, "transit_by_destination_by_weekday_report.csv")
     else:
         st.info("No destination weekday mix data available for the selected date range.")
     
@@ -2313,18 +2261,15 @@ if selected_view == "Transits":
             "Transit Items"
         )
         render_chart(daily_transit_chart)
-    else:
-        st.info("No transit items found for the selected date range.")
+    
         daily_transit_display = daily_transit.copy()
         daily_transit_display["date"] = pd.to_datetime(daily_transit_display["date"]).dt.strftime("%Y-%m-%d")
-        
+    
         st.dataframe(daily_transit_display, use_container_width=True)
+        download_button(daily_transit_display, "daily_transit_volume_report.csv")
+    else:
+        st.info("No transit items found for the selected date range.")
         
-        render_report_exports(
-            daily_transit_display,
-            "Daily Transit Volume Report",
-            html_summary="Daily transit volume for the selected date range."
-        )
     st.subheader("Transit Mix by Day")
     if len(transit_df) > 0:
         transit_mix = (
@@ -2347,12 +2292,7 @@ if selected_view == "Transits":
         transit_mix_display["date"] = pd.to_datetime(transit_mix_display["date"]).dt.strftime("%Y-%m-%d")
         
         st.dataframe(transit_mix_display, use_container_width=True)
-        
-        render_report_exports(
-            transit_mix_display,
-            "Transit Mix by Day Report",
-            html_summary="Daily transit mix by destination."
-        )
+        download_button(transit_mix_display, "transit_mix_by_day_report.csv")
     else:
         st.info("No transit mix data available for the selected date range.")
 
@@ -2362,10 +2302,6 @@ if selected_view == "Transits":
         comparison_display["Avg Transit Items / Day"] = comparison_display["Avg Transit Items / Day"].round(1)
         comparison_display["Avg Reject Rate %"] = comparison_display["Avg Reject Rate %"].round(2)
         st.dataframe(comparison_display, use_container_width=True)
-        render_report_exports(
-            comparison_display,
-            "Transit vs Reject Pattern by Weekday Report",
-            html_summary="Weekday comparison of transit volume and reject rate."
-        )
+        download_button(comparison_display, "transit_vs_reject_pattern_by_weekday_report.csv")
     else:
         st.info("No weekday comparison data available for the selected date range.")
