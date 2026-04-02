@@ -708,7 +708,14 @@ if alerts:
                 System Alerts
             </div>
             <ul style="margin: 0; padding-left: 18px; color: {alert_text_color};">
-                {''.join(f"<li><b>{a['level'].upper()}</b>: {a['text']}</li>" for a in alerts)}
+                {''.join(
+                    f"<li style='color: "
+                    + ("#dc2626" if a["level"] == "critical"
+                       else "#d97706" if a["level"] == "warning"
+                       else "#2563eb")
+                    + f";'><b>{a['level'].upper()}</b>: {a['text']}</li>"
+                    for a in alerts
+                )}
             </ul>
         </div>
         """,
