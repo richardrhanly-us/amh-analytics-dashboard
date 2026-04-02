@@ -1598,8 +1598,26 @@ if selected_view == "Reports":
                     value_font_size="1.6rem"
                 )
 
-            chart_df = staff_df.set_index("date")["staff_hours_saved"]
-            st.line_chart(chart_df)
+            staff_df["date"] = pd.to_datetime(staff_df["date"])
+            staff_df["date_label"] = staff_df["date"].dt.strftime("%b %d")
+            
+            staff_time_chart = (
+                alt.Chart(staff_df)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X(
+                        "date_label:N",
+                        sort=staff_df["date_label"].tolist(),
+                        title="Date",
+                        axis=alt.Axis(labelAngle=0)
+                    ),
+                    y=alt.Y("staff_hours_saved:Q", title="Staff Hours Saved"),
+                    tooltip=["date_label", "staff_hours_saved"]
+                )
+                .properties(height=350)
+            )
+            
+            render_chart(staff_time_chart)
 
             display_df = staff_df.rename(columns={
                 "date": "Date",
