@@ -343,6 +343,8 @@ rejects_raw["error_simple"] = rejects_raw["error_message"].apply(simplify_error)
 min_date = df_raw["datetime"].min().date()
 max_date = df_raw["datetime"].max().date()
 
+estimated_holds = max(bin6_count - rejects_count - library_express_count, 0)
+
 st.caption("Hanly Analytics")
 st.markdown('<div class="sortview-title">SortView</div>', unsafe_allow_html=True)
 st.caption("Operational overview of AMH performance, failure patterns, and transit routing")
@@ -587,6 +589,17 @@ today_library_express_pct = (today_library_express / today_checkins * 100) if to
 today_hourly_checkins = today_df["datetime"].dt.hour.value_counts().sort_index()
 today_hourly_rejects = today_rejects_df["datetime"].dt.hour.value_counts().sort_index()
 
+today_bin6_count = 0
+if "bin" in today_df.columns:
+    today_bin6_count = (
+        today_df["bin"].astype(str).str.strip().eq("6").sum()
+    )
+
+today_estimated_holds = max(
+    today_bin6_count - today_rejects - today_library_express,
+    0
+)
+
 historical_baseline = get_historical_reject_baseline(df_raw, rejects_raw, today)
 
 historical_daily_avg_reject = historical_baseline.get("historical_daily_avg_reject")
@@ -805,7 +818,7 @@ if selected_view == "Live Today":
 
     st.markdown("### Today at a Glance")
 
-    live1, live2, live3, live4, live5, live6, live7, live8, live9 = st.columns(9)
+    live1, live2, live3, live4, live5, live6, live7, live8, live9, live10 = st.columns(10)
 
     with live1:
         render_kpi_card("Checkins", f"{today_checkins:,}", "Processed today", "#6b7280")
@@ -885,6 +898,15 @@ if selected_view == "Live Today":
             "#6b7280"
         )
 
+
+    with live10:
+        render_kpi_card(
+            "Estimated Holds",
+            f"{today_estimated_holds:,}",
+            "Bin 6 minus rejects and Library Express",
+            "#6b7280"
+        )
+    
     if show_live_alert:
         st.markdown(
             f"""
@@ -1768,6 +1790,17 @@ if selected_view == "Reports":
             exception_count = len(exception_df)
             exception_pct = (exception_count / total_binned * 100) if total_binned > 0 else 0
 
+            library_express_count = int(
+                df["destination"].astype(str).str.upper().str.contains("LIBRARY EXPRESS", na=False).sum()
+            )
+            
+            estimated_holds = max(
+                exception_count - len(rejects_df) - library_express_count,
+                0
+            )
+            
+            estimated_holds_pct = (estimated_holds / exception_count * 100) if exception_count > 0 else 0
+
             daily_exception = (
                 exception_df["datetime"].dt.date.value_counts().sort_index()
             )
@@ -1833,7 +1866,7 @@ if selected_view == "Reports":
                 unsafe_allow_html=True
             )
 
-            k1, k2, k3 = st.columns(3)
+            k1, k2, k3, k4 = st.columns(4)
             with k1:
                 render_kpi_card(
                     "Exception Bin",
@@ -1856,6 +1889,14 @@ if selected_view == "Reports":
                     "Of all binned checkins",
                     "#6b7280",
                     value_font_size="1.4rem"
+                )
+
+            with k4:
+                render_kpi_card(
+                    "Estimated Holds",
+                    f"{estimated_holds:,}",
+                    f"{estimated_holds_pct:.1f}% of Bin 6",
+                    "#6b7280"
                 )
 
             if len(overflow_daily) > 0:
