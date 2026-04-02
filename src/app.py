@@ -384,7 +384,7 @@ if pipeline_status:
 
 selected_view = st.segmented_control(
     "Section",
-    options=["Live Today", "Overview", "Reports", "Transits"],
+    options=["Live Today", "Transits", "Reports", "Overview"],
     default="Live Today",
     label_visibility="collapsed"
 )
