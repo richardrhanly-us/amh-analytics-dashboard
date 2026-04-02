@@ -326,8 +326,10 @@ from io import BytesIO
 def render_report_exports(df, report_title, html_summary=""):
     import base64
 
-    # --- build data ---
+    safe_name = report_title.lower().replace(" ", "_")
+
     csv_bytes = df.to_csv(index=False).encode("utf-8")
+    csv_b64 = base64.b64encode(csv_bytes).decode()
 
     html_table = df.to_html(index=False, border=0)
     html_doc = f"""
@@ -370,52 +372,96 @@ def render_report_exports(df, report_title, html_summary=""):
     </html>
     """
 
-    html_bytes = html_doc.encode("utf-8")
-    html_b64 = base64.b64encode(html_bytes).decode()
-
-    print_html = f"""
-    <a href="data:text/html;base64,{html_b64}" target="_blank">
-        <button style="
-            background:#f3f4f6;
-            border:1px solid #d1d5db;
-            border-radius:8px;
-            padding:0.4rem 0.8rem;
-            cursor:pointer;
-        ">Open Print View</button>
-    </a>
+    print_doc = f"""
+    <html>
+    <head>
+        <title>{report_title}</title>
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                margin: 24px;
+                color: #111;
+            }}
+            h1 {{
+                margin-bottom: 6px;
+            }}
+            .summary {{
+                margin-bottom: 18px;
+                color: #444;
+            }}
+            table {{
+                border-collapse: collapse;
+                width: 100%;
+                margin-top: 12px;
+            }}
+            th, td {{
+                border: 1px solid #d1d5db;
+                padding: 8px 10px;
+                text-align: left;
+            }}
+            th {{
+                background: #f3f4f6;
+            }}
+        </style>
+    </head>
+    <body onload="window.print()">
+        <h1>{report_title}</h1>
+        <div class="summary">{html_summary}</div>
+        {html_table}
+    </body>
+    </html>
     """
 
-    # --- dropdown ---
-    left, _ = st.columns([1, 8])
-    
-    with left:
-        option = st.selectbox(
-            "Export",
-            ["Select option...", "Download CSV", "Download HTML", "Print View"],
-            label_visibility="collapsed",
-            key=f"{report_title}_export"
-        )
-    
-    if option == "Download CSV":
-        st.download_button(
-            "Download CSV",
-            data=csv_bytes,
-            file_name=f"{report_title.lower().replace(' ', '_')}.csv",
-            mime="text/csv",
-            key=f"{report_title}_csv"
-        )
+    html_b64 = base64.b64encode(html_doc.encode("utf-8")).decode()
+    print_b64 = base64.b64encode(print_doc.encode("utf-8")).decode()
 
-    elif option == "Download HTML":
-        st.download_button(
-            "Download HTML",
-            data=html_bytes,
-            file_name=f"{report_title.lower().replace(' ', '_')}.html",
-            mime="text/html",
-            key=f"{report_title}_html"
-        )
+    st.markdown(
+        """
+        <style>
+        .report-export-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-top: 8px;
+            margin-bottom: 8px;
+        }
+        .report-export-row a {
+            text-decoration: none;
+        }
+        .report-export-btn {
+            display: inline-block;
+            background: #f3f4f6;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            padding: 0.5rem 1rem;
+            color: #111827;
+            font-size: 0.95rem;
+            cursor: pointer;
+        }
+        .report-export-btn:hover {
+            background: #e5e7eb;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
-    elif option == "Print View":
-        st.markdown(print_html, unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class="report-export-row">
+            <a href="data:text/csv;base64,{csv_b64}" download="{safe_name}.csv">
+                <span class="report-export-btn">Download CSV</span>
+            </a>
+            <a href="data:text/html;base64,{html_b64}" target="_blank">
+                <span class="report-export-btn">View HTML</span>
+            </a>
+            <a href="data:text/html;base64,{print_b64}" target="_blank">
+                <span class="report-export-btn">Print View</span>
+            </a>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 
 CHECKINS_FILE = "data/processed/checkins_clean.csv"
