@@ -7,6 +7,18 @@ import streamlit as st
 CHECKINS_FILE = "data/processed/checkins_clean.csv"
 REJECTS_FILE = "data/processed/rejects_clean.csv"
 STATUS_FILE = "data/processed/pipeline_status.json"
+CHECKINS_HISTORY_FILE = "data/processed/checkins_history.csv"
+
+@st.cache_data
+def load_checkins_history_df(mtime=None):
+    import pandas as pd
+
+    df = pd.read_csv(CHECKINS_HISTORY_FILE, low_memory=False)
+
+    if "datetime" in df.columns:
+        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+
+    return df
 
 
 def get_file_mtime(path):
