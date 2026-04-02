@@ -1933,7 +1933,14 @@ if selected_view == "Reports":
 
                 overflow_daily_display = overflow_daily.reset_index().rename(columns={"index": "date"})
                 st.dataframe(overflow_daily_display, use_container_width=True)
-                download_button(overflow_daily_display, "exception_bin_daily_report.csv")
+                render_report_exports(
+                    overflow_daily_display,
+                    "Exception Bin Rate by Day Report",
+                    html_summary=(
+                        f"Peak exception day: {peak_exception_day_label} at "
+                        f"{peak_exception_rate:.2f}%."
+                    )
+                )
 
             if len(hourly_exception_df) > 0:
                 st.subheader("Exception Bin Volume by Hour")
@@ -1948,7 +1955,14 @@ if selected_view == "Reports":
                     columns={"hour_label": "hour"}
                 )
                 st.dataframe(hourly_exception_display, use_container_width=True)
-                download_button(hourly_exception_display, "exception_bin_hourly_report.csv")
+                render_report_exports(
+                    hourly_exception_display,
+                    "Exception Bin Volume by Hour Report",
+                    html_summary=(
+                        f"Peak exception hour: {peak_exception_hour_text} with "
+                        f"{peak_exception_hour_count:,} items."
+                    )
+                )
             else:
                 st.info("No exception-bin items found for the selected date range.")
 
