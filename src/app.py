@@ -1536,21 +1536,38 @@ if selected_view == "Reports":
 
 
     with st.expander("Throughput", expanded=False):
-        st.caption("Shows how quickly the AMH processes items by hour, helping quantify peak handling capacity and operational demand.")
+        st.caption("Shows average checkins per hour per day across the selected date range, so multi-day ranges do not overstate throughput.")
 
-        throughput_volume = df["datetime"].dt.hour.value_counts().sort_index()
-        throughput_df = throughput_volume.reset_index()
-        throughput_df.columns = ["hour", "items_per_hour"]
-        throughput_df["hour_label"] = throughput_df["hour"].apply(format_hour_plain)
+        if len(df) > 0:
+            throughput_df = df.copy()
+            throughput_df["date"] = throughput_df["datetime"].dt.date
+            throughput_df["hour"] = throughput_df["datetime"].dt.hour
 
-        if len(throughput_df) > 0:
-            peak_row = throughput_df.loc[throughput_df["items_per_hour"].idxmax()]
-            avg_items_per_hour = throughput_df["items_per_hour"].mean()
-            active_hours_count = len(throughput_df)
+            # count checkins per day per hour
+            daily_hourly = (
+                throughput_df.groupby(["date", "hour"])
+                .size()
+                .reset_index(name="checkins")
+            )
 
-            peak_threshold = peak_row["items_per_hour"] * 0.75
-            peak_hours_df = throughput_df[throughput_df["items_per_hour"] >= peak_threshold].copy()
-            peak_times_avg = peak_hours_df["items_per_hour"].mean() if len(peak_hours_df) > 0 else 0
+            # average those hourly counts across days
+            avg_hourly = (
+                daily_hourly.groupby("hour")["checkins"]
+                .mean()
+                .reset_index(name="avg_items_per_hour")
+            )
+
+            avg_hourly["hour_label"] = avg_hourly["hour"].apply(format_hour_plain)
+
+            peak_row = avg_hourly.loc[avg_hourly["avg_items_per_hour"].idxmax()]
+            avg_items_per_hour = avg_hourly["avg_items_per_hour"].mean()
+            active_hours_count = len(avg_hourly)
+
+            peak_threshold = peak_row["avg_items_per_hour"] * 0.75
+            peak_hours_df = avg_hourly[avg_hourly["avg_items_per_hour"] >= peak_threshold].copy()
+            peak_times_avg = peak_hours_df["avg_items_per_hour"].mean() if len(peak_hours_df) > 0 else 0
+
+            days_in_range = throughput_df["date"].nunique()
 
             st.markdown(
                 f"""
@@ -1566,9 +1583,10 @@ if selected_view == "Reports":
                         Report Summary
                     </div>
                     <div style="color: #4b5563; line-height: 1.4;">
-                        Peak throughput: {int(peak_row["items_per_hour"]):,} items/hour at {peak_row["hour_label"]}.
-                        Average items per hour: {avg_items_per_hour:,.1f}.
-                        Average items per hour during peak times: {peak_times_avg:,.1f}.
+                        Based on {days_in_range} day(s) in the selected range, the busiest average hour was {peak_row["hour_label"]}
+                        at {peak_row["avg_items_per_hour"]:,.1f} checkins per day.
+                        Average checkins per active hour: {avg_items_per_hour:,.1f}.
+                        Average during busiest hours: {peak_times_avg:,.1f}.
                     </div>
                 </div>
                 """,
@@ -1579,8 +1597,8 @@ if selected_view == "Reports":
 
             with k1:
                 render_kpi_card(
-                    "Peak Throughput",
-                    f"{int(peak_row['items_per_hour']):,}",
+                    "Peak Avg Hour",
+                    f"{peak_row['avg_items_per_hour']:,.1f}",
                     f"At {peak_row['hour_label']}",
                     "#6b7280",
                     value_font_size="1.6rem"
@@ -1588,16 +1606,16 @@ if selected_view == "Reports":
 
             with k2:
                 render_kpi_card(
-                    "Avg Items / Hour",
+                    "Avg Checkins / Hour",
                     f"{avg_items_per_hour:,.1f}",
-                    "Average across active hours",
+                    "Average per hour per day",
                     "#6b7280",
                     value_font_size="1.6rem"
                 )
 
             with k3:
                 render_kpi_card(
-                    "Peak Times Avg",
+                    "Peak Hours Avg",
                     f"{peak_times_avg:,.1f}",
                     "Average during busiest hours",
                     "#6b7280",
@@ -1606,27 +1624,30 @@ if selected_view == "Reports":
 
             with k4:
                 render_kpi_card(
-                    "Active Hours",
-                    f"{active_hours_count}",
-                    "Hours with recorded activity",
+                    "Days in Range",
+                    f"{days_in_range}",
+                    "Days used in this average",
                     "#6b7280",
                     value_font_size="1.6rem"
                 )
 
-            throughput_df = throughput_df[(throughput_df["hour"] >= 7) & (throughput_df["hour"] <= 20)].copy()
-            throughput_chart = build_hourly_bar_chart(throughput_df, "items_per_hour", "Items Per Hour")
+            avg_hourly = avg_hourly[(avg_hourly["hour"] >= 7) & (avg_hourly["hour"] <= 20)].copy()
+            throughput_chart = build_hourly_bar_chart(
+                avg_hourly.rename(columns={"avg_items_per_hour": "items_per_hour"}),
+                "items_per_hour",
+                "Avg Checkins Per Hour"
+            )
             render_chart(throughput_chart)
 
-            display_df = throughput_df.rename(columns={
+            display_df = avg_hourly.rename(columns={
                 "hour_label": "Hour",
-                "items_per_hour": "Items Per Hour"
-            })[["Hour", "Items Per Hour"]]
+                "avg_items_per_hour": "Avg Checkins Per Hour"
+            })[["Hour", "Avg Checkins Per Hour"]]
 
             st.dataframe(display_df, use_container_width=True)
             download_button(display_df, "throughput_report.csv")
         else:
             st.info("No throughput data available for the selected date range.")
-            
 
     with st.expander("Today vs Typical Hourly Pattern", expanded=False):
         today = datetime.now(ZoneInfo("America/Chicago")).date()
