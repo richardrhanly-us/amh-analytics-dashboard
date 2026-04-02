@@ -343,7 +343,7 @@ rejects_raw["error_simple"] = rejects_raw["error_message"].apply(simplify_error)
 min_date = df_raw["datetime"].min().date()
 max_date = df_raw["datetime"].max().date()
 
-estimated_holds = max(bin6_count - rejects_count - library_express_count, 0)
+
 
 st.caption("Hanly Analytics")
 st.markdown('<div class="sortview-title">SortView</div>', unsafe_allow_html=True)
