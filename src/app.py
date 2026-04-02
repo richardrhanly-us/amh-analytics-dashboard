@@ -1316,26 +1316,6 @@ if selected_view == "Overview":
 
     st.divider()
 
-    st.subheader("Worst Days (Top 5 by Reject Rate)")
-    worst_table = pd.DataFrame({
-        "checkins": checkins_daily,
-        "rejects": rejects_daily
-    }).fillna(0)
-
-    worst_table = worst_table[worst_table["checkins"] > 0]
-
-    if len(worst_table) > 0:
-        worst_table["reject_rate"] = (worst_table["rejects"] / worst_table["checkins"]) * 100
-        worst_table.index = pd.to_datetime(worst_table.index)
-        worst_table["day_of_week"] = worst_table.index.day_name()
-        worst_table = worst_table.sort_values("reject_rate", ascending=False).head(5)
-
-        worst_table_display = worst_table.copy()
-        worst_table_display["reject_rate"] = worst_table_display["reject_rate"].round(2)
-        worst_table_display = worst_table_display[["day_of_week", "checkins", "rejects", "reject_rate"]]
-        st.dataframe(worst_table_display, use_container_width=True)
-    else:
-        st.info("No worst-day data available for the selected date range.")
 
 
 if selected_view == "Reports":
@@ -1974,6 +1954,29 @@ if selected_view == "Reports":
                 download_button(hourly_exception_display, "exception_bin_volume_by_hour_report.csv")
             else:
                 st.info("No exception-bin items found for the selected date range.")
+
+
+
+    st.subheader("Worst Days (Top 5 by Reject Rate)")
+    worst_table = pd.DataFrame({
+        "checkins": checkins_daily,
+        "rejects": rejects_daily
+    }).fillna(0)
+
+    worst_table = worst_table[worst_table["checkins"] > 0]
+
+    if len(worst_table) > 0:
+        worst_table["reject_rate"] = (worst_table["rejects"] / worst_table["checkins"]) * 100
+        worst_table.index = pd.to_datetime(worst_table.index)
+        worst_table["day_of_week"] = worst_table.index.day_name()
+        worst_table = worst_table.sort_values("reject_rate", ascending=False).head(5)
+
+        worst_table_display = worst_table.copy()
+        worst_table_display["reject_rate"] = worst_table_display["reject_rate"].round(2)
+        worst_table_display = worst_table_display[["day_of_week", "checkins", "rejects", "reject_rate"]]
+        st.dataframe(worst_table_display, use_container_width=True)
+    else:
+        st.info("No worst-day data available for the selected date range.")
 
     st.markdown("---")
 
