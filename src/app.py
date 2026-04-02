@@ -374,12 +374,7 @@ if pipeline_status:
     rejects_rows = pipeline_status.get("rejects_rows", 0)
     transit_items = pipeline_status.get("transit_items", 0)
 
-    st.info(
-        f"Last pipeline refresh: {last_run} | "
-        f"Checkins: {checkins_rows:,} | "
-        f"Rejects: {rejects_rows:,} | "
-        f"Transit items: {transit_items:,}"
-    )
+
 
 selected_view = st.segmented_control(
     "Section",
