@@ -748,19 +748,34 @@ if selected_view == "Live Today":
             st.rerun()
 
     with top_right:
-        if today_checkins == 0:
-            readout_text = "No AMH activity has been logged for today yet."
-        else:
-            current_throughput = today_metrics["current_speed"]
-            staff_hours = today_metrics["staff_hours_saved"]
-            total_transit_pct = (today_total_transit / today_checkins * 100) if today_checkins > 0 else 0
+        st.subheader("Checkins by Hour")
 
-            readout_text = (
-                f"The AMH has processed {today_checkins:,} items with a reject rate of "
-                f"{today_reject_rate:.2f}%. Current throughput is {current_throughput:,} items this hour. "
-                f"Busiest hour: {format_hour(today_peak_hour)} with {today_peak_hour_count:,} checkins. "
+        if len(today_hourly_checkins) > 0:
+            checkins_hour_df = today_hourly_checkins.reset_index()
+            checkins_hour_df.columns = ["hour", "checkins"]
+            checkins_hour_df["hour_label"] = checkins_hour_df["hour"].apply(
+                lambda h: pd.to_datetime(f"{int(h):02d}:00").strftime("%I%p").lstrip("0")
             )
 
+            checkins_hour_chart = (
+                alt.Chart(checkins_hour_df)
+                .mark_line(point=True, strokeWidth=3)
+                .encode(
+                    x=alt.X(
+                        "hour_label:N",
+                        sort=checkins_hour_df["hour_label"].tolist(),
+                        title="Hour",
+                        axis=alt.Axis(labelAngle=0)
+                    ),
+                    y=alt.Y("checkins:Q", title="Checkins"),
+                    tooltip=["hour_label", "checkins"]
+                )
+                .properties(height=320)
+            )
+
+            st.altair_chart(checkins_hour_chart, use_container_width=True)
+        else:
+            st.info("No checkins found for today.")
     st.markdown("### Today at a Glance")
 
     live1, live2, live3, live4, live5, live6, live7, live8, live9, live10 = st.columns(10)
@@ -932,38 +947,7 @@ if selected_view == "Live Today":
 
     st.divider()
 
-    st.subheader("Checkins by Hour")
-
-    if len(today_hourly_checkins) > 0:
-        checkins_hour_df = today_hourly_checkins.reset_index()
-        checkins_hour_df.columns = ["hour", "checkins"]
-        checkins_hour_df["hour_label"] = checkins_hour_df["hour"].apply(
-            lambda h: pd.to_datetime(f"{int(h):02d}:00").strftime("%I%p").lstrip("0")
-        )
-
-        checkins_hour_chart = (
-            alt.Chart(checkins_hour_df)
-            .mark_line(point=True, strokeWidth=3)
-            .encode(
-                x=alt.X(
-                    "hour_label:N",
-                    sort=checkins_hour_df["hour_label"].tolist(),
-                    title="Hour",
-                    axis=alt.Axis(labelAngle=0)
-                ),
-                y=alt.Y("checkins:Q", title="Checkins"),
-                tooltip=["hour_label", "checkins"]
-            )
-            .properties(height=350)
-        )
-
-        st.altair_chart(checkins_hour_chart, use_container_width=True)
-    else:
-        st.info("No checkins found for today.")
-
-    
-
-
+      
 
     
     st.subheader("Bin Volume")
