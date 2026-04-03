@@ -485,9 +485,10 @@ valid_transit_destinations = [
     "Westside",
     "Library Express",
 ]
+transit_source = today_df if selected_view == "Transits" else df
 
-transit_df = df[
-    df["transit_destination"].isin(valid_transit_destinations)
+transit_df = transit_source[
+    transit_source["transit_destination"].isin(valid_transit_destinations)
 ].copy()
 
 transit_summary = get_transit_summary(df)
@@ -2456,7 +2457,7 @@ if selected_view == "Transits":
         )
 
     today_no_agency_dest = int(
-        df["destination"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False).sum()
+        today_df["destination"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False).sum()
     )
     
     transit1, transit2, transit3, transit4, transit5 = st.columns(5)
