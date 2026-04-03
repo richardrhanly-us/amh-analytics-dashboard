@@ -1790,45 +1790,84 @@ Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.
 
         st.subheader("Peak Hour Analysis")
 
-        hour_counts = (
-            df.groupby("hour")
-              .size()
-              .reset_index(name="count")
-        )
+        if len(df) > 0:
+            peak_df = df.copy()
+            peak_df["date"] = peak_df["datetime"].dt.date
+            peak_df["hour"] = peak_df["datetime"].dt.hour
 
-        if len(hour_counts) > 0:
-            busiest_hour = hour_counts.sort_values("count", ascending=False).iloc[0]
+            days_in_range = peak_df["date"].nunique()
 
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #2563eb;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-top: 8px;
-                    margin-bottom: 16px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Report Summary
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.4;">
-                        Busiest hour: {format_hour_plain(busiest_hour['hour'])} with {int(busiest_hour['count']):,} items.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
+            hour_totals = (
+                peak_df.groupby("hour")
+                .size()
+                .reset_index(name="count")
             )
 
-            hour_counts["hour_label"] = hour_counts["hour"].apply(format_hour_plain)
-            hour_counts = hour_counts[(hour_counts["hour"] >= 7) & (hour_counts["hour"] <= 20)]
+            hour_daily = (
+                peak_df.groupby(["date", "hour"])
+                .size()
+                .reset_index(name="hourly_checkins")
+            )
 
-            hourly_chart = build_hourly_bar_chart(hour_counts, "count", "Checkins")
-            render_chart(hourly_chart)
+            hour_avg = (
+                hour_daily.groupby("hour")["hourly_checkins"]
+                .mean()
+                .reset_index(name="avg_checkins")
+            )
 
-            display_df = hour_counts[["hour_label", "count"]].rename(columns={"hour_label": "hour"})
-            st.dataframe(display_df, use_container_width=True)
-            download_button(display_df, "peak_hour_analysis.csv")
+            hour_summary = hour_totals.merge(hour_avg, on="hour", how="left")
+            hour_summary["hour_label"] = hour_summary["hour"].apply(format_hour_plain)
+            hour_summary = hour_summary[(hour_summary["hour"] >= 7) & (hour_summary["hour"] <= 20)].copy()
+
+            if len(hour_summary) > 0:
+                busiest_hour_row = hour_summary.loc[hour_summary["avg_checkins"].idxmax()]
+
+                st.markdown(
+                    f"""
+                    <div style="
+                        border-left: 4px solid #2563eb;
+                        background-color: #f9fafb;
+                        padding: 14px 16px;
+                        border-radius: 8px;
+                        margin-top: 8px;
+                        margin-bottom: 16px;
+                    ">
+                        <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                            Report Summary
+                        </div>
+                        <div style="color: #4b5563; line-height: 1.4;">
+                            Busiest average hour: {busiest_hour_row["hour_label"]} with
+                            {busiest_hour_row["avg_checkins"]:,.1f} average checkins per day
+                            across {days_in_range} day(s). Total volume during that hour in the selected range:
+                            {int(busiest_hour_row["count"]):,} checkins.
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+                peak_hour_chart = build_hourly_bar_chart(
+                    hour_summary.rename(columns={"avg_checkins": "avg_items_per_hour"}),
+                    "avg_items_per_hour",
+                    "Avg Checkins Per Hour"
+                )
+                render_chart(peak_hour_chart)
+
+                peak_hour_display = hour_summary.rename(columns={
+                    "hour_label": "Hour",
+                    "count": "Total Checkins",
+                    "avg_checkins": "Avg Checkins Per Day"
+                })[["Hour", "Total Checkins", "Avg Checkins Per Day"]]
+
+                peak_hour_display["Avg Checkins Per Day"] = peak_hour_display["Avg Checkins Per Day"].round(1)
+
+                st.dataframe(peak_hour_display, use_container_width=True)
+                download_button(
+                    peak_hour_display,
+                    "peak_hour_analysis.csv"
+                )
+            else:
+                st.info("No hourly data available for selected range.")
         else:
             st.info("No hourly data available for selected range.")
 
