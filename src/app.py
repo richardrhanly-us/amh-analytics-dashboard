@@ -1312,111 +1312,110 @@ if selected_view == "Reports":
     st.markdown("---")
 
 
-
-        # -----------------------------
-        # Labor & Efficiency
-        # -----------------------------
-        st.subheader("Labor & Efficiency")
-        st.caption("Translates machine activity into estimated staff effort replaced by automation.")
+    # -----------------------------
+    # Labor & Efficiency
+    # -----------------------------
+    st.subheader("Labor & Efficiency")
+    st.caption("Translates machine activity into estimated staff effort replaced by automation.")
     
-        with st.expander("Staff Time Equivalent", expanded=False):
-            st.caption("Estimates staff time saved by comparing manual processing time against observed AMH processing time.")
+    with st.expander("Staff Time Equivalent", expanded=False):
+        st.caption("Estimates staff time saved by comparing manual processing time against observed AMH processing time.")
     
-            MANUAL_RATE = 50
+        MANUAL_RATE = 50
     
-            if len(df) > 0 and len(df_history_raw) > 0:
-                rate_df = df.copy()
-                rate_df["date"] = rate_df["datetime"].dt.date
-                rate_df["hour"] = rate_df["datetime"].dt.hour
-                
-                daily_hourly = (
-                    rate_df.groupby(["date", "hour"])
-                    .size()
-                    .reset_index(name="checkins")
+        if len(df) > 0 and len(df_history_raw) > 0:
+            rate_df = df.copy()
+            rate_df["date"] = rate_df["datetime"].dt.date
+            rate_df["hour"] = rate_df["datetime"].dt.hour
+    
+            daily_hourly = (
+                rate_df.groupby(["date", "hour"])
+                .size()
+                .reset_index(name="checkins")
+            )
+    
+            avg_hourly = (
+                daily_hourly.groupby("hour")["checkins"]
+                .mean()
+                .reset_index(name="avg_items_per_hour")
+            )
+    
+            if len(avg_hourly) > 0:
+                peak_row = avg_hourly.loc[avg_hourly["avg_items_per_hour"].idxmax()]
+                threshold = peak_row["avg_items_per_hour"] * 0.75
+                peak_hours = avg_hourly[avg_hourly["avg_items_per_hour"] >= threshold].copy()
+    
+                AMH_RATE = (
+                    peak_hours["avg_items_per_hour"].mean()
+                    if len(peak_hours) > 0
+                    else peak_row["avg_items_per_hour"]
                 )
-                
-                avg_hourly = (
-                    daily_hourly.groupby("hour")["checkins"]
-                    .mean()
-                    .reset_index(name="avg_items_per_hour")
-                )
-                
-                if len(avg_hourly) > 0:
-                    peak_row = avg_hourly.loc[avg_hourly["avg_items_per_hour"].idxmax()]
-                    threshold = peak_row["avg_items_per_hour"] * 0.75
-                    peak_hours = avg_hourly[avg_hourly["avg_items_per_hour"] >= threshold].copy()
-                
-                    AMH_RATE = (
-                        peak_hours["avg_items_per_hour"].mean()
-                        if len(peak_hours) > 0
-                        else peak_row["avg_items_per_hour"]
-                    )
-                else:
-                    AMH_RATE = 130.0
+            else:
+                AMH_RATE = 130.0
     
-                daily_counts = df["datetime"].dt.date.value_counts().sort_index()
-                staff_df = daily_counts.reset_index()
-                staff_df.columns = ["date", "checkins"]
+            daily_counts = df["datetime"].dt.date.value_counts().sort_index()
+            staff_df = daily_counts.reset_index()
+            staff_df.columns = ["date", "checkins"]
     
-                staff_df["manual_hours"] = staff_df["checkins"] / MANUAL_RATE
-                staff_df["amh_hours"] = staff_df["checkins"] / AMH_RATE
-                staff_df["hours_saved"] = (staff_df["manual_hours"] - staff_df["amh_hours"]).clip(lower=0)
-                staff_df["shifts_saved"] = staff_df["hours_saved"] / 8
+            staff_df["manual_hours"] = staff_df["checkins"] / MANUAL_RATE
+            staff_df["amh_hours"] = staff_df["checkins"] / AMH_RATE
+            staff_df["hours_saved"] = (staff_df["manual_hours"] - staff_df["amh_hours"]).clip(lower=0)
+            staff_df["shifts_saved"] = staff_df["hours_saved"] / 8
     
-                avg_saved = staff_df["hours_saved"].mean()
-                total_saved = staff_df["hours_saved"].sum()
-                peak_day = staff_df.loc[staff_df["hours_saved"].idxmax()]
+            avg_saved = staff_df["hours_saved"].mean()
+            total_saved = staff_df["hours_saved"].sum()
+            peak_day = staff_df.loc[staff_df["hours_saved"].idxmax()]
     
-                avg_daily_checkins = staff_df["checkins"].mean()
-                avg_daily_manual_hours = staff_df["manual_hours"].mean()
-                avg_daily_amh_hours = staff_df["amh_hours"].mean()
+            avg_daily_checkins = staff_df["checkins"].mean()
+            avg_daily_manual_hours = staff_df["manual_hours"].mean()
+            avg_daily_amh_hours = staff_df["amh_hours"].mean()
     
-                st.markdown(
-                    f"""
-                    <div style="
-                        border-left: 4px solid #059669;
-                        background-color: #f9fafb;
-                        padding: 14px 16px;
-                        border-radius: 8px;
-                        margin-top: 8px;
-                        margin-bottom: 16px;
-                    ">
-                        <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                            Report Summary
-                        </div>
-                        <div style="color: #4b5563; line-height: 1.4;">
-                            Using a manual processing rate of {MANUAL_RATE:.0f} items/hour and an observed AMH rate of
-                            {AMH_RATE:.1f} items/hour, the average daily staff time saved in the selected range was
-                            {avg_saved:,.2f} hours.
-                        </div>
+            st.markdown(
+                f"""
+                <div style="
+                    border-left: 4px solid #059669;
+                    background-color: #f9fafb;
+                    padding: 14px 16px;
+                    border-radius: 8px;
+                    margin-top: 8px;
+                    margin-bottom: 16px;
+                ">
+                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                        Report Summary
                     </div>
-                    """,
-                    unsafe_allow_html=True
+                    <div style="color: #4b5563; line-height: 1.4;">
+                        Using a manual processing rate of {MANUAL_RATE:.0f} items/hour and an observed AMH rate of
+                        {AMH_RATE:.1f} items/hour, the average daily staff time saved in the selected range was
+                        {avg_saved:,.2f} hours.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+    
+            k1, k2, k3 = st.columns(3)
+    
+            with k1:
+                render_kpi_card("Avg Hours Saved", f"{avg_saved:,.2f}", "Per day", "#6b7280")
+    
+            with k2:
+                render_kpi_card(
+                    "Peak Day Saved",
+                    f"{peak_day['hours_saved']:,.2f}",
+                    pd.to_datetime(peak_day["date"]).strftime("%b %d, %Y"),
+                    "#6b7280"
                 )
     
-                k1, k2, k3 = st.columns(3)
+            with k3:
+                render_kpi_card(
+                    "Total Hours Saved",
+                    f"{total_saved:,.2f}",
+                    "Across selected date range",
+                    "#6b7280"
+                )
     
-                with k1:
-                    render_kpi_card("Avg Hours Saved", f"{avg_saved:,.2f}", "Per day", "#6b7280")
-    
-                with k2:
-                    render_kpi_card(
-                        "Peak Day Saved",
-                        f"{peak_day['hours_saved']:,.2f}",
-                        pd.to_datetime(peak_day["date"]).strftime("%b %d, %Y"),
-                        "#6b7280"
-                    )
-    
-                with k3:
-                    render_kpi_card(
-                        "Total Hours Saved",
-                        f"{total_saved:,.2f}",
-                        "Across selected date range",
-                        "#6b7280"
-                    )
-    
-                st.info(
-        f"""## How Staff Time Saved Is Calculated   
+            st.info(
+                f"""## How Staff Time Saved Is Calculated
     
     This estimate compares how long it would take staff to check items in manually versus how long the AMH checks in the same workload.
     
@@ -1429,79 +1428,66 @@ if selected_view == "Reports":
     
     Manual rate = {MANUAL_RATE:.0f} check-ins p/hr
     
-    This dashboard uses a manual processing baseline of {MANUAL_RATE:.0f} items per hour.
-    
-    The baseline comes from observed staff check-in pace from Westside circulation check-in reporting during peak hours.
-    
-    Manual time = Average daily check-ins ÷ Manual rate
-    
-    Manual time = {avg_daily_checkins:,.1f} check-ins ÷ {MANUAL_RATE:.0f} p/hr
+    Manual time = {avg_daily_checkins:,.1f} ÷ {MANUAL_RATE:.0f}
     
     **Manual time = {avg_daily_manual_hours:,.2f} hours**
     
     #### AMH Processing Time
     
-    This dashboard uses the AMH’s observed all-time busiest-hour average.
+    Current AMH rate = {AMH_RATE:.1f} items per hour (selected date range)
     
-    Current AMH rate used = {AMH_RATE:.1f} items per hour (based on all check-ins from {start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')})
-    
-    AMH time = Checkins ÷ AMH rate
-    
-    AMH time = {avg_daily_checkins:,.1f} check-ins ÷ {AMH_RATE:.1f} p/hr
+    AMH time = {avg_daily_checkins:,.1f} ÷ {AMH_RATE:.1f}
     
     **AMH time = {avg_daily_amh_hours:,.2f} hours**
     
     #### Time Saved
     
-    **Average Daily Staff time saved = (Check-ins ÷ Manual rate) − (Check-ins ÷ AMH rate)**
+    **Time saved = Manual − AMH**
     
-    Using {avg_daily_checkins:,.1f} average daily check-ins:
-    
-    Average Daily Staff time saved = ({avg_daily_manual_hours:,.2f} − {avg_daily_amh_hours:,.2f})
+    ({avg_daily_manual_hours:,.2f} − {avg_daily_amh_hours:,.2f})
     
     **Average Daily Staff time saved = {avg_saved:,.2f} hours**
     
     What This Means
-    - Uses an observed manual staff benchmark from the TLC circulation report for Westside
-    - Uses actual AMH performance from historical data
-    - Compares manual processing time against AMH processing time
-    - Produces a realistic estimate based on observed data from Westside and Main branch operations"""
-    )
+    - Uses observed staff benchmark from Westside circulation reporting
+    - Uses AMH performance from selected date range
+    - Compares manual vs automated processing time
+    - Produces a realistic estimate based on operational data"""
+            )
     
-                staff_chart_df = staff_df.copy()
-                staff_chart_df["date"] = pd.to_datetime(staff_chart_df["date"])
-                staff_chart_df["date_label"] = staff_chart_df["date"].dt.strftime("%b %d")
+            staff_chart_df = staff_df.copy()
+            staff_chart_df["date"] = pd.to_datetime(staff_chart_df["date"])
+            staff_chart_df["date_label"] = staff_chart_df["date"].dt.strftime("%b %d")
     
-                staff_time_chart = (
-                    alt.Chart(staff_chart_df)
-                    .mark_line(point=True)
-                    .encode(
-                        x=alt.X("date_label:N", sort=staff_chart_df["date_label"].tolist(), title="Date"),
-                        y=alt.Y("hours_saved:Q", title="Staff Hours Saved"),
-                        tooltip=["date_label", "hours_saved"]
-                    )
-                    .properties(height=350)
+            staff_time_chart = (
+                alt.Chart(staff_chart_df)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X("date_label:N", sort=staff_chart_df["date_label"].tolist(), title="Date"),
+                    y=alt.Y("hours_saved:Q", title="Staff Hours Saved"),
+                    tooltip=["date_label", "hours_saved"]
                 )
+                .properties(height=350)
+            )
     
-                render_chart(staff_time_chart)
+            render_chart(staff_time_chart)
     
-                display_df = staff_df.copy()
-                display_df["date"] = pd.to_datetime(display_df["date"]).dt.strftime("%Y-%m-%d")
-                display_df = display_df.rename(columns={
-                    "date": "Date",
-                    "checkins": "Checkins",
-                    "manual_hours": "Manual Hours",
-                    "amh_hours": "AMH Hours",
-                    "hours_saved": "Staff Hours Saved",
-                    "shifts_saved": "Staff Shifts Saved (8 hr)"
-                })
+            display_df = staff_df.copy()
+            display_df["date"] = pd.to_datetime(display_df["date"]).dt.strftime("%Y-%m-%d")
+            display_df = display_df.rename(columns={
+                "date": "Date",
+                "checkins": "Checkins",
+                "manual_hours": "Manual Hours",
+                "amh_hours": "AMH Hours",
+                "hours_saved": "Staff Hours Saved",
+                "shifts_saved": "Staff Shifts Saved (8 hr)"
+            })
     
-                st.dataframe(display_df, use_container_width=True)
-                download_button(display_df, "staff_time_equivalent.csv")
-            else:
-                st.info("Not enough data is available to calculate staff time savings for the selected date range.")
-
-
+            st.dataframe(display_df, use_container_width=True)
+            download_button(display_df, "staff_time_equivalent.csv")
+    
+        else:
+            st.info("Not enough data is available to calculate staff time savings for the selected date range.")
 
 
     
