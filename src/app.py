@@ -914,13 +914,21 @@ if selected_view == "Live Today":
         quality1, quality2, quality3 = st.columns(3)
 
         with quality1:
+            reject_subtitle = f"{today_rejects:,} failures today"
+            if historical_daily_avg_reject > 0:
+                reject_subtitle = (
+                    f"{live_reject_deviation:+.2f}% vs avg daily "
+                    f"rate ({historical_daily_avg_reject:.2f}%)"
+                )
+        
             render_kpi_card(
                 "Rejects",
                 f"{today_rejects:,}",
-                "Failed today",
-                "#6b7280",
+                reject_subtitle,
+                live_reject_subtitle_color,
                 value_font_size="1.15rem",
-                border_color="#fbbf24"
+                border_color=live_reject_card_border,
+                value_color=live_reject_value_color
             )
 
         with quality2:
