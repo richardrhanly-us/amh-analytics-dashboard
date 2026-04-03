@@ -1828,13 +1828,13 @@ AMH time = {avg_daily_checkins:,.1f} check-ins ÷ {AMH_RATE:.1f} p/hr
 
 #### Time Saved
 
-**Average Daily Staff time saved = (Check-ins p/hr ÷ Manual rate) − (Check-ins p/hr ÷ AMH rate)**
-  
-Average Daily Staff time saved = ({avg_daily_checkins:,.1f} check-ins ÷ 50 Check-ins p/hr) - ({avg_daily_checkins:,.1f} ÷ 131.6 check-ins p/hr)
+**Average Daily Staff time saved = (Check-ins ÷ Manual rate) − (Check-ins ÷ AMH rate)**
 
-Average Daily Staff time saved = (19.74 check-ins p/hr) − (7.50 Check-ins p/hr)
+Using {avg_daily_checkins:,.1f} average daily check-ins:
 
-**Average Daily Staff time saved = 16.20 hours**
+Average Daily Staff time saved = ({avg_daily_manual_hours:,.2f} − {avg_daily_amh_hours:,.2f})
+
+**Average Daily Staff time saved = {avg_saved:,.2f} hours**
 
 What This Means
 - Uses an observed manual staff benchmark from the TLC circulation report for Westside
