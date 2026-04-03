@@ -1316,7 +1316,7 @@ if selected_view == "Reports":
     # Labor & Efficiency
     # -----------------------------
     st.subheader("Labor & Efficiency")
-    st.caption("Translates machine activity into estimated staff effort replaced by automation.")
+    st.caption("Estimates staff time saved by Automated Materials Handler processing.")
     
     with st.expander("Staff Time Equivalent", expanded=False):
         st.caption("Estimates staff time saved by comparing manual processing time against observed AMH processing time.")
