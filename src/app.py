@@ -2627,36 +2627,6 @@ if selected_view == "Transits":
     
     
     with st.expander("Distribution & Flow", expanded=False):
-        st.subheader("Transit Distribution")
-        st.caption("Visualizes total item counts sent to each destination for quick comparison.")
-        if len(transit_summary) > 0:
-            transit_distribution_df = transit_summary.copy()
-            transit_distribution_df["transit_items"] = transit_distribution_df["transit_items"].astype(int)
-    
-            transit_distribution_chart_df = transit_distribution_df[["destination", "transit_items"]].copy()
-            transit_distribution_chart = build_category_bar_chart(
-                transit_distribution_chart_df,
-                "destination",
-                "transit_items",
-                "Transit Items",
-                "Destination"
-            )
-            render_chart(transit_distribution_chart)
-    
-            transit_distribution_display = transit_distribution_df.rename(columns={
-                "destination": "Destination",
-                "transit_items": "Transit Items",
-                "pct_of_total_items": "% of Total Items"
-            })
-    
-            st.dataframe(transit_distribution_display, use_container_width=True)
-            download_button(
-                transit_distribution_display,
-                "transit_distribution_report.csv",
-                key="transit_reports_distribution_flow_transit_distribution_download"
-            )
-        else:
-            st.info("No transit distribution data available for the selected date range.")
     
         st.subheader("Routing Distribution")
         st.caption("Displays how items are proportionally distributed across all destinations.")
