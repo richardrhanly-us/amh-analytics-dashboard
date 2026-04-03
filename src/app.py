@@ -1379,8 +1379,6 @@ if selected_view == "Overview":
 
 if selected_view == "Reports":
     st.header("Reports")
-    st.markdown("---")
-
     # -----------------------------
     # Labor & Efficiency
     # -----------------------------
