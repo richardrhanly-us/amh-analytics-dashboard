@@ -1418,17 +1418,36 @@ if selected_view == "Overview":
     peak_day_total_subtitle = "No activity in selected range"
 
     if len(df) > 0:
+        # --- TOTAL MODE (existing logic) ---
         daily_volume = df["datetime"].dt.date.value_counts().sort_index()
+    
         if len(daily_volume) > 0:
             peak_day_date = daily_volume.idxmax()
             peak_day_count = int(daily_volume.max())
             peak_day_name = pd.to_datetime(peak_day_date).strftime("%A")
-
+    
             peak_day_total_value = peak_day_name
-            peak_day_total_subtitle = f"{peak_day_count:,} checkins on {pd.to_datetime(peak_day_date).strftime('%b %d, %Y')}"
+            peak_day_total_subtitle = (
+                f"{peak_day_count:,} checkins on "
+                f"{pd.to_datetime(peak_day_date).strftime('%b %d, %Y')}"
+            )
+    
+        # --- AVERAGE MODE (NEW FIX) ---
+        weekday_avg = (
+            df.assign(day_of_week=df["datetime"].dt.day_name())
+              .groupby("day_of_week")
+              .size()
+              .div(df["datetime"].dt.date.nunique())
+              .reindex([
+                  "Monday", "Tuesday", "Wednesday",
+                  "Thursday", "Friday", "Saturday", "Sunday"
+              ])
+        )
 
-            peak_day_avg_value = peak_day_name
-            peak_day_avg_subtitle = f"{peak_day_count:,} checkins on {pd.to_datetime(peak_day_date).strftime('%b %d, %Y')}"
+    if len(weekday_avg) > 0:
+        peak_day_avg_name = weekday_avg.idxmax()
+        peak_day_avg_value = peak_day_avg_name
+        peak_day_avg_subtitle = f"{weekday_avg.max():,.1f} avg checkins/day"
 
     row1_col1, row1_col2, row1_col3 = st.columns(3)
     row2_col1, row2_col2, row2_col3 = st.columns(3)
