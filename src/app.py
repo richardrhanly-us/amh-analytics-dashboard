@@ -736,28 +736,57 @@ if selected_view == "Live Today":
             st.rerun()
     
     
-    with chart_col:
-        st.subheader("Checkins by Hour")
-    
-        if len(today_hourly_checkins) > 0:
-            checkins_hour_df = today_hourly_checkins.reset_index()
-            checkins_hour_df.columns = ["hour", "checkins"]
-            checkins_hour_df["hour_label"] = checkins_hour_df["hour"].apply(
-                lambda h: pd.to_datetime(f"{int(h):02d}:00").strftime("%I%p").lstrip("0")
+with chart_col:
+    st.markdown(
+        """
+        <div style="
+            background-color: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 14px 18px 6px 18px;
+            margin-top: 6px;
+            margin-bottom: 8px;
+        ">
+            <div style="
+                font-size: 1.05rem;
+                font-weight: 600;
+                color: #1f2937;
+                margin-bottom: 8px;
+            ">
+                Checkins by Hour
+            </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    if len(today_hourly_checkins) > 0:
+        checkins_hour_df = today_hourly_checkins.reset_index()
+        checkins_hour_df.columns = ["hour", "checkins"]
+        checkins_hour_df["hour_label"] = checkins_hour_df["hour"].apply(
+            lambda h: pd.to_datetime(f"{int(h):02d}:00").strftime("%I%p").lstrip("0")
+        )
+
+        checkins_hour_chart = (
+            alt.Chart(checkins_hour_df)
+            .mark_line(point=True, strokeWidth=3)
+            .encode(
+                x=alt.X(
+                    "hour_label:N",
+                    sort=checkins_hour_df["hour_label"].tolist(),
+                    title="Hour"
+                ),
+                y=alt.Y("checkins:Q", title="Checkins"),
+                tooltip=["hour_label", "checkins"]
             )
-    
-            checkins_hour_chart = (
-                alt.Chart(checkins_hour_df)
-                .mark_line(point=True, strokeWidth=3)
-                .encode(
-                    x=alt.X("hour_label:N", sort=checkins_hour_df["hour_label"].tolist(), title="Hour"),
-                    y=alt.Y("checkins:Q", title="Checkins"),
-                    tooltip=["hour_label", "checkins"]
-                )
-                .properties(height=260)
-            )
-    
-            st.altair_chart(checkins_hour_chart, use_container_width=True)
+            .properties(height=240)
+        )
+
+        st.altair_chart(checkins_hour_chart, use_container_width=True)
+    else:
+        st.info("No checkins found for today.")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
     st.markdown("### Today at a Glance")
 
     live1, live2, live3, live4, live5, live6, live7, live8, live9, live10 = st.columns(10)
