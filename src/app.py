@@ -708,32 +708,32 @@ if alerts:
 
 
 if selected_view == "Live Today":
-    # LEFT SIDE (normal flow)
-    st.header(f"{today.strftime('%A, %b %d')}")
+    # HEADER + CHART IN SAME ROW (fixes gap issue)
+    left_col, chart_col = st.columns([1, 1.4])
     
-    if checkins_updated is not None:
-        st.markdown(
-            f"""
-            <div style="
-                margin-top: -10px;
-                margin-bottom: 12px;
-                color: #6b7280;
-                font-size: 0.95rem;
-            ">
-                Last updated: {checkins_updated.strftime('%b %d, %Y %I:%M %p')}
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+    with left_col:
+        st.header(f"{today.strftime('%A, %b %d')}")
     
-    if st.button("Refresh Live Data"):
-        st.cache_data.clear()
-        st.success("Live data cache cleared. Reloading latest available files...")
-        st.rerun()
+        if checkins_updated is not None:
+            st.markdown(
+                f"""
+                <div style="
+                    margin-top: -10px;
+                    margin-bottom: 12px;
+                    color: #6b7280;
+                    font-size: 0.95rem;
+                ">
+                    Last updated: {checkins_updated.strftime('%b %d, %Y %I:%M %p')}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
     
+        if st.button("Refresh Live Data"):
+            st.cache_data.clear()
+            st.success("Live data cache cleared. Reloading latest available files...")
+            st.rerun()
     
-    # NOW create a row BELOW header but ABOVE "Today at a Glance"
-    left_spacer, chart_col = st.columns([1, 1.4])
     
     with chart_col:
         st.subheader("Checkins by Hour")
@@ -753,7 +753,7 @@ if selected_view == "Live Today":
                     y=alt.Y("checkins:Q", title="Checkins"),
                     tooltip=["hour_label", "checkins"]
                 )
-                .properties(height=300)
+                .properties(height=260)
             )
     
             st.altair_chart(checkins_hour_chart, use_container_width=True)
