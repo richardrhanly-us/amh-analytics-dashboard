@@ -723,7 +723,7 @@ if selected_view == "Live Today":
         st.success("Live data cache cleared. Reloading latest available files...")
         st.rerun()
 
-    st.markdown("### Today at a Glance")
+    
 
 
 
