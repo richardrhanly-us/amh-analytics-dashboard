@@ -1446,9 +1446,9 @@ For **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**, 
 
 #### Manual Processing Time
 
-Manual rate = {MANUAL_RATE:.0f} check-ins p/hr
-
 This rate was based on circulation report data observed during peak hours, where staff are working at their fastest steady pace.
+
+Manual rate = {MANUAL_RATE:.0f} check-ins p/hr
 
 Manual time = {avg_daily_checkins:,.1f} ÷ {MANUAL_RATE:.0f}
 
