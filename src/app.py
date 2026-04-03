@@ -84,16 +84,16 @@ def render_kpi_card(
     fill_html = ""
     if fill_pct is not None:
         fill_html = f"""
-            <div style="
-                position: absolute;
-                left: 0;
-                bottom: 0;
-                width: 100%;
-                height: {safe_fill_pct:.1f}%;
-                background: {fill_color};
-                z-index: 1;
-                transition: height 0.6s ease;
-            "></div>
+        <div style="
+            position: absolute;
+            left: 0;
+            bottom: 0;
+            width: 100%;
+            height: {safe_fill_pct:.1f}%;
+            background: {fill_color};
+            z-index: 1;
+            transition: height 0.6s ease;
+        "></div>
         """
 
     st.markdown(
@@ -141,7 +141,6 @@ def render_kpi_card(
         """,
         unsafe_allow_html=True
     )
-
 
 def get_file_updated_time(path):
     file_path = Path(path)
