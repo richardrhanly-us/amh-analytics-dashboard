@@ -2735,10 +2735,20 @@ if selected_view == "Transits":
     
         if len(no_agency_df) > 0:
             no_agency_total = len(no_agency_df)
-            no_agency_daily = no_agency_df["datetime"].dt.date.value_counts().sort_index().reset_index()
+
+            # daily counts
+            no_agency_daily = (
+                no_agency_df["datetime"]
+                .dt.date
+                .value_counts()
+                .sort_index()
+                .reset_index()
+            )
             no_agency_daily.columns = ["date", "count"]
             no_agency_daily["date"] = pd.to_datetime(no_agency_daily["date"])
-    
+
+            st.subheader("No Agency Destination Items by Day")
+
             no_agency_daily_chart = build_date_line_chart(
                 no_agency_daily,
                 "date",
@@ -2746,20 +2756,31 @@ if selected_view == "Transits":
                 "No Agency Destination Items"
             )
             render_chart(no_agency_daily_chart)
-    
-            no_agency_hourly = no_agency_df["datetime"].dt.hour.value_counts().sort_index().reset_index()
+
+            # hourly counts
+            no_agency_hourly = (
+                no_agency_df["datetime"]
+                .dt.hour
+                .value_counts()
+                .sort_index()
+                .reset_index()
+            )
             no_agency_hourly.columns = ["hour", "count"]
             no_agency_hourly["hour_label"] = no_agency_hourly["hour"].apply(format_hour_plain)
-            no_agency_hourly = no_agency_hourly[(no_agency_hourly["hour"] >= 7) & (no_agency_hourly["hour"] <= 20)].copy()
-    
+            no_agency_hourly = no_agency_hourly[
+                (no_agency_hourly["hour"] >= 7) & (no_agency_hourly["hour"] <= 20)
+            ].copy()
+
             if len(no_agency_hourly) > 0:
+                st.subheader("No Agency Destination Items by Hour")
+
                 no_agency_hourly_chart = build_hourly_bar_chart(
                     no_agency_hourly,
                     "count",
                     "No Agency Destination Items"
                 )
                 render_chart(no_agency_hourly_chart)
-    
+
             no_agency_display = no_agency_df[["datetime", "title", "barcode", "destination"]].copy()
             no_agency_display["datetime"] = pd.to_datetime(no_agency_display["datetime"]).dt.strftime("%Y-%m-%d %I:%M %p")
             no_agency_display = no_agency_display.rename(columns={
@@ -2768,7 +2789,7 @@ if selected_view == "Transits":
                 "barcode": "Barcode",
                 "destination": "Destination"
             })
-    
+
             st.markdown(
                 f"""
                 <div style="
@@ -2789,8 +2810,15 @@ if selected_view == "Transits":
                 """,
                 unsafe_allow_html=True
             )
-    
+
             st.dataframe(no_agency_display, use_container_width=True)
+            download_button(
+                no_agency_display,
+                "no_agency_destination_deep_dive_report.csv",
+                key="transit_reports_exceptions_failures_no_agency_deep_dive_download"
+            )
+        else:
+            st.info("No No Agency Destination items found for the selected date range.")
             download_button(
                 no_agency_display,
                 "no_agency_destination_deep_dive_report.csv",
