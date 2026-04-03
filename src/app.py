@@ -377,7 +377,8 @@ max_date = df_history_raw["datetime"].max().date()
 
 st.caption("Hanly Analytics")
 st.markdown('<div class="sortview-title">SORTVIEW</div>', unsafe_allow_html=True)
-st.caption("Operational overview of AMH performance, failure patterns, and transit routing")
+st.caption("New Braunfels Public Library - Main Branch")
+st.caption("Tech Logic UltraSort")
 
 if pipeline_status:
     last_run = pipeline_status.get("last_run", "Unknown")
