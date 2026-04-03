@@ -485,12 +485,9 @@ valid_transit_destinations = [
     "Westside",
     "Library Express",
 ]
-transit_source = today_df if selected_view == "Transits" else df
-
-transit_df = transit_source[
-    transit_source["transit_destination"].isin(valid_transit_destinations)
+transit_df = df[
+    df["transit_destination"].isin(valid_transit_destinations)
 ].copy()
-
 transit_summary = get_transit_summary(df)
 
 peak_transit_day = get_peak_transit_day_summary(transit_df, weekday_order)
@@ -2438,6 +2435,24 @@ Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.
 if selected_view == "Transits":
     st.header("Transit Routing")
     st.caption("Tracks items routed to transit destinations such as Westside and Library Express.")
+
+    today_df["transit_destination"] = today_df["destination"].apply(normalize_transit_destination)
+
+    transit_df = today_df[
+        today_df["transit_destination"].isin(valid_transit_destinations)
+    ].copy()
+
+    westside_count = len(
+        today_df[today_df["transit_destination"] == "Westside"]
+    )
+    westside_pct = (westside_count / len(today_df) * 100) if len(today_df) > 0 else 0
+
+    library_express_count = len(
+        today_df[today_df["transit_destination"] == "Library Express"]
+    )
+    library_express_pct = (library_express_count / len(today_df) * 100) if len(today_df) > 0 else 0
+
+    transit_summary = get_transit_summary(today_df)
 
     transit_time_summary = get_transit_time_summary(transit_df)
 
