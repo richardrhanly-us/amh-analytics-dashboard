@@ -1438,47 +1438,38 @@ This is equivalent to approximately **{(total_saved/8):,.0f} full staff shifts**
 
             st.info(
                 f"""## How Staff Time Saved Is Calculated
-
-st.markdown(f"""
 #### Average daily check-ins  
 This is the average number of items checked in per day over the selected date range.
 
-For {start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')},  
-the average daily check-in volume is {avg_daily_checkins:,.1f} items/day.
+For **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**, the average daily check-in volume is **{avg_daily_checkins:,.1f} items/day**.
 
----
-
-#### Manual Processing Time  
+#### Manual Processing Time
 
 Manual rate = {MANUAL_RATE:.0f} items/hour  
 
 Manual time = {avg_daily_checkins:,.1f} items/day ÷ {MANUAL_RATE:.0f} items/hour  
 
-Manual time = {avg_daily_manual_hours:,.2f} staff hours/day  
+**Manual time = {avg_daily_manual_hours:,.2f} staff hours/day**
 
-*The manual check-in rate is based on circulation report data during peak hours, reflecting a realistic sustained working pace.*
+*The manual check-in rate of 50 is based on circulation report data observed during peak hours, where staff are working at their fastest steady pace.*
 
----
-
-#### AMH Processing Time  
+#### AMH Processing Time
 
 Current AMH rate = {AMH_RATE:.1f} items/hour  
 
 AMH time = {avg_daily_checkins:,.1f} items/day ÷ {AMH_RATE:.1f} items/hour  
 
-AMH time = {avg_daily_amh_hours:,.2f} machine hours/day  
+**AMH time = {avg_daily_amh_hours:,.2f} machine hours/day**
 
----
+#### Time Saved
 
-#### Time Saved  
+Time saved = Manual time − AMH time  
 
-Time saved = manual time − AMH time  
+Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.2f} hours/day  
 
-Time saved = {avg_daily_manual_hours:,.2f} − {avg_daily_amh_hours:,.2f} hours/day  
-
-Average daily staff time saved = {avg_saved:,.2f} staff hours/day
-""")
-
+**Average Daily Staff time saved = {avg_saved:,.2f} staff hours/day**
+"""
+            )
     
     # -----------------------------
     # Volume & Capacity
