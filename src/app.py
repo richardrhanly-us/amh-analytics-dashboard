@@ -2036,10 +2036,12 @@ Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.
             st.info("No throughput data available for the selected date range.")
 
     with st.expander("Today vs Typical Hourly Pattern", expanded=False):
-        today = datetime.now(ZoneInfo("America/Chicago")).date()
         live_now = datetime.now(ZoneInfo("America/Chicago"))
+        today = live_now.date()
         live_end_hour = min(max(live_now.hour, 7), 20)
         live_hour_range = list(range(7, live_end_hour + 1))
+        
+        today_metrics = get_today_metrics(df_live_raw, rejects_live_raw, today)
 
 
         today_df_report = df_live_raw[df_live_raw["datetime"].dt.date == today].copy()
