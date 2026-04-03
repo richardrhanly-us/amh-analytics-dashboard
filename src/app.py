@@ -1787,7 +1787,7 @@ if selected_view == "Reports":
                 )
 
             st.info(
-    f"""##How Staff Time Saved Is Calculated
+    f"""## How Staff Time Saved Is Calculated
 
 This estimate compares how long it would take staff to check items in manually versus how long the AMH checks in the same workload.
 
