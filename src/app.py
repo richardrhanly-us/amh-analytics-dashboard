@@ -1446,7 +1446,7 @@ For **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**, 
 
 #### Manual Processing Time
 
-Manual rate = {MANUAL_RATE:.0f}* check-ins p/hr
+Manual rate = {MANUAL_RATE:.0f} check-ins p/hr*
 
 Manual time = {avg_daily_checkins:,.1f} ÷ {MANUAL_RATE:.0f}
 
