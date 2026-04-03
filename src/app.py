@@ -2976,6 +2976,7 @@ if selected_view == "Transits":
             )
         else:
             st.info("No daily transfer summary data available for the selected date range.")
+            
         st.subheader("Transit By Hour")
         st.caption("Shows how item transfers are distributed throughout the day to reveal peak routing times.")
 
@@ -3008,7 +3009,7 @@ if selected_view == "Transits":
                 transit_hour_totals = (
                     transit_hourly_source.groupby("hour")
                     .size()
-                    .reset_index(name="total_transit_items")
+                    .reset_index(name="Total Transit Items")
                 )
 
                 transit_hour_daily = (
@@ -3020,7 +3021,7 @@ if selected_view == "Transits":
                 transit_hour_avg = (
                     transit_hour_daily.groupby("hour")["daily_transit_items"]
                     .mean()
-                    .reset_index(name="avg_transit_items")
+                    .reset_index(name="Avg Transit Items Per Day")
                 )
 
                 transit_hourly = transit_hour_totals.merge(
@@ -3035,16 +3036,14 @@ if selected_view == "Transits":
                 ].copy()
 
                 transit_hourly_chart = build_hourly_bar_chart(
-                    transit_hourly.rename(columns={"avg_transit_items": "transit_items"}),
-                    "transit_items",
+                    transit_hourly.rename(columns={"Avg Transit Items Per Day": "avg_transit_items"}),
+                    "avg_transit_items",
                     "Avg Transit Items Per Hour"
                 )
                 render_chart(transit_hourly_chart)
 
                 transit_hourly_display = transit_hourly.rename(columns={
-                    "hour_label": "Hour",
-                    "total_transit_items": "Total Transit Items",
-                    "avg_transit_items": "Avg Transit Items Per Day"
+                    "hour_label": "Hour"
                 })[["Hour", "Total Transit Items", "Avg Transit Items Per Day"]]
 
                 transit_hourly_display["Avg Transit Items Per Day"] = (
