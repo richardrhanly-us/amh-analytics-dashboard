@@ -630,8 +630,19 @@ if len(rejects_df) > 0:
     peak_failure_pct = (peak_failure_count / len(rejects_df)) * 100
     peak_failure_window_text = format_hour(peak_failure_hour)
     peak_failure_window_subtitle = f"{peak_failure_count:,} rejects ({peak_failure_pct:.1f}% of failures)"
+    
+live_now = datetime.now(ZoneInfo("America/Chicago"))
+today = live_now.date()
 
-today = datetime.now(ZoneInfo("America/Chicago")).date()
+start_hour = 7
+end_hour = 20
+current_hour = live_now.hour
+
+if current_hour < start_hour:
+    live_hour_range = [start_hour]
+else:
+    live_hour_range = list(range(start_hour, min(current_hour, end_hour) + 1))
+
 today_metrics = get_today_metrics(df_live_raw, rejects_live_raw, today)
 
 
@@ -2036,22 +2047,6 @@ Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.
             st.info("No throughput data available for the selected date range.")
 
     with st.expander("Today vs Typical Hourly Pattern", expanded=False):
-        live_now = datetime.now(ZoneInfo("America/Chicago"))
-        today = live_now.date()
-        
-        # Clamp to operating hours (7AM–8PM)
-        current_hour = live_now.hour
-        start_hour = 7
-        end_hour = 20
-        
-        # Build live hour range (always at least 7AM, up to current time)
-        if current_hour < start_hour:
-            live_hour_range = list(range(start_hour, start_hour + 1))
-        else:
-            live_hour_range = list(range(start_hour, min(current_hour, end_hour) + 1))
-        
-        today_metrics = get_today_metrics(df_live_raw, rejects_live_raw, today)
-
 
         today_df_report = df_live_raw[df_live_raw["datetime"].dt.date == today].copy()
         historical_df_report = df_history_raw[df_history_raw["datetime"].dt.date < today].copy()
