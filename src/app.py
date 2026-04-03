@@ -24,11 +24,25 @@ st.markdown("""
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&display=swap" rel="stylesheet">
 
 <style>
+st.markdown("""
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&display=swap" rel="stylesheet">
+
+<style>
 .sortview-title {
     font-family: 'Orbitron', sans-serif;
-    font-size: 48px;
+    font-size: 52px;
     font-weight: 800;
-    letter-spacing: 2px;
+    letter-spacing: 3px;
+
+    background: linear-gradient(90deg, #60a5fa, #a78bfa, #34d399);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+
+    text-shadow:
+        0 0 6px rgba(96, 165, 250, 0.4),
+        0 0 12px rgba(167, 139, 250, 0.25);
+
+    margin-bottom: -4px;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -384,7 +398,12 @@ max_date = df_history_raw["datetime"].max().date()
 
 st.caption("Hanly Analytics")
 st.markdown('<div class="sortview-title">SORTVIEW</div>', unsafe_allow_html=True)
-st.caption("New Braunfels Public Library - Main Branch - Tech Logic UltraSort")
+st.markdown(
+    "<div style='color:#6b7280; font-size:0.95rem; margin-bottom:10px;'>"
+    "New Braunfels Public Library • Main Branch • Tech Logic UltraSort"
+    "</div>",
+    unsafe_allow_html=True
+)
 
 if pipeline_status:
     last_run = pipeline_status.get("last_run", "Unknown")
