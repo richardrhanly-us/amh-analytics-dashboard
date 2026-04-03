@@ -709,7 +709,7 @@ if alerts:
 
 
 if selected_view == "Live Today":
-    top_left, top_right = st.columns([1, 1.4], vertical_alignment="top")
+    top_left, top_right = st.columns([.8, 1.6], vertical_alignment="top")
 
     with top_left:
         st.header(f"{today.strftime('%A, %b %d')}")
@@ -776,7 +776,7 @@ if selected_view == "Live Today":
                     y=alt.Y("checkins:Q", title="Checkins"),
                     tooltip=["hour_label", "checkins"]
                 )
-                .properties(height=280)
+                .properties(height=300)
             )
 
             st.altair_chart(checkins_hour_chart, use_container_width=True)
