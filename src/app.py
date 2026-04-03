@@ -1481,39 +1481,6 @@ What This Means
 - Produces a realistic estimate based on operational data"""
             )
 
-            staff_chart_df = staff_df.copy()
-            staff_chart_df["date"] = pd.to_datetime(staff_chart_df["date"])
-            staff_chart_df["date_label"] = staff_chart_df["date"].dt.strftime("%b %d")
-
-            staff_time_chart = (
-                alt.Chart(staff_chart_df)
-                .mark_line(point=True)
-                .encode(
-                    x=alt.X("date_label:N", sort=staff_chart_df["date_label"].tolist(), title="Date"),
-                    y=alt.Y("hours_saved:Q", title="Staff Hours Saved"),
-                    tooltip=["date_label", "hours_saved"]
-                )
-                .properties(height=350)
-            )
-
-            render_chart(staff_time_chart)
-
-            display_df = staff_df.copy()
-            display_df["date"] = pd.to_datetime(display_df["date"]).dt.strftime("%Y-%m-%d")
-            display_df = display_df.rename(columns={
-                "date": "Date",
-                "checkins": "Checkins",
-                "manual_hours": "Manual Hours",
-                "amh_hours": "AMH Hours",
-                "hours_saved": "Staff Hours Saved",
-                "shifts_saved": "Staff Shifts Saved (8 hr)"
-            })
-
-            st.dataframe(display_df, use_container_width=True)
-            download_button(display_df, "staff_time_equivalent.csv")
-
-        else:
-            st.info("Not enough data is available to calculate staff time savings for the selected date range.")
 
     
     # -----------------------------
