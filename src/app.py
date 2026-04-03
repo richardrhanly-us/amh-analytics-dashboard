@@ -63,19 +63,21 @@ def render_kpi_card(
     value_white_space = "normal" if value_wrap else "nowrap"
     value_word_break = "break-word" if value_wrap else "normal"
 
-    subtitle_html = f"""
-        <div style="
-            font-size: 0.9rem;
-            color: {subtitle_color};
-            margin-top: 8px;
-            line-height: 1.3;
-            overflow: hidden;
-            position: relative;
-            z-index: 2;
-        ">
-            {subtitle}
-        </div>
-    """ if subtitle else ""
+    subtitle_html = ""
+    if subtitle:
+        subtitle_html = f"""
+            <div style="
+                font-size: 0.9rem;
+                color: {subtitle_color};
+                margin-top: 8px;
+                line-height: 1.3;
+                overflow: hidden;
+                position: relative;
+                z-index: 2;
+            ">
+                {subtitle}
+            </div>
+        """
 
     safe_fill_pct = 0
     if fill_pct is not None:
@@ -84,20 +86,19 @@ def render_kpi_card(
     fill_html = ""
     if fill_pct is not None:
         fill_html = f"""
-        <div style="
-            position: absolute;
-            left: 0;
-            bottom: 0;
-            width: 100%;
-            height: {safe_fill_pct:.1f}%;
-            background: {fill_color};
-            z-index: 1;
-            transition: height 0.6s ease;
-        "></div>
+            <div style="
+                position: absolute;
+                left: 0;
+                bottom: 0;
+                width: 100%;
+                height: {safe_fill_pct:.1f}%;
+                background: {fill_color};
+                z-index: 1;
+                transition: height 0.6s ease;
+            "></div>
         """
 
-    st.markdown(
-        f"""
+    card_html = f"""
         <div style="
             position: relative;
             overflow: hidden;
@@ -138,9 +139,10 @@ def render_kpi_card(
             </div>
             {subtitle_html}
         </div>
-        """,
-        unsafe_allow_html=True
-    )
+    """
+
+    st.markdown(card_html, unsafe_allow_html=True)
+
 
 def get_file_updated_time(path):
     file_path = Path(path)
