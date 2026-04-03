@@ -30,12 +30,15 @@ st.markdown("""
     font-size: 52px;
     font-weight: 800;
     letter-spacing: 3px;
+
     background: linear-gradient(90deg, #60a5fa, #a78bfa, #34d399);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
+
     text-shadow:
         0 0 6px rgba(96, 165, 250, 0.4),
         0 0 12px rgba(167, 139, 250, 0.25);
+
     margin-bottom: -4px;
 }
 </style>
