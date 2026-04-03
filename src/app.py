@@ -12,19 +12,6 @@ st.set_page_config(layout="wide")
 from streamlit_autorefresh import st_autorefresh
 st_autorefresh(interval=120000, key="amh_auto_refresh")
 
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Luckiest+Guy&display=swap');
-
-.sortview-title {
-    font-family: 'Luckiest Guy', cursive;
-    font-size: 48px;
-    color: #111;
-    letter-spacing: 1px;
-}
-</style>
-""", unsafe_allow_html=True)
-
 
 from data_loader import load_checkins_df, load_checkins_history_df, load_rejects_df, load_rejects_history_df, load_pipeline_status
 from metrics import get_date_filtered_df, get_today_metrics, get_overall_metrics, get_historical_reject_baseline
