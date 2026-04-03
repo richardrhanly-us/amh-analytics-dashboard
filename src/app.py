@@ -1432,7 +1432,7 @@ This is equivalent to approximately **{(total_saved/8):,.0f} full staff shifts**
 
 ### How to Interpret This
 
-- These values represent **estimated staff time avoided**, not time eliminated
+- These values represent **estimated staff time avoided**, not time eliminated.
 - Staff are still required for:
   - exception handling
   - routing issues
