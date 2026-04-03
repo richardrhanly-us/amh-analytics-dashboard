@@ -1401,17 +1401,46 @@ if selected_view == "Overview":
             peak_total_hour_value = format_hour(int(peak_total_row["hour_only"]))
             peak_total_hour_subtitle = f"{int(peak_total_row['total_checkins']):,} total checkins"
 
-    fail_peak_avg_value = peak_failure_window_text
-    fail_peak_avg_subtitle = peak_failure_window_subtitle
+    fail_peak_avg_value = "N/A"
+    fail_peak_avg_subtitle = "No failures in selected range"
     fail_peak_total_value = "N/A"
     fail_peak_total_subtitle = "No failures in selected range"
-
+    
     if len(rejects_df) > 0:
-        fail_hour_total = rejects_df["datetime"].dt.hour.value_counts().sort_index()
-        fail_peak_total_hour = fail_hour_total.idxmax()
-        fail_peak_total_count = int(fail_hour_total.max())
-        fail_peak_total_value = format_hour(int(fail_peak_total_hour))
-        fail_peak_total_subtitle = f"{fail_peak_total_count:,} total rejects"
+        # --- AVERAGE MODE ---
+        reject_hour_source = rejects_df.copy()
+        reject_hour_source["date_only"] = reject_hour_source["datetime"].dt.date
+        reject_hour_source["hour_only"] = reject_hour_source["datetime"].dt.hour
+    
+        fail_hour_daily = (
+            reject_hour_source.groupby(["date_only", "hour_only"])
+            .size()
+            .reset_index(name="failures")
+        )
+    
+        fail_hour_avg = (
+            fail_hour_daily.groupby("hour_only")["failures"]
+            .mean()
+            .reset_index(name="avg_failures")
+        )
+    
+        if len(fail_hour_avg) > 0:
+            peak_avg_fail_row = fail_hour_avg.loc[fail_hour_avg["avg_failures"].idxmax()]
+            fail_peak_avg_value = format_hour(int(peak_avg_fail_row["hour_only"]))
+            fail_peak_avg_subtitle = f"{peak_avg_fail_row['avg_failures']:,.1f} avg failures/day"
+    
+        # --- TOTAL MODE ---
+        fail_hour_total = (
+            rejects_df["datetime"].dt.hour.value_counts()
+            .sort_index()
+            .reset_index()
+        )
+        fail_hour_total.columns = ["hour_only", "total_failures"]
+    
+        if len(fail_hour_total) > 0:
+            peak_total_fail_row = fail_hour_total.loc[fail_hour_total["total_failures"].idxmax()]
+            fail_peak_total_value = format_hour(int(peak_total_fail_row["hour_only"]))
+            fail_peak_total_subtitle = f"{int(peak_total_fail_row['total_failures']):,} total rejects"
 
     peak_day_avg_value = "N/A"
     peak_day_avg_subtitle = "No activity in selected range"
