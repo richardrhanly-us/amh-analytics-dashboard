@@ -47,6 +47,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+
 def render_kpi_card(
     title,
     value,
@@ -55,7 +56,9 @@ def render_kpi_card(
     value_font_size="1.9rem",
     border_color="#e5e7eb",
     value_color="#1f2937",
-    value_wrap=False
+    value_wrap=False,
+    fill_pct=None,
+    fill_color="rgba(37, 99, 235, 0.12)"
 ):
     value_white_space = "normal" if value_wrap else "nowrap"
     value_word_break = "break-word" if value_wrap else "normal"
@@ -67,14 +70,37 @@ def render_kpi_card(
             margin-top: 8px;
             line-height: 1.3;
             overflow: hidden;
+            position: relative;
+            z-index: 2;
         ">
             {subtitle}
         </div>
     """ if subtitle else ""
 
+    safe_fill_pct = 0
+    if fill_pct is not None:
+        safe_fill_pct = max(0, min(fill_pct, 1)) * 100
+
+    fill_html = ""
+    if fill_pct is not None:
+        fill_html = f"""
+            <div style="
+                position: absolute;
+                left: 0;
+                bottom: 0;
+                width: 100%;
+                height: {safe_fill_pct:.1f}%;
+                background: {fill_color};
+                z-index: 1;
+                transition: height 0.6s ease;
+            "></div>
+        """
+
     st.markdown(
         f"""
         <div style="
+            position: relative;
+            overflow: hidden;
             border: 2px solid {border_color};
             border-radius: 12px;
             padding: 16px 18px;
@@ -87,10 +113,13 @@ def render_kpi_card(
             align-items: center;
             text-align: center;
         ">
+            {fill_html}
             <div style="
                 font-size: 0.9rem;
                 color: #6b7280;
                 margin-bottom: 8px;
+                position: relative;
+                z-index: 2;
             ">
                 {title}
             </div>
@@ -102,6 +131,8 @@ def render_kpi_card(
                 margin-bottom: 4px;
                 white-space: {value_white_space};
                 word-break: {value_word_break};
+                position: relative;
+                z-index: 2;
             ">
                 {value}
             </div>
@@ -110,7 +141,6 @@ def render_kpi_card(
         """,
         unsafe_allow_html=True
     )
-
 
 
 def get_file_updated_time(path):
@@ -728,9 +758,19 @@ if selected_view == "Live Today":
 
 
     live1, live2, live3, live4, live5, live6, live7, live8, live9, live10 = st.columns(10)
-
+    
     with live1:
-        render_kpi_card("Checkins", f"{today_checkins:,}", "Processed today", "#6b7280")
+        typical_daily_checkins = checkins_daily.mean() if len(checkins_daily) > 0 else 1
+        checkins_fill_pct = (today_checkins / typical_daily_checkins) if typical_daily_checkins > 0 else 0
+    
+        render_kpi_card(
+            "Checkins",
+            f"{today_checkins:,}",
+            "Processed today",
+            "#6b7280",
+            fill_pct=checkins_fill_pct,
+            fill_color="rgba(37, 99, 235, 0.14)"
+        )
 
     with live2:
         render_kpi_card("Rejects", f"{today_rejects:,}", "Failed today", "#6b7280")
