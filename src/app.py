@@ -1803,7 +1803,7 @@ The baseline comes from observed staff check-in pace from Westside circulation c
 
 Manual time = Check-ins ÷ Manual rate
 
-Manual time = {avg_daily_checkins:,.1f} Check-ins ÷ 50 p/hr
+Manual time = {avg_daily_checkins:,.1f} ÷ {MANUAL_RATE:.0f}
 
 **Manual time = {avg_daily_manual_hours:,.2f} hours**
 
@@ -1815,7 +1815,9 @@ Current AMH rate used = {AMH_RATE:.1f} items per hour (based on all check-ins fr
 
 AMH time = Checkins ÷ AMH rate
 
-**AMH time = 986.6 Check-ins ÷ 131.6**
+AMH time = {avg_daily_checkins:,.1f} check-ins ÷ {AMH_RATE:.1f} p/hr
+
+**AMH time = {avg_daily_amh_hours:,.2f} hours**
 
 #### Time Saved
 
