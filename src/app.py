@@ -2285,7 +2285,7 @@ Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.
         if "bin" not in df.columns:
             st.warning("No bin column found in the current dataset. Add bin parsing to your cleaned checkins file first.")
         else:
-            exception_bin = "6"
+            exception_bin = "0"
 
             bin_df = df.copy()
             bin_df = bin_df[bin_df["bin"].notna()].copy()
