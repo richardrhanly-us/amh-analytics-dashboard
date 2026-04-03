@@ -1791,8 +1791,6 @@ if selected_view == "Reports":
 
 This estimate compares how long it would take staff to check items in manually versus how long the AMH checks in the same workload.
 
-The estimate does not factor the AHM presorting the materials, holds or transit items as they pertain to staff time. These variables are outside the scope of the AMH and TLC logging systems.
-
 Variables used:
 
 #### Average daily check-ins
