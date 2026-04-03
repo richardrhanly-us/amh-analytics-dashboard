@@ -1787,11 +1787,18 @@ if selected_view == "Reports":
                 )
 
             st.info(
-    f"""## How Staff Time Saved Is Calculated
+    f"""## How Staff Time Saved Is Calculated   
 
 This estimate compares how long it would take staff to check items in manually versus how long the AMH checks in the same workload.
 
 The estimate does not factor the AHM presorting the materials, holds or transit items as they pertain to staff time. These variables are outside the scope of the AMH and TLC logging systems.
+
+Variables used:
+
+#### Average daily check-ins
+This takes an average of the daily check-in total for the selected date range.
+
+For **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**, the current average daily check-in volume is **{avg_daily_checkins:,.1f}**.
 
 #### Manual Processing Time
 
@@ -1801,9 +1808,9 @@ This dashboard uses a manual processing baseline of {MANUAL_RATE:.0f} items per 
 
 The baseline comes from observed staff check-in pace from Westside circulation check-in reporting during peak hours.
 
-Manual time = Check-ins ÷ Manual rate
+Manual time = Average daily check-ins ÷ Manual rate
 
-Manual time = {avg_daily_checkins:,.1f} ÷ {MANUAL_RATE:.0f}
+Manual time = {avg_daily_checkins:,.1f} check-ins ÷ {MANUAL_RATE:.0f} p/hr
 
 **Manual time = {avg_daily_manual_hours:,.2f} hours**
 
