@@ -911,7 +911,8 @@ if selected_view == "Live Today":
                 x=alt.X(
                     "hour_label:N",
                     sort=checkins_hour_df["hour_label"].tolist(),
-                    title="Hour"
+                    title="Hour",
+                    axis=alt.Axis(labelAngle=0)
                 ),
                 y=alt.Y("checkins:Q", title="Checkins"),
                 tooltip=["hour_label", "checkins"]
