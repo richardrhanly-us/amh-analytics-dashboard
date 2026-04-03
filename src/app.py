@@ -975,7 +975,7 @@ if selected_view == "Live Today":
             unsafe_allow_html=True
         )
 
-        route1, route2, route3, route4 = st.columns(4)
+        route1, route2, route3 = st.columns(3)
 
         with route1:
             total_transit_pct = (today_total_transit / today_checkins * 100) if today_checkins > 0 else 0
@@ -1008,15 +1008,6 @@ if selected_view == "Live Today":
                 border_color="#c4b5fd"
             )
 
-        with route4:
-            render_kpi_card(
-                "Estimated Holds",
-                f"{today_estimated_holds:,}",
-                "Bin 0 less rejects/transits",
-                "#6b7280",
-                value_font_size="1.15rem",
-                border_color="#c4b5fd"
-            )
 
 
 
