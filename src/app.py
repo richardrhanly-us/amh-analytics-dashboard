@@ -2592,62 +2592,89 @@ Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.
 
             hour_range = list(range(7, 21))
 
-            hourly_bin = (
-                bin_df.groupby([bin_df["datetime"].dt.hour, "bin"])
+            bin_hourly_source = bin_df.copy()
+            bin_hourly_source["date"] = bin_hourly_source["datetime"].dt.date
+            bin_hourly_source["hour"] = bin_hourly_source["datetime"].dt.hour
+
+            daily_bin_hour = (
+                bin_hourly_source.groupby(["date", "hour", "bin"])
                 .size()
-                .unstack(fill_value=0)
+                .reset_index(name="daily_checkins")
             )
 
-            hourly_bin = hourly_bin.reindex(hour_range, fill_value=0)
-            hourly_bin = hourly_bin.loc[hourly_bin.sum(axis=1) > 0]
+            avg_bin_hour = (
+                daily_bin_hour.groupby(["hour", "bin"])["daily_checkins"]
+                .mean()
+                .reset_index(name="avg_checkins")
+            )
 
-            if len(hourly_bin) > 0:
+            total_bin_hour = (
+                bin_hourly_source.groupby(["hour", "bin"])
+                .size()
+                .reset_index(name="total_checkins")
+            )
+
+            hourly_bin_summary = total_bin_hour.merge(
+                avg_bin_hour,
+                on=["hour", "bin"],
+                how="left"
+            )
+
+            if len(hourly_bin_summary) > 0:
                 st.subheader("Bin Volume by Hour")
 
-                hourly_bin_chart = hourly_bin.copy()
-                hourly_bin_chart.columns = [f"Bin {col}" for col in hourly_bin_chart.columns]
+                hourly_bin_summary = hourly_bin_summary[
+                    (hourly_bin_summary["hour"] >= 7) & (hourly_bin_summary["hour"] <= 20)
+                ].copy()
 
-                hourly_bin_chart_display = hourly_bin_chart.copy().reset_index()
-                hourly_bin_chart_display.columns = ["hour"] + list(hourly_bin_chart_display.columns[1:])
-
-                hourly_bin_chart_display["hour_label"] = hourly_bin_chart_display["hour"].apply(
-                    lambda h: pd.to_datetime(f"{int(h):02d}:00").strftime("%I%p").lstrip("0")
-                )
-
-                hourly_bin_long = hourly_bin_chart_display.melt(
-                    id_vars=["hour", "hour_label"],
-                    var_name="bin",
-                    value_name="checkins"
-                )
+                hourly_bin_summary["hour_label"] = hourly_bin_summary["hour"].apply(format_hour_plain)
+                hourly_bin_summary["bin_label"] = hourly_bin_summary["bin"].apply(lambda b: f"Bin {b}")
 
                 bin_chart = (
-                    alt.Chart(hourly_bin_long)
+                    alt.Chart(hourly_bin_summary)
                     .mark_line(point=False)
                     .encode(
                         x=alt.X(
                             "hour_label:N",
-                            sort=hourly_bin_chart_display["hour_label"].tolist(),
+                            sort=[format_hour_plain(h) for h in hour_range],
                             title="Hour",
                             axis=alt.Axis(labelAngle=0)
                         ),
-                        y=alt.Y("checkins:Q", title="Checkins"),
-                        color=alt.Color("bin:N", title="Bin"),
-                        tooltip=["hour_label", "bin", "checkins"]
+                        y=alt.Y("avg_checkins:Q", title="Avg Checkins Per Hour"),
+                        color=alt.Color("bin_label:N", title="Bin"),
+                        tooltip=[
+                            "hour_label",
+                            "bin_label",
+                            alt.Tooltip("avg_checkins:Q", title="Avg Checkins", format=".1f"),
+                            alt.Tooltip("total_checkins:Q", title="Total Checkins")
+                        ]
                     )
                     .properties(height=350)
+                    .interactive(False)
                 )
-
-                bin_chart = bin_chart.interactive(False)
 
                 st.altair_chart(bin_chart, use_container_width=True)
 
-                hourly_bin_display = hourly_bin_chart.copy().reset_index()
-                hourly_bin_display.columns = ["hour"] + [str(col) for col in hourly_bin_display.columns[1:]]
-                hourly_bin_display["hour"] = hourly_bin_display["hour"].apply(format_hour_plain)
+                hourly_bin_display = hourly_bin_summary.pivot_table(
+                    index="hour_label",
+                    columns="bin_label",
+                    values=["total_checkins", "avg_checkins"],
+                    fill_value=0
+                )
+
+                hourly_bin_display.columns = [
+                    f"{bin_name} Total" if metric == "total_checkins" else f"{bin_name} Avg/Day"
+                    for metric, bin_name in hourly_bin_display.columns
+                ]
+
+                hourly_bin_display = hourly_bin_display.reset_index().rename(columns={"hour_label": "Hour"})
+
+                avg_cols = [col for col in hourly_bin_display.columns if col.endswith("Avg/Day")]
+                for col in avg_cols:
+                    hourly_bin_display[col] = hourly_bin_display[col].round(1)
 
                 st.dataframe(hourly_bin_display, use_container_width=True)
                 download_button(hourly_bin_display, "bin_volume_by_hour_report.csv")
-
 
 if selected_view == "Transits":
     st.header("Transit Routing")
