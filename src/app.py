@@ -1379,6 +1379,7 @@ if selected_view == "Overview":
 
 if selected_view == "Reports":
     st.header("Reports")
+    
     # -----------------------------
     # Labor & Efficiency
     # -----------------------------
