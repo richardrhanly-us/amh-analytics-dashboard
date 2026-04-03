@@ -1313,15 +1313,34 @@ if selected_view == "Overview":
 
     # Row 3
     with row3_col1:
-        if peak_hour is not None:
-            render_kpi_card(
-                "Peak Avg Hour",
-                format_hour(peak_hour),
-                f"{peak_hour_count:,} checkins ({peak_hour_pct:.1f}% of total volume)",
-                "#6b7280"
+        peak_avg_hour_value = "N/A"
+        peak_avg_hour_subtitle = "No activity in selected range"
+    
+        if len(df) > 0:
+            hourly_daily = (
+                df.groupby([df["datetime"].dt.date, df["datetime"].dt.hour])
+                .size()
+                .reset_index(name="checkins")
             )
-        else:
-            render_kpi_card("Peak Avg Hour", "N/A", "No activity in selected range", "#6b7280")
+            hourly_daily.columns = ["date", "hour", "checkins"]
+    
+            hourly_avg = (
+                hourly_daily.groupby("hour")["checkins"]
+                .mean()
+                .reset_index(name="avg_checkins")
+            )
+    
+            if len(hourly_avg) > 0:
+                peak_avg_row = hourly_avg.loc[hourly_avg["avg_checkins"].idxmax()]
+                peak_avg_hour_value = format_hour(int(peak_avg_row["hour"]))
+                peak_avg_hour_subtitle = f"{peak_avg_row['avg_checkins']:,.1f} avg checkins"
+    
+        render_kpi_card(
+            "Peak Avg Hour",
+            peak_avg_hour_value,
+            peak_avg_hour_subtitle,
+            "#6b7280"
+        )
 
     with row3_col2:
         render_kpi_card(
