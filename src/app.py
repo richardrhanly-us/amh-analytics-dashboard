@@ -11,7 +11,7 @@ import altair as alt
 st.set_page_config(layout="wide")
 from streamlit_autorefresh import st_autorefresh
 from streamlit_autorefresh import st_autorefresh
-st_autorefresh(interval=30000, key="amh_auto_refresh")
+st_autorefresh(interval=120000, key="amh_auto_refresh")
 
 st.markdown("""
 <style>
