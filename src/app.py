@@ -1182,35 +1182,74 @@ if selected_view == "Overview":
     daily_counts = df["datetime"].dt.date.value_counts().sort_index()
     avg_daily_checkins = daily_counts.mean() if len(daily_counts) > 0 else 0
 
+
+    overview_volume_mode = st.radio(
+        "Volume display",
+        ["Average per Day", "Total"],
+        horizontal=True,
+        key="overview_volume_mode"
+    )
+    
+    days_in_range = df["datetime"].dt.date.nunique() if len(df) > 0 else 0
+    
+    avg_daily_checkins = daily_counts.mean() if len(daily_counts) > 0 else 0
+    avg_daily_westside = (westside_count / days_in_range) if days_in_range > 0 else 0
+    avg_daily_library_express = (library_express_count / days_in_range) if days_in_range > 0 else 0
+    
+
     row1_col1, row1_col2, row1_col3 = st.columns(3)
     row2_col1, row2_col2, row2_col3 = st.columns(3)
     row3_col1, row3_col2, row3_col3 = st.columns(3)
 
     # Row 1
     with row1_col1:
-        render_kpi_card(
-            "Avg Daily Checkins",
-            f"{avg_daily_checkins:,.1f}",
-            f"{start_date.strftime('%b %d')} – {end_date.strftime('%b %d')}",
-            "#6b7280"
-        )
-
+        if overview_volume_mode == "Average per Day":
+            render_kpi_card(
+                "Avg Daily Checkins",
+                f"{avg_daily_checkins:,.1f}",
+                f"{start_date.strftime('%b %d')} – {end_date.strftime('%b %d')}",
+                "#6b7280"
+            )
+        else:
+            render_kpi_card(
+                "Total Checkins",
+                f"{len(df):,}",
+                f"{start_date.strftime('%b %d')} – {end_date.strftime('%b %d')}",
+                "#6b7280"
+            )
+    
     with row1_col2:
-        render_kpi_card(
-            "Westside Transits",
-            f"{westside_transit_count:,}",
-            f"{westside_transit_pct:.2f}% of total items",
-            "#6b7280"
-        )
-
+        if overview_volume_mode == "Average per Day":
+            render_kpi_card(
+                "Avg Westside Transits",
+                f"{avg_daily_westside:,.1f}",
+                "Per day",
+                "#6b7280"
+            )
+        else:
+            render_kpi_card(
+                "Total Westside Transits",
+                f"{westside_transit_count:,}",
+                f"{westside_transit_pct:.2f}% of total items",
+                "#6b7280"
+            )
+    
     with row1_col3:
-        render_kpi_card(
-            "Library Express Transits",
-            f"{library_express_transit_count:,}",
-            f"{library_express_transit_pct:.2f}% of total items",
-            "#6b7280"
-        )
-
+        if overview_volume_mode == "Average per Day":
+            render_kpi_card(
+                "Avg Library Express Transits",
+                f"{avg_daily_library_express:,.1f}",
+                "Per day",
+                "#6b7280"
+            )
+        else:
+            render_kpi_card(
+                "Total Library Express Transits",
+                f"{library_express_transit_count:,}",
+                f"{library_express_transit_pct:.2f}% of total items",
+                "#6b7280"
+            )
+            
     # Row 2
     with row2_col1:
         render_kpi_card("Reject Count", f"{reject_count:,}", "Total failed checkins", "#6b7280")
