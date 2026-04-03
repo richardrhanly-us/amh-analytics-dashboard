@@ -2896,28 +2896,81 @@ if selected_view == "Transits":
     st.caption("Hourly transit volume from 7 AM to 8 PM.")
 
     if len(transit_df) > 0:
-        transit_hourly = transit_df["datetime"].dt.hour.value_counts().sort_index().reset_index()
-        transit_hourly.columns = ["hour", "transit_items"]
-        transit_hourly["hour_label"] = transit_hourly["hour"].apply(format_hour_plain)
+        if transit_mode == "Today":
+            transit_hourly = transit_df["datetime"].dt.hour.value_counts().sort_index().reset_index()
+            transit_hourly.columns = ["hour", "transit_items"]
+            transit_hourly["hour_label"] = transit_hourly["hour"].apply(format_hour_plain)
 
-        transit_hourly = transit_hourly[(transit_hourly["hour"] >= 7) & (transit_hourly["hour"] <= 20)].copy()
+            transit_hourly = transit_hourly[
+                (transit_hourly["hour"] >= 7) & (transit_hourly["hour"] <= 20)
+            ].copy()
 
-        transit_hourly_chart = build_hourly_bar_chart(
-            transit_hourly,
-            "transit_items",
-            "Transit Items"
-        )
-        render_chart(transit_hourly_chart)
+            transit_hourly_chart = build_hourly_bar_chart(
+                transit_hourly,
+                "transit_items",
+                "Transit Items"
+            )
+            render_chart(transit_hourly_chart)
 
-        transit_hourly_display = transit_hourly[["hour_label", "transit_items"]].rename(
-            columns={"hour_label": "Hour", "transit_items": "Transit Items"}
-        )
+            transit_hourly_display = transit_hourly.rename(columns={
+                "hour_label": "Hour",
+                "transit_items": "Transit Items"
+            })[["Hour", "Transit Items"]]
+
+        else:
+            transit_hourly_source = transit_df.copy()
+            transit_hourly_source["date"] = transit_hourly_source["datetime"].dt.date
+            transit_hourly_source["hour"] = transit_hourly_source["datetime"].dt.hour
+
+            transit_hour_totals = (
+                transit_hourly_source.groupby("hour")
+                .size()
+                .reset_index(name="Total Transit Items")
+            )
+
+            transit_hour_daily = (
+                transit_hourly_source.groupby(["date", "hour"])
+                .size()
+                .reset_index(name="daily_transit_items")
+            )
+
+            transit_hour_avg = (
+                transit_hour_daily.groupby("hour")["daily_transit_items"]
+                .mean()
+                .reset_index(name="Avg Transit Items Per Day")
+            )
+
+            transit_hourly = transit_hour_totals.merge(
+                transit_hour_avg,
+                on="hour",
+                how="left"
+            )
+
+            transit_hourly["hour_label"] = transit_hourly["hour"].apply(format_hour_plain)
+            transit_hourly = transit_hourly[
+                (transit_hourly["hour"] >= 7) & (transit_hourly["hour"] <= 20)
+            ].copy()
+
+            transit_hourly_chart = build_hourly_bar_chart(
+                transit_hourly.rename(columns={"Avg Transit Items Per Day": "avg_transit_items"}),
+                "avg_transit_items",
+                "Avg Transit Items Per Hour"
+            )
+            render_chart(transit_hourly_chart)
+
+            transit_hourly_display = transit_hourly.rename(columns={
+                "hour_label": "Hour"
+            })[["Hour", "Total Transit Items", "Avg Transit Items Per Day"]]
+
+            transit_hourly_display["Avg Transit Items Per Day"] = (
+                transit_hourly_display["Avg Transit Items Per Day"].round(1)
+            )
 
         st.dataframe(transit_hourly_display, use_container_width=True)
         download_button(
             transit_hourly_display,
             "transit_by_hour_report.csv",
-            key="transit_reports_volume_activity_transit_by_hour_download"
+            key="transit_reports_always_visible_transit_by_hour_download"
         )
     else:
         st.info("No hourly transit data available for the selected date range.")
