@@ -2436,25 +2436,16 @@ if selected_view == "Transits":
     st.header("Transit Routing")
     st.caption("Tracks items routed to transit destinations such as Westside and Library Express.")
 
-    today_df["transit_destination"] = today_df["destination"].apply(normalize_transit_destination)
-
-    transit_df = today_df[
-        today_df["transit_destination"].isin(valid_transit_destinations)
+    df["transit_destination"] = df["destination"].apply(normalize_transit_destination)
+    
+    valid_transit_destinations = [
+        "Westside",
+        "Library Express",
+    ]
+    
+    transit_df = df[
+        df["transit_destination"].isin(valid_transit_destinations)
     ].copy()
-
-    westside_count = len(
-        today_df[today_df["transit_destination"] == "Westside"]
-    )
-    westside_pct = (westside_count / len(today_df) * 100) if len(today_df) > 0 else 0
-
-    library_express_count = len(
-        today_df[today_df["transit_destination"] == "Library Express"]
-    )
-    library_express_pct = (library_express_count / len(today_df) * 100) if len(today_df) > 0 else 0
-
-    transit_summary = get_transit_summary(today_df)
-
-    transit_time_summary = get_transit_time_summary(transit_df)
 
     total_transit_items = len(transit_df)
     total_transit_pct = (total_transit_items / len(df) * 100) if len(df) > 0 else 0
@@ -2472,7 +2463,7 @@ if selected_view == "Transits":
         )
 
     today_no_agency_dest = int(
-        today_df["destination"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False).sum()
+        df["destination"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False).sum()
     )
     
     transit1, transit2, transit3, transit4, transit5 = st.columns(5)
