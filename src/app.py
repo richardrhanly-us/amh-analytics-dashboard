@@ -1264,7 +1264,12 @@ if selected_view == "Overview":
 
     # Row 1
     with row1_col1:
-        render_kpi_card("Checkins", f"{len(df):,}", date_range_text, "#6b7280")
+        render_kpi_card(
+            "Avg Daily Checkins",
+            f"{avg_daily_checkins:,.1f}",
+            f"{start_date.strftime('%b %d')} – {end_date.strftime('%b %d')}",
+            "#6b7280"
+        )
 
     with row1_col2:
         render_kpi_card(
@@ -1398,6 +1403,8 @@ if selected_view == "Reports":
                 AMH_RATE = 130.0
 
             daily_counts = df["datetime"].dt.date.value_counts().sort_index()
+            daily_counts = df["datetime"].dt.date.value_counts().sort_index()
+            avg_daily_checkins = daily_counts.mean() if len(daily_counts) > 0 else 0
             staff_df = daily_counts.reset_index()
             staff_df.columns = ["date", "checkins"]
 
