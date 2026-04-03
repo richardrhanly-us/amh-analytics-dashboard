@@ -911,7 +911,7 @@ if selected_view == "Live Today":
             unsafe_allow_html=True
         )
 
-        quality1, quality2, quality3 = st.columns(3)
+        quality1, quality2 = st.columns(2)
 
         with quality1:
             reject_subtitle = f"{today_rejects:,} failures today"
@@ -949,16 +949,7 @@ if selected_view == "Live Today":
                 value_color=live_reject_value_color
             )
 
-        with quality3:
-            staff_hours = today_metrics["staff_hours_saved"]
-            render_kpi_card(
-                "Staff Hours Saved",
-                f"{staff_hours:.1f}",
-                "Manual labor hrs",
-                "#6b7280",
-                value_font_size="1.15rem",
-                border_color="#6ee7b7"
-            )
+
 
     # Routing
     with live_group3:
