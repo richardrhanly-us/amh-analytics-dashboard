@@ -67,17 +67,17 @@ def render_kpi_card(
     subtitle_html = ""
     if subtitle:
         subtitle_html = dedent(f"""
-            <div style="
-                font-size: 0.9rem;
-                color: {subtitle_color};
-                margin-top: 8px;
-                line-height: 1.3;
-                overflow: hidden;
-                position: relative;
-                z-index: 2;
-            ">
-                {subtitle}
-            </div>
+        <div style="
+            font-size: 0.9rem;
+            color: {subtitle_color};
+            margin-top: 8px;
+            line-height: 1.3;
+            overflow: hidden;
+            position: relative;
+            z-index: 2;
+        ">
+            {subtitle}
+        </div>
         """).strip()
 
     safe_fill_pct = 0
@@ -87,63 +87,62 @@ def render_kpi_card(
     fill_html = ""
     if fill_pct is not None:
         fill_html = dedent(f"""
-            <div style="
-                position: absolute;
-                left: 0;
-                bottom: 0;
-                width: 100%;
-                height: {safe_fill_pct:.1f}%;
-                background: {fill_color};
-                z-index: 1;
-                transition: height 0.6s ease;
-            "></div>
+        <div style="
+            position: absolute;
+            left: 0;
+            bottom: 0;
+            width: 100%;
+            height: {safe_fill_pct:.1f}%;
+            background: {fill_color};
+            z-index: 1;
+            transition: height 0.6s ease;
+        "></div>
         """).strip()
 
     card_html = dedent(f"""
+    <div style="
+        position: relative;
+        overflow: hidden;
+        border: 2px solid {border_color};
+        border-radius: 12px;
+        padding: 16px 18px;
+        background-color: white;
+        min-height: 185px;
+        height: 185px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
+    ">
+        {fill_html}
         <div style="
+            font-size: 0.9rem;
+            color: #6b7280;
+            margin-bottom: 8px;
             position: relative;
-            overflow: hidden;
-            border: 2px solid {border_color};
-            border-radius: 12px;
-            padding: 16px 18px;
-            background-color: white;
-            min-height: 185px;
-            height: 185px;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            text-align: center;
+            z-index: 2;
         ">
-            {fill_html}
-            <div style="
-                font-size: 0.9rem;
-                color: #6b7280;
-                margin-bottom: 8px;
-                position: relative;
-                z-index: 2;
-            ">
-                {title}
-            </div>
-            <div style="
-                font-size: {value_font_size};
-                font-weight: 600;
-                color: {value_color};
-                line-height: 1.2;
-                margin-bottom: 4px;
-                white-space: {value_white_space};
-                word-break: {value_word_break};
-                position: relative;
-                z-index: 2;
-            ">
-                {value}
-            </div>
-            {subtitle_html}
+            {title}
         </div>
+        <div style="
+            font-size: {value_font_size};
+            font-weight: 600;
+            color: {value_color};
+            line-height: 1.2;
+            margin-bottom: 4px;
+            white-space: {value_white_space};
+            word-break: {value_word_break};
+            position: relative;
+            z-index: 2;
+        ">
+            {value}
+        </div>
+        {subtitle_html}
+    </div>
     """).strip()
 
     st.markdown(card_html, unsafe_allow_html=True)
-
 
 def get_file_updated_time(path):
     file_path = Path(path)
