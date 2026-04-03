@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import altair as alt
+from textwrap import dedent
 st.set_page_config(layout="wide")
 from streamlit_autorefresh import st_autorefresh
 from streamlit_autorefresh import st_autorefresh
@@ -65,7 +66,7 @@ def render_kpi_card(
 
     subtitle_html = ""
     if subtitle:
-        subtitle_html = f"""
+        subtitle_html = dedent(f"""
             <div style="
                 font-size: 0.9rem;
                 color: {subtitle_color};
@@ -77,7 +78,7 @@ def render_kpi_card(
             ">
                 {subtitle}
             </div>
-        """
+        """).strip()
 
     safe_fill_pct = 0
     if fill_pct is not None:
@@ -85,7 +86,7 @@ def render_kpi_card(
 
     fill_html = ""
     if fill_pct is not None:
-        fill_html = f"""
+        fill_html = dedent(f"""
             <div style="
                 position: absolute;
                 left: 0;
@@ -96,9 +97,9 @@ def render_kpi_card(
                 z-index: 1;
                 transition: height 0.6s ease;
             "></div>
-        """
+        """).strip()
 
-    card_html = f"""
+    card_html = dedent(f"""
         <div style="
             position: relative;
             overflow: hidden;
@@ -139,7 +140,7 @@ def render_kpi_card(
             </div>
             {subtitle_html}
         </div>
-    """
+    """).strip()
 
     st.markdown(card_html, unsafe_allow_html=True)
 
