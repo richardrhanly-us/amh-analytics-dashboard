@@ -1195,11 +1195,94 @@ if selected_view == "Overview":
     avg_daily_checkins = daily_counts.mean() if len(daily_counts) > 0 else 0
     avg_daily_westside = (westside_count / days_in_range) if days_in_range > 0 else 0
     avg_daily_library_express = (library_express_count / days_in_range) if days_in_range > 0 else 0
+
+overview_volume_mode = st.radio(
+    "Volume display",
+    ["Average per Day", "Total"],
+    horizontal=True,
+    key="overview_volume_mode"
+)
+
+days_in_range = df["datetime"].dt.date.nunique() if len(df) > 0 else 0
+
+avg_daily_checkins = daily_counts.mean() if len(daily_counts) > 0 else 0
+avg_daily_westside = (westside_count / days_in_range) if days_in_range > 0 else 0
+avg_daily_library_express = (library_express_count / days_in_range) if days_in_range > 0 else 0
+avg_daily_rejects = (reject_count / days_in_range) if days_in_range > 0 else 0
+
+peak_avg_hour_value = "N/A"
+peak_avg_hour_subtitle = "No activity in selected range"
+peak_total_hour_value = "N/A"
+peak_total_hour_subtitle = "No activity in selected range"
+
+if len(df) > 0:
+    hourly_source = df.copy()
+    hourly_source["date_only"] = hourly_source["datetime"].dt.date
+    hourly_source["hour_only"] = hourly_source["datetime"].dt.hour
+
+    hourly_daily = (
+        hourly_source.groupby(["date_only", "hour_only"])
+        .size()
+        .reset_index(name="checkins")
+    )
+
+    hourly_avg = (
+        hourly_daily.groupby("hour_only")["checkins"]
+        .mean()
+        .reset_index(name="avg_checkins")
+    )
+
+    if len(hourly_avg) > 0:
+        peak_avg_row = hourly_avg.loc[hourly_avg["avg_checkins"].idxmax()]
+        peak_avg_hour_value = format_hour(int(peak_avg_row["hour_only"]))
+        peak_avg_hour_subtitle = f"{peak_avg_row['avg_checkins']:,.1f} avg checkins"
+
+    hourly_total = (
+        df["datetime"].dt.hour.value_counts()
+        .sort_index()
+        .reset_index()
+    )
+    hourly_total.columns = ["hour_only", "total_checkins"]
+
+    if len(hourly_total) > 0:
+        peak_total_row = hourly_total.loc[hourly_total["total_checkins"].idxmax()]
+        peak_total_hour_value = format_hour(int(peak_total_row["hour_only"]))
+        peak_total_hour_subtitle = f"{int(peak_total_row['total_checkins']):,} total checkins"
+
+fail_peak_avg_value = peak_failure_window_text
+fail_peak_avg_subtitle = peak_failure_window_subtitle
+fail_peak_total_value = "N/A"
+fail_peak_total_subtitle = "No failures in selected range"
+
+if len(rejects_df) > 0:
+    fail_hour_total = rejects_df["datetime"].dt.hour.value_counts().sort_index()
+    fail_peak_total_hour = fail_hour_total.idxmax()
+    fail_peak_total_count = int(fail_hour_total.max())
+    fail_peak_total_value = format_hour(int(fail_peak_total_hour))
+    fail_peak_total_subtitle = f"{fail_peak_total_count:,} total rejects"
+
+    peak_day_avg_value = "N/A"
+    peak_day_avg_subtitle = "No activity in selected range"
+    peak_day_total_value = "N/A"
+    peak_day_total_subtitle = "No activity in selected range"
     
+    if len(df) > 0:
+        daily_volume = df["datetime"].dt.date.value_counts().sort_index()
+        if len(daily_volume) > 0:
+            peak_day_date = daily_volume.idxmax()
+            peak_day_count = int(daily_volume.max())
+            peak_day_name = pd.to_datetime(peak_day_date).strftime("%A")
+    
+            peak_day_total_value = peak_day_name
+            peak_day_total_subtitle = f"{peak_day_count:,} checkins on {pd.to_datetime(peak_day_date).strftime('%b %d, %Y')}"
+    
+            peak_day_avg_value = peak_day_name
+            peak_day_avg_subtitle = f"{peak_day_count:,} checkins on {pd.to_datetime(peak_day_date).strftime('%b %d, %Y')}"
 
     row1_col1, row1_col2, row1_col3 = st.columns(3)
     row2_col1, row2_col2, row2_col3 = st.columns(3)
     row3_col1, row3_col2, row3_col3 = st.columns(3)
+
 
     # Row 1
     with row1_col1:
@@ -1249,11 +1332,24 @@ if selected_view == "Overview":
                 f"{library_express_transit_pct:.2f}% of total items",
                 "#6b7280"
             )
-            
+    
     # Row 2
     with row2_col1:
-        render_kpi_card("Reject Count", f"{reject_count:,}", "Total failed checkins", "#6b7280")
-
+        if overview_volume_mode == "Average per Day":
+            render_kpi_card(
+                "Avg Daily Rejects",
+                f"{avg_daily_rejects:,.1f}",
+                "Per day",
+                "#6b7280"
+            )
+        else:
+            render_kpi_card(
+                "Reject Count",
+                f"{reject_count:,}",
+                "Total failed checkins",
+                "#6b7280"
+            )
+    
     with row2_col2:
         render_kpi_card(
             "Reject %",
@@ -1262,7 +1358,7 @@ if selected_view == "Overview":
             "#6b7280",
             value_font_size="1.55rem"
         )
-
+    
     with row2_col3:
         render_kpi_card(
             "Top Issue",
@@ -1272,72 +1368,61 @@ if selected_view == "Overview":
             value_font_size="1.15rem",
             value_wrap=True
         )
-
+    
     # Row 3
     with row3_col1:
-        peak_avg_hour_value = "N/A"
-        peak_avg_hour_subtitle = "No activity in selected range"
-    
-        if len(df) > 0:
-            hourly_source = df.copy()
-            hourly_source["date_only"] = hourly_source["datetime"].dt.date
-            hourly_source["hour_only"] = hourly_source["datetime"].dt.hour
-    
-            hourly_daily = (
-                hourly_source.groupby(["date_only", "hour_only"])
-                .size()
-                .reset_index(name="checkins")
+        if overview_volume_mode == "Average per Day":
+            render_kpi_card(
+                "Peak Avg Hour",
+                peak_avg_hour_value,
+                peak_avg_hour_subtitle,
+                "#6b7280"
+            )
+        else:
+            render_kpi_card(
+                "Peak Total Hour",
+                peak_total_hour_value,
+                peak_total_hour_subtitle,
+                "#6b7280"
             )
     
-            hourly_avg = (
-                hourly_daily.groupby("hour_only")["checkins"]
-                .mean()
-                .reset_index(name="avg_checkins")
-            )
-    
-            if len(hourly_avg) > 0:
-                peak_avg_row = hourly_avg.loc[hourly_avg["avg_checkins"].idxmax()]
-                peak_avg_hour_value = format_hour(int(peak_avg_row["hour_only"]))
-                peak_avg_hour_subtitle = f"{peak_avg_row['avg_checkins']:,.1f} avg checkins"
-    
-        render_kpi_card(
-            "Peak Avg Hour",
-            peak_avg_hour_value,
-            peak_avg_hour_subtitle,
-            "#6b7280"
-        )
-
     with row3_col2:
-        render_kpi_card(
-            "Fail Peak Hr",
-            peak_failure_window_text,
-            peak_failure_window_subtitle,
-            "#6b7280"
-        )
-
-    with row3_col3:
-        peak_day_of_week_text = "N/A"
-        peak_day_of_week_subtitle = "No activity in selected range"
-
-        if len(df) > 0:
-            peak_day_volume = df["datetime"].dt.date.value_counts().sort_index()
-            if len(peak_day_volume) > 0:
-                peak_day_date = peak_day_volume.idxmax()
-                peak_day_count = int(peak_day_volume.max())
-                peak_day_of_week_text = pd.to_datetime(peak_day_date).strftime("%A")
-                peak_day_of_week_subtitle = f"{peak_day_count:,} checkins on {pd.to_datetime(peak_day_date).strftime('%b %d, %Y')}"
-
-        render_kpi_card(
-            "Peak Day of Week",
-            peak_day_of_week_text,
-            peak_day_of_week_subtitle,
-            "#6b7280",
-            value_font_size="1.4rem",
-            value_wrap=True
-        )
+        if overview_volume_mode == "Average per Day":
+            render_kpi_card(
+                "Fail Peak Hr",
+                fail_peak_avg_value,
+                fail_peak_avg_subtitle,
+                "#6b7280"
+            )
+        else:
+            render_kpi_card(
+                "Peak Failure Hour",
+                fail_peak_total_value,
+                fail_peak_total_subtitle,
+                "#6b7280"
+            )
     
-        st.divider()
-
+    with row3_col3:
+        if overview_volume_mode == "Average per Day":
+            render_kpi_card(
+                "Peak Day of Week",
+                peak_day_avg_value,
+                peak_day_avg_subtitle,
+                "#6b7280",
+                value_font_size="1.4rem",
+                value_wrap=True
+            )
+        else:
+            render_kpi_card(
+                "Peak Day",
+                peak_day_total_value,
+                peak_day_total_subtitle,
+                "#6b7280",
+                value_font_size="1.4rem",
+                value_wrap=True
+            )
+    
+    st.divider()
 
 if selected_view == "Reports":
     st.header("Reports")
