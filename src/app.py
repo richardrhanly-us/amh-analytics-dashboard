@@ -10,7 +10,6 @@ from zoneinfo import ZoneInfo
 import altair as alt
 st.set_page_config(layout="wide")
 from streamlit_autorefresh import st_autorefresh
-from streamlit_autorefresh import st_autorefresh
 st_autorefresh(interval=120000, key="amh_auto_refresh")
 
 st.markdown("""
@@ -1643,7 +1642,6 @@ if selected_view == "Reports":
             else:
                 AMH_RATE = 130.0
 
-            daily_counts = df["datetime"].dt.date.value_counts().sort_index()
             daily_counts = df["datetime"].dt.date.value_counts().sort_index()
             staff_df = daily_counts.reset_index()
             staff_df.columns = ["date", "checkins"]
