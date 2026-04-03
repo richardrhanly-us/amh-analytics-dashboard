@@ -776,7 +776,7 @@ if selected_view == "Live Today":
                     y=alt.Y("checkins:Q", title="Checkins"),
                     tooltip=["hour_label", "checkins"]
                 )
-                .properties(height=400)
+                .properties(height=260)
             )
 
             st.altair_chart(checkins_hour_chart, use_container_width=True)
