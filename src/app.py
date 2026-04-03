@@ -2319,13 +2319,13 @@ Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.
         if "bin" not in df.columns:
             st.warning("No bin column found in the current dataset. Add bin parsing to your cleaned checkins file first.")
         else:
-            exception_bin = "0"
+            EXCEPTION_BIN = "0"
 
             bin_df = df.copy()
             bin_df = bin_df[bin_df["bin"].notna()].copy()
             bin_df["bin"] = bin_df["bin"].astype(str)
 
-            exception_df = bin_df[bin_df["bin"] == exception_bin].copy()
+            exception_df = bin_df[bin_df["bin"] == EXCEPTION_BIN].copy()
             total_binned = len(bin_df)
             exception_count = len(exception_df)
             exception_pct = (exception_count / total_binned * 100) if total_binned > 0 else 0
@@ -2428,7 +2428,7 @@ Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.
                 render_kpi_card(
                     "Estimated Holds",
                     f"{estimated_holds:,}",
-                    f"{estimated_holds_pct:.1f}% of Bin 6",
+                    f"{estimated_holds_pct:.1f}% of Bin 0",
                     "#6b7280"
                 )
 
