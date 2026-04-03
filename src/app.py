@@ -1534,7 +1534,7 @@ This is equivalent to approximately **{(total_saved/8):,.0f} full staff shifts**
             )
 
             st.info(
-                f"""## How Staff Time Saved Is Calculated
+                f"""### How Staff Time Saved Is Calculated
 #### Average daily check-ins  
 This is the average number of items checked in per day over the selected date range.
 
