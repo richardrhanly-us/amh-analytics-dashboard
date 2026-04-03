@@ -364,9 +364,6 @@ rejects_history_raw = load_rejects_history_df()
 
 pipeline_status = load_pipeline_status(mtime=status_mtime)
 
-
-
-
 rejects_live_raw["error_simple"] = rejects_live_raw["error_message"].apply(simplify_error)
 rejects_history_raw["error_simple"] = rejects_history_raw["error_message"].apply(simplify_error)
 
@@ -377,8 +374,7 @@ max_date = df_history_raw["datetime"].max().date()
 
 st.caption("Hanly Analytics")
 st.markdown('<div class="sortview-title">SORTVIEW</div>', unsafe_allow_html=True)
-st.caption("New Braunfels Public Library - Main Branch")
-st.caption("Tech Logic UltraSort")
+st.caption("New Braunfels Public Library - Main Branch - Tech Logic UltraSort")
 
 if pipeline_status:
     last_run = pipeline_status.get("last_run", "Unknown")
