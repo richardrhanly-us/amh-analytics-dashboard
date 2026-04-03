@@ -1313,7 +1313,7 @@ if selected_view == "Reports":
 
 
 
-    # -----------------------------
+        # -----------------------------
         # Labor & Efficiency
         # -----------------------------
         st.subheader("Labor & Efficiency")
