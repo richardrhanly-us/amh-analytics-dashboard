@@ -20,8 +20,6 @@ from alerts import get_system_alerts
 
 from transit_logic import *
 
-st.markdown("""
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&display=swap" rel="stylesheet">
 
 <style>
 st.markdown("""
