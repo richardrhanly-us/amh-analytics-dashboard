@@ -749,136 +749,238 @@ if selected_view == "Live Today":
 
     
 
-
-
     # =============================
-    # Live Today KPI Groups
+    # Live Today KPI Groups - One Row
     # =============================
 
-    st.markdown("#### Operations")
-    ops1, ops2, ops3 = st.columns(3)
-
-    with ops1:
-        typical_daily_checkins = checkins_daily.mean() if len(checkins_daily) > 0 else 1
-        checkins_fill_pct = (today_checkins / typical_daily_checkins) if typical_daily_checkins > 0 else 0
-
-        render_kpi_card(
-            "Checkins",
-            f"{today_checkins:,}",
-            "Processed today",
-            "#6b7280",
-            border_color="#60a5fa",
-            fill_pct=checkins_fill_pct,
-            fill_color="rgba(59, 130, 246, 0.14)"
+    def render_group_shell(title, border_color):
+        st.markdown(
+            f"""
+            <div style="
+                border: 2px solid {border_color};
+                border-radius: 14px;
+                padding: 10px 12px 12px 12px;
+                background: #ffffff;
+                margin-bottom: 8px;
+            ">
+                <div style="
+                    font-size: 0.95rem;
+                    font-weight: 600;
+                    color: #374151;
+                    margin-bottom: 10px;
+                ">
+                    {title}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
 
-    with ops2:
-        render_kpi_card(
-            "Current Throughput",
-            f"{today_metrics['current_speed']}",
-            "Items this hour",
-            "#6b7280",
-            border_color="#60a5fa"
+    live_group1, live_group2, live_group3 = st.columns([3, 3, 4])
+
+    # Operations
+    with live_group1:
+        st.markdown(
+            """
+            <div style="
+                border: 2px solid #60a5fa;
+                border-radius: 14px;
+                padding: 10px 12px 12px 12px;
+                background: #ffffff;
+                margin-bottom: 8px;
+            ">
+                <div style="
+                    font-size: 0.95rem;
+                    font-weight: 600;
+                    color: #1d4ed8;
+                    margin-bottom: 10px;
+                ">
+                    Operations
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
 
-    with ops3:
-        if today_peak_hour is not None:
+        ops1, ops2, ops3 = st.columns(3)
+
+        with ops1:
+            typical_daily_checkins = checkins_daily.mean() if len(checkins_daily) > 0 else 1
+            checkins_fill_pct = (today_checkins / typical_daily_checkins) if typical_daily_checkins > 0 else 0
+
             render_kpi_card(
-                "Busiest Hour",
-                format_hour(today_peak_hour),
-                f"{today_peak_hour_count:,} items ({today_peak_hour_pct:.1f}%)",
+                "Checkins",
+                f"{today_checkins:,}",
+                "Processed today",
                 "#6b7280",
-                value_font_size="1.4rem",
-                border_color="#60a5fa"
+                value_font_size="1.15rem",
+                border_color="#93c5fd",
+                fill_pct=checkins_fill_pct,
+                fill_color="rgba(59, 130, 246, 0.14)"
             )
-        else:
+
+        with ops2:
             render_kpi_card(
-                "Busiest Hour",
-                "N/A",
-                "No activity yet",
+                "Current Throughput",
+                f"{today_metrics['current_speed']}",
+                "Items this hour",
                 "#6b7280",
-                border_color="#60a5fa"
+                value_font_size="1.15rem",
+                border_color="#93c5fd"
             )
 
-    st.markdown("#### Quality & Impact")
-    quality1, quality2, quality3 = st.columns(3)
+        with ops3:
+            if today_peak_hour is not None:
+                render_kpi_card(
+                    "Busiest Hour",
+                    format_hour(today_peak_hour),
+                    f"{today_peak_hour_count:,} items ({today_peak_hour_pct:.1f}%)",
+                    "#6b7280",
+                    value_font_size="1.05rem",
+                    border_color="#93c5fd"
+                )
+            else:
+                render_kpi_card(
+                    "Busiest Hour",
+                    "N/A",
+                    "No activity yet",
+                    "#6b7280",
+                    value_font_size="1.05rem",
+                    border_color="#93c5fd"
+                )
 
-    with quality1:
-        render_kpi_card(
-            "Rejects",
-            f"{today_rejects:,}",
-            "Failed today",
-            "#6b7280",
-            border_color="#f59e0b"
+    # Quality & Impact
+    with live_group2:
+        st.markdown(
+            """
+            <div style="
+                border: 2px solid #34d399;
+                border-radius: 14px;
+                padding: 10px 12px 12px 12px;
+                background: #ffffff;
+                margin-bottom: 8px;
+            ">
+                <div style="
+                    font-size: 0.95rem;
+                    font-weight: 600;
+                    color: #047857;
+                    margin-bottom: 10px;
+                ">
+                    Quality & Impact
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
 
-    with quality2:
-        reject_subtitle = "Of checkins today"
-        if historical_daily_avg_reject > 0:
-            reject_subtitle = (
-                f"{live_reject_deviation:+.2f}% vs avg daily "
-                f"rate ({historical_daily_avg_reject:.2f}%)"
+        quality1, quality2, quality3 = st.columns(3)
+
+        with quality1:
+            render_kpi_card(
+                "Rejects",
+                f"{today_rejects:,}",
+                "Failed today",
+                "#6b7280",
+                value_font_size="1.15rem",
+                border_color="#fbbf24"
             )
 
-        render_kpi_card(
-            "Reject Rate",
-            f"{today_reject_rate:.2f}%",
-            reject_subtitle,
-            live_reject_subtitle_color,
-            value_font_size="1.55rem",
-            border_color=live_reject_card_border,
-            value_color=live_reject_value_color
+        with quality2:
+            reject_subtitle = "Of checkins today"
+            if historical_daily_avg_reject > 0:
+                reject_subtitle = (
+                    f"{live_reject_deviation:+.2f}% vs avg daily "
+                    f"rate ({historical_daily_avg_reject:.2f}%)"
+                )
+
+            render_kpi_card(
+                "Reject Rate",
+                f"{today_reject_rate:.2f}%",
+                reject_subtitle,
+                live_reject_subtitle_color,
+                value_font_size="1.05rem",
+                border_color=live_reject_card_border,
+                value_color=live_reject_value_color
+            )
+
+        with quality3:
+            staff_hours = today_metrics["staff_hours_saved"]
+            render_kpi_card(
+                "Staff Hours Saved",
+                f"{staff_hours:.1f}",
+                "Manual labor hrs",
+                "#6b7280",
+                value_font_size="1.15rem",
+                border_color="#6ee7b7"
+            )
+
+    # Routing
+    with live_group3:
+        st.markdown(
+            """
+            <div style="
+                border: 2px solid #a78bfa;
+                border-radius: 14px;
+                padding: 10px 12px 12px 12px;
+                background: #ffffff;
+                margin-bottom: 8px;
+            ">
+                <div style="
+                    font-size: 0.95rem;
+                    font-weight: 600;
+                    color: #6d28d9;
+                    margin-bottom: 10px;
+                ">
+                    Routing
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
 
-    with quality3:
-        staff_hours = today_metrics["staff_hours_saved"]
-        render_kpi_card(
-            "Staff Hours Saved Today",
-            f"{staff_hours:.1f}",
-            "Equivalent manual labor hours",
-            "#6b7280",
-            border_color="#34d399"
-        )
+        route1, route2, route3, route4 = st.columns(4)
 
-    st.markdown("#### Routing")
-    route1, route2, route3, route4 = st.columns(4)
+        with route1:
+            total_transit_pct = (today_total_transit / today_checkins * 100) if today_checkins > 0 else 0
+            render_kpi_card(
+                "Total Transit",
+                f"{today_total_transit:,}",
+                f"{total_transit_pct:.1f}% of today",
+                "#6b7280",
+                value_font_size="1.15rem",
+                border_color="#c4b5fd"
+            )
 
-    with route1:
-        total_transit_pct = (today_total_transit / today_checkins * 100) if today_checkins > 0 else 0
-        render_kpi_card(
-            "Total Transit",
-            f"{today_total_transit:,}",
-            f"{total_transit_pct:.1f}% of today",
-            "#6b7280",
-            border_color="#a78bfa"
-        )
+        with route2:
+            render_kpi_card(
+                "Westside",
+                f"{today_westside:,}",
+                f"{today_westside_pct:.1f}% of today",
+                "#6b7280",
+                value_font_size="1.15rem",
+                border_color="#c4b5fd"
+            )
 
-    with route2:
-        render_kpi_card(
-            "Westside Transit",
-            f"{today_westside:,}",
-            f"{today_westside_pct:.1f}% of today",
-            "#6b7280",
-            border_color="#a78bfa"
-        )
+        with route3:
+            render_kpi_card(
+                "Library Express",
+                f"{today_library_express:,}",
+                f"{today_library_express_pct:.1f}% of today",
+                "#6b7280",
+                value_font_size="1.05rem",
+                border_color="#c4b5fd"
+            )
 
-    with route3:
-        render_kpi_card(
-            "Library Express Transit",
-            f"{today_library_express:,}",
-            f"{today_library_express_pct:.1f}% of today",
-            "#6b7280",
-            border_color="#a78bfa"
-        )
+        with route4:
+            render_kpi_card(
+                "Estimated Holds",
+                f"{today_estimated_holds:,}",
+                "Bin 0 less rejects/transits",
+                "#6b7280",
+                value_font_size="1.15rem",
+                border_color="#c4b5fd"
+            )
 
-    with route4:
-        render_kpi_card(
-            "Estimated Holds",
-            f"{today_estimated_holds:,}",
-            "Bin 0 less rejects/transits",
-            "#6b7280",
-            border_color="#a78bfa"
-        )
 
 
     if info_alerts:
