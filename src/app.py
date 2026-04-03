@@ -1467,7 +1467,7 @@ Time saved = Manual time − AMH time
 
 Time saved = {avg_daily_manual_hours:,.2f} − {avg_daily_amh_hours:,.2f}
 
-**Average Daily Staff time saved = {avg_saved:,.2f} hours**
+**Staff time saved = {avg_saved:,.2f} hours**
 
 What This Means
 - Uses observed staff benchmark from Westside circulation reporting
