@@ -3267,8 +3267,11 @@ if selected_view == "Transits":
 
         if len(base_df) > 0 and len(historical_df) > 0:
             current_total_transit = len(transit_df)
+            current_total_items = len(base_df)
             current_ws_pct = westside_pct
             current_le_pct = library_express_pct
+
+            current_days = max(1, base_df["datetime"].dt.date.nunique())
 
             historical_df["transit_destination"] = historical_df["destination"].apply(normalize_transit_destination)
             historical_transit_df = historical_df[
@@ -3277,6 +3280,10 @@ if selected_view == "Transits":
 
             historical_total_transit = len(historical_transit_df)
             historical_total_items = len(historical_df)
+            historical_days = max(1, historical_df["datetime"].dt.date.nunique())
+
+            current_avg_daily_transit = current_total_transit / current_days
+            historical_avg_daily_transit = historical_total_transit / historical_days
 
             historical_ws_pct = (
                 len(historical_df[historical_df["transit_destination"] == "Westside"]) / historical_total_items * 100
@@ -3288,17 +3295,17 @@ if selected_view == "Transits":
 
             baseline_df = pd.DataFrame({
                 "Metric": [
-                    "Total Transit Items",
+                    "Avg Daily Transit Items",
                     "Westside %",
                     "Library Express %"
                 ],
                 "Current": [
-                    current_total_transit,
+                    round(current_avg_daily_transit, 1),
                     round(current_ws_pct, 2),
                     round(current_le_pct, 2)
                 ],
                 "Historical Baseline": [
-                    historical_total_transit,
+                    round(historical_avg_daily_transit, 1),
                     round(historical_ws_pct, 2),
                     round(historical_le_pct, 2)
                 ]
