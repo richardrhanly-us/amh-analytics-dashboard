@@ -2411,24 +2411,98 @@ Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.
                     key="exception_bin_rate_by_day_report_download"
                 )
 
-            if len(hourly_exception_df) > 0:
+            if len(exception_df) > 0:
                 st.subheader("Exception Bin Volume by Hour")
-                hourly_exception_df = hourly_exception_df[
-                    (hourly_exception_df["hour"] >= 7) & (hourly_exception_df["hour"] <= 20)
+
+                exception_hourly_source = exception_df.copy()
+                exception_hourly_source["date"] = exception_hourly_source["datetime"].dt.date
+                exception_hourly_source["hour"] = exception_hourly_source["datetime"].dt.hour
+
+                days_in_range = exception_hourly_source["date"].nunique()
+
+                exception_hour_totals = (
+                    exception_hourly_source.groupby("hour")
+                    .size()
+                    .reset_index(name="exception_items")
+                )
+
+                exception_hour_daily = (
+                    exception_hourly_source.groupby(["date", "hour"])
+                    .size()
+                    .reset_index(name="daily_exception_items")
+                )
+
+                exception_hour_avg = (
+                    exception_hour_daily.groupby("hour")["daily_exception_items"]
+                    .mean()
+                    .reset_index(name="avg_exception_items")
+                )
+
+                hourly_exception_summary = exception_hour_totals.merge(
+                    exception_hour_avg,
+                    on="hour",
+                    how="left"
+                )
+
+                hourly_exception_summary["hour_label"] = hourly_exception_summary["hour"].apply(format_hour_plain)
+                hourly_exception_summary = hourly_exception_summary[
+                    (hourly_exception_summary["hour"] >= 7) & (hourly_exception_summary["hour"] <= 20)
                 ].copy()
 
-                exception_chart = build_hourly_bar_chart(hourly_exception_df, "exception_items", "Exception Items")
-                render_chart(exception_chart)
+                if len(hourly_exception_summary) > 0:
+                    peak_exception_hour_row = hourly_exception_summary.loc[
+                        hourly_exception_summary["avg_exception_items"].idxmax()
+                    ]
 
-                hourly_exception_display = hourly_exception_df[["hour_label", "exception_items"]].rename(
-                    columns={"hour_label": "hour"}
-                )
-                st.dataframe(hourly_exception_display, use_container_width=True)
-                download_button(
-                    hourly_exception_display,
-                    "exception_bin_volume_by_hour_report.csv",
-                    key="exception_bin_volume_by_hour_report_download"
-                )
+                    st.markdown(
+                        f"""
+                        <div style="
+                            border-left: 4px solid #d97706;
+                            background-color: #f9fafb;
+                            padding: 14px 16px;
+                            border-radius: 8px;
+                            margin-top: 8px;
+                            margin-bottom: 16px;
+                        ">
+                            <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                                Report Summary
+                            </div>
+                            <div style="color: #4b5563; line-height: 1.4;">
+                                Highest average exception-bin hour: {peak_exception_hour_row["hour_label"]} with
+                                {peak_exception_hour_row["avg_exception_items"]:,.1f} average items per day
+                                across {days_in_range} day(s). Total exception-bin volume during that hour in the
+                                selected range: {int(peak_exception_hour_row["exception_items"]):,} items.
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+                    exception_chart = build_hourly_bar_chart(
+                        hourly_exception_summary.rename(columns={"avg_exception_items": "avg_items_per_hour"}),
+                        "avg_items_per_hour",
+                        "Avg Exception Items Per Hour"
+                    )
+                    render_chart(exception_chart)
+
+                    hourly_exception_display = hourly_exception_summary.rename(columns={
+                        "hour_label": "Hour",
+                        "exception_items": "Total Exception Items",
+                        "avg_exception_items": "Avg Exception Items Per Day"
+                    })[["Hour", "Total Exception Items", "Avg Exception Items Per Day"]]
+
+                    hourly_exception_display["Avg Exception Items Per Day"] = (
+                        hourly_exception_display["Avg Exception Items Per Day"].round(1)
+                    )
+
+                    st.dataframe(hourly_exception_display, use_container_width=True)
+                    download_button(
+                        hourly_exception_display,
+                        "exception_bin_volume_by_hour_report.csv",
+                        key="exception_bin_volume_by_hour_report_download"
+                    )
+                else:
+                    st.info("No exception-bin items found for the selected date range.")
             else:
                 st.info("No exception-bin items found for the selected date range.")
 
