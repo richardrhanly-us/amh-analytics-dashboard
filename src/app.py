@@ -1256,7 +1256,8 @@ if selected_view == "Overview":
         unsafe_allow_html=True
     )
 
-
+    daily_counts = df["datetime"].dt.date.value_counts().sort_index()
+    avg_daily_checkins = daily_counts.mean() if len(daily_counts) > 0 else 0
 
     row1_col1, row1_col2, row1_col3 = st.columns(3)
     row2_col1, row2_col2, row2_col3 = st.columns(3)
@@ -1404,7 +1405,6 @@ if selected_view == "Reports":
 
             daily_counts = df["datetime"].dt.date.value_counts().sort_index()
             daily_counts = df["datetime"].dt.date.value_counts().sort_index()
-            avg_daily_checkins = daily_counts.mean() if len(daily_counts) > 0 else 0
             staff_df = daily_counts.reset_index()
             staff_df.columns = ["date", "checkins"]
 
