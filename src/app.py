@@ -1412,7 +1412,6 @@ if selected_view == "Reports":
 
             st.markdown(
                 f"""
-### What These Metrics Mean
 
 **Avg Hours Saved — {avg_saved:,.2f} hours/day**  
 On an average day in the selected range, the AMH reduces staff workload by about **{avg_saved:,.2f} hours** compared to manual check-in processing.  
@@ -1426,7 +1425,6 @@ This represents the maximum operational impact observed in the selected period.
 Across the full selected date range, the AMH reduced total staff workload by **{total_saved:,.2f} hours**.  
 This is equivalent to approximately **{(total_saved/8):,.0f} full staff shifts** of labor.
 
-### How to Interpret This
 
 - These values represent **estimated staff time avoided**, not time eliminated.
 - Staff are still required for:
