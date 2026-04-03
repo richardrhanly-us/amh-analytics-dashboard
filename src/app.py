@@ -1452,7 +1452,7 @@ Manual time = {avg_daily_checkins:,.1f} ÷ {MANUAL_RATE:.0f}
 
 **Manual time = {avg_daily_manual_hours:,.2f} hours**
 
-* This rate was based on circulation report data observed during peak hours, where staff are working at their fastest steady pace.
+* The manual check-in rate of 50 is based on circulation report data observed during peak hours, where staff are working at their fastest steady pace.
 #### AMH Processing Time
 
 Current AMH rate = {AMH_RATE:.1f} items per hour (selected date range)
