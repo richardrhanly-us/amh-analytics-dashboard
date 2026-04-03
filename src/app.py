@@ -8,7 +8,6 @@ from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import altair as alt
-from textwrap import dedent
 st.set_page_config(layout="wide")
 from streamlit_autorefresh import st_autorefresh
 from streamlit_autorefresh import st_autorefresh
