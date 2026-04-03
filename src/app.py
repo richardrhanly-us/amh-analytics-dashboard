@@ -1451,7 +1451,7 @@ Manual time = {avg_daily_checkins:,.1f} items/day ÷ {MANUAL_RATE:.0f} items/hou
 
 **Manual time = {avg_daily_manual_hours:,.2f} staff hours/day**
 
-\\*The manual check-in rate of 50 is based on circulation report data observed during peak hours, where staff are working at their fastest steady pace.*
+\\*The manual check-in rate of 50 is based on circulation report data observed at the Westside branch during peak hours, where staff are working at their fastest steady pace.*
 
 #### AMH Processing Time
 
