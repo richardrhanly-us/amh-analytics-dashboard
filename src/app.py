@@ -2589,8 +2589,8 @@ Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.
                 render_kpi_card(
                     "Bin Discrepancy",
                     f"{top_bin_row['pct_of_total'] - low_bin_row['pct_of_total']:.2f}% gap",
-                    f"Between highest and lowest bin share"
-                    f"Bin {top_bin_row['bin']} leads ({top_bin_row['pct_of_total']:.2f}%) • "
+                    f"Between highest and lowest bin share\n"
+                    f"Bin {top_bin_row['bin']} leads ({top_bin_row['pct_of_total']:.2f}%) •"
                     f"Bin {low_bin_row['bin']} lowest ({low_bin_row['pct_of_total']:.2f}%)",
                     "#6b7280",
                     value_font_size="1.4rem"
