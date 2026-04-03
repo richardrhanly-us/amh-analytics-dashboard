@@ -1359,41 +1359,43 @@ if selected_view == "Overview":
     avg_daily_westside = (westside_count / days_in_range) if days_in_range > 0 else 0
     avg_daily_library_express = (library_express_count / days_in_range) if days_in_range > 0 else 0
     avg_daily_rejects = (reject_count / days_in_range) if days_in_range > 0 else 0
-
+    
     peak_avg_hour_value = "N/A"
     peak_avg_hour_subtitle = "No activity in selected range"
     peak_total_hour_value = "N/A"
     peak_total_hour_subtitle = "No activity in selected range"
-
+    
     if len(df) > 0:
+        # --- AVERAGE MODE ---
         hourly_source = df.copy()
         hourly_source["date_only"] = hourly_source["datetime"].dt.date
         hourly_source["hour_only"] = hourly_source["datetime"].dt.hour
-
+    
         hourly_daily = (
             hourly_source.groupby(["date_only", "hour_only"])
             .size()
             .reset_index(name="checkins")
         )
-
+    
         hourly_avg = (
             hourly_daily.groupby("hour_only")["checkins"]
             .mean()
             .reset_index(name="avg_checkins")
         )
-
+    
         if len(hourly_avg) > 0:
             peak_avg_row = hourly_avg.loc[hourly_avg["avg_checkins"].idxmax()]
             peak_avg_hour_value = format_hour(int(peak_avg_row["hour_only"]))
-            peak_avg_hour_subtitle = f"{peak_avg_row['avg_checkins']:,.1f} avg checkins"
-
+            peak_avg_hour_subtitle = f"{peak_avg_row['avg_checkins']:,.1f} avg checkins/day"
+    
+        # --- TOTAL MODE ---
         hourly_total = (
             df["datetime"].dt.hour.value_counts()
             .sort_index()
             .reset_index()
         )
         hourly_total.columns = ["hour_only", "total_checkins"]
-
+    
         if len(hourly_total) > 0:
             peak_total_row = hourly_total.loc[hourly_total["total_checkins"].idxmax()]
             peak_total_hour_value = format_hour(int(peak_total_row["hour_only"]))
