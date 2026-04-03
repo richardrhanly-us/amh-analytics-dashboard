@@ -2532,6 +2532,7 @@ Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.
 
             top_bin_row = bin_summary.loc[bin_summary["checkins"].idxmax()]
             low_bin_row = bin_summary.loc[bin_summary["checkins"].idxmin()]
+            bin_discrepancy = int(top_bin_row["checkins"] - low_bin_row["checkins"])
 
             st.markdown(
                 f"""
@@ -2555,8 +2556,9 @@ Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.
                 """,
                 unsafe_allow_html=True
             )
-
-            k1, k2, k3 = st.columns(3)
+            
+            k1, k2, k3, k4 = st.columns(4)
+            
             with k1:
                 render_kpi_card(
                     "Binned Checkins",
@@ -2564,6 +2566,7 @@ Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.
                     "Items with a detected bin",
                     "#6b7280"
                 )
+            
             with k2:
                 render_kpi_card(
                     "Top Bin",
@@ -2572,11 +2575,21 @@ Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.
                     "#6b7280",
                     value_font_size="1.4rem"
                 )
+            
             with k3:
                 render_kpi_card(
                     "Top Bin Share",
                     f"{top_bin_row['pct_of_total']:.2f}%",
                     "Of all binned checkins",
+                    "#6b7280",
+                    value_font_size="1.4rem"
+                )
+            
+            with k4:
+                render_kpi_card(
+                    "Bin Discrepancy",
+                    f"{bin_discrepancy:,}",
+                    f"Bin {top_bin_row['bin']} vs Bin {low_bin_row['bin']}",
                     "#6b7280",
                     value_font_size="1.4rem"
                 )
