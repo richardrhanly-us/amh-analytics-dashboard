@@ -1692,35 +1692,31 @@ if selected_view == "Reports":
         MANUAL_RATE = 50
 
         if len(df) > 0 and len(df_history_raw) > 0:
-            all_time_df = df_history_raw.copy()
-            all_time_df["date"] = all_time_df["datetime"].dt.date
-            all_time_df["hour"] = all_time_df["datetime"].dt.hour
-
-            all_time_daily_hourly = (
-                all_time_df.groupby(["date", "hour"])
+            rate_df = df.copy()
+            rate_df["date"] = rate_df["datetime"].dt.date
+            rate_df["hour"] = rate_df["datetime"].dt.hour
+            
+            daily_hourly = (
+                rate_df.groupby(["date", "hour"])
                 .size()
                 .reset_index(name="checkins")
             )
-
-            all_time_avg_hourly = (
-                all_time_daily_hourly.groupby("hour")["checkins"]
+            
+            avg_hourly = (
+                daily_hourly.groupby("hour")["checkins"]
                 .mean()
                 .reset_index(name="avg_items_per_hour")
             )
-
-            if len(all_time_avg_hourly) > 0:
-                all_time_peak_row = all_time_avg_hourly.loc[
-                    all_time_avg_hourly["avg_items_per_hour"].idxmax()
-                ]
-                all_time_threshold = all_time_peak_row["avg_items_per_hour"] * 0.75
-                all_time_peak_hours = all_time_avg_hourly[
-                    all_time_avg_hourly["avg_items_per_hour"] >= all_time_threshold
-                ].copy()
-
+            
+            if len(avg_hourly) > 0:
+                peak_row = avg_hourly.loc[avg_hourly["avg_items_per_hour"].idxmax()]
+                threshold = peak_row["avg_items_per_hour"] * 0.75
+                peak_hours = avg_hourly[avg_hourly["avg_items_per_hour"] >= threshold].copy()
+            
                 AMH_RATE = (
-                    all_time_peak_hours["avg_items_per_hour"].mean()
-                    if len(all_time_peak_hours) > 0
-                    else all_time_peak_row["avg_items_per_hour"]
+                    peak_hours["avg_items_per_hour"].mean()
+                    if len(peak_hours) > 0
+                    else peak_row["avg_items_per_hour"]
                 )
             else:
                 AMH_RATE = 130.0
