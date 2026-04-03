@@ -21,24 +21,21 @@ from alerts import get_system_alerts
 from transit_logic import *
 
 
-<style>
 st.markdown("""
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&display=swap" rel="stylesheet">
 
+<style>
 .sortview-title {
     font-family: 'Orbitron', sans-serif;
     font-size: 52px;
     font-weight: 800;
     letter-spacing: 3px;
-
     background: linear-gradient(90deg, #60a5fa, #a78bfa, #34d399);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
-
     text-shadow:
         0 0 6px rgba(96, 165, 250, 0.4),
         0 0 12px rgba(167, 139, 250, 0.25);
-
     margin-bottom: -4px;
 }
 </style>
