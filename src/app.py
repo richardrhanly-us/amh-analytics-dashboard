@@ -2896,7 +2896,6 @@ if selected_view == "Transits":
 
     st.divider()
 
-    st.markdown("---")
     st.subheader("Transit Reports")
     st.caption("Additional transit reports organized by data type.")
 
