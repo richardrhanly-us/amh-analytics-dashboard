@@ -1256,23 +1256,46 @@ if selected_view == "Overview":
         unsafe_allow_html=True
     )
 
-    col1, col2, col3 = st.columns(3)
-    col4, col5, col6 = st.columns(3)
-    col7, col8, col9 = st.columns(3)
 
-    with col1:
+
+    row1_col1, row1_col2, row1_col3 = st.columns(3)
+    row2_col1, row2_col2, row2_col3 = st.columns(3)
+    row3_col1, row3_col2, row3_col3 = st.columns(3)
+
+    # Row 1
+    with row1_col1:
         render_kpi_card("Checkins", f"{len(df):,}", date_range_text, "#6b7280")
 
-    with col2:
-        render_kpi_card("Westside Transits", f"{westside_transit_count:,}", f"{westside_transit_pct:.2f}% of total items", "#6b7280")
+    with row1_col2:
+        render_kpi_card(
+            "Westside Transits",
+            f"{westside_transit_count:,}",
+            f"{westside_transit_pct:.2f}% of total items",
+            "#6b7280"
+        )
 
-    with col3:
-        render_kpi_card("Library Express Transits", f"{library_express_transit_count:,}", f"{library_express_transit_pct:.2f}% of total items", "#6b7280")
+    with row1_col3:
+        render_kpi_card(
+            "Library Express Transits",
+            f"{library_express_transit_count:,}",
+            f"{library_express_transit_pct:.2f}% of total items",
+            "#6b7280"
+        )
 
-    with col4:
-        render_kpi_card("Reject %", f"{reject_pct:.2f}%", date_range_text, "#6b7280", value_font_size="1.55rem")
+    # Row 2
+    with row2_col1:
+        render_kpi_card("Reject Count", f"{reject_count:,}", "Total failed checkins", "#6b7280")
 
-    with col5:
+    with row2_col2:
+        render_kpi_card(
+            "Reject %",
+            f"{reject_pct:.2f}%",
+            date_range_text,
+            "#6b7280",
+            value_font_size="1.55rem"
+        )
+
+    with row2_col3:
         render_kpi_card(
             "Top Issue",
             top_issue,
@@ -1282,26 +1305,47 @@ if selected_view == "Overview":
             value_wrap=True
         )
 
-    with col6:
-        render_kpi_card("Reject Count", f"{reject_count:,}", "Total failed checkins", "#6b7280")
-
-    with col7:
+    # Row 3
+    with row3_col1:
         if peak_hour is not None:
             render_kpi_card(
-                "Peak Hour",
+                "Peak Avg Hour",
                 format_hour(peak_hour),
                 f"{peak_hour_count:,} checkins ({peak_hour_pct:.1f}% of total volume)",
                 "#6b7280"
             )
         else:
-            render_kpi_card("Peak Hour", "N/A", "No activity in selected range", "#6b7280")
+            render_kpi_card("Peak Avg Hour", "N/A", "No activity in selected range", "#6b7280")
 
-    with col8:
-        render_kpi_card("Fail Peak Hr", peak_failure_window_text, peak_failure_window_subtitle, "#6b7280")
+    with row3_col2:
+        render_kpi_card(
+            "Fail Peak Hr",
+            peak_failure_window_text,
+            peak_failure_window_subtitle,
+            "#6b7280"
+        )
 
-    with col9:
-        render_kpi_card("Active Hours", f"{active_hours}", active_hours_subtitle, "#6b7280")
+    with row3_col3:
+        peak_day_of_week_text = "N/A"
+        peak_day_of_week_subtitle = "No activity in selected range"
 
+        if len(df) > 0:
+            peak_day_volume = df["datetime"].dt.date.value_counts().sort_index()
+            if len(peak_day_volume) > 0:
+                peak_day_date = peak_day_volume.idxmax()
+                peak_day_count = int(peak_day_volume.max())
+                peak_day_of_week_text = pd.to_datetime(peak_day_date).strftime("%A")
+                peak_day_of_week_subtitle = f"{peak_day_count:,} checkins on {pd.to_datetime(peak_day_date).strftime('%b %d, %Y')}"
+
+        render_kpi_card(
+            "Peak Day of Week",
+            peak_day_of_week_text,
+            peak_day_of_week_subtitle,
+            "#6b7280",
+            value_font_size="1.4rem",
+            value_wrap=True
+        )
+    
     st.divider()
 
 
