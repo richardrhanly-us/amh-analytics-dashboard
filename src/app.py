@@ -801,29 +801,6 @@ if selected_view == "Live Today":
     # Live Today KPI Groups - One Row
     # =============================
 
-    def render_group_shell(title, border_color):
-        st.markdown(
-            f"""
-            <div style="
-                border: 2px solid {border_color};
-                border-radius: 14px;
-                padding: 10px 12px 12px 12px;
-                background: #ffffff;
-                margin-bottom: 8px;
-            ">
-                <div style="
-                    font-size: 0.95rem;
-                    font-weight: 600;
-                    color: #374151;
-                    margin-bottom: 10px;
-                ">
-                    {title}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
     live_group1, live_group2, live_group3 = st.columns([3, 3, 4])
 
     # Operations
