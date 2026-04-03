@@ -1742,49 +1742,85 @@ Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.
 
         dow_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
-        dow_counts = (
-            df.groupby("day_of_week")
-              .size()
-              .reindex(dow_order)
-              .fillna(0)
-              .reset_index(name="count")
-        )
+        if len(df) > 0:
+            weekday_df = df.copy()
+            weekday_df["date"] = weekday_df["datetime"].dt.date
+            weekday_df["day_of_week"] = weekday_df["datetime"].dt.day_name()
 
-        if len(dow_counts) > 0:
-            busiest_day = dow_counts.sort_values("count", ascending=False).iloc[0]
+            days_in_range = weekday_df["date"].nunique()
 
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #2563eb;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-top: 8px;
-                    margin-bottom: 16px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Report Summary
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.4;">
-                        Busiest day: {busiest_day['day_of_week']} with {int(busiest_day['count']):,} items processed.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
+            dow_totals = (
+                weekday_df.groupby("day_of_week")
+                .size()
+                .reindex(dow_order)
+                .fillna(0)
+                .reset_index(name="count")
             )
 
-            dow_chart = build_category_bar_chart(
-                dow_counts,
-                "day_of_week",
-                "count",
-                "Checkins",
-                "Day of Week"
+            daily_weekday = (
+                weekday_df.groupby(["date", "day_of_week"])
+                .size()
+                .reset_index(name="daily_checkins")
             )
-            render_chart(dow_chart)
 
-            st.dataframe(dow_counts, use_container_width=True)
-            download_button(dow_counts, "weekday_volume.csv")
+            dow_avg = (
+                daily_weekday.groupby("day_of_week")["daily_checkins"]
+                .mean()
+                .reindex(dow_order)
+                .fillna(0)
+                .reset_index(name="avg_checkins")
+            )
+
+            dow_summary = dow_totals.merge(dow_avg, on="day_of_week", how="left")
+
+            if len(dow_summary) > 0:
+                busiest_day = dow_summary.loc[dow_summary["avg_checkins"].idxmax()]
+
+                st.markdown(
+                    f"""
+                    <div style="
+                        border-left: 4px solid #2563eb;
+                        background-color: #f9fafb;
+                        padding: 14px 16px;
+                        border-radius: 8px;
+                        margin-top: 8px;
+                        margin-bottom: 16px;
+                    ">
+                        <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                            Report Summary
+                        </div>
+                        <div style="color: #4b5563; line-height: 1.4;">
+                            Busiest average day: {busiest_day['day_of_week']} with
+                            {busiest_day['avg_checkins']:,.1f} average checkins per day
+                            across {days_in_range} day(s). Total volume for that weekday in the selected range:
+                            {int(busiest_day['count']):,} checkins.
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+                dow_chart = build_category_bar_chart(
+                    dow_summary.rename(columns={"avg_checkins": "avg_items_per_day"}),
+                    "day_of_week",
+                    "avg_items_per_day",
+                    "Avg Checkins Per Day",
+                    "Day of Week"
+                )
+                render_chart(dow_chart)
+
+                dow_display = dow_summary.rename(columns={
+                    "day_of_week": "Day of Week",
+                    "count": "Total Checkins",
+                    "avg_checkins": "Avg Checkins Per Day"
+                })[["Day of Week", "Total Checkins", "Avg Checkins Per Day"]]
+
+                dow_display["Avg Checkins Per Day"] = dow_display["Avg Checkins Per Day"].round(1)
+
+                st.dataframe(dow_display, use_container_width=True)
+                download_button(dow_display, "weekday_volume.csv")
+            else:
+                st.info("No weekday data available for selected range.")
         else:
             st.info("No weekday data available for selected range.")
 
