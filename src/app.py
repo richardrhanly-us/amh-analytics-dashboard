@@ -804,7 +804,7 @@ if selected_view == "Live Today":
     # Live Today KPI Groups - One Row
     # =============================
 
-    live_group1, live_group2, live_group3 = st.columns([3, 3, 4])
+    live_group1, live_group2, live_group3 = st.columns(3)
 
     # Operations
     with live_group1:
