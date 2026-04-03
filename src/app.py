@@ -1317,22 +1317,25 @@ if selected_view == "Overview":
         peak_avg_hour_subtitle = "No activity in selected range"
     
         if len(df) > 0:
+            hourly_source = df.copy()
+            hourly_source["date_only"] = hourly_source["datetime"].dt.date
+            hourly_source["hour_only"] = hourly_source["datetime"].dt.hour
+    
             hourly_daily = (
-                df.groupby([df["datetime"].dt.date, df["datetime"].dt.hour])
+                hourly_source.groupby(["date_only", "hour_only"])
                 .size()
                 .reset_index(name="checkins")
             )
-            hourly_daily.columns = ["date", "hour", "checkins"]
     
             hourly_avg = (
-                hourly_daily.groupby("hour")["checkins"]
+                hourly_daily.groupby("hour_only")["checkins"]
                 .mean()
                 .reset_index(name="avg_checkins")
             )
     
             if len(hourly_avg) > 0:
                 peak_avg_row = hourly_avg.loc[hourly_avg["avg_checkins"].idxmax()]
-                peak_avg_hour_value = format_hour(int(peak_avg_row["hour"]))
+                peak_avg_hour_value = format_hour(int(peak_avg_row["hour_only"]))
                 peak_avg_hour_subtitle = f"{peak_avg_row['avg_checkins']:,.1f} avg checkins"
     
         render_kpi_card(
