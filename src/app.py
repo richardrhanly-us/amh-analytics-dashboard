@@ -709,7 +709,7 @@ if alerts:
 
 
 if selected_view == "Live Today":
-    top_left, top_right = st.columns([1.2, 1.3], vertical_alignment="top")
+    top_left, top_right = st.columns([1, 1.4], vertical_alignment="top")
 
     with top_left:
         st.header(f"{today.strftime('%A, %b %d')}")
