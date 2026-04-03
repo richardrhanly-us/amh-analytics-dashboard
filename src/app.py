@@ -2373,7 +2373,7 @@ Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.
                 peak_exception_hour_count = 0
 
             insight_text = (
-                f"Exception bin {exception_bin} handled {exception_count:,} items "
+                f"Exception bin {EXCEPTION_BIN} handled {exception_count:,} items "
                 f"({exception_pct:.2f}% of all binned checkins). "
                 f"Peak exception day: {peak_exception_day_label} at {peak_exception_rate:.2f}%. "
                 f"Peak exception hour: {peak_exception_hour_text} with {peak_exception_hour_count:,} items."
@@ -2404,7 +2404,7 @@ Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.
             with k1:
                 render_kpi_card(
                     "Exception Bin",
-                    f"Bin {exception_bin}",
+                    f"Bin {EXCEPTION_BIN}",
                     "Assumed overflow / exception lane",
                     "#6b7280",
                     value_font_size="1.4rem"
