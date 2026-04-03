@@ -1995,7 +1995,6 @@ Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.
         else:
             st.info("No destination data available for the selected date range.")
 
-    st.markdown("---")
 
     # -----------------------------
     # Errors & Exceptions
@@ -2288,7 +2287,6 @@ Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.
             else:
                 st.info("No exception-bin items found for the selected date range.")
 
-    st.markdown("---")
 
     # -----------------------------
     # Bin Activity
