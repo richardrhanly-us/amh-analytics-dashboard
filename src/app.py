@@ -64,86 +64,80 @@ def render_kpi_card(
     value_white_space = "normal" if value_wrap else "nowrap"
     value_word_break = "break-word" if value_wrap else "normal"
 
-    subtitle_html = ""
-    if subtitle:
-        subtitle_html = dedent(f"""
-        <div style="
-            font-size: 0.9rem;
-            color: {subtitle_color};
-            margin-top: 8px;
-            line-height: 1.3;
-            overflow: hidden;
-            position: relative;
-            z-index: 2;
-        ">
-            {subtitle}
-        </div>
-        """).strip()
-
     safe_fill_pct = 0
     if fill_pct is not None:
         safe_fill_pct = max(0, min(fill_pct, 1)) * 100
 
     fill_html = ""
     if fill_pct is not None:
-        fill_html = dedent(f"""
-        <div style="
-            position: absolute;
-            left: 0;
-            bottom: 0;
-            width: 100%;
-            height: {safe_fill_pct:.1f}%;
-            background: {fill_color};
-            z-index: 1;
-            transition: height 0.6s ease;
-        "></div>
-        """).strip()
+        fill_html = (
+            f'<div style="'
+            f'position:absolute;'
+            f'left:0;'
+            f'bottom:0;'
+            f'width:100%;'
+            f'height:{safe_fill_pct:.1f}%;'
+            f'background:{fill_color};'
+            f'z-index:1;'
+            f'transition:height 0.6s ease;'
+            f'"></div>'
+        )
 
-    card_html = dedent(f"""
-    <div style="
-        position: relative;
-        overflow: hidden;
-        border: 2px solid {border_color};
-        border-radius: 12px;
-        padding: 16px 18px;
-        background-color: white;
-        min-height: 185px;
-        height: 185px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        text-align: center;
-    ">
-        {fill_html}
-        <div style="
-            font-size: 0.9rem;
-            color: #6b7280;
-            margin-bottom: 8px;
-            position: relative;
-            z-index: 2;
-        ">
-            {title}
-        </div>
-        <div style="
-            font-size: {value_font_size};
-            font-weight: 600;
-            color: {value_color};
-            line-height: 1.2;
-            margin-bottom: 4px;
-            white-space: {value_white_space};
-            word-break: {value_word_break};
-            position: relative;
-            z-index: 2;
-        ">
-            {value}
-        </div>
-        {subtitle_html}
-    </div>
-    """).strip()
+    subtitle_html = ""
+    if subtitle:
+        subtitle_html = (
+            f'<div style="'
+            f'font-size:0.9rem;'
+            f'color:{subtitle_color};'
+            f'margin-top:8px;'
+            f'line-height:1.3;'
+            f'overflow:hidden;'
+            f'position:relative;'
+            f'z-index:2;'
+            f'">{subtitle}</div>'
+        )
+
+    card_html = (
+        f'<div style="'
+        f'position:relative;'
+        f'overflow:hidden;'
+        f'border:2px solid {border_color};'
+        f'border-radius:12px;'
+        f'padding:16px 18px;'
+        f'background-color:white;'
+        f'min-height:185px;'
+        f'height:185px;'
+        f'display:flex;'
+        f'flex-direction:column;'
+        f'justify-content:center;'
+        f'align-items:center;'
+        f'text-align:center;'
+        f'">'
+        f'{fill_html}'
+        f'<div style="'
+        f'font-size:0.9rem;'
+        f'color:#6b7280;'
+        f'margin-bottom:8px;'
+        f'position:relative;'
+        f'z-index:2;'
+        f'">{title}</div>'
+        f'<div style="'
+        f'font-size:{value_font_size};'
+        f'font-weight:600;'
+        f'color:{value_color};'
+        f'line-height:1.2;'
+        f'margin-bottom:4px;'
+        f'white-space:{value_white_space};'
+        f'word-break:{value_word_break};'
+        f'position:relative;'
+        f'z-index:2;'
+        f'">{value}</div>'
+        f'{subtitle_html}'
+        f'</div>'
+    )
 
     st.markdown(card_html, unsafe_allow_html=True)
-
+    
 def get_file_updated_time(path):
     file_path = Path(path)
     if file_path.exists():
