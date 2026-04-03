@@ -829,7 +829,6 @@ if selected_view == "Live Today":
             """,
             unsafe_allow_html=True
         )
-        st.markdown("<div style='margin-top:6px'></div>", unsafe_allow_html=True)
         ops1, ops2, ops3 = st.columns(3)
 
         with ops1:
