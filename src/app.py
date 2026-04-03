@@ -1249,8 +1249,7 @@ if selected_view == "Live Today":
 
 if selected_view == "Overview":
     st.subheader("Summary")
-    st.caption("Get a hitorical overview of your machine by choosing a date range.")
-    st.markdown("---")
+    st.caption("Get a hitorical summary by choosing a date range.")
 
     westside_transit_count = westside_count
     westside_transit_pct = westside_pct
