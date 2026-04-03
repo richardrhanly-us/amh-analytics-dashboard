@@ -751,30 +751,73 @@ if selected_view == "Live Today":
 
 
 
-    live1, live2, live3, live4, live5, live6, live7, live8, live9, live10 = st.columns(10)
-    
-    with live1:
+    # =============================
+    # Live Today KPI Groups
+    # =============================
+
+    st.markdown("#### Operations")
+    ops1, ops2, ops3 = st.columns(3)
+
+    with ops1:
         typical_daily_checkins = checkins_daily.mean() if len(checkins_daily) > 0 else 1
         checkins_fill_pct = (today_checkins / typical_daily_checkins) if typical_daily_checkins > 0 else 0
-    
+
         render_kpi_card(
             "Checkins",
             f"{today_checkins:,}",
             "Processed today",
             "#6b7280",
+            border_color="#60a5fa",
             fill_pct=checkins_fill_pct,
-            fill_color="rgba(37, 99, 235, 0.14)"
+            fill_color="rgba(59, 130, 246, 0.14)"
         )
 
-    with live2:
-        render_kpi_card("Rejects", f"{today_rejects:,}", "Failed today", "#6b7280")
+    with ops2:
+        render_kpi_card(
+            "Current Throughput",
+            f"{today_metrics['current_speed']}",
+            "Items this hour",
+            "#6b7280",
+            border_color="#60a5fa"
+        )
 
-    with live3:
+    with ops3:
+        if today_peak_hour is not None:
+            render_kpi_card(
+                "Busiest Hour",
+                format_hour(today_peak_hour),
+                f"{today_peak_hour_count:,} items ({today_peak_hour_pct:.1f}%)",
+                "#6b7280",
+                value_font_size="1.4rem",
+                border_color="#60a5fa"
+            )
+        else:
+            render_kpi_card(
+                "Busiest Hour",
+                "N/A",
+                "No activity yet",
+                "#6b7280",
+                border_color="#60a5fa"
+            )
+
+    st.markdown("#### Quality & Impact")
+    quality1, quality2, quality3 = st.columns(3)
+
+    with quality1:
+        render_kpi_card(
+            "Rejects",
+            f"{today_rejects:,}",
+            "Failed today",
+            "#6b7280",
+            border_color="#f59e0b"
+        )
+
+    with quality2:
         reject_subtitle = "Of checkins today"
         if historical_daily_avg_reject > 0:
             reject_subtitle = (
-                f"{live_reject_deviation:+.2f}% vs avg daily rate "
-                f"({historical_daily_avg_reject:.2f}%)"
+                f"{live_reject_deviation:+.2f}% vs avg daily "
+                f"rate ({historical_daily_avg_reject:.2f}%)"
             )
 
         render_kpi_card(
@@ -787,69 +830,55 @@ if selected_view == "Live Today":
             value_color=live_reject_value_color
         )
 
-    with live4:
-        render_kpi_card(
-            "Current Throughput",
-            f"{today_metrics['current_speed']}",
-            "Items this hour",
-            "#6b7280"
-        )
-
-    with live5:
-        if today_peak_hour is not None:
-            render_kpi_card(
-                "Busiest Hour",
-                format_hour(today_peak_hour),
-                f"{today_peak_hour_count:,} items ({today_peak_hour_pct:.1f}%)",
-                "#6b7280",
-                value_font_size="1.4rem"
-            )
-        else:
-            render_kpi_card("Busiest Hour", "N/A", "No activity yet", "#6b7280")
-
-    with live6:
+    with quality3:
         staff_hours = today_metrics["staff_hours_saved"]
         render_kpi_card(
             "Staff Hours Saved Today",
             f"{staff_hours:.1f}",
-            "",
-            "#6b7280"
+            "Equivalent manual labor hours",
+            "#6b7280",
+            border_color="#34d399"
         )
 
-    with live7:
+    st.markdown("#### Routing")
+    route1, route2, route3, route4 = st.columns(4)
+
+    with route1:
         total_transit_pct = (today_total_transit / today_checkins * 100) if today_checkins > 0 else 0
         render_kpi_card(
             "Total Transit",
             f"{today_total_transit:,}",
             f"{total_transit_pct:.1f}% of today",
-            "#6b7280"
+            "#6b7280",
+            border_color="#a78bfa"
         )
 
-    with live8:
+    with route2:
         render_kpi_card(
             "Westside Transit",
             f"{today_westside:,}",
             f"{today_westside_pct:.1f}% of today",
-            "#6b7280"
+            "#6b7280",
+            border_color="#a78bfa"
         )
 
-    with live9:
+    with route3:
         render_kpi_card(
             "Library Express Transit",
             f"{today_library_express:,}",
             f"{today_library_express_pct:.1f}% of today",
-            "#6b7280"
+            "#6b7280",
+            border_color="#a78bfa"
         )
 
-
-    with live10:
+    with route4:
         render_kpi_card(
             "Estimated Holds",
             f"{today_estimated_holds:,}",
-            "",
-            "#6b7280"
+            "Bin 0 less rejects/transits",
+            "#6b7280",
+            border_color="#a78bfa"
         )
-
 
 
     if info_alerts:
