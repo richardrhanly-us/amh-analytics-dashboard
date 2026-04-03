@@ -813,15 +813,15 @@ if selected_view == "Live Today":
             <div style="
                 border: 2px solid #60a5fa;
                 border-radius: 14px;
-                padding: 10px 12px 12px 12px;
-                background: #ffffff;
+                padding: 12px 14px;
+                background: #60a5fa;
                 margin-bottom: 8px;
             ">
                 <div style="
                     font-size: 0.95rem;
-                    font-weight: 600;
-                    color: #1d4ed8;
-                    margin-bottom: 10px;
+                    font-weight: 700;
+                    color: #ffffff;
+                    line-height: 1.2;
                 ">
                     Operations
                 </div>
@@ -884,15 +884,15 @@ if selected_view == "Live Today":
             <div style="
                 border: 2px solid #34d399;
                 border-radius: 14px;
-                padding: 10px 12px 12px 12px;
-                background: #ffffff;
+                padding: 12px 14px;
+                background: #34d399;
                 margin-bottom: 8px;
             ">
                 <div style="
                     font-size: 0.95rem;
-                    font-weight: 600;
-                    color: #047857;
-                    margin-bottom: 10px;
+                    font-weight: 700;
+                    color: #ffffff;
+                    line-height: 1.2;
                 ">
                     Quality & Impact
                 </div>
@@ -948,15 +948,15 @@ if selected_view == "Live Today":
             <div style="
                 border: 2px solid #a78bfa;
                 border-radius: 14px;
-                padding: 10px 12px 12px 12px;
-                background: #ffffff;
+                padding: 12px 14px;
+                background: #a78bfa;
                 margin-bottom: 8px;
             ">
                 <div style="
                     font-size: 0.95rem;
-                    font-weight: 600;
-                    color: #6d28d9;
-                    margin-bottom: 10px;
+                    font-weight: 700;
+                    color: #ffffff;
+                    line-height: 1.2;
                 ">
                     Routing
                 </div>
