@@ -32,17 +32,39 @@ def append_to_history(new_df, history_path):
     else:
         history_df = pd.DataFrame()
 
+    # copy to avoid mutation issues
+    new_df = new_df.copy()
+    history_df = history_df.copy()
+
+    # normalize datetime BEFORE concat
+    if "datetime" in new_df.columns:
+        new_df["datetime"] = pd.to_datetime(new_df["datetime"], errors="coerce")
+
+    if "datetime" in history_df.columns:
+        history_df["datetime"] = pd.to_datetime(history_df["datetime"], errors="coerce")
+
     combined_df = pd.concat([history_df, new_df], ignore_index=True)
 
-    # keep exact row uniqueness across reruns
-    combined_df = combined_df.drop_duplicates()
+    # normalize text columns (prevents hidden duplicates)
+    for col in combined_df.columns:
+        if combined_df[col].dtype == "object":
+            combined_df[col] = combined_df[col].astype(str).str.strip()
 
-    # keep datetime sane if present
+    # use stable dedupe keys
+    preferred_keys = ["datetime", "barcode", "title", "destination"]
+    dedupe_cols = [col for col in preferred_keys if col in combined_df.columns]
+
+    if dedupe_cols:
+        combined_df = combined_df.drop_duplicates(subset=dedupe_cols, keep="first")
+    else:
+        combined_df = combined_df.drop_duplicates()
+
     if "datetime" in combined_df.columns:
-        combined_df["datetime"] = pd.to_datetime(combined_df["datetime"], errors="coerce")
         combined_df = combined_df.sort_values("datetime", kind="stable")
 
+    combined_df = combined_df.reset_index(drop=True)
     combined_df.to_csv(history_file, index=False)
+
     return combined_df
 
 
