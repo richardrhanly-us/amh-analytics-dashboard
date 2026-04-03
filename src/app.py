@@ -1377,6 +1377,11 @@ if selected_view == "Overview":
         st.divider()
 
 
+if selected_view == "Reports":
+    st.header("Reports")
+    st.caption("Reports are grouped by type so staff can browse insights more naturally.")
+    st.markdown("---")
+
     # -----------------------------
     # Labor & Efficiency
     # -----------------------------
