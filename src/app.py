@@ -1479,14 +1479,6 @@ Time saved = {avg_daily_manual_hours:,.2f} − {avg_daily_amh_hours:,.2f} hours/
 Average daily staff time saved = {avg_saved:,.2f} staff hours/day
 """)
 
-What This Means
-- Uses observed staff benchmark from Westside circulation reporting
-- Uses AMH performance from selected date range
-- Compares manual vs automated processing time
-- Produces a realistic estimate based on operational data"""
-            )
-
-
     
     # -----------------------------
     # Volume & Capacity
