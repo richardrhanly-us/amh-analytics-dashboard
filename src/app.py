@@ -1439,35 +1439,45 @@ This is equivalent to approximately **{(total_saved/8):,.0f} full staff shifts**
             st.info(
                 f"""## How Staff Time Saved Is Calculated
 
-#### Average daily check-ins
-This takes an average of the daily check-in total for the selected date range.
+st.markdown(f"""
+#### Average daily check-ins  
+This is the average number of items checked in per day over the selected date range.
 
-For **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**, the average daily check-in volume is **{avg_daily_checkins:,.1f}**.
+For {start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')},  
+the average daily check-in volume is {avg_daily_checkins:,.1f} items/day.
 
-#### Manual Processing Time
+---
 
-Manual rate = {MANUAL_RATE:.0f} check-ins p/hr*
+#### Manual Processing Time  
 
-Manual time = {avg_daily_checkins:,.1f} ÷ {MANUAL_RATE:.0f}
+Manual rate = {MANUAL_RATE:.0f} items/hour  
 
-**Manual time = {avg_daily_manual_hours:,.2f} hours**
+Manual time = {avg_daily_checkins:,.1f} items/day ÷ {MANUAL_RATE:.0f} items/hour  
 
-*The manual check-in rate of 50 is based on circulation report data observed during peak hours, where staff are working at their fastest steady pace.
-#### AMH Processing Time
+Manual time = {avg_daily_manual_hours:,.2f} staff hours/day  
 
-Current AMH rate = {AMH_RATE:.1f} items per hour (selected date range)
+*The manual check-in rate is based on circulation report data during peak hours, reflecting a realistic sustained working pace.*
 
-AMH time = {avg_daily_checkins:,.1f} ÷ {AMH_RATE:.1f}
+---
 
-**AMH time = {avg_daily_amh_hours:,.2f} hours**
+#### AMH Processing Time  
 
-#### Time Saved
+Current AMH rate = {AMH_RATE:.1f} items/hour  
 
-Time saved = Manual time − AMH time
+AMH time = {avg_daily_checkins:,.1f} items/day ÷ {AMH_RATE:.1f} items/hour  
 
-Time saved = {avg_daily_manual_hours:,.2f} − {avg_daily_amh_hours:,.2f}
+AMH time = {avg_daily_amh_hours:,.2f} machine hours/day  
 
-**Average Daily Staff time saved = {avg_saved:,.2f} hours per day**
+---
+
+#### Time Saved  
+
+Time saved = manual time − AMH time  
+
+Time saved = {avg_daily_manual_hours:,.2f} − {avg_daily_amh_hours:,.2f} hours/day  
+
+Average daily staff time saved = {avg_saved:,.2f} staff hours/day
+""")
 
 What This Means
 - Uses observed staff benchmark from Westside circulation reporting
