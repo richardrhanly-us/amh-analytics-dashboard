@@ -25,7 +25,6 @@ from transit_logic import *
 st.markdown("""
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&display=swap" rel="stylesheet">
 
-<style>
 .sortview-title {
     font-family: 'Orbitron', sans-serif;
     font-size: 52px;
