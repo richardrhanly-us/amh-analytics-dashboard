@@ -2580,7 +2580,7 @@ if selected_view == "Transits":
 
     with transit4:
         render_kpi_card(
-            "To No Agency Destination",
+            "Routing Failures",
             f"{no_agency_dest_count:,}",
             "Missing destination routing",
             "#6b7280"
@@ -2594,42 +2594,39 @@ if selected_view == "Transits":
             "#6b7280"
         )
 
-    st.markdown(
-        f"""
-        <div style="
-            border-left: 4px solid {transit_reject_insight_color};
-            background-color: #f9fafb;
-            padding: 14px 16px;
-            border-radius: 8px;
-            margin-top: 18px;
-            margin-bottom: 8px;
-        ">
-            <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                {transit_reject_insight_title}
-            </div>
-            <div style="color: #4b5563; line-height: 1.4;">
-                {transit_reject_insight_text}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    transit_pattern_title = "Transit Volume vs Reject Pattern"
+
+    if transit_reject_insight_title == "No Clear Relationship":
+        transit_pattern_text = (
+            "High-transit days do not line up with high-reject days in the selected range. "
+            "This suggests rejects are not mainly being driven by transit volume alone."
+        )
+        transit_pattern_color = "#6b7280"
+    elif transit_reject_insight_title == "Strong Correlation":
+        transit_pattern_text = (
+            "High-transit days and high-reject days line up in the selected range. "
+            "This suggests transit load may be contributing to failures."
+        )
+        transit_pattern_color = "#d97706"
+    else:
+        transit_pattern_text = transit_reject_insight_text
+        transit_pattern_color = transit_reject_insight_color
 
     st.markdown(
         f"""
         <div style="
-            border-left: 4px solid {destination_transit_summary_color};
+            border-left: 4px solid {transit_pattern_color};
             background-color: #f9fafb;
             padding: 14px 16px;
             border-radius: 8px;
-            margin-top: 8px;
+            margin-top: 18px;
             margin-bottom: 4px;
         ">
             <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                Destination Driver Summary
+                {transit_pattern_title}
             </div>
             <div style="color: #4b5563; line-height: 1.4;">
-                {destination_transit_summary_text}
+                {transit_pattern_text}
             </div>
         </div>
         """,
@@ -3060,3 +3057,69 @@ if selected_view == "Transits":
             )
         else:
             st.info("Not enough data available for baseline comparison.")
+
+        st.subheader("Destination Diagnostics")
+        st.caption("Shows which transit destinations are driving the most volume, rejects, and failure patterns.")
+
+        if len(destination_reject_summary) > 0:
+            diagnostics_df = destination_reject_summary.copy()
+
+            diagnostics_df["transit_items"] = diagnostics_df["transit_items"].fillna(0).astype(int)
+            diagnostics_df["pct_of_total_items"] = diagnostics_df["pct_of_total_items"].fillna(0).round(2)
+            diagnostics_df["reject_count"] = diagnostics_df["reject_count"].fillna(0).astype(int)
+            diagnostics_df["reject_rate_pct"] = diagnostics_df["reject_rate_pct"].fillna(0).round(2)
+            diagnostics_df["reason_count"] = diagnostics_df["reason_count"].fillna(0).astype(int)
+            diagnostics_df["top_reason_pct_of_destination_rejects"] = (
+                diagnostics_df["top_reason_pct_of_destination_rejects"].fillna(0).round(2)
+            )
+
+            diagnostics_display = diagnostics_df.rename(columns={
+                "destination": "Destination",
+                "transit_items": "Transit Items",
+                "pct_of_total_items": "% of Total Items",
+                "reject_count": "Transit-Linked Rejects",
+                "reject_rate_pct": "Reject Rate %",
+                "top_reject_reason": "Top Reject Reason",
+                "reason_count": "Top Reason Count",
+                "top_reason_pct_of_destination_rejects": "Top Reason % of Destination Rejects"
+            })
+
+            if len(diagnostics_df) > 0:
+                top_problem_row = diagnostics_df.sort_values(
+                    ["reject_count", "reject_rate_pct", "transit_items"],
+                    ascending=False
+                ).iloc[0]
+
+                st.markdown(
+                    f"""
+                    <div style="
+                        border-left: 4px solid #d97706;
+                        background-color: #f9fafb;
+                        padding: 14px 16px;
+                        border-radius: 8px;
+                        margin-top: 8px;
+                        margin-bottom: 16px;
+                    ">
+                        <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                            Report Summary
+                        </div>
+                        <div style="color: #4b5563; line-height: 1.4;">
+                            {top_problem_row['destination']} currently shows the strongest operational impact:
+                            {int(top_problem_row['transit_items']):,} transit items,
+                            {int(top_problem_row['reject_count']):,} transit-linked rejects,
+                            and a {float(top_problem_row['reject_rate_pct']):.2f}% reject rate.
+                            Top issue: {top_problem_row['top_reject_reason']}.
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+            st.dataframe(diagnostics_display, use_container_width=True)
+            download_button(
+                diagnostics_display,
+                "destination_diagnostics_report.csv",
+                key="transit_reports_diagnostics_destination_diagnostics_download"
+            )
+        else:
+            st.info("No destination diagnostics available for the selected date range.")
