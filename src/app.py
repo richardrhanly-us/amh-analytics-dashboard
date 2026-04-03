@@ -1249,7 +1249,7 @@ if selected_view == "Live Today":
 
 if selected_view == "Overview":
     st.subheader("Summary")
-    st.caption("Get a hitorical summary by choosing a date range.")
+    st.caption("Get a historical summary by choosing a date range.")
 
     westside_transit_count = westside_count
     westside_transit_pct = westside_pct
@@ -1474,7 +1474,7 @@ if selected_view == "Overview":
               ])
         )
 
-    if len(weekday_avg) > 0:
+    if len(df) > 0 and len(weekday_avg) > 0:
         peak_day_avg_name = weekday_avg.idxmax()
         peak_day_avg_value = peak_day_avg_name
         peak_day_avg_subtitle = f"{weekday_avg.max():,.1f} avg checkins/day"
