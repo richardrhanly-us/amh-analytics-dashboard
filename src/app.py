@@ -1791,12 +1791,10 @@ if selected_view == "Reports":
 
 This estimate compares how long it would take staff to check items in manually versus how long the AMH checks in the same workload.
 
-Variables used:
-
 #### Average daily check-ins
 This takes an average of the daily check-in total for the selected date range.
 
-For **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**, the current average daily check-in volume is **{avg_daily_checkins:,.1f}**.
+For **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**, the average daily check-in volume is **{avg_daily_checkins:,.1f}**.
 
 #### Manual Processing Time
 
@@ -1816,7 +1814,7 @@ Manual time = {avg_daily_checkins:,.1f} check-ins ÷ {MANUAL_RATE:.0f} p/hr
 
 This dashboard uses the AMH’s observed all-time busiest-hour average.
 
-Current AMH rate used = {AMH_RATE:.1f} items per hour (based on all check-ins from 1/31/26 - 4/2/26)
+Current AMH rate used = {AMH_RATE:.1f} items per hour (based on all check-ins from {start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')})
 
 AMH time = Checkins ÷ AMH rate
 
