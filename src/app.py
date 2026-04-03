@@ -2038,8 +2038,17 @@ Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.
     with st.expander("Today vs Typical Hourly Pattern", expanded=False):
         live_now = datetime.now(ZoneInfo("America/Chicago"))
         today = live_now.date()
-        live_end_hour = min(max(live_now.hour, 7), 20)
-        live_hour_range = list(range(7, live_end_hour + 1))
+        
+        # Clamp to operating hours (7AM–8PM)
+        current_hour = live_now.hour
+        start_hour = 7
+        end_hour = 20
+        
+        # Build live hour range (always at least 7AM, up to current time)
+        if current_hour < start_hour:
+            live_hour_range = list(range(start_hour, start_hour + 1))
+        else:
+            live_hour_range = list(range(start_hour, min(current_hour, end_hour) + 1))
         
         today_metrics = get_today_metrics(df_live_raw, rejects_live_raw, today)
 
