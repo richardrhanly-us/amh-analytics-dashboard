@@ -1374,9 +1374,35 @@ if selected_view == "Overview":
             value_wrap=True
         )
     
-    st.divider()
-
-
+        st.divider()
+    
+        st.markdown("### Top Issues Report")
+    
+        if len(rejects_df) > 0:
+            top_issues_df = (
+                rejects_df["error_simple"]
+                .value_counts()
+                .reset_index()
+            )
+            top_issues_df.columns = ["Issue", "Reject Count"]
+            top_issues_df["% of Failures"] = (
+                top_issues_df["Reject Count"] / top_issues_df["Reject Count"].sum() * 100
+            ).round(1)
+    
+            issue_explanations = {
+                "Item Not Found": "Barcode not recognized by ILS / missing item record",
+                "ILS / ACS Failure": "Communication issue between AMH and ILS/ACS",
+                "RFID Collision": "Multiple tags detected in bin",
+                "Call Number / Config Error": "Item routing configuration mismatch",
+                "Routing Error": "Destination not resolved correctly",
+                "Other": "Uncategorized system failure"
+            }
+    
+            top_issues_df["Explanation"] = top_issues_df["Issue"].map(issue_explanations).fillna("Operational issue requiring review")
+    
+            st.dataframe(top_issues_df, use_container_width=True)
+        else:
+            st.info("No reject issues found for the selected date range.")
 
 if selected_view == "Reports":
     st.header("Reports")
