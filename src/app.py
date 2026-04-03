@@ -1086,38 +1086,40 @@ if selected_view == "Live Today":
             unsafe_allow_html=True
         )
 
+
+    st.divider()
+      
     st.subheader("Checkins by Hour")
+
+    checkins_hour_base = pd.DataFrame({"hour": live_hour_range})
+    checkins_hour_base["hour_label"] = checkins_hour_base["hour"].apply(format_hour_plain)
 
     if len(today_hourly_checkins) > 0:
         checkins_hour_df = today_hourly_checkins.reset_index()
         checkins_hour_df.columns = ["hour", "checkins"]
-        checkins_hour_df["hour_label"] = checkins_hour_df["hour"].apply(
-            lambda h: pd.to_datetime(f"{int(h):02d}:00").strftime("%I%p").lstrip("0")
-        )
-
-        checkins_hour_chart = (
-            alt.Chart(checkins_hour_df)
-            .mark_line(point=True, strokeWidth=3)
-            .encode(
-                x=alt.X(
-                    "hour_label:N",
-                    sort=checkins_hour_df["hour_label"].tolist(),
-                    title="Hour",
-                    axis=alt.Axis(labelAngle=0)
-                ),
-                y=alt.Y("checkins:Q", title="Checkins"),
-                tooltip=["hour_label", "checkins"]
-            )
-            .properties(height=320)
-        )
-
-        st.altair_chart(checkins_hour_chart, use_container_width=True)
     else:
-        st.info("No checkins found for today.")
+        checkins_hour_df = pd.DataFrame(columns=["hour", "checkins"])
 
-    st.divider()
-      
+    checkins_hour_df = checkins_hour_base.merge(checkins_hour_df, on="hour", how="left").fillna(0)
+    checkins_hour_df["checkins"] = checkins_hour_df["checkins"].astype(int)
 
+    checkins_hour_chart = (
+        alt.Chart(checkins_hour_df)
+        .mark_line(point=True, strokeWidth=3)
+        .encode(
+            x=alt.X(
+                "hour_label:N",
+                sort=checkins_hour_df["hour_label"].tolist(),
+                title="Hour",
+                axis=alt.Axis(labelAngle=0)
+            ),
+            y=alt.Y("checkins:Q", title="Checkins"),
+            tooltip=["hour_label", "checkins"]
+        )
+        .properties(height=320)
+    )
+
+    st.altair_chart(checkins_hour_chart, use_container_width=True)
     
     st.subheader("Bin Volume")
     st.caption("Distribution of items across sort bins for today.")
@@ -1164,6 +1166,7 @@ if selected_view == "Live Today":
     else:
         st.info("No bin column found in today's checkins data.")
 
+
     st.subheader("Bin Volume by Hour")
 
     if "bin" in today_df.columns:
@@ -1171,27 +1174,21 @@ if selected_view == "Live Today":
         today_bin_df = today_bin_df[today_bin_df["bin"].notna()].copy()
         today_bin_df["bin"] = today_bin_df["bin"].astype(str)
 
-        hour_range = list(range(7, 21))
+        if len(today_bin_df) > 0:
+            today_hourly_bin = (
+                today_bin_df.groupby([today_bin_df["datetime"].dt.hour, "bin"])
+                .size()
+                .unstack(fill_value=0)
+            )
 
-        today_hourly_bin = (
-            today_bin_df.groupby([today_bin_df["datetime"].dt.hour, "bin"])
-            .size()
-            .unstack(fill_value=0)
-        )
+            today_hourly_bin = today_hourly_bin.reindex(live_hour_range, fill_value=0)
 
-        today_hourly_bin = today_hourly_bin.reindex(hour_range, fill_value=0)
-        today_hourly_bin = today_hourly_bin.loc[today_hourly_bin.sum(axis=1) > 0]
-
-        if len(today_hourly_bin) > 0:
             today_hourly_bin_chart = today_hourly_bin.copy()
             today_hourly_bin_chart.columns = [f"Bin {col}" for col in today_hourly_bin_chart.columns]
 
             today_hourly_bin_display = today_hourly_bin_chart.copy().reset_index()
             today_hourly_bin_display.columns = ["hour"] + list(today_hourly_bin_display.columns[1:])
-
-            today_hourly_bin_display["hour_label"] = today_hourly_bin_display["hour"].apply(
-                lambda h: pd.to_datetime(f"{int(h):02d}:00").strftime("%I%p").lstrip("0")
-            )
+            today_hourly_bin_display["hour_label"] = today_hourly_bin_display["hour"].apply(format_hour_plain)
 
             today_hourly_bin_long = today_hourly_bin_display.melt(
                 id_vars=["hour", "hour_label"],
@@ -1220,8 +1217,7 @@ if selected_view == "Live Today":
         else:
             st.info("No binned checkins found for today.")
     else:
-        st.info("No bin column found in today's checkins data.")  
-
+        st.info("No bin column found in today's checkins data.")
 
     st.subheader("Top Issues Today")
 
@@ -2041,6 +2037,10 @@ Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.
 
     with st.expander("Today vs Typical Hourly Pattern", expanded=False):
         today = datetime.now(ZoneInfo("America/Chicago")).date()
+        live_now = datetime.now(ZoneInfo("America/Chicago"))
+        live_end_hour = min(max(live_now.hour, 7), 20)
+        live_hour_range = list(range(7, live_end_hour + 1))
+
 
         today_df_report = df_live_raw[df_live_raw["datetime"].dt.date == today].copy()
         historical_df_report = df_history_raw[df_history_raw["datetime"].dt.date < today].copy()
