@@ -778,7 +778,7 @@ if selected_view == "Live Today":
         render_kpi_card(
             "Staff Hours Saved Today",
             f"{staff_hours:.1f}",
-            "Equivalent manual labor hours",
+            "",
             "#6b7280"
         )
 
