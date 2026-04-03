@@ -433,7 +433,7 @@ if selected_view in ["Overview", "Reports", "Transits"]:
 
     range_mode = st.sidebar.radio(
         "Date Range",
-        ["Single Day", "Last 7 Days", "Last 30 Days", "Month to Date", "All Time", "Custom"],
+        ["Single Day", "Last 7 Days", "Last 30 Days", "Month to Date", "Full Month", "All Time", "Custom"],
         index=1
     )
 
@@ -459,7 +459,45 @@ if selected_view in ["Overview", "Reports", "Transits"]:
         end_date = max_allowed_date
         start_date = max(min_date, end_date.replace(day=1))
 
-    elif range_mode == "All Data":
+    elif range_mode == "Full Month":
+        first_day_current_month = local_today.replace(day=1)
+        last_day_previous_month = first_day_current_month - pd.Timedelta(days=1)
+
+        month_starts = pd.date_range(
+            start=min_date.replace(day=1),
+            end=last_day_previous_month.replace(day=1),
+            freq="MS"
+        )
+
+        month_options = []
+        month_map = {}
+
+        for month_start in month_starts:
+            month_start_date = month_start.date()
+            next_month_start = (month_start + pd.offsets.MonthBegin(1)).date()
+            month_end_date = next_month_start - pd.Timedelta(days=1)
+
+            # only include months fully available in the dataset and fully completed
+            if month_start_date >= min_date and month_end_date <= max_allowed_date and month_end_date < first_day_current_month:
+                label = month_start.strftime("%B %Y")
+                month_options.append(label)
+                month_map[label] = (month_start_date, month_end_date)
+
+        month_options = list(reversed(month_options))
+
+        if month_options:
+            selected_month_label = st.sidebar.selectbox(
+                "Choose Full Month",
+                month_options,
+                index=0
+            )
+            start_date, end_date = month_map[selected_month_label]
+        else:
+            st.sidebar.warning("No completed full months are available in the current dataset.")
+            start_date = min_date
+            end_date = max_allowed_date
+
+    elif range_mode == "All Time":
         start_date = min_date
         end_date = max_allowed_date
 
