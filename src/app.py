@@ -694,76 +694,14 @@ alerts = get_system_alerts(
 )
 
 
-
+critical_alerts = []
+warning_alerts = []
+info_alerts = []
 
 if alerts:
     critical_alerts = [a for a in alerts if a["level"].lower() == "critical"]
     warning_alerts = [a for a in alerts if a["level"].lower() == "warning"]
-    info_alerts = [a for a in alerts if a["level"].lower() in ["info", "trend"]]
-
-    if critical_alerts:
-        st.markdown(
-            f"""
-            <div style="
-                border-left: 5px solid #dc2626;
-                background-color: #fef2f2;
-                padding: 14px 16px;
-                border-radius: 8px;
-                margin-bottom: 16px;
-            ">
-                <div style="font-weight: 600; color: #991b1b; margin-bottom: 6px;">
-                    Critical Alerts
-                </div>
-                <ul style="margin: 0; padding-left: 18px; color: #7f1d1d;">
-                    {''.join(f"<li><b>{a['level'].upper()}</b>: {a['text']}</li>" for a in critical_alerts)}
-                </ul>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    if warning_alerts:
-        st.markdown(
-            f"""
-            <div style="
-                border-left: 5px solid #d97706;
-                background-color: #fffbeb;
-                padding: 14px 16px;
-                border-radius: 8px;
-                margin-bottom: 16px;
-            ">
-                <div style="font-weight: 600; color: #92400e; margin-bottom: 6px;">
-                    Warnings
-                </div>
-                <ul style="margin: 0; padding-left: 18px; color: #78350f;">
-                    {''.join(f"<li><b>{a['level'].upper()}</b>: {a['text']}</li>" for a in warning_alerts)}
-                </ul>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    if info_alerts:
-        st.markdown(
-            f"""
-            <div style="
-                border-left: 5px solid #2563eb;
-                background-color: #eff6ff;
-                padding: 14px 16px;
-                border-radius: 8px;
-                margin-bottom: 16px;
-            ">
-                <div style="font-weight: 600; color: #1d4ed8; margin-bottom: 6px;">
-                    Trends / Info
-                </div>
-                <ul style="margin: 0; padding-left: 18px; color: #1e3a8a;">
-                    {''.join(f"<li><b>{a['level'].upper()}</b>: {a['text']}</li>" for a in info_alerts)}
-                </ul>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )    
-        
+    info_alerts = [a for a in alerts if a["level"].lower() in ["info", "trend"]]      
 
     
 
@@ -821,37 +759,6 @@ if selected_view == "Live Today":
                 f"The AMH has processed {today_checkins:,} items with a reject rate of "
                 f"{today_reject_rate:.2f}%. Current throughput is {current_throughput:,} items this hour. "
                 f"Busiest hour: {format_hour(today_peak_hour)} with {today_peak_hour_count:,} checkins. "
-            )
-
-
-        if len(today_hourly_checkins) > 0:
-            peak_hours_df = today_hourly_checkins.sort_values(ascending=False).head(3).reset_index()
-            peak_hours_df.columns = ["hour", "checkins"]
-            peak_hours_df["hour_label"] = peak_hours_df["hour"].apply(format_hour_plain)
-
-            peak_hours_text = "<br>".join(
-                [f"{row['hour_label']} — {int(row['checkins']):,} items" for _, row in peak_hours_df.iterrows()]
-            )
-
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #2563eb;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-top: 0px;
-                    margin-bottom: 8px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Peak Hours Today
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.6;">
-                        {peak_hours_text}
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
             )
 
     st.markdown("### Today at a Glance")
@@ -943,6 +850,60 @@ if selected_view == "Live Today":
             f"{today_estimated_holds:,}",
             "",
             "#6b7280"
+        )
+
+
+
+    if info_alerts:
+        st.markdown(
+            f"""
+            <div style="
+                border-left: 5px solid #2563eb;
+                background-color: #eff6ff;
+                padding: 14px 16px;
+                border-radius: 8px;
+                margin-top: 18px;
+                margin-bottom: 12px;
+            ">
+                <div style="font-weight: 600; color: #1d4ed8; margin-bottom: 6px;">
+                    Trends / Info
+                </div>
+                <ul style="margin: 0; padding-left: 18px; color: #1e3a8a;">
+                    {''.join(f"<li><b>{a['level'].upper()}</b>: {a['text']}</li>" for a in info_alerts)}
+                </ul>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    if len(today_hourly_checkins) > 0:
+        peak_hours_df = today_hourly_checkins.sort_values(ascending=False).head(3).reset_index()
+        peak_hours_df.columns = ["hour", "checkins"]
+        peak_hours_df["hour_label"] = peak_hours_df["hour"].apply(format_hour_plain)
+
+        peak_hours_text = "<br>".join(
+            [f"{row['hour_label']} — {int(row['checkins']):,} items" for _, row in peak_hours_df.iterrows()]
+        )
+
+        st.markdown(
+            f"""
+            <div style="
+                border-left: 4px solid #2563eb;
+                background-color: #f9fafb;
+                padding: 14px 16px;
+                border-radius: 8px;
+                margin-top: 0px;
+                margin-bottom: 8px;
+            ">
+                <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                    Peak Hours Today
+                </div>
+                <div style="color: #4b5563; line-height: 1.6;">
+                    {peak_hours_text}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
     
     if show_live_alert:
