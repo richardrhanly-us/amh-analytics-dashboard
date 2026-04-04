@@ -1820,7 +1820,7 @@ if selected_view == "Reports":
 
             
             st.markdown(f"""
-            ### 💰 Estimated Labor Value
+            #### Estimated Labor Value
             
             This represents approximately **${labor_value_saved:,.0f}** in staff time avoided over the selected period.
             """)
