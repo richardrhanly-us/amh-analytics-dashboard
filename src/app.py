@@ -660,46 +660,46 @@ if len(rejects_df) > 0:
     peak_failure_window_subtitle = f"{peak_failure_count:,} rejects ({peak_failure_pct:.1f}% of failures)"
 
 
-    attention_items = []
+attention_items = []
 
-    overall_daily_avg_reject = daily_combined["reject_rate"].mean() if len(daily_combined) > 0 else 0
+overall_daily_avg_reject = daily_combined["reject_rate"].mean() if len(daily_combined) > 0 else 0
 
-    if worst_rate is not None and overall_daily_avg_reject > 0:
-        spike_ratio = worst_rate / overall_daily_avg_reject
+if worst_rate is not None and overall_daily_avg_reject > 0:
+    spike_ratio = worst_rate / overall_daily_avg_reject
 
-        if spike_ratio >= 2:
-            attention_items.append(
-                f"Daily rejects spiked on {worst_day_label} to {worst_rate:.2f}%, about {spike_ratio:.1f}x normal."
-            )
-        elif worst_rate >= 5:
-            attention_items.append(
-                f"Daily rejects peaked on {worst_day_label} at {worst_rate:.2f}%. Review what changed that day."
-            )
+    if spike_ratio >= 2:
+        attention_items.append(
+            f"Daily rejects spiked on {worst_day_label} to {worst_rate:.2f}%, about {spike_ratio:.1f}x normal."
+        )
+    elif worst_rate >= 5:
+        attention_items.append(
+            f"Daily rejects peaked on {worst_day_label} at {worst_rate:.2f}%. Review what changed that day."
+        )
 
-    if top_issue == "Item Not Found":
-        attention_items.append("<b>Item Not Found</b> is leading failures. Check ILS connection and RFID tag condition.")
-    elif top_issue == "ILS / ACS Failure":
-        attention_items.append("ILS/ACS failures detected. Check system connectivity.")
-    elif top_issue == "RFID Collision":
-        attention_items.append("RFID collisions detected. Items may be stacked or scanned together.")
-    elif top_issue == "Routing Error":
-        attention_items.append("Routing errors present. Verify destination mappings.")
-    elif top_issue == "Call Number / Config Error":
-        attention_items.append("Call number/config issues detected. Review item setup.")
+if top_issue == "Item Not Found":
+    attention_items.append("<b>Item Not Found</b> is leading failures. Check ILS connection and RFID tag condition.")
+elif top_issue == "ILS / ACS Failure":
+    attention_items.append("ILS/ACS failures detected. Check system connectivity.")
+elif top_issue == "RFID Collision":
+    attention_items.append("RFID collisions detected. Items may be stacked or scanned together.")
+elif top_issue == "Routing Error":
+    attention_items.append("Routing errors present. Verify destination mappings.")
+elif top_issue == "Call Number / Config Error":
+    attention_items.append("Call number/config issues detected. Review item setup.")
 
-    if peak_failure_window_text != "N/A":
-        attention_items.append(f"Failures peak at {peak_failure_window_text}. Check conditions during that hour.")
+if peak_failure_window_text != "N/A":
+    attention_items.append(f"Failures peak at {peak_failure_window_text}. Check conditions during that hour.")
 
-    if westside_pct >= 10:
-        attention_items.append("Westside transit share is high. Watch for routing or branch-related issues.")
+if westside_pct >= 10:
+    attention_items.append("Westside transit share is high. Watch for routing or branch-related issues.")
 
-    if not attention_items:
-        attention_title = "Recommended Attention"
-        attention_color = "#059669"
-        attention_text = "No major issues stand out in the selected date range."
-    else:
-        attention_title = "Recommended Attention"
-        attention_color = "#d97706"
+if not attention_items:
+    attention_title = "Recommended Attention"
+    attention_color = "#059669"
+    attention_text = "No major issues stand out in the selected date range."
+else:
+    attention_title = "Recommended Attention"
+    attention_color = "#d97706"
     
 live_now = datetime.now(ZoneInfo("America/Chicago"))
 today = live_now.date()
