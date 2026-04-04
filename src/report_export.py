@@ -139,6 +139,9 @@ def build_director_report_data(
         "busiest_weekday_avg": busiest_weekday_avg,
         "labor_value_saved": safe_float(labor_value_saved) if labor_value_saved is not None else None,
         "hourly_cost": safe_float(hourly_cost) if hourly_cost is not None else None,
+        "hourly_cost_display": safe_float(hourly_cost) if hourly_cost is not None else None,
+        "manual_total_hours": safe_float(total_checkins / manual_rate) if manual_rate not in (None, 0) else None,
+        "amh_total_hours": safe_float(total_checkins / amh_rate) if amh_rate not in (None, 0) else None,
     }
 
     report_data["executive_summary"] = build_executive_summary(report_data)
@@ -158,6 +161,55 @@ def render_director_report_html(report_data: Dict[str, Any]) -> str:
         </div>
         """
 
+
+
+    labor_value_method_html = ""
+    if (
+        report_data.get("labor_value_saved") is not None
+        and report_data.get("hourly_cost_display") is not None
+        and report_data.get("manual_rate") not in (None, 0)
+        and report_data.get("amh_rate") not in (None, 0)
+        and report_data.get("manual_total_hours") is not None
+        and report_data.get("amh_total_hours") is not None
+    ):
+        labor_value_method_html = f"""
+        <div class="section">
+            <h2>Labor Value Method</h2>
+            <div class="summary-box">
+                <div style="margin-bottom:10px;">
+                    Estimated labor value is based on the selected date range and calculated in two steps:
+                </div>
+
+                <div style="margin-bottom:10px;">
+                    <strong>1. Total hours saved</strong><br>
+                    Total hours saved = (Total checkins ÷ Manual rate) − (Total checkins ÷ Observed AMH rate)
+                </div>
+
+                <div style="margin-bottom:10px;">
+                    Total hours saved = ({report_data['total_checkins']:,} items ÷ {report_data['manual_rate']:.1f} items/hour)
+                    − ({report_data['total_checkins']:,} items ÷ {report_data['amh_rate']:.1f} items/hour)
+                </div>
+
+                <div style="margin-bottom:10px;">
+                    Total hours saved = {report_data['manual_total_hours']:.1f} staff hours
+                    − {report_data['amh_total_hours']:.1f} machine hours
+                    = <strong>{report_data['total_hours_saved']:.1f} staff hours</strong>
+                </div>
+
+                <div style="margin-bottom:10px;">
+                    <strong>2. Estimated labor value</strong><br>
+                    Estimated labor value = Total hours saved × Hourly labor cost
+                </div>
+
+                <div>
+                    Estimated labor value = {report_data['total_hours_saved']:.1f} staff hours
+                    × ${report_data['hourly_cost_display']:.2f}/hour
+                    = <strong>${report_data['labor_value_saved']:,.0f}</strong>
+                </div>
+            </div>
+        </div>
+        """
+    
     rates_html = ""
     if report_data.get("manual_rate") is not None and report_data.get("amh_rate") is not None:
         rates_html = f"""
@@ -415,6 +467,8 @@ def render_director_report_html(report_data: Dict[str, Any]) -> str:
             </div>
 
             {labor_value_html}
+
+            {labor_value_method_html}
 
             {rates_html}
 
