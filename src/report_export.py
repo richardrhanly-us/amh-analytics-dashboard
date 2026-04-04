@@ -76,6 +76,24 @@ def build_director_report_data(
     total_checkins = len(df)
     avg_daily_checkins = (total_checkins / days_in_range) if days_in_range > 0 else 0.0
 
+
+    busiest_weekday_avg = "N/A"
+    
+    if len(df) > 0 and "datetime" in df.columns:
+        weekday_avg = (
+            df.assign(day_of_week=df["datetime"].dt.day_name())
+              .groupby("day_of_week")
+              .size()
+              .div(df["datetime"].dt.date.nunique())
+              .reindex([
+                  "Monday", "Tuesday", "Wednesday",
+                  "Thursday", "Friday", "Saturday", "Sunday"
+              ])
+        )
+    
+        if len(weekday_avg.dropna()) > 0:
+            busiest_weekday_avg = weekday_avg.idxmax()
+
     reject_count = safe_int(overall_metrics.get("reject_count", len(rejects_df)))
     reject_pct = safe_float(overall_metrics.get("reject_pct", 0.0))
     westside_count = safe_int(overall_metrics.get("westside_count", 0))
