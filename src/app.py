@@ -43,20 +43,21 @@ st.markdown("""
     margin-bottom: -4px;
 }
 
-/* Style download button */
 div.stDownloadButton > button {
-    background-color: #2563eb;
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
     color: white;
-    border-radius: 8px;
-    padding: 0.6em 1.2em;
+    border-radius: 10px;
+    padding: 0.7em 1.4em;
     font-weight: 600;
     border: none;
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
 }
 
 div.stDownloadButton > button:hover {
-    background-color: #1e40af;
-    color: white;
+    background: linear-gradient(135deg, #1d4ed8, #1e3a8a);
+    transform: translateY(-1px);
 }
+
 </style>
 """, unsafe_allow_html=True)
 
