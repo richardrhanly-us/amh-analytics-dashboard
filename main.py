@@ -48,9 +48,7 @@ def upload(data: dict):
                 inserted_checkins += result.rowcount
 
             for row in rejects:
-                barcode_value = row.get("barcode")
-                if barcode_value == "":
-                    barcode_value = None
+                barcode_value = row.get("barcode") or ""
 
                 reject_row = {
                     "customer_id": row.get("customer_id"),
