@@ -1,0 +1,72 @@
+from fastapi import FastAPI, HTTPException
+from sqlalchemy import create_engine, text
+import os
+
+app = FastAPI()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL not set")
+
+engine = create_engine(DATABASE_URL)
+
+
+@app.get("/")
+def root():
+    return {"status": "SortView API running"}
+
+
+@app.post("/upload")
+def upload(data: dict):
+    try:
+        checkins = data.get("checkins", [])
+        rejects = data.get("rejects", [])
+
+        inserted_checkins = 0
+        inserted_rejects = 0
+
+        with engine.begin() as conn:
+
+            for row in checkins:
+                conn.execute(text("""
+                    INSERT INTO checkins (
+                        customer_id, branch_id, event_time, title, barcode,
+                        collection_code, call_number, shelf_code,
+                        destination, bin, is_problem, message,
+                        flag_1, flag_2, flag_3, source_file
+                    )
+                    VALUES (
+                        :customer_id, :branch_id, :event_time, :title, :barcode,
+                        :collection_code, :call_number, :shelf_code,
+                        :destination, :bin, :is_problem, :message,
+                        :flag_1, :flag_2, :flag_3, :source_file
+                    )
+                    ON CONFLICT (barcode, event_time) DO NOTHING
+                """), row)
+                inserted_checkins += 1
+
+            for row in rejects:
+                conn.execute(text("""
+                    INSERT INTO rejects (
+                        customer_id, branch_id, event_time,
+                        barcode, message, source_file
+                    )
+                    VALUES (
+                        :customer_id, :branch_id, :event_time,
+                        :barcode, :message, :source_file
+                    )
+                    ON CONFLICT (barcode, event_time, message) DO NOTHING
+                """), row)
+                inserted_rejects += 1
+
+        return {
+            "status": "success",
+            "checkins_received": len(checkins),
+            "rejects_received": len(rejects),
+            "checkins_inserted": inserted_checkins,
+            "rejects_inserted": inserted_rejects
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
