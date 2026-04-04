@@ -1662,37 +1662,6 @@ if selected_view == "Overview":
 
 if selected_view == "Reports":
     st.header("Reports")
-
-    # example placement inside selected_view == "Reports"
-    # put this after you have avg_saved, total_saved, peak_day, MANUAL_RATE, and AMH_RATE
-    
-    director_pdf = build_director_report_pdf(
-        start_date=start_date,
-        end_date=end_date,
-        df=df,
-        rejects_df=rejects_df,
-        overall_metrics=overall_metrics,
-        top_issue=top_issue,
-        attention_text=attention_text,
-        avg_hours_saved=avg_saved,
-        total_hours_saved=total_saved,
-        peak_day_saved=float(peak_day["hours_saved"]) if peak_day is not None else None,
-        peak_day_saved_date=pd.to_datetime(peak_day["date"]).strftime("%b %d, %Y") if peak_day is not None else None,
-        manual_rate=MANUAL_RATE,
-        amh_rate=AMH_RATE,
-        library_name="New Braunfels Public Library",
-        branch_name="Main Branch",
-        system_name="Tech Logic UltraSort",
-        report_title="AMH Director Report",
-    )
-    
-    st.download_button(
-        label="Download Director PDF",
-        data=director_pdf,
-        file_name=f"amh_director_report_{pd.to_datetime(start_date).strftime('%Y%m%d')}_{pd.to_datetime(end_date).strftime('%Y%m%d')}.pdf",
-        mime="application/pdf",
-        key="director_pdf_download"
-    )
     
     # -----------------------------
     # Labor & Efficiency
@@ -1747,6 +1716,35 @@ if selected_view == "Reports":
             avg_saved = staff_df["hours_saved"].mean()
             total_saved = staff_df["hours_saved"].sum()
             peak_day = staff_df.loc[staff_df["hours_saved"].idxmax()]
+
+            
+            director_pdf = build_director_report_pdf(
+                start_date=start_date,
+                end_date=end_date,
+                df=df,
+                rejects_df=rejects_df,
+                overall_metrics=overall_metrics,
+                top_issue=top_issue,
+                attention_text=attention_text,
+                avg_hours_saved=avg_saved,
+                total_hours_saved=total_saved,
+                peak_day_saved=float(peak_day["hours_saved"]),
+                peak_day_saved_date=pd.to_datetime(peak_day["date"]).strftime("%b %d, %Y"),
+                manual_rate=MANUAL_RATE,
+                amh_rate=AMH_RATE,
+                library_name="New Braunfels Public Library",
+                branch_name="Main Branch",
+                system_name="Tech Logic UltraSort",
+                report_title="AMH Director Report",
+            )
+            
+            st.download_button(
+                label="Download Director PDF",
+                data=director_pdf,
+                file_name=f"amh_director_report_{pd.to_datetime(start_date).strftime('%Y%m%d')}_{pd.to_datetime(end_date).strftime('%Y%m%d')}.pdf",
+                mime="application/pdf",
+                key="director_pdf_download"
+            )
 
             avg_daily_checkins = staff_df["checkins"].mean()
             avg_daily_manual_hours = staff_df["manual_hours"].mean()
