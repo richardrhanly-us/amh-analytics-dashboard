@@ -4,13 +4,17 @@ from datetime import datetime
 
 import pandas as pd
 
-from scripts.parse_checkins import load_checkins, save_checkins_csv
-from scripts.parse_rejects import load_rejects, save_rejects_csv
-from src.logger_config import get_logger
+from config import load_config
+from parse_checkins import load_checkins, save_checkins_csv
+from parse_rejects import load_rejects, save_rejects_csv
+from logger_config import get_logger
+from uploader import upload_checkins_and_rejects
 
-STATUS_FILE = "data/processed/pipeline_status.json"
-CHECKINS_HISTORY_FILE = "data/processed/checkins_history.csv"
-REJECTS_HISTORY_FILE = "data/processed/rejects_history.csv"
+config = load_config()
+
+STATUS_FILE = config["status_file"]
+CHECKINS_HISTORY_FILE = config["checkins_history_file"]
+REJECTS_HISTORY_FILE = config["rejects_history_file"]
 
 logger = get_logger("run_pipeline")
 
@@ -32,11 +36,9 @@ def append_to_history(new_df, history_path):
     else:
         history_df = pd.DataFrame()
 
-    # copy to avoid mutation issues
     new_df = new_df.copy()
     history_df = history_df.copy()
 
-    # normalize datetime BEFORE concat
     if "datetime" in new_df.columns:
         new_df["datetime"] = pd.to_datetime(new_df["datetime"], errors="coerce")
 
@@ -45,12 +47,10 @@ def append_to_history(new_df, history_path):
 
     combined_df = pd.concat([history_df, new_df], ignore_index=True)
 
-    # normalize text columns (prevents hidden duplicates)
     for col in combined_df.columns:
         if combined_df[col].dtype == "object":
             combined_df[col] = combined_df[col].astype(str).str.strip()
 
-    # use stable dedupe keys
     preferred_keys = ["datetime", "barcode", "title", "destination"]
     dedupe_cols = [col for col in preferred_keys if col in combined_df.columns]
 
@@ -84,6 +84,13 @@ def main():
     save_rejects_csv(rejects_df)
     logger.info("Saved cleaned rejects CSV")
 
+    upload_result = upload_checkins_and_rejects(checkins_df, rejects_df)
+    logger.info(
+        "Uploaded to Neon | checkins=%s rejects=%s",
+        upload_result["uploaded_checkins"],
+        upload_result["uploaded_rejects"],
+    )
+
     checkins_history_df = append_to_history(checkins_df, CHECKINS_HISTORY_FILE)
     logger.info("Updated checkins history CSV | rows=%s", len(checkins_history_df))
 
@@ -94,6 +101,8 @@ def main():
         "last_run": datetime.now().isoformat(timespec="seconds"),
         "checkins_rows": int(len(checkins_df)),
         "rejects_rows": int(len(rejects_df)),
+        "uploaded_checkins_rows": int(upload_result["uploaded_checkins"]),
+        "uploaded_rejects_rows": int(upload_result["uploaded_rejects"]),
         "checkins_history_rows": int(len(checkins_history_df)),
         "rejects_history_rows": int(len(rejects_history_df)),
         "checkins_bad_datetime_rows": int(checkins_df["datetime"].isna().sum()),
@@ -110,9 +119,11 @@ def main():
     logger.info("Wrote pipeline status JSON")
 
     logger.info(
-        "Pipeline summary | checkins=%s rejects=%s transit_items=%s bad_checkins=%s bad_rejects=%s",
+        "Pipeline summary | checkins=%s rejects=%s uploaded_checkins=%s uploaded_rejects=%s transit_items=%s bad_checkins=%s bad_rejects=%s",
         status["checkins_rows"],
         status["rejects_rows"],
+        status["uploaded_checkins_rows"],
+        status["uploaded_rejects_rows"],
         status["transit_items"],
         status["checkins_bad_datetime_rows"],
         status["rejects_bad_datetime_rows"],

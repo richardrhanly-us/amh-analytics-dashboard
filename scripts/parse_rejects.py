@@ -1,9 +1,13 @@
 import pandas as pd
 from pathlib import Path
-from src.logger_config import get_logger
 
-REJECTS_FILE = r"C:\TLCFinalDlls\Rejects.txt"
-PROCESSED_REJECTS_FILE = "data/processed/rejects_clean.csv"
+from config import load_config
+from logger_config import get_logger
+
+config = load_config()
+
+REJECTS_FILE = config["raw_rejects_file"]
+PROCESSED_REJECTS_FILE = config["processed_rejects_file"]
 
 logger = get_logger("parse_rejects")
 
@@ -39,7 +43,10 @@ def simplify_error_message(msg):
     return "Other"
 
 
-def load_rejects(filepath=REJECTS_FILE):
+def load_rejects(filepath=None):
+    if filepath is None:
+        filepath = REJECTS_FILE
+
     logger.info("Loading rejects from %s", filepath)
 
     rows = []
@@ -87,7 +94,10 @@ def load_rejects(filepath=REJECTS_FILE):
     return df
 
 
-def save_rejects_csv(df, output_path=PROCESSED_REJECTS_FILE):
+def save_rejects_csv(df, output_path=None):
+    if output_path is None:
+        output_path = PROCESSED_REJECTS_FILE
+
     output_file = Path(output_path)
     output_file.parent.mkdir(parents=True, exist_ok=True)
 

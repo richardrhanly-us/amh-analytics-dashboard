@@ -28,3 +28,8 @@ data/processed/*
 .idea/
 .DS_Store
 Thumbs.db
+.env
+.streamlit/secrets.toml
+data/local/
+data/sample/
+sortview-agent/agent_config.json

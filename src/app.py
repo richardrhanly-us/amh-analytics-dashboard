@@ -387,28 +387,27 @@ def build_hourly_line_chart(df, value_col, title_y, series_col=None, start_hour=
 
 
 
-CHECKINS_FILE = "data/processed/checkins_clean.csv"
-REJECTS_FILE = "data/processed/rejects_clean.csv"
 STATUS_FILE = "data/processed/pipeline_status.json"
-CHECKINS_HISTORY_FILE = "data/processed/checkins_history.csv"
 
-checkins_updated = get_file_updated_time(CHECKINS_FILE)
-rejects_updated = get_file_updated_time(REJECTS_FILE)
 status_updated = get_file_updated_time(STATUS_FILE)
-checkins_history_updated = get_file_updated_time(CHECKINS_HISTORY_FILE)
-checkins_history_mtime = checkins_history_updated.timestamp() if checkins_history_updated else 0
-
-checkins_mtime = checkins_updated.timestamp() if checkins_updated else 0
-rejects_mtime = rejects_updated.timestamp() if rejects_updated else 0
 status_mtime = status_updated.timestamp() if status_updated else 0
 
-df_live_raw = load_checkins_df(mtime=checkins_mtime)
-df_history_raw = load_checkins_history_df(mtime=checkins_history_mtime)
+df_live_raw = load_checkins_df()
+df_history_raw = load_checkins_history_df()
 
-rejects_live_raw = load_rejects_df(mtime=rejects_mtime)
+rejects_live_raw = load_rejects_df()
 rejects_history_raw = load_rejects_history_df()
 
 pipeline_status = load_pipeline_status(mtime=status_mtime)
+
+checkins_updated = None
+if len(df_live_raw) > 0 and "datetime" in df_live_raw.columns:
+    latest_dt = df_live_raw["datetime"].max()
+    if pd.notna(latest_dt):
+        if latest_dt.tzinfo is None:
+            checkins_updated = latest_dt.tz_localize("America/Chicago")
+        else:
+            checkins_updated = latest_dt.tz_convert("America/Chicago")
 
 rejects_live_raw["error_simple"] = rejects_live_raw["error_message"].apply(simplify_error)
 rejects_history_raw["error_simple"] = rejects_history_raw["error_message"].apply(simplify_error)

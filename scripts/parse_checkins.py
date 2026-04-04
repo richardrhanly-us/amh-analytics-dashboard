@@ -1,9 +1,13 @@
 import pandas as pd
 from pathlib import Path
-from src.logger_config import get_logger
 
-RAW_CHECKINS_FILE = r"C:\TLCFinalDlls\Checkins.txt"
-PROCESSED_CHECKINS_FILE = "data/processed/checkins_clean.csv"
+from config import load_config
+from logger_config import get_logger
+
+config = load_config()
+
+RAW_CHECKINS_FILE = config["raw_checkins_file"]
+PROCESSED_CHECKINS_FILE = config["processed_checkins_file"]
 
 logger = get_logger("parse_checkins")
 
@@ -50,7 +54,10 @@ def normalize_destination(value):
     return text
 
 
-def load_checkins(filepath=RAW_CHECKINS_FILE):
+def load_checkins(filepath=None):
+    if filepath is None:
+        filepath = RAW_CHECKINS_FILE
+
     logger.info("Loading checkins from %s", filepath)
 
     rows = []
@@ -104,7 +111,10 @@ def load_checkins(filepath=RAW_CHECKINS_FILE):
     return df
 
 
-def save_checkins_csv(df, output_path=PROCESSED_CHECKINS_FILE):
+def save_checkins_csv(df, output_path=None):
+    if output_path is None:
+        output_path = PROCESSED_CHECKINS_FILE
+
     output_file = Path(output_path)
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
