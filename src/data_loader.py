@@ -39,7 +39,7 @@ def get_file_mtime(path):
     return 0
 
 
-@st.cache_data
+
 def load_checkins_history_df(mtime=None):
     query = """
         SELECT *
@@ -56,7 +56,6 @@ def load_checkins_history_df(mtime=None):
     return df
 
 
-@st.cache_data
 def load_checkins_df(path=CHECKINS_FILE, mtime=None):
     query = """
         SELECT *
@@ -78,7 +77,7 @@ def load_checkins_df(path=CHECKINS_FILE, mtime=None):
     return df
 
 
-@st.cache_data
+
 def load_rejects_df(path=REJECTS_FILE, mtime=None):
     query = """
         SELECT *
@@ -95,7 +94,8 @@ def load_rejects_df(path=REJECTS_FILE, mtime=None):
     return df
 
 
-@st.cache_data
+
+
 def load_rejects_history_df(path="data/processed/rejects_history.csv", mtime=None):
     query = """
         SELECT *
