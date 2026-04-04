@@ -1,5 +1,4 @@
 from datetime import datetime
-from io import BytesIO
 from typing import Any, Dict, Optional
 
 import pandas as pd
@@ -41,10 +40,15 @@ def build_executive_summary(report_data: Dict[str, Any]) -> str:
     peak_hour = report_data["peak_hour"]
     westside_pct = report_data["westside_pct"]
     library_express_pct = report_data["library_express_pct"]
+    labor_value_saved = report_data.get("labor_value_saved")
+
+    labor_value_text = ""
+    if labor_value_saved is not None:
+        labor_value_text = f" This represents approximately ${labor_value_saved:,.0f} in estimated staff time avoided."
 
     return (
         f"During the selected period, the AMH processed {total_checkins:,} items and reduced manual workload "
-        f"by an estimated {total_hours_saved:,.1f} staff hours. "
+        f"by an estimated {total_hours_saved:,.1f} staff hours.{labor_value_text} "
         f"The overall reject rate was {reject_pct:.2f}%, with {top_issue} as the leading issue category. "
         f"Peak operational load occurred around {peak_hour}. "
         f"Transit routing remained stable, with {westside_pct:.2f}% of items routed to Westside and "
@@ -67,7 +71,7 @@ def build_director_report_data(
     peak_day_saved_date: Optional[str] = None,
     manual_rate: Optional[float] = None,
     amh_rate: Optional[float] = None,
-    hourly_cost=None,
+    hourly_cost: Optional[float] = None,
     library_name: str = "New Braunfels Public Library",
     branch_name: str = "Main Branch",
     system_name: str = "Tech Logic UltraSort",
@@ -77,26 +81,23 @@ def build_director_report_data(
     total_checkins = len(df)
     avg_daily_checkins = (total_checkins / days_in_range) if days_in_range > 0 else 0.0
 
-
-
     labor_value_saved = None
     if hourly_cost is not None and total_hours_saved is not None:
         labor_value_saved = total_hours_saved * hourly_cost
 
     busiest_weekday_avg = "N/A"
-    
     if len(df) > 0 and "datetime" in df.columns:
         weekday_avg = (
             df.assign(day_of_week=df["datetime"].dt.day_name())
-              .groupby("day_of_week")
-              .size()
-              .div(df["datetime"].dt.date.nunique())
-              .reindex([
-                  "Monday", "Tuesday", "Wednesday",
-                  "Thursday", "Friday", "Saturday", "Sunday"
-              ])
+            .groupby("day_of_week")
+            .size()
+            .div(df["datetime"].dt.date.nunique())
+            .reindex([
+                "Monday", "Tuesday", "Wednesday",
+                "Thursday", "Friday", "Saturday", "Sunday"
+            ])
         )
-    
+
         if len(weekday_avg.dropna()) > 0:
             busiest_weekday_avg = weekday_avg.idxmax()
 
@@ -136,8 +137,8 @@ def build_director_report_data(
         "amh_rate": safe_float(amh_rate) if amh_rate is not None else None,
         "attention_text": attention_text or "No major issues stand out in the selected date range.",
         "busiest_weekday_avg": busiest_weekday_avg,
-        "labor_value_saved": labor_value_saved,
-        "hourly_cost": hourly_cost,
+        "labor_value_saved": safe_float(labor_value_saved) if labor_value_saved is not None else None,
+        "hourly_cost": safe_float(hourly_cost) if hourly_cost is not None else None,
     }
 
     report_data["executive_summary"] = build_executive_summary(report_data)
@@ -145,13 +146,15 @@ def build_director_report_data(
 
 
 def render_director_report_html(report_data: Dict[str, Any]) -> str:
-    peak_day_saved_html = ""
-    if report_data.get("peak_day_saved") is not None and report_data.get("peak_day_saved_date"):
-        peak_day_saved_html = f"""
-        <div class="kpi-card">
-            <div class="kpi-label">Peak Day Saved</div>
-            <div class="kpi-value">{report_data['peak_day_saved']:.2f} hrs</div>
-            <div class="kpi-sub">{report_data['peak_day_saved_date']}</div>
+    labor_value_html = ""
+    if report_data.get("labor_value_saved") is not None:
+        labor_value_html = f"""
+        <div class="section">
+            <h2>Estimated Labor Value</h2>
+            <div class="info-box">
+                <div class="info-value">${report_data['labor_value_saved']:,.0f}</div>
+                <div class="info-sub">Estimated staff time avoided during this period</div>
+            </div>
         </div>
         """
 
@@ -308,6 +311,12 @@ def render_director_report_html(report_data: Dict[str, Any]) -> str:
                 color: #111827;
             }}
 
+            .info-sub {{
+                font-size: 11px;
+                color: #6b7280;
+                margin-top: 6px;
+            }}
+
             .recommendation-box {{
                 background: #fff7ed;
                 border-left: 4px solid #d97706;
@@ -345,7 +354,7 @@ def render_director_report_html(report_data: Dict[str, Any]) -> str:
                     {report_data['executive_summary']}
                 </div>
             </div>
-            
+
             <div class="section">
                 <h2>Key Performance Indicators</h2>
                 <div class="kpi-grid">
@@ -354,49 +363,49 @@ def render_director_report_html(report_data: Dict[str, Any]) -> str:
                         <div class="kpi-value">{report_data['total_checkins']:,}</div>
                         <div class="kpi-sub">{report_data['days_in_range']} day(s) in range</div>
                     </div>
-            
+
                     <div class="kpi-card">
                         <div class="kpi-label">Avg Daily Checkins</div>
                         <div class="kpi-value">{report_data['avg_daily_checkins']:.1f}</div>
                         <div class="kpi-sub">Average per day</div>
                     </div>
-            
+
                     <div class="kpi-card">
                         <div class="kpi-label">Reject Rate</div>
                         <div class="kpi-value">{report_data['reject_pct']:.2f}%</div>
                         <div class="kpi-sub">{report_data['reject_count']:,} total rejects</div>
                     </div>
-            
+
                     <div class="kpi-card">
                         <div class="kpi-label">Top Issue</div>
                         <div class="kpi-value" style="font-size:16px;">{report_data['top_issue']}</div>
                         <div class="kpi-sub">Leading reject category</div>
                     </div>
-            
+
                     <div class="kpi-card">
                         <div class="kpi-label">Westside Transit</div>
                         <div class="kpi-value">{report_data['westside_pct']:.2f}%</div>
                         <div class="kpi-sub">{report_data['westside_count']:,} items</div>
                     </div>
-            
+
                     <div class="kpi-card">
                         <div class="kpi-label">Library Express Transit</div>
                         <div class="kpi-value">{report_data['library_express_pct']:.2f}%</div>
                         <div class="kpi-sub">{report_data['library_express_count']:,} items</div>
                     </div>
-            
+
                     <div class="kpi-card">
                         <div class="kpi-label">Avg Hours Saved</div>
                         <div class="kpi-value">{report_data['avg_hours_saved']:.2f}</div>
                         <div class="kpi-sub">Staff hours saved per day</div>
                     </div>
-            
+
                     <div class="kpi-card">
                         <div class="kpi-label">Total Hours Saved</div>
                         <div class="kpi-value">{report_data['total_hours_saved']:.2f}</div>
                         <div class="kpi-sub">Across selected range</div>
                     </div>
-            
+
                     <div class="kpi-card">
                         <div class="kpi-label">Busiest Day of Week</div>
                         <div class="kpi-value" style="font-size:16px;">{report_data['busiest_weekday_avg']}</div>
@@ -405,18 +414,10 @@ def render_director_report_html(report_data: Dict[str, Any]) -> str:
                 </div>
             </div>
 
+            {labor_value_html}
+
             {rates_html}
-            labor_value_html = ""
-            if report_data.get("labor_value_saved") is not None:
-                labor_value_html = f"""
-                <div class="section">
-                    <h2>Estimated Labor Value</h2>
-                    <div class="info-box">
-                        <div class="info-value">${report_data['labor_value_saved']:,.0f}</div>
-                        <div class="info-sub">Estimated staff time avoided during this period</div>
-                    </div>
-                </div>
-                """
+
             <div class="section">
                 <h2>Recommended Attention</h2>
                 <div class="recommendation-box">
@@ -461,6 +462,7 @@ def build_director_report_pdf(
     peak_day_saved_date: Optional[str] = None,
     manual_rate: Optional[float] = None,
     amh_rate: Optional[float] = None,
+    hourly_cost: Optional[float] = None,
     library_name: str = "New Braunfels Public Library",
     branch_name: str = "Main Branch",
     system_name: str = "Tech Logic UltraSort",
@@ -480,6 +482,7 @@ def build_director_report_pdf(
         peak_day_saved_date=peak_day_saved_date,
         manual_rate=manual_rate,
         amh_rate=amh_rate,
+        hourly_cost=hourly_cost,
         library_name=library_name,
         branch_name=branch_name,
         system_name=system_name,
