@@ -67,6 +67,7 @@ def build_director_report_data(
     peak_day_saved_date: Optional[str] = None,
     manual_rate: Optional[float] = None,
     amh_rate: Optional[float] = None,
+    hourly_cost=None,
     library_name: str = "New Braunfels Public Library",
     branch_name: str = "Main Branch",
     system_name: str = "Tech Logic UltraSort",
@@ -76,6 +77,11 @@ def build_director_report_data(
     total_checkins = len(df)
     avg_daily_checkins = (total_checkins / days_in_range) if days_in_range > 0 else 0.0
 
+
+
+    labor_value_saved = None
+    if hourly_cost is not None and total_hours_saved is not None:
+        labor_value_saved = total_hours_saved * hourly_cost
 
     busiest_weekday_avg = "N/A"
     
@@ -130,6 +136,8 @@ def build_director_report_data(
         "amh_rate": safe_float(amh_rate) if amh_rate is not None else None,
         "attention_text": attention_text or "No major issues stand out in the selected date range.",
         "busiest_weekday_avg": busiest_weekday_avg,
+        "labor_value_saved": labor_value_saved,
+        "hourly_cost": hourly_cost,
     }
 
     report_data["executive_summary"] = build_executive_summary(report_data)
