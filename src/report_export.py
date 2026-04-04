@@ -337,7 +337,7 @@ def render_director_report_html(report_data: Dict[str, Any]) -> str:
                     {report_data['executive_summary']}
                 </div>
             </div>
-
+            
             <div class="section">
                 <h2>Key Performance Indicators</h2>
                 <div class="kpi-grid">
@@ -346,56 +346,54 @@ def render_director_report_html(report_data: Dict[str, Any]) -> str:
                         <div class="kpi-value">{report_data['total_checkins']:,}</div>
                         <div class="kpi-sub">{report_data['days_in_range']} day(s) in range</div>
                     </div>
-
+            
                     <div class="kpi-card">
                         <div class="kpi-label">Avg Daily Checkins</div>
                         <div class="kpi-value">{report_data['avg_daily_checkins']:.1f}</div>
                         <div class="kpi-sub">Average per day</div>
                     </div>
-
+            
                     <div class="kpi-card">
                         <div class="kpi-label">Reject Rate</div>
                         <div class="kpi-value">{report_data['reject_pct']:.2f}%</div>
                         <div class="kpi-sub">{report_data['reject_count']:,} total rejects</div>
                     </div>
-
+            
                     <div class="kpi-card">
                         <div class="kpi-label">Top Issue</div>
                         <div class="kpi-value" style="font-size:16px;">{report_data['top_issue']}</div>
                         <div class="kpi-sub">Leading reject category</div>
                     </div>
-
+            
                     <div class="kpi-card">
                         <div class="kpi-label">Westside Transit</div>
                         <div class="kpi-value">{report_data['westside_pct']:.2f}%</div>
                         <div class="kpi-sub">{report_data['westside_count']:,} items</div>
                     </div>
-
+            
                     <div class="kpi-card">
                         <div class="kpi-label">Library Express Transit</div>
                         <div class="kpi-value">{report_data['library_express_pct']:.2f}%</div>
                         <div class="kpi-sub">{report_data['library_express_count']:,} items</div>
                     </div>
-
-                    <div class="kpi-card">
-                        <div class="kpi-label">Peak Hour</div>
-                        <div class="kpi-value">{report_data['peak_hour']}</div>
-                        <div class="kpi-sub">Highest activity window</div>
-                    </div>
-
+            
                     <div class="kpi-card">
                         <div class="kpi-label">Avg Hours Saved</div>
                         <div class="kpi-value">{report_data['avg_hours_saved']:.2f}</div>
                         <div class="kpi-sub">Staff hours saved per day</div>
                     </div>
-
+            
                     <div class="kpi-card">
                         <div class="kpi-label">Total Hours Saved</div>
                         <div class="kpi-value">{report_data['total_hours_saved']:.2f}</div>
                         <div class="kpi-sub">Across selected range</div>
                     </div>
-
-                    {peak_day_saved_html}
+            
+                    <div class="kpi-card">
+                        <div class="kpi-label">Busiest Day of Week</div>
+                        <div class="kpi-value" style="font-size:16px;">{report_data['busiest_weekday_avg']}</div>
+                        <div class="kpi-sub">Highest average daily volume</div>
+                    </div>
                 </div>
             </div>
 
