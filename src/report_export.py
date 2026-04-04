@@ -406,7 +406,17 @@ def render_director_report_html(report_data: Dict[str, Any]) -> str:
             </div>
 
             {rates_html}
-
+            labor_value_html = ""
+            if report_data.get("labor_value_saved") is not None:
+                labor_value_html = f"""
+                <div class="section">
+                    <h2>Estimated Labor Value</h2>
+                    <div class="info-box">
+                        <div class="info-value">${report_data['labor_value_saved']:,.0f}</div>
+                        <div class="info-sub">Estimated staff time avoided during this period</div>
+                    </div>
+                </div>
+                """
             <div class="section">
                 <h2>Recommended Attention</h2>
                 <div class="recommendation-box">
