@@ -1690,7 +1690,16 @@ if selected_view == "Reports":
         st.caption("Estimates staff time saved by comparing manual processing time against observed AMH processing time.")
 
         MANUAL_RATE = 45
-        HOURLY_COST = 18  # adjust if needed (library staff avg wage)
+
+        HOURLY_COST = st.number_input(
+            "Hourly labor rate ($/hour)",
+            min_value=0.0,
+            max_value=100.0,
+            value=18.0,
+            step=0.5,
+            format="%.2f",
+            help="Adjust the hourly labor cost used to estimate labor value."
+        )
 
         if len(df) > 0 and len(df_history_raw) > 0:
             rate_df = df.copy()
