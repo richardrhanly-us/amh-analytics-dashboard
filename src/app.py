@@ -1661,6 +1661,7 @@ if selected_view == "Overview":
 
 if selected_view == "Reports":
     st.header("Reports")
+    pdf_button_placeholder = st.empty()
     
     
     # -----------------------------
@@ -1743,16 +1744,15 @@ if selected_view == "Reports":
                     report_title="AMH Director Report",
                 )
 
-                st.download_button(
+                pdf_button_placeholder.download_button(
                     label="Download Director PDF",
                     data=director_pdf,
                     file_name=f"amh_director_report_{pd.to_datetime(start_date).strftime('%Y%m%d')}_{pd.to_datetime(end_date).strftime('%Y%m%d')}.pdf",
                     mime="application/pdf",
                     key="director_pdf_download"
                 )
-
             except Exception as e:
-                st.warning(f"Director PDF export is temporarily unavailable: {e}")
+                pdf_button_placeholder.warning(f"Director PDF export is temporarily unavailable: {e}")
 
             st.markdown(
                 f"""
