@@ -11,7 +11,7 @@ import altair as alt
 
 st.set_page_config(layout="wide")
 from streamlit_autorefresh import st_autorefresh
-st_autorefresh(interval=120000, key="amh_auto_refresh")
+st_autorefresh(interval=30000, key="amh_auto_refresh")
 
 
 from data_loader import load_checkins_df, load_checkins_history_df, load_rejects_df, load_rejects_history_df, load_pipeline_status
@@ -409,11 +409,11 @@ STATUS_FILE = "data/processed/pipeline_status.json"
 status_updated = get_file_updated_time(STATUS_FILE)
 status_mtime = status_updated.timestamp() if status_updated else 0
 
-df_live_raw = load_checkins_df()
-df_history_raw = load_checkins_history_df()
+df_live_raw = load_checkins_df(mtime=status_mtime)
+df_history_raw = load_checkins_history_df(mtime=status_mtime)
 
-rejects_live_raw = load_rejects_df()
-rejects_history_raw = load_rejects_history_df()
+rejects_live_raw = load_rejects_df(mtime=status_mtime)
+rejects_history_raw = load_rejects_history_df(mtime=status_mtime)
 
 pipeline_status = load_pipeline_status(mtime=status_mtime)
 
