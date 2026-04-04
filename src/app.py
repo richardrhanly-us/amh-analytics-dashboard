@@ -185,7 +185,6 @@ def download_button(df, filename, key=None):
 def render_chart(chart):
     chart = (
         chart
-        .interactive(False)
         .configure_view(
             stroke=None
         )
