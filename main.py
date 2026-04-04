@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from sqlalchemy import create_engine, text
 import os
+import traceback
 
 app = FastAPI()
 
@@ -27,7 +28,6 @@ def upload(data: dict):
         inserted_rejects = 0
 
         with engine.begin() as conn:
-
             for row in checkins:
                 conn.execute(text("""
                     INSERT INTO checkins (
@@ -47,6 +47,19 @@ def upload(data: dict):
                 inserted_checkins += 1
 
             for row in rejects:
+                barcode_value = row.get("barcode")
+                if barcode_value == "":
+                    barcode_value = None
+
+                reject_row = {
+                    "customer_id": row.get("customer_id"),
+                    "branch_id": row.get("branch_id"),
+                    "event_time": row.get("event_time"),
+                    "barcode": barcode_value,
+                    "message": row.get("message"),
+                    "source_file": row.get("source_file"),
+                }
+
                 conn.execute(text("""
                     INSERT INTO rejects (
                         customer_id, branch_id, event_time,
@@ -56,8 +69,7 @@ def upload(data: dict):
                         :customer_id, :branch_id, :event_time,
                         :barcode, :message, :source_file
                     )
-                    ON CONFLICT (barcode, event_time, message) DO NOTHING
-                """), row)
+                """), reject_row)
                 inserted_rejects += 1
 
         return {
@@ -69,4 +81,6 @@ def upload(data: dict):
         }
 
     except Exception as e:
+        print("UPLOAD ERROR:")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
