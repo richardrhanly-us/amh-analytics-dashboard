@@ -1690,6 +1690,7 @@ if selected_view == "Reports":
         st.caption("Estimates staff time saved by comparing manual processing time against observed AMH processing time.")
 
         MANUAL_RATE = 45
+        HOURLY_COST = 18  # adjust if needed (library staff avg wage)
 
         if len(df) > 0 and len(df_history_raw) > 0:
             rate_df = df.copy()
@@ -1736,6 +1737,7 @@ if selected_view == "Reports":
             avg_saved = staff_df["hours_saved"].mean()
             total_saved = staff_df["hours_saved"].sum()
             peak_day = staff_df.loc[staff_df["hours_saved"].idxmax()]
+            labor_value_saved = total_saved * HOURLY_COST
 
             try:
                 from report_export import build_director_report_pdf
@@ -1814,6 +1816,13 @@ if selected_view == "Reports":
                     "#6b7280"
                 )
 
+
+            
+            st.markdown(f"""
+            ### 💰 Estimated Labor Value
+            
+            This represents approximately **${labor_value_saved:,.0f}** in staff time avoided over the selected period.
+            """)
             st.markdown(
                 f"""
 
