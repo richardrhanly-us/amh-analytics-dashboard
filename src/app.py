@@ -42,6 +42,21 @@ st.markdown("""
 
     margin-bottom: -4px;
 }
+
+/* Style download button */
+div.stDownloadButton > button {
+    background-color: #2563eb;
+    color: white;
+    border-radius: 8px;
+    padding: 0.6em 1.2em;
+    font-weight: 600;
+    border: none;
+}
+
+div.stDownloadButton > button:hover {
+    background-color: #1e40af;
+    color: white;
+}
 </style>
 """, unsafe_allow_html=True)
 
