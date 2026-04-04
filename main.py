@@ -29,7 +29,7 @@ def upload(data: dict):
 
         with engine.begin() as conn:
             for row in checkins:
-                conn.execute(text("""
+                result = conn.execute(text("""
                     INSERT INTO checkins (
                         customer_id, branch_id, event_time, title, barcode,
                         collection_code, call_number, shelf_code,
@@ -44,7 +44,8 @@ def upload(data: dict):
                     )
                     ON CONFLICT (barcode, event_time) DO NOTHING
                 """), row)
-                inserted_checkins += 1
+
+                inserted_checkins += result.rowcount
 
             for row in rejects:
                 barcode_value = row.get("barcode")
@@ -60,7 +61,7 @@ def upload(data: dict):
                     "source_file": row.get("source_file"),
                 }
 
-                conn.execute(text("""
+                result = conn.execute(text("""
                     INSERT INTO rejects (
                         customer_id, branch_id, event_time,
                         barcode, error_message, source_file
@@ -69,8 +70,10 @@ def upload(data: dict):
                         :customer_id, :branch_id, :event_time,
                         :barcode, :error_message, :source_file
                     )
+                    ON CONFLICT (barcode, event_time, error_message) DO NOTHING
                 """), reject_row)
-                inserted_rejects += 1
+
+                inserted_rejects += result.rowcount
 
         return {
             "status": "success",
