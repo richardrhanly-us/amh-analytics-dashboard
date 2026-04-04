@@ -129,6 +129,7 @@ def build_director_report_data(
         "manual_rate": safe_float(manual_rate) if manual_rate is not None else None,
         "amh_rate": safe_float(amh_rate) if amh_rate is not None else None,
         "attention_text": attention_text or "No major issues stand out in the selected date range.",
+        "busiest_weekday_avg": busiest_weekday_avg,
     }
 
     report_data["executive_summary"] = build_executive_summary(report_data)
