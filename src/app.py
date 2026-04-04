@@ -1796,11 +1796,12 @@ if selected_view == "Reports":
                 unsafe_allow_html=True
             )
 
-            k1, k2, k3 = st.columns(3)
 
+            k1, k2, k3, k4 = st.columns(4)
+            
             with k1:
                 render_kpi_card("Avg Hours Saved", f"{avg_saved:,.2f}", "Per day", "#6b7280")
-
+            
             with k2:
                 render_kpi_card(
                     "Peak Day Saved",
@@ -1808,7 +1809,7 @@ if selected_view == "Reports":
                     pd.to_datetime(peak_day["date"]).strftime("%b %d, %Y"),
                     "#6b7280"
                 )
-
+            
             with k3:
                 render_kpi_card(
                     "Total Hours Saved",
@@ -1816,78 +1817,78 @@ if selected_view == "Reports":
                     "Across selected date range",
                     "#6b7280"
                 )
-
-
             
-            st.markdown(f"""
-            #### Estimated Labor Value
+            with k4:
+                render_kpi_card(
+                    "Estimated Labor Value",
+                    f"${labor_value_saved:,.0f}",
+                    "Staff time avoided value",
+                    "#6b7280"
+                )
             
-            This represents approximately **${labor_value_saved:,.0f}** in staff time avoided over the selected period.
-            """)
+            
             st.markdown(
                 f"""
-
-**Avg Hours Saved — {avg_saved:,.2f} hours/day**  
-On an average day in the selected range, the AMH reduces staff workload by about **{avg_saved:,.2f} hours** compared to manual check-in processing.  
-This is equivalent to roughly **{(avg_saved/8):,.2f} full staff shifts per day**.
-
-**Peak Day Saved — {peak_day['hours_saved']:,.2f} hours**  
-On the busiest day (**{pd.to_datetime(peak_day["date"]).strftime('%b %d, %Y')}**), the AMH reduced workload by **{peak_day['hours_saved']:,.2f} hours**.  
-This represents the maximum operational impact observed in the selected period.
-
-**Total Hours Saved — {total_saved:,.2f} hours**  
-Across the full selected date range, the AMH reduced total staff workload by **{total_saved:,.2f} hours**.  
-This is equivalent to approximately **{(total_saved/8):,.0f} full staff shifts** of labor.
-
-
-- These values represent **estimated staff time avoided**, not time eliminated.
-- Staff are still required for:
-  - exception handling
-  - routing issues
-  - holds and transit processing
-- The AMH primarily reduces repetitive scanning and sorting workload
-- Higher numbers typically correlate with higher volume days, not necessarily inefficiency
-                """
+            **Avg Hours Saved — {avg_saved:,.2f} hours/day**  
+            On an average day in the selected range, the AMH reduces staff workload by about **{avg_saved:,.2f} hours** compared to manual check-in processing.  
+            This is equivalent to roughly **{(avg_saved/8):,.2f} full staff shifts per day**.
+            
+            **Peak Day Saved — {peak_day['hours_saved']:,.2f} hours**  
+            On the busiest day (**{pd.to_datetime(peak_day["date"]).strftime('%b %d, %Y')}**), the AMH reduced workload by **{peak_day['hours_saved']:,.2f} hours**.  
+            This represents the maximum operational impact observed in the selected period.
+            
+            **Total Hours Saved — {total_saved:,.2f} hours**  
+            Across the full selected date range, the AMH reduced total staff workload by **{total_saved:,.2f} hours**.  
+            This is equivalent to approximately **{(total_saved/8):,.0f} full staff shifts** of labor.
+            
+            **Estimated Labor Value — ${labor_value_saved:,.0f}**  
+            This represents the estimated value of staff time avoided over the selected period based on the defined hourly labor rate.
+            """
             )
 
+            
             st.info(
                 f"""### How Staff Time Saved Is Calculated
-#### Average daily check-ins  
-This is the average number of items checked in per day over the selected date range.
-
-For **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**, the average daily check-in volume is **{avg_daily_checkins:,.1f} items/day**.
-
-#### Manual Processing Time
-
-Manual rate = {MANUAL_RATE:.0f} items/hour* 
-
-Manual time = {avg_daily_checkins:,.1f} items/day ÷ {MANUAL_RATE:.0f} items/hour  
-
-**Manual time = {avg_daily_manual_hours:,.2f} staff hours/day**
-
-\\*The manual check-in rate of {MANUAL_RATE:.0f} is based on circulation report data observed at the Westside branch during peak hours, where staff are working at their fastest steady pace.*
-
-#### AMH Processing Time
-
-Current AMH rate = {AMH_RATE:.1f} items/hour  
-
-AMH time = {avg_daily_checkins:,.1f} items/day ÷ {AMH_RATE:.1f} items/hour  
-
-**AMH time = {avg_daily_amh_hours:,.2f} machine hours/day**
-
-#### Time Saved
-
-Time saved = Manual time − AMH time  
-
-Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.2f} hours/day  
-
-**Average Daily Staff time saved = {avg_saved:,.2f} staff hours/day**
-"""
+            #### Average daily check-ins  
+            This is the average number of items checked in per day over the selected date range.
+            
+            For **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**, the average daily check-in volume is **{avg_daily_checkins:,.1f} items/day**.
+            
+            #### Manual Processing Time
+            
+            Manual rate = {MANUAL_RATE:.0f} items/hour* 
+            
+            Manual time = {avg_daily_checkins:,.1f} items/day ÷ {MANUAL_RATE:.0f} items/hour  
+            
+            **Manual time = {avg_daily_manual_hours:,.2f} staff hours/day**
+            
+            \\*The manual check-in rate of {MANUAL_RATE:.0f} is based on circulation report data observed at the Westside branch during peak hours, where staff are working at their fastest steady pace.*
+            
+            #### AMH Processing Time
+            
+            Current AMH rate = {AMH_RATE:.1f} items/hour  
+            
+            AMH time = {avg_daily_checkins:,.1f} items/day ÷ {AMH_RATE:.1f} items/hour  
+            
+            **AMH time = {avg_daily_amh_hours:,.2f} machine hours/day**
+            
+            #### Time Saved
+            
+            Time saved = Manual time − AMH time  
+            
+            Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.2f} hours/day  
+            
+            **Average Daily Staff time saved = {avg_saved:,.2f} staff hours/day**
+            
+            #### Estimated Labor Value
+            
+            Estimated labor value = Total hours saved × Hourly labor cost  
+            
+            Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hour  
+            
+            **Estimated labor value = ${labor_value_saved:,.0f}**
+            """
             )
-
-
-
-
  
     # -----------------------------
     # Volume & Capacity
