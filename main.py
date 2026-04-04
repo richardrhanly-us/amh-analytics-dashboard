@@ -56,18 +56,18 @@ def upload(data: dict):
                     "branch_id": row.get("branch_id"),
                     "event_time": row.get("event_time"),
                     "barcode": barcode_value,
-                    "message": row.get("message"),
+                    "error_message": row.get("message"),
                     "source_file": row.get("source_file"),
                 }
 
                 conn.execute(text("""
                     INSERT INTO rejects (
                         customer_id, branch_id, event_time,
-                        barcode, message, source_file
+                        barcode, error_message, source_file
                     )
                     VALUES (
                         :customer_id, :branch_id, :event_time,
-                        :barcode, :message, :source_file
+                        :barcode, :error_message, :source_file
                     )
                 """), reject_row)
                 inserted_rejects += 1
