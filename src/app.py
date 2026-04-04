@@ -690,7 +690,7 @@ if len(rejects_df) > 0:
     if peak_failure_window_text != "N/A":
         attention_items.append(f"Failures peak at {peak_failure_window_text}. Check conditions during that hour.")
 
-    if westside_transit_pct >= 10:
+    if westside_pct >= 10:
         attention_items.append("Westside transit share is high. Watch for routing or branch-related issues.")
 
     if not attention_items:
