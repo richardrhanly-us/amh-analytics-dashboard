@@ -1726,7 +1726,7 @@ if selected_view == "Reports":
     with st.expander("Staff Time Equivalent", expanded=False):
         st.caption("Estimates staff time saved by comparing manual processing time against observed AMH processing time.")
 
-        MANUAL_RATE = 50
+        MANUAL_RATE = 45
 
         if len(df) > 0 and len(df_history_raw) > 0:
             rate_df = df.copy()
@@ -1857,7 +1857,7 @@ Manual time = {avg_daily_checkins:,.1f} items/day ÷ {MANUAL_RATE:.0f} items/hou
 
 **Manual time = {avg_daily_manual_hours:,.2f} staff hours/day**
 
-\\*The manual check-in rate of 50 is based on circulation report data observed at the Westside branch during peak hours, where staff are working at their fastest steady pace.*
+\\*The manual check-in rate of {MANUAL_RATE:.0f} is based on circulation report data observed at the Westside branch during peak hours, where staff are working at their fastest steady pace.*
 
 #### AMH Processing Time
 
