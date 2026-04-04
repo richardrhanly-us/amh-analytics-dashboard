@@ -1847,48 +1847,47 @@ if selected_view == "Reports":
             )
 
             
-            st.info(
-                f"""### How Staff Time Saved Is Calculated
-            #### Average daily check-ins  
-            This is the average number of items checked in per day over the selected date range.
-            
-            For **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**, the average daily check-in volume is **{avg_daily_checkins:,.1f} items/day**.
-            
-            #### Manual Processing Time
-            
-            Manual rate = {MANUAL_RATE:.0f} items/hour* 
-            
-            Manual time = {avg_daily_checkins:,.1f} items/day ÷ {MANUAL_RATE:.0f} items/hour  
-            
-            **Manual time = {avg_daily_manual_hours:,.2f} staff hours/day**
-            
-            \\*The manual check-in rate of {MANUAL_RATE:.0f} is based on circulation report data observed at the Westside branch during peak hours, where staff are working at their fastest steady pace.*
-            
-            #### AMH Processing Time
-            
-            Current AMH rate = {AMH_RATE:.1f} items/hour  
-            
-            AMH time = {avg_daily_checkins:,.1f} items/day ÷ {AMH_RATE:.1f} items/hour  
-            
-            **AMH time = {avg_daily_amh_hours:,.2f} machine hours/day**
-            
-            #### Time Saved
-            
-            Time saved = Manual time − AMH time  
-            
-            Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.2f} hours/day  
-            
-            **Average Daily Staff time saved = {avg_saved:,.2f} staff hours/day**
-            
-            #### Estimated Labor Value
-            
-            Estimated labor value = Total hours saved × Hourly labor cost  
-            
-            Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hour  
-            
-            **Estimated labor value = ${labor_value_saved:,.0f}**
-            """
-            )
+            st.info(f"""### How Staff Time Saved Is Calculated
+
+#### Average daily check-ins  
+This is the average number of items checked in per day over the selected date range.
+
+For **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**, the average daily check-in volume is **{avg_daily_checkins:,.1f} items/day**.
+
+#### Manual Processing Time
+
+Manual rate = {MANUAL_RATE:.0f} items/hour*  
+
+Manual time = {avg_daily_checkins:,.1f} items/day ÷ {MANUAL_RATE:.0f} items/hour  
+
+**Manual time = {avg_daily_manual_hours:,.2f} staff hours/day**
+
+\\*The manual check-in rate of {MANUAL_RATE:.0f} is based on circulation report data observed at the Westside branch during peak hours, where staff are working at their fastest steady pace.*
+
+#### AMH Processing Time
+
+Current AMH rate = {AMH_RATE:.1f} items/hour  
+
+AMH time = {avg_daily_checkins:,.1f} items/day ÷ {AMH_RATE:.1f} items/hour  
+
+**AMH time = {avg_daily_amh_hours:,.2f} machine hours/day**
+
+#### Time Saved
+
+Time saved = Manual time − AMH time  
+
+Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.2f} hours/day  
+
+**Average Daily Staff time saved = {avg_saved:,.2f} staff hours/day**
+
+#### Estimated Labor Value
+
+Estimated labor value = Total hours saved × Hourly labor cost  
+
+Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hour  
+
+**Estimated labor value = ${labor_value_saved:,.0f}**
+""")
  
     # -----------------------------
     # Volume & Capacity
