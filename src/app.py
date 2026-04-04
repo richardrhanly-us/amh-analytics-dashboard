@@ -1760,6 +1760,7 @@ if selected_view == "Reports":
                     branch_name="Main Branch",
                     system_name="Tech Logic UltraSort",
                     report_title="AMH Director Report",
+                    hourly_cost=HOURLY_COST,
                 )
 
                 pdf_button_placeholder.download_button(
