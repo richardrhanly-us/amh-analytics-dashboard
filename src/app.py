@@ -417,6 +417,10 @@ rejects_history_raw = load_rejects_history_df(mtime=status_mtime)
 
 pipeline_status = load_pipeline_status(mtime=status_mtime)
 
+st.write("DEBUG newest checkin from app:", df_live_raw["datetime"].max() if len(df_live_raw) else "no rows")
+st.write("DEBUG checkin row count from app:", len(df_live_raw))
+st.write("DEBUG newest reject from app:", rejects_live_raw["datetime"].max() if len(rejects_live_raw) else "no rows")
+
 checkins_updated = None
 if len(df_live_raw) > 0 and "datetime" in df_live_raw.columns:
     latest_dt = df_live_raw["datetime"].max()
