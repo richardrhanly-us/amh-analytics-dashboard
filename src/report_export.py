@@ -161,6 +161,10 @@ def render_director_report_html(report_data: Dict[str, Any]) -> str:
                     <div class="info-value">{report_data['amh_rate']:.1f} items/hour</div>
                 </div>
             </div>
+            <div style="margin-top:10px; color:#4b5563; font-size:11px; line-height:1.5;">
+                Manual rate reflects the assumed sustained item-processing speed for staff performing check-in manually.
+                Observed AMH rate reflects the average machine throughput during the busiest operating hours in the selected date range.
+            </div>
         </div>
         """
 
