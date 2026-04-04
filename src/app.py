@@ -1851,7 +1851,7 @@ if selected_view == "Reports":
             This is equivalent to approximately **{(total_saved/8):,.0f} full staff shifts** of labor.
             
             **Estimated Labor Value — ${labor_value_saved:,.0f}**  
-            This represents the estimated value of staff time avoided over the selected period based on the defined hourly labor rate.
+            This represents the estimated value of staff time avoided over the selected period based on the defined hourly labor rate of ${HOURLY_COST:.2f}/hour.
             """
             )
 
