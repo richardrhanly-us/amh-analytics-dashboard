@@ -11,11 +11,25 @@ REJECTS_FILE = "data/processed/rejects_clean.csv"
 STATUS_FILE = "data/processed/pipeline_status.json"
 CHECKINS_HISTORY_FILE = "data/processed/checkins_history.csv"
 
-DATABASE_URL = st.secrets.get("DATABASE_URL", os.getenv("DATABASE_URL"))
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL is not set in Streamlit secrets or environment")
 
-engine = create_engine(DATABASE_URL)
+def get_database_url():
+    db_url = os.getenv("DATABASE_URL")
+
+    if not db_url:
+        try:
+            db_url = st.secrets["DATABASE_URL"]
+        except Exception:
+            db_url = None
+
+    if not db_url:
+        raise ValueError("DATABASE_URL is not set in environment or Streamlit secrets")
+
+    return db_url
+
+
+@st.cache_resource
+def get_engine():
+    return create_engine(get_database_url())
 
 
 def get_file_mtime(path):
@@ -32,7 +46,7 @@ def load_checkins_history_df(mtime=None):
         FROM checkins
         ORDER BY event_time
     """
-    df = pd.read_sql(query, engine)
+    df = pd.read_sql(query, get_engine())
 
     if "event_time" in df.columns:
         df["datetime"] = pd.to_datetime(df["event_time"], errors="coerce")
@@ -49,7 +63,7 @@ def load_checkins_df(path=CHECKINS_FILE, mtime=None):
         FROM checkins
         ORDER BY event_time
     """
-    df = pd.read_sql(query, engine)
+    df = pd.read_sql(query, get_engine())
 
     if "event_time" in df.columns:
         df["datetime"] = pd.to_datetime(df["event_time"], errors="coerce")
@@ -71,7 +85,7 @@ def load_rejects_df(path=REJECTS_FILE, mtime=None):
         FROM rejects
         ORDER BY event_time
     """
-    df = pd.read_sql(query, engine)
+    df = pd.read_sql(query, get_engine())
 
     if "event_time" in df.columns:
         df["datetime"] = pd.to_datetime(df["event_time"], errors="coerce")
@@ -88,7 +102,7 @@ def load_rejects_history_df(path="data/processed/rejects_history.csv", mtime=Non
         FROM rejects
         ORDER BY event_time
     """
-    df = pd.read_sql(query, engine)
+    df = pd.read_sql(query, get_engine())
 
     if "event_time" in df.columns:
         df["datetime"] = pd.to_datetime(df["event_time"], errors="coerce")
