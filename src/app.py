@@ -700,6 +700,14 @@ if not attention_items:
 else:
     attention_title = "Recommended Attention"
     attention_color = "#d97706"
+    if not attention_items:
+attention_title = "Recommended Attention"
+attention_color = "#059669"
+attention_text = "No major issues stand out in the selected date range."
+else:
+attention_title = "Recommended Attention"
+attention_color = "#d97706"
+attention_text = " ".join(attention_items)
     
 live_now = datetime.now(ZoneInfo("America/Chicago"))
 today = live_now.date()
@@ -1350,9 +1358,6 @@ if selected_view == "Overview":
     else:
         top_issue = "N/A"
         top_issue_subtitle = "No rejects in selected range"
-
-    
-        attention_text = " ".join(attention_items)
 
     st.markdown(
         f"""
