@@ -652,13 +652,20 @@ peak_failure_window_text = "N/A"
 peak_failure_window_subtitle = ""
 
 if len(rejects_df) > 0:
+    top_issue = rejects_df["error_simple"].value_counts().idxmax()
+else:
+    top_issue = "N/A"
+
+peak_failure_window_text = "N/A"
+peak_failure_window_subtitle = ""
+
+if len(rejects_df) > 0:
     peak_failure_hour_counts = rejects_df["datetime"].dt.hour.value_counts().sort_index()
     peak_failure_hour = peak_failure_hour_counts.idxmax()
     peak_failure_count = peak_failure_hour_counts.max()
     peak_failure_pct = (peak_failure_count / len(rejects_df)) * 100
     peak_failure_window_text = format_hour(peak_failure_hour)
     peak_failure_window_subtitle = f"{peak_failure_count:,} rejects ({peak_failure_pct:.1f}% of failures)"
-
 
 attention_items = []
 
@@ -677,7 +684,7 @@ if worst_rate is not None and overall_daily_avg_reject > 0:
         )
 
 if top_issue == "Item Not Found":
-    attention_items.append("<b>Item Not Found</b> is leading failures. Check ILS connection and RFID tag condition.")
+    attention_items.append("Item Not Found is leading failures. Check ILS connection and RFID tag condition.")
 elif top_issue == "ILS / ACS Failure":
     attention_items.append("ILS/ACS failures detected. Check system connectivity.")
 elif top_issue == "RFID Collision":
@@ -700,15 +707,8 @@ if not attention_items:
 else:
     attention_title = "Recommended Attention"
     attention_color = "#d97706"
-    if not attention_items:
-attention_title = "Recommended Attention"
-attention_color = "#059669"
-attention_text = "No major issues stand out in the selected date range."
-else:
-attention_title = "Recommended Attention"
-attention_color = "#d97706"
-attention_text = " ".join(attention_items)
-    
+    attention_text = " ".join(attention_items)
+
 live_now = datetime.now(ZoneInfo("America/Chicago"))
 today = live_now.date()
 
@@ -720,7 +720,7 @@ if current_hour < start_hour:
     live_hour_range = [start_hour]
 else:
     live_hour_range = list(range(start_hour, min(current_hour, end_hour) + 1))
-
+    
 today_metrics = get_today_metrics(df_live_raw, rejects_live_raw, today)
 
 
