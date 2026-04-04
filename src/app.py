@@ -182,11 +182,37 @@ def download_button(df, filename, key=None):
     
  
 
-
 def render_chart(chart):
-    chart = chart.interactive(False).configure_view(
-        stroke=None
+    chart = (
+        chart
+        .interactive(False)
+        .configure_view(
+            stroke=None
+        )
+        .configure_axis(
+            labelColor="#6b7280",
+            titleColor="#6b7280",
+            gridColor="#e5e7eb",
+            domainColor="#d1d5db",
+            tickColor="#d1d5db",
+            labelFontSize=12,
+            titleFontSize=13
+        )
+        .configure_legend(
+            labelColor="#6b7280",
+            titleColor="#6b7280",
+            labelFontSize=12,
+            titleFontSize=13
+        )
+        .configure_title(
+            color="#1f2937",
+            fontSize=16
+        )
+        .properties(
+            background="white"
+        )
     )
+
     st.altair_chart(chart, use_container_width=True)
     
     
@@ -1108,7 +1134,7 @@ if selected_view == "Live Today":
         .properties(height=320)
     )
 
-    st.altair_chart(checkins_hour_chart, use_container_width=True)
+    render_chart(checkins_hour_chart)
     
     st.subheader("Bin Volume")
     st.caption("Distribution of items across sort bins for today.")
@@ -1149,7 +1175,7 @@ if selected_view == "Live Today":
                 .properties(height=350)
             )
 
-            st.altair_chart(today_bin_bar_chart, use_container_width=True)
+            render_chart(today_bin_bar_chart)
         else:
             st.info("No binned checkins found for today.")
     else:
@@ -1202,7 +1228,7 @@ if selected_view == "Live Today":
                 .properties(height=350)
             )
 
-            st.altair_chart(live_bin_chart, use_container_width=True)
+            render_chart(live_bin_chart)
         else:
             st.info("No binned checkins found for today.")
     else:
