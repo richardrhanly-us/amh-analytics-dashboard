@@ -962,12 +962,26 @@ if alerts:
     info_alerts = [a for a in alerts if a["level"].lower() in ["info", "trend"]]      
 
     
-
 if selected_view == "Live Today":
     col1, col2 = st.columns([3, 2])
     
     with col1:
         st.header(f"{today.strftime('%A, %b %d')}")
+    
+        if checkins_updated is not None:
+            st.markdown(
+                f"""
+                <div style="
+                    margin-top: -10px;
+                    margin-bottom: 12px;
+                    color: #6b7280;
+                    font-size: 0.95rem;
+                ">
+                    Last updated: {checkins_updated.strftime('%b %d, %Y %I:%M %p')}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
     
     with col2:
         st.markdown(
@@ -993,21 +1007,6 @@ if selected_view == "Live Today":
                 <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
                     New Items (1 hr): {today_metrics['current_speed']}
                 </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-    
-    if checkins_updated is not None:
-        st.markdown(
-            f"""
-            <div style="
-                margin-top: -10px;
-                margin-bottom: 12px;
-                color: #6b7280;
-                font-size: 0.95rem;
-            ">
-                Last updated: {checkins_updated.strftime('%b %d, %Y %I:%M %p')}
             </div>
             """,
             unsafe_allow_html=True
