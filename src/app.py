@@ -417,6 +417,12 @@ df_history_raw = load_checkins_history_df(mtime=status_mtime)
 rejects_live_raw = load_rejects_df(mtime=status_mtime)
 rejects_history_raw = load_rejects_history_df(mtime=status_mtime)
 
+st.write("df_live_raw columns:", list(df_live_raw.columns))
+st.write("df_live_raw rows:", len(df_live_raw))
+st.write("rejects_live_raw columns:", list(rejects_live_raw.columns))
+st.write("rejects_live_raw rows:", len(rejects_live_raw))
+
+
 pipeline_status = load_pipeline_status(mtime=status_mtime)
 
 
@@ -2207,8 +2213,15 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
 
     with st.expander("Today vs Typical Hourly Pattern", expanded=False):
 
-        today_df_report = df_live_raw[df_live_raw["datetime"].dt.date == today].copy()
-        historical_df_report = df_history_raw[df_history_raw["datetime"].dt.date < today].copy()
+        if "datetime" in df_live_raw.columns:
+            today_df_report = df_live_raw[df_live_raw["datetime"].dt.date == today].copy()
+        else:
+            today_df_report = pd.DataFrame(columns=df_live_raw.columns)
+        
+        if "datetime" in df_history_raw.columns:
+            historical_df_report = df_history_raw[df_history_raw["datetime"].dt.date < today].copy()
+        else:
+            historical_df_report = pd.DataFrame(columns=df_history_raw.columns)
 
         today_hourly = today_df_report["datetime"].dt.hour.value_counts().sort_index()
 
