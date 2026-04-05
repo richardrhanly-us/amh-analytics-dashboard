@@ -8,66 +8,93 @@ def get_date_filtered_df(df, start_date, end_date):
     ].copy()
 
 
+
 def get_today_metrics(df, rejects_df, today):
-    today_df = df[
-        df["datetime"].dt.tz_localize(None).dt.date == today
-    ].copy()
-    today_rejects_df = rejects_df[rejects_df["datetime"].dt.date == today].copy()
+    import pandas as pd
+
+    # safe empty fallbacks
+    empty_today_df = pd.DataFrame()
+    empty_today_rejects_df = pd.DataFrame()
+
+    if df is None or not isinstance(df, pd.DataFrame) or "datetime" not in df.columns:
+        df = empty_today_df.copy()
+    else:
+        df = df.copy()
+        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+        df = df[df["datetime"].notna()].copy()
+
+    if rejects_df is None or not isinstance(rejects_df, pd.DataFrame) or "datetime" not in rejects_df.columns:
+        rejects_df = empty_today_rejects_df.copy()
+    else:
+        rejects_df = rejects_df.copy()
+        rejects_df["datetime"] = pd.to_datetime(rejects_df["datetime"], errors="coerce")
+        rejects_df = rejects_df[rejects_df["datetime"].notna()].copy()
+
+    if len(df) > 0:
+        try:
+            if getattr(df["datetime"].dt, "tz", None) is not None:
+                today_df = df[df["datetime"].dt.tz_localize(None).dt.date == today].copy()
+            else:
+                today_df = df[df["datetime"].dt.date == today].copy()
+        except Exception:
+            today_df = pd.DataFrame(columns=df.columns)
+    else:
+        today_df = pd.DataFrame(columns=df.columns if len(df.columns) > 0 else [])
+
+    if len(rejects_df) > 0:
+        try:
+            if getattr(rejects_df["datetime"].dt, "tz", None) is not None:
+                today_rejects_df = rejects_df[rejects_df["datetime"].dt.tz_localize(None).dt.date == today].copy()
+            else:
+                today_rejects_df = rejects_df[rejects_df["datetime"].dt.date == today].copy()
+        except Exception:
+            today_rejects_df = pd.DataFrame(columns=rejects_df.columns)
+    else:
+        today_rejects_df = pd.DataFrame(columns=rejects_df.columns if len(rejects_df.columns) > 0 else [])
+
+    if "destination" in today_df.columns:
+        today_dest_upper = today_df["destination"].astype(str).str.upper()
+        today_westside = int(today_dest_upper.str.contains("WESTSIDE", na=False).sum())
+        today_library_express = int(today_dest_upper.str.contains("LIBRARY EXPRESS", na=False).sum())
+    else:
+        today_westside = 0
+        today_library_express = 0
 
     today_checkins = len(today_df)
-    # --- Throughput metrics ---
-    if len(today_df) > 0:
-        hourly_counts = today_df["datetime"].dt.hour.value_counts().sort_index()
-        from zoneinfo import ZoneInfo
-        from datetime import datetime
-        
-        current_hour = datetime.now(ZoneInfo("America/Chicago")).hour
-
-        current_speed = int(hourly_counts.get(current_hour, 0))
-        peak_speed = int(hourly_counts.max())
-    else:
-        current_speed = 0
-        peak_speed = 0
-    
-    
     today_rejects = len(today_rejects_df)
-
-    MANUAL_RATE = 120  # items per hour (conservative estimate)
-    staff_hours_saved = today_checkins / MANUAL_RATE if today_checkins > 0 else 0
-
-    today_westside = today_df["destination"].astype(str).str.upper().str.contains("WESTSIDE", na=False).sum()
-    today_library_express = today_df["destination"].astype(str).str.upper().str.contains("LIBRARY EXPRESS", na=False).sum()
     today_total_transit = today_westside + today_library_express
 
-    if today_checkins > 0:
-        today_peak_hour_counts = today_df["datetime"].dt.hour.value_counts().sort_index()
-        today_peak_hour = int(today_peak_hour_counts.idxmax())
-        today_peak_hour_count = int(today_peak_hour_counts.max())
-        today_peak_hour_pct = (today_peak_hour_count / today_checkins) * 100
-        today_reject_rate = (today_rejects / today_checkins) * 100
+    if today_checkins > 0 and "datetime" in today_df.columns:
+        hourly_counts = today_df["datetime"].dt.hour.value_counts().sort_index()
+        today_peak_hour = int(hourly_counts.idxmax()) if len(hourly_counts) > 0 else None
+        today_peak_hour_count = int(hourly_counts.max()) if len(hourly_counts) > 0 else 0
+        today_peak_hour_pct = (today_peak_hour_count / today_checkins) * 100 if today_checkins > 0 else 0
     else:
         today_peak_hour = None
         today_peak_hour_count = 0
         today_peak_hour_pct = 0
-        today_reject_rate = 0
+
+    current_speed = 0
+    if today_checkins > 0 and "datetime" in today_df.columns:
+        current_hour = pd.Timestamp.now().hour
+        current_speed = int((today_df["datetime"].dt.hour == current_hour).sum())
+
+    today_reject_rate = (today_rejects / today_checkins * 100) if today_checkins > 0 else 0
 
     return {
         "today_df": today_df,
         "today_rejects_df": today_rejects_df,
         "today_checkins": today_checkins,
         "today_rejects": today_rejects,
-        "today_westside": int(today_westside),
-        "today_library_express": int(today_library_express),
+        "today_total_transit": today_total_transit,
+        "today_westside": today_westside,
+        "today_library_express": today_library_express,
         "today_peak_hour": today_peak_hour,
         "today_peak_hour_count": today_peak_hour_count,
         "today_peak_hour_pct": today_peak_hour_pct,
         "today_reject_rate": today_reject_rate,
-        "staff_hours_saved": staff_hours_saved,
         "current_speed": current_speed,
-        "peak_speed": peak_speed,
-        "today_total_transit": int(today_total_transit),
     }
-
 
 def get_overall_metrics(df, rejects_df):
     if len(df) > 0:
