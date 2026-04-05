@@ -1691,12 +1691,12 @@ if selected_view == "Overview":
     daily_counts = df["datetime"].dt.date.value_counts().sort_index()
     avg_daily_checkins = daily_counts.mean() if len(daily_counts) > 0 else 0
 
-    overview_volume_mode = st.radio(
-        "Volume display",
-        ["Average per Day", "Total"],
-        horizontal=True,
-        key="overview_volume_mode"
-    )
+overview_volume_mode = st.radio(
+    "Volume display",
+    ["Average per Day", "Total"],
+    horizontal=True,
+    key="overview_volume_mode"
+)
 
     days_in_range = df["datetime"].dt.date.nunique() if len(df) > 0 else 0
 
