@@ -1095,19 +1095,23 @@ if selected_view == "Live Today":
             f"""
             <style>
             div[data-testid="stExpander"] details {{
-                border: 1px solid #e5e7eb;
+                border: 1px solid rgba(148, 163, 184, 0.28);
                 border-radius: 10px;
-                background-color: {pipeline_status_bg};
                 overflow: hidden;
+                background-color: var(--secondary-background-color);
             }}
-    
+        
             div[data-testid="stExpander"] summary {{
                 font-weight: 700;
                 color: {pipeline_status_color};
-            }}
-    
-            div[data-testid="stExpander"] details[open] {{
                 background-color: {pipeline_status_bg};
+                padding-top: 0.2rem;
+                padding-bottom: 0.2rem;
+            }}
+        
+            div[data-testid="stExpander"] details[open] > div {{
+                background-color: var(--secondary-background-color);
+                color: var(--text-color);
             }}
             </style>
             """,
@@ -1115,7 +1119,7 @@ if selected_view == "Live Today":
         )
     
         with st.expander(expander_label, expanded=pipeline_expanded):
-            st.caption("Pipeline Status")
+            st.markdown("##### Pipeline Status")
     
             st.markdown(
                 f"""
