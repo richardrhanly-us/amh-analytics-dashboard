@@ -10,6 +10,14 @@ from zoneinfo import ZoneInfo
 import altair as alt
 
 from streamlit_autorefresh import st_autorefresh
+
+st.set_page_config(
+    page_title="SortView",
+    page_icon="📚",
+    layout="wide"
+)
+
+
 refresh_count = st_autorefresh(interval=30000, key="amh_auto_refresh")
 
 
@@ -20,11 +28,6 @@ from alerts import get_system_alerts
 
 from transit_logic import *
 
-st.set_page_config(
-    page_title="SortView",
-    page_icon="📚",
-    layout="wide"
-)
 
 
 st.markdown("""
