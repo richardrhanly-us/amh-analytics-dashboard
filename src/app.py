@@ -572,7 +572,7 @@ if selected_view in ["Overview", "Reports", "Transits"]:
             start_date, end_date = end_date, start_date
 
     st.sidebar.caption(f"Showing: {start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}")
-
+    
 df = get_date_filtered_df(df_history_raw, start_date, end_date)
 rejects_df = get_date_filtered_df(rejects_history_raw, start_date, end_date)
 
@@ -587,7 +587,8 @@ df["day_of_week"] = df["datetime"].dt.day_name()
 rejects_df["date"] = rejects_df["datetime"].dt.date
 rejects_df["day_of_week"] = rejects_df["datetime"].dt.day_name()
 
-df["transit_destination"] = df["destination"].apply(normalize_transit_destination)
+df["destination_clean"] = df[""destination_clean"].apply(normalize_transit_destination)
+df["transit_destination"] = df["destination_clean"]
 
 valid_transit_destinations = [
     "Westside",
@@ -757,13 +758,15 @@ today_reject_rate = today_metrics["today_reject_rate"]
 historical_checkins_df = df_history_raw[df_history_raw["datetime"].dt.date < today].copy()
 
 if len(historical_checkins_df) > 0:
+    historical_checkins_df["destination_clean"] = historical_checkins_df[""destination_clean"].apply(normalize_transit_destination)
+
     historical_westside_pct = (
-        historical_checkins_df["destination"].astype(str).str.upper().str.contains("WESTSIDE", na=False).sum()
+        (historical_checkins_df["destination_clean"] == "Westside").sum()
         / len(historical_checkins_df)
     ) * 100
 
     historical_library_express_pct = (
-        historical_checkins_df["destination"].astype(str).str.upper().str.contains("LIBRARY EXPRESS", na=False).sum()
+        (historical_checkins_df["destination_clean"] == "Library Express").sum()
         / len(historical_checkins_df)
     ) * 100
 else:
@@ -2263,9 +2266,14 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
     st.caption("Shows where items are being sent after check-in and highlights routing concentration.")
 
     with st.expander("Destination Breakdown", expanded=False):
-        destination_counts = df["destination"].value_counts().reset_index()
+        
+        destination_counts = (
+            df["destination_clean"]
+            .value_counts()
+            .reset_index()
+        )
         destination_counts.columns = ["destination", "count"]
-
+        destination_counts = destination_counts.sort_values("count", ascending=False)
         if len(destination_counts) > 0:
             top_destination_row = destination_counts.loc[destination_counts["count"].idxmax()]
             top_destination_pct = (top_destination_row["count"] / destination_counts["count"].sum()) * 100
@@ -2470,9 +2478,9 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
             total_binned = len(bin_df)
             exception_count = len(exception_df)
             exception_pct = (exception_count / total_binned * 100) if total_binned > 0 else 0
-
+            
             library_express_count = int(
-                df["destination"].astype(str).str.upper().str.contains("LIBRARY EXPRESS", na=False).sum()
+                (df["destination_clean"] == "Library Express").sum()
             )
 
             estimated_holds = max(
@@ -2886,7 +2894,8 @@ if selected_view == "Transits":
         base_rejects_df = rejects_df.copy()
         date_label = f"{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}"
 
-    base_df["transit_destination"] = base_df["destination"].apply(normalize_transit_destination)
+        base_df["destination_clean"] = base_df["d"destination_clean"].apply(normalize_transit_destination)
+        base_df["transit_destination"] = base_df["destination_clean"]
 
     st.caption(f"Showing: {date_label}")
 
@@ -2928,7 +2937,7 @@ if selected_view == "Transits":
     library_express_pct = (library_express_count / len(base_df) * 100) if len(base_df) > 0 else 0
 
     no_agency_dest_count = int(
-        base_df["destination"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False).sum()
+        base_df[""destination_clean"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False).sum()
     )
 
     peak_transit_day = get_peak_transit_day_summary(transit_df, weekday_order)
@@ -3051,10 +3060,10 @@ if selected_view == "Transits":
                 base_df[base_df["transit_destination"] == "Library Express"]["datetime"].dt.date
             ).size()
             daily_no_agency = base_df[
-                base_df["destination"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False)
+                base_df[""destination_clean"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False)
             ].groupby(
                 base_df[
-                    base_df["destination"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False)
+                    base_df[""destination_clean"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False)
                 ]["datetime"].dt.date
             ).size()
 
@@ -3312,7 +3321,7 @@ if selected_view == "Transits":
         st.subheader('"No Agency Destination" Deep Dive')
         st.caption("Looks at items that failed routing to highlight system or configuration issues.")
         no_agency_df = base_df[
-            base_df["destination"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False)
+            base_df[""destination_clean"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False)
         ].copy()
 
         if len(no_agency_df) > 0:
@@ -3414,7 +3423,7 @@ if selected_view == "Transits":
 
             current_days = max(1, base_df["datetime"].dt.date.nunique())
 
-            historical_df["transit_destination"] = historical_df["destination"].apply(normalize_transit_destination)
+            historical_df["transit_destination"] = historical_df[""destination_clean"].apply(normalize_transit_destination)
             historical_transit_df = historical_df[
                 historical_df["transit_destination"].isin(valid_transit_destinations)
             ].copy()
