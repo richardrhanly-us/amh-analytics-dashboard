@@ -1030,7 +1030,7 @@ if selected_view == "Live Today":
             st.rerun()
     
     with col2:
-        expander_label = f"{pipeline_status_label}"
+        expander_label = f"● {pipeline_status_label}"
     
         st.markdown(
             f"""
@@ -1045,6 +1045,10 @@ if selected_view == "Live Today":
             div[data-testid="stExpander"] summary {{
                 font-weight: 700;
                 color: {pipeline_status_color};
+            }}
+    
+            div[data-testid="stExpander"] details[open] {{
+                background-color: {pipeline_status_bg};
             }}
             </style>
             """,
