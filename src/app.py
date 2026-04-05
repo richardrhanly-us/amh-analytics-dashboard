@@ -912,7 +912,37 @@ if alerts:
     
 
 if selected_view == "Live Today":
-    st.header(f"{today.strftime('%A, %b %d')}")
+    col1, col2 = st.columns([3, 2])
+    
+    with col1:
+        st.header(f"{today.strftime('%A, %b %d')}")
+    
+    with col2:
+        st.markdown(
+            f"""
+            <div style="
+                border: 1px solid #e5e7eb;
+                border-radius: 10px;
+                padding: 12px;
+                background-color: #f9fafb;
+            ">
+                <div style="font-size: 12px; color: #6b7280;">Pipeline Status</div>
+                <div style="font-size: 16px; font-weight: 600; color: #059669;">
+                    ● Live
+                </div>
+                <div style="font-size: 12px; color: #6b7280;">
+                    Last Update: {checkins_updated.strftime('%I:%M %p') if checkins_updated else "N/A"}
+                </div>
+                <div style="font-size: 12px; color: #6b7280;">
+                    New Items (1 hr): {today_metrics['current_speed']}
+                </div>
+                <div style="font-size: 12px; color: #6b7280;">
+                    AMH Status: Online
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
     if checkins_updated is not None:
         st.markdown(
