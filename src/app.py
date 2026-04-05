@@ -239,32 +239,58 @@ def download_button(df, filename, key=None):
  
 
 def render_chart(chart):
+    theme_base = st.get_option("theme.base") or "light"
+
+    if theme_base == "dark":
+        axis_label_color = "#cbd5e1"
+        axis_title_color = "#e5e7eb"
+        grid_color = "rgba(148, 163, 184, 0.18)"
+        domain_color = "rgba(148, 163, 184, 0.28)"
+        tick_color = "rgba(148, 163, 184, 0.28)"
+        legend_label_color = "#cbd5e1"
+        legend_title_color = "#e5e7eb"
+        title_color = "#f8fafc"
+        chart_background = "transparent"
+        view_fill = "transparent"
+    else:
+        axis_label_color = "#6b7280"
+        axis_title_color = "#6b7280"
+        grid_color = "#e5e7eb"
+        domain_color = "#d1d5db"
+        tick_color = "#d1d5db"
+        legend_label_color = "#6b7280"
+        legend_title_color = "#6b7280"
+        title_color = "#1f2937"
+        chart_background = "transparent"
+        view_fill = "transparent"
+
     chart = (
         chart
         .configure_view(
-            stroke=None
+            stroke=None,
+            fill=view_fill
         )
         .configure_axis(
-            labelColor="#6b7280",
-            titleColor="#6b7280",
-            gridColor="#e5e7eb",
-            domainColor="#d1d5db",
-            tickColor="#d1d5db",
+            labelColor=axis_label_color,
+            titleColor=axis_title_color,
+            gridColor=grid_color,
+            domainColor=domain_color,
+            tickColor=tick_color,
             labelFontSize=12,
             titleFontSize=13
         )
         .configure_legend(
-            labelColor="#6b7280",
-            titleColor="#6b7280",
+            labelColor=legend_label_color,
+            titleColor=legend_title_color,
             labelFontSize=12,
             titleFontSize=13
         )
         .configure_title(
-            color="#1f2937",
+            color=title_color,
             fontSize=16
         )
         .properties(
-            background="white"
+            background=chart_background
         )
     )
 
