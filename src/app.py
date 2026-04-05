@@ -2111,41 +2111,70 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
             st.info("No hourly data available for selected range.")
 
     
-
     with st.expander("Throughput", expanded=False):
         st.caption("Shows average checkins per hour per day across the selected date range, so multi-day ranges do not overstate throughput.")
-
-
-        display_df = avg_hourly.rename(columns={
-            "hour_label": "Hour",
-            "avg_items_per_hour": "Avg Checkins Per Hour"
-        })[["Hour", "Avg Checkins Per Hour"]]
-        
-        st.dataframe(display_df, use_container_width=True)
-        download_button(display_df, "throughput_report.csv")
-        
-        st.subheader("Average Checkins per Day by Weekday")
-        
-        weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-        
-        weekday_daily = (
-            throughput_df.groupby(["date", throughput_df["datetime"].dt.day_name()])
-            .size()
-            .reset_index(name="daily_checkins")
-        )
-        weekday_daily.columns = ["date", "day_of_week", "daily_checkins"]
-        
-        weekday_avg = (
-            weekday_daily.groupby("day_of_week")["daily_checkins"]
-            .mean()
-            .reindex(weekday_order)
-            .fillna(0)
-            .reset_index(name="avg_checkins_per_day")
-        )
-        
-        if len(weekday_avg) > 0:
+    
+        if len(df) > 0:
+            throughput_df = df.copy()
+            throughput_df["date"] = throughput_df["datetime"].dt.date
+            throughput_df["hour"] = throughput_df["datetime"].dt.hour
+            throughput_df["day_of_week"] = throughput_df["datetime"].dt.day_name()
+    
+            # ===== BUILD HOURLY =====
+            daily_hourly = (
+                throughput_df.groupby(["date", "hour"])
+                .size()
+                .reset_index(name="checkins")
+            )
+    
+            avg_hourly = (
+                daily_hourly.groupby("hour")["checkins"]
+                .mean()
+                .reset_index(name="avg_items_per_hour")
+            )
+    
+            avg_hourly["hour_label"] = avg_hourly["hour"].apply(format_hour_plain)
+    
+            avg_hourly_chart_df = avg_hourly[(avg_hourly["hour"] >= 7) & (avg_hourly["hour"] <= 20)].copy()
+    
+            throughput_chart = build_hourly_bar_chart(
+                avg_hourly_chart_df,
+                "avg_items_per_hour",
+                "Avg Checkins Per Hour"
+            )
+            render_chart(throughput_chart)
+    
+            display_df = avg_hourly_chart_df.rename(columns={
+                "hour_label": "Hour",
+                "avg_items_per_hour": "Avg Checkins Per Hour"
+            })[["Hour", "Avg Checkins Per Hour"]]
+    
+            display_df["Avg Checkins Per Hour"] = display_df["Avg Checkins Per Hour"].round(1)
+    
+            st.dataframe(display_df, use_container_width=True)
+            download_button(display_df, "throughput_report.csv")
+    
+            # ===== WEEKDAY SECTION =====
+            st.subheader("Average Checkins per Day by Weekday")
+    
+            weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    
+            weekday_daily = (
+                throughput_df.groupby(["date", "day_of_week"])
+                .size()
+                .reset_index(name="daily_checkins")
+            )
+    
+            weekday_avg = (
+                weekday_daily.groupby("day_of_week")["daily_checkins"]
+                .mean()
+                .reindex(weekday_order)
+                .fillna(0)
+                .reset_index(name="avg_checkins_per_day")
+            )
+    
             busiest_weekday_row = weekday_avg.loc[weekday_avg["avg_checkins_per_day"].idxmax()]
-        
+    
             st.markdown(
                 f"""
                 <div style="
@@ -2157,7 +2186,7 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
                     margin-bottom: 16px;
                 ">
                     <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Report Summary
+                        Weekday Summary
                     </div>
                     <div style="color: #4b5563; line-height: 1.4;">
                         Busiest average weekday: {busiest_weekday_row["day_of_week"]} at
@@ -2167,7 +2196,7 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
                 """,
                 unsafe_allow_html=True
             )
-        
+    
             weekday_chart = build_category_bar_chart(
                 weekday_avg,
                 "day_of_week",
@@ -2176,19 +2205,20 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
                 "Day of Week"
             )
             render_chart(weekday_chart)
-        
+    
             weekday_display = weekday_avg.rename(columns={
                 "day_of_week": "Day of Week",
                 "avg_checkins_per_day": "Avg Checkins Per Day"
             })[["Day of Week", "Avg Checkins Per Day"]]
-        
+    
             weekday_display["Avg Checkins Per Day"] = weekday_display["Avg Checkins Per Day"].round(1)
-        
+    
             st.dataframe(weekday_display, use_container_width=True)
             download_button(weekday_display, "throughput_by_weekday_report.csv")
-
+    
         else:
             st.info("No throughput data available for the selected date range.")
+
 
     with st.expander("Today vs Typical Hourly Pattern", expanded=False):
 
