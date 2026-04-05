@@ -893,7 +893,6 @@ if selected_view == "Live Today":
         st.rerun()
 
     
-
     # =============================
     # Live Today KPI Groups - One Row
     # =============================
@@ -923,10 +922,13 @@ if selected_view == "Live Today":
             """,
             unsafe_allow_html=True
         )
+
         ops1, ops2, ops3 = st.columns(3)
 
-        # Operations
         with ops1:
+            typical_daily_checkins = checkins_daily.mean() if len(checkins_daily) > 0 else 1
+            checkins_fill_pct = (today_checkins / typical_daily_checkins) if typical_daily_checkins > 0 else 0
+
             render_kpi_card(
                 "Checkins",
                 f"{today_checkins:,}",
@@ -937,7 +939,7 @@ if selected_view == "Live Today":
                 fill_pct=checkins_fill_pct,
                 fill_color="rgba(59, 130, 246, 0.14)"
             )
-        
+
         with ops2:
             render_kpi_card(
                 "Current Throughput",
@@ -947,7 +949,7 @@ if selected_view == "Live Today":
                 value_font_size="2.2rem",
                 border_color="#93c5fd"
             )
-        
+
         with ops3:
             if today_peak_hour is not None:
                 render_kpi_card(
@@ -967,9 +969,41 @@ if selected_view == "Live Today":
                     value_font_size="1.7rem",
                     border_color="#93c5fd"
                 )
-        
-        # Quality
+
+    # Quality & Impact
+    with live_group2:
+        st.markdown(
+            """
+            <div style="
+                border: 2px solid #34d399;
+                border-radius: 14px;
+                padding: 12px 14px;
+                background: #34d399;
+                margin-bottom: 8px;
+            ">
+                <div style="
+                    font-size: 0.95rem;
+                    font-weight: 700;
+                    color: #ffffff;
+                    line-height: 1.2;
+                ">
+                    Quality & Impact
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        quality1, quality2 = st.columns(2)
+
         with quality1:
+            reject_subtitle = f"{today_rejects:,} failures today"
+            if historical_daily_avg_reject > 0:
+                reject_subtitle = (
+                    f"{live_reject_deviation:+.2f}% vs avg daily "
+                    f"rate ({historical_daily_avg_reject:.2f}%)"
+                )
+
             render_kpi_card(
                 "Rejects",
                 f"{today_rejects:,}",
@@ -979,20 +1013,53 @@ if selected_view == "Live Today":
                 border_color=live_reject_card_border,
                 value_color=live_reject_value_color
             )
-        
+
         with quality2:
+            reject_rate_subtitle = "Of checkins today"
+            if historical_daily_avg_reject > 0:
+                reject_rate_subtitle = (
+                    f"{live_reject_deviation:+.2f}% vs avg daily "
+                    f"rate ({historical_daily_avg_reject:.2f}%)"
+                )
+
             render_kpi_card(
                 "Reject Rate",
                 f"{today_reject_rate:.2f}%",
-                reject_subtitle,
+                reject_rate_subtitle,
                 live_reject_subtitle_color,
                 value_font_size="1.8rem",
                 border_color=live_reject_card_border,
                 value_color=live_reject_value_color
             )
-        
-        # Routing
+
+    # Routing
+    with live_group3:
+        st.markdown(
+            """
+            <div style="
+                border: 2px solid #a78bfa;
+                border-radius: 14px;
+                padding: 12px 14px;
+                background: #a78bfa;
+                margin-bottom: 8px;
+            ">
+                <div style="
+                    font-size: 0.95rem;
+                    font-weight: 700;
+                    color: #ffffff;
+                    line-height: 1.2;
+                ">
+                    Routing
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        route1, route2, route3 = st.columns(3)
+
         with route1:
+            total_transit_pct = (today_total_transit / today_checkins * 100) if today_checkins > 0 else 0
             render_kpi_card(
                 "Total Transit",
                 f"{today_total_transit:,}",
@@ -1001,7 +1068,7 @@ if selected_view == "Live Today":
                 value_font_size="2.2rem",
                 border_color="#c4b5fd"
             )
-        
+
         with route2:
             render_kpi_card(
                 "Westside",
@@ -1011,7 +1078,7 @@ if selected_view == "Live Today":
                 value_font_size="2.2rem",
                 border_color="#c4b5fd"
             )
-        
+
         with route3:
             render_kpi_card(
                 "Library Express",
@@ -1021,7 +1088,6 @@ if selected_view == "Live Today":
                 value_font_size="1.6rem",
                 border_color="#c4b5fd"
             )
-
 
 
 
