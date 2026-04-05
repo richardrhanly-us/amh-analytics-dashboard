@@ -10,7 +10,6 @@ from zoneinfo import ZoneInfo
 import altair as alt
 
 from streamlit_autorefresh import st_autorefresh
-import json
 
 st.set_page_config(
     page_title="SortView",
@@ -440,27 +439,7 @@ def build_hourly_line_chart(df, value_col, title_y, series_col=None, start_hour=
     return chart
 
 
-AGENT_CONFIG_FILE = Path(__file__).resolve().parent.parent / "agent_config.json"
-
-STATUS_FILE = "data/processed/pipeline_status.json"
-
-try:
-    if AGENT_CONFIG_FILE.exists():
-        with open(AGENT_CONFIG_FILE, "r", encoding="utf-8") as f:
-            agent_config = json.load(f)
-
-        status_file_config = agent_config.get("status_file", STATUS_FILE)
-        status_file_path = Path(status_file_config)
-
-        if not status_file_path.is_absolute():
-            status_file_path = (Path(__file__).resolve().parent.parent / status_file_path).resolve()
-
-        STATUS_FILE = str(status_file_path)
-except Exception:
-    pass
-
-status_updated = get_file_updated_time(STATUS_FILE)
-status_mtime = status_updated.timestamp() if status_updated else 0
+status_mtime = 0
 
 df_live_raw = load_checkins_df(mtime=status_mtime, refresh_count=refresh_count)
 df_history_raw = load_checkins_history_df(mtime=status_mtime, refresh_count=refresh_count)
@@ -468,7 +447,7 @@ df_history_raw = load_checkins_history_df(mtime=status_mtime, refresh_count=refr
 rejects_live_raw = load_rejects_df(mtime=status_mtime, refresh_count=refresh_count)
 rejects_history_raw = load_rejects_history_df(mtime=status_mtime, refresh_count=refresh_count)
 
-pipeline_status = load_pipeline_status(path=STATUS_FILE, mtime=status_mtime, refresh_count=refresh_count)
+pipeline_status = load_pipeline_status(mtime=status_mtime, refresh_count=refresh_count)
 
 # DEBUG
 #st.write("df_live_raw columns:", list(df_live_raw.columns))
