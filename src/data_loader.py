@@ -83,8 +83,8 @@ def _normalize_rejects_df(df):
     return df
 
 
-@st.cache_data
-def load_checkins_history_df(mtime=None):
+@st.cache_data(show_spinner=False)
+def load_checkins_history_df(mtime=None, refresh_count=0):
     query = """
         SELECT *
         FROM checkins
@@ -94,8 +94,8 @@ def load_checkins_history_df(mtime=None):
     return _normalize_checkins_df(df)
 
 
-@st.cache_data
-def load_checkins_df(path=CHECKINS_FILE, mtime=None):
+@st.cache_data(show_spinner=False)
+def load_checkins_df(path=CHECKINS_FILE, mtime=None, refresh_count=0):
     query = """
         SELECT *
         FROM checkins
@@ -105,8 +105,8 @@ def load_checkins_df(path=CHECKINS_FILE, mtime=None):
     return _normalize_checkins_df(df)
 
 
-@st.cache_data
-def load_rejects_df(path=REJECTS_FILE, mtime=None):
+@st.cache_data(show_spinner=False)
+def load_rejects_df(path=REJECTS_FILE, mtime=None, refresh_count=0):
     query = """
         SELECT *
         FROM rejects
@@ -116,8 +116,8 @@ def load_rejects_df(path=REJECTS_FILE, mtime=None):
     return _normalize_rejects_df(df)
 
 
-@st.cache_data
-def load_rejects_history_df(path="data/processed/rejects_history.csv", mtime=None):
+@st.cache_data(show_spinner=False)
+def load_rejects_history_df(path="data/processed/rejects_history.csv", mtime=None, refresh_count=0):
     query = """
         SELECT *
         FROM rejects
@@ -127,8 +127,8 @@ def load_rejects_history_df(path="data/processed/rejects_history.csv", mtime=Non
     return _normalize_rejects_df(df)
 
 
-@st.cache_data
-def load_pipeline_status(path=STATUS_FILE, mtime=None):
+@st.cache_data(show_spinner=False)
+def load_pipeline_status(path=STATUS_FILE, mtime=None, refresh_count=0):
     file_path = Path(path)
 
     if not file_path.exists():
