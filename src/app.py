@@ -566,6 +566,7 @@ else:
     pipeline_status_bg = "#f9fafb"
     pipeline_result_text = "Unknown"
 
+    pipeline_expanded = pipeline_run_status not in ["completed", "skipped_no_source_changes"]
 
 
 selected_view = st.segmented_control(
@@ -1029,37 +1030,40 @@ if selected_view == "Live Today":
             st.rerun()
     
     with col2:
-        st.markdown(
-            f"""
-            <div style="
-                border: 1px solid #e5e7eb;
-                border-radius: 10px;
-                padding: 12px;
-                background-color: {pipeline_status_bg};
-                margin-bottom: 12px;
-            ">
-                <div style="font-size: 12px; color: #6b7280; margin-bottom: 6px;">
-                    Pipeline Status
+        expander_label = f"● {pipeline_status_label}"
+    
+        with st.expander(expander_label, expanded=pipeline_expanded):
+            st.markdown(
+                f"""
+                <div style="
+                    border: 1px solid #e5e7eb;
+                    border-radius: 10px;
+                    padding: 12px;
+                    background-color: {pipeline_status_bg};
+                    margin-bottom: 4px;
+                ">
+                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 6px;">
+                        Pipeline Status
+                    </div>
+                    <div style="font-size: 16px; font-weight: 700; color: {pipeline_status_color}; margin-bottom: 8px;">
+                        {pipeline_status_label}
+                    </div>
+                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
+                        App Last Refreshed: {app_refreshed_str}
+                    </div>
+                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
+                        Last Successful Run: {pipeline_last_run_str}
+                    </div>
+                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
+                        Last Attempt: {pipeline_last_attempt_str}
+                    </div>
+                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
+                        Result: {pipeline_result_text}
+                    </div>
                 </div>
-                <div style="font-size: 16px; font-weight: 700; color: {pipeline_status_color}; margin-bottom: 8px;">
-                    ● {pipeline_status_label}
-                </div>
-                <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                    App Last Refreshed: {app_refreshed_str}
-                </div>
-                <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                    Last Successful Run: {pipeline_last_run_str}
-                </div>
-                <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                    Last Attempt: {pipeline_last_attempt_str}
-                </div>
-                <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                    Result: {pipeline_result_text}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+                """,
+                unsafe_allow_html=True
+            )
 
     
     # =============================
