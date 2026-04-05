@@ -129,6 +129,56 @@ def load_rejects_history_df(path="data/processed/rejects_history.csv", mtime=Non
 
 @st.cache_data(show_spinner=False)
 def load_pipeline_status(path=STATUS_FILE, mtime=None, refresh_count=0):
+    query = """
+        SELECT
+            customer_id,
+            branch_id,
+            last_attempt,
+            last_run,
+            status,
+            checkins_rows,
+            rejects_rows,
+            uploaded_checkins_rows,
+            uploaded_rejects_rows,
+            checkins_history_rows,
+            rejects_history_rows,
+            checkins_bad_datetime_rows,
+            rejects_bad_datetime_rows,
+            transit_items,
+            problem_items,
+            destination_breakdown,
+            updated_at
+        FROM pipeline_status
+        ORDER BY updated_at DESC
+        LIMIT 1
+    """
+    df = _read_table(query)
+
+    if not df.empty:
+        row = df.iloc[0].to_dict()
+
+        for key in ["last_attempt", "last_run", "updated_at"]:
+            value = row.get(key)
+            if pd.notna(value):
+                if hasattr(value, "isoformat"):
+                    row[key] = value.isoformat()
+                else:
+                    row[key] = str(value)
+            else:
+                row[key] = None
+
+        destination_breakdown = row.get("destination_breakdown")
+
+        if isinstance(destination_breakdown, str):
+            try:
+                row["destination_breakdown"] = json.loads(destination_breakdown)
+            except Exception:
+                row["destination_breakdown"] = {}
+        elif destination_breakdown is None or (isinstance(destination_breakdown, float) and pd.isna(destination_breakdown)):
+            row["destination_breakdown"] = {}
+
+        return row
+
     file_path = Path(path)
 
     if not file_path.exists():
