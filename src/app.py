@@ -1832,9 +1832,64 @@ if selected_view == "Overview":
         peak_day_avg_value = peak_day_avg_name
         peak_day_avg_subtitle = f"{weekday_avg.max():,.1f} avg checkins/day"
 
+
+overview_avg_hours_saved = 0.0
+overview_total_hours_saved = 0.0
+overview_labor_value_saved = 0.0
+
+MANUAL_RATE_OVERVIEW = 45
+HOURLY_COST_OVERVIEW = 18.0
+
+if len(df) > 0:
+    labor_df = df.copy()
+    labor_df["date"] = labor_df["datetime"].dt.date
+    labor_df["hour"] = labor_df["datetime"].dt.hour
+
+    labor_daily_hourly = (
+        labor_df.groupby(["date", "hour"])
+        .size()
+        .reset_index(name="checkins")
+    )
+
+    labor_avg_hourly = (
+        labor_daily_hourly.groupby("hour")["checkins"]
+        .mean()
+        .reset_index(name="avg_items_per_hour")
+    )
+
+    if len(labor_avg_hourly) > 0:
+        labor_peak_row = labor_avg_hourly.loc[labor_avg_hourly["avg_items_per_hour"].idxmax()]
+        labor_threshold = labor_peak_row["avg_items_per_hour"] * 0.75
+        labor_peak_hours = labor_avg_hourly[
+            labor_avg_hourly["avg_items_per_hour"] >= labor_threshold
+        ].copy()
+
+        amh_rate_overview = (
+            labor_peak_hours["avg_items_per_hour"].mean()
+            if len(labor_peak_hours) > 0
+            else labor_peak_row["avg_items_per_hour"]
+        )
+    else:
+        amh_rate_overview = 130.0
+
+    labor_daily_counts = df["datetime"].dt.date.value_counts().sort_index()
+    labor_staff_df = labor_daily_counts.reset_index()
+    labor_staff_df.columns = ["date", "checkins"]
+
+    labor_staff_df["manual_hours"] = labor_staff_df["checkins"] / MANUAL_RATE_OVERVIEW
+    labor_staff_df["amh_hours"] = labor_staff_df["checkins"] / amh_rate_overview
+    labor_staff_df["hours_saved"] = (
+        labor_staff_df["manual_hours"] - labor_staff_df["amh_hours"]
+    ).clip(lower=0)
+
+    overview_avg_hours_saved = labor_staff_df["hours_saved"].mean() if len(labor_staff_df) > 0 else 0.0
+    overview_total_hours_saved = labor_staff_df["hours_saved"].sum() if len(labor_staff_df) > 0 else 0.0
+    overview_labor_value_saved = overview_total_hours_saved * HOURLY_COST_OVERVIEW
+    
     row1_col1, row1_col2, row1_col3 = st.columns(3)
     row2_col1, row2_col2, row2_col3 = st.columns(3)
     row3_col1, row3_col2, row3_col3 = st.columns(3)
+    row4_col1, row4_col2, row4_col3 = st.columns(3)
 
     # Row 1
     with row1_col1:
@@ -1974,8 +2029,31 @@ if selected_view == "Overview":
                 value_wrap=True
             )
 
-    st.divider()
+    with row4_col1:
+        render_kpi_card(
+            "Avg Hours Saved",
+            f"{overview_avg_hours_saved:,.2f}",
+            "Per day",
+            "#6b7280"
+        )
 
+    with row4_col2:
+        render_kpi_card(
+            "Total Hours Saved",
+            f"{overview_total_hours_saved:,.2f}",
+            "Across selected date range",
+            "#6b7280"
+        )
+
+    with row4_col3:
+        render_kpi_card(
+            "Estimated Labor Value",
+            f"${overview_labor_value_saved:,.0f}",
+            "Staff time avoided value",
+            "#6b7280"
+        )
+
+    st.divider()
 
 if selected_view == "Reports":
     st.header("Reports")
