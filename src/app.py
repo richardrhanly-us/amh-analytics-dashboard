@@ -417,7 +417,7 @@ df_history_raw = load_checkins_history_df(mtime=status_mtime)
 rejects_live_raw = load_rejects_df(mtime=status_mtime)
 rejects_history_raw = load_rejects_history_df(mtime=status_mtime)
 
-DEBUG = False
+DEBUG = TRUE
 
 if DEBUG:
     st.write("df_live_raw columns:", list(df_live_raw.columns))
