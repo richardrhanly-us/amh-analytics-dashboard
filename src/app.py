@@ -3173,7 +3173,19 @@ if selected_view == "Transits":
             "transit_destination": pd.Series(dtype="object"),
             "destination_report": pd.Series(dtype="object"),
         })
-    
+
+
+    if len(base_rejects_df) > 0 and "datetime" in base_rejects_df.columns:
+        base_rejects_df = base_rejects_df.copy()
+        base_rejects_df["date"] = base_rejects_df["datetime"].dt.date
+        base_rejects_df["day_of_week"] = base_rejects_df["datetime"].dt.day_name()
+    else:
+        base_rejects_df = pd.DataFrame({
+            "datetime": pd.Series(dtype="datetime64[ns]"),
+            "date": pd.Series(dtype="object"),
+            "day_of_week": pd.Series(dtype="object"),
+        })
+        
     transit_df = base_df[
         base_df["transit_destination"].isin(valid_transit_destinations)
     ].copy()
