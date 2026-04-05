@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 import altair as alt
 
 from streamlit_autorefresh import st_autorefresh
-from config import load_config
+import json
 
 st.set_page_config(
     page_title="SortView",
@@ -414,15 +414,24 @@ def build_hourly_line_chart(df, value_col, title_y, series_col=None, start_hour=
     return chart
 
 
-app_config = load_config()
+AGENT_CONFIG_FILE = Path(__file__).resolve().parent.parent / "agent_config.json"
 
-status_file_config = app_config["status_file"]
-status_file_path = Path(status_file_config)
+STATUS_FILE = "data/processed/pipeline_status.json"
 
-if not status_file_path.is_absolute():
-    status_file_path = (Path(__file__).resolve().parent / status_file_path).resolve()
+try:
+    if AGENT_CONFIG_FILE.exists():
+        with open(AGENT_CONFIG_FILE, "r", encoding="utf-8") as f:
+            agent_config = json.load(f)
 
-STATUS_FILE = str(status_file_path)
+        status_file_config = agent_config.get("status_file", STATUS_FILE)
+        status_file_path = Path(status_file_config)
+
+        if not status_file_path.is_absolute():
+            status_file_path = (Path(__file__).resolve().parent.parent / status_file_path).resolve()
+
+        STATUS_FILE = str(status_file_path)
+except Exception:
+    pass
 
 status_updated = get_file_updated_time(STATUS_FILE)
 status_mtime = status_updated.timestamp() if status_updated else 0
