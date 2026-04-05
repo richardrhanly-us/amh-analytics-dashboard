@@ -496,43 +496,55 @@ minutes_since_run = None
 if last_run is not None:
     minutes_since_run = (now_ct - last_run).total_seconds() / 60
 
-    
-    live_data_updated_str = (
-        checkins_updated.strftime('%b %d, %Y %I:%M %p')
-        if checkins_updated else "N/A"
-    )
-    
-    status_file_updated_str = (
-        status_updated.strftime('%b %d, %Y %I:%M %p')
-        if status_updated else "N/A"
-    )
-    
-    pipeline_reported_run_str = (
-        last_run.strftime('%b %d, %Y %I:%M %p')
-        if last_run else "N/A"
-    )
+last_attempt = None
+if pipeline_status:
+    last_attempt_raw = pipeline_status.get("last_attempt")
+    if last_attempt_raw:
+        try:
+            last_attempt = datetime.fromisoformat(last_attempt_raw)
+            if last_attempt.tzinfo is None:
+                last_attempt = last_attempt.replace(tzinfo=ZoneInfo("America/Chicago"))
+            else:
+                last_attempt = last_attempt.astimezone(ZoneInfo("America/Chicago"))
+        except Exception:
+            last_attempt = None
 
-if checkins_updated is None:
-    pipeline_status_label = "No Live Data"
-    pipeline_status_color = "#dc2626"
-    pipeline_status_bg = "#fef2f2"
-    amh_status_text = "Offline / No feed"
-elif minutes_since_update is not None and minutes_since_update > 30:
-    pipeline_status_label = "Stale"
-    pipeline_status_color = "#d97706"
-    pipeline_status_bg = "#fffbeb"
-    amh_status_text = "No recent updates"
-else:
-    pipeline_status_label = "Live"
+app_refreshed_str = now_ct.strftime('%b %d, %Y %I:%M %p')
+
+pipeline_last_run_str = (
+    last_attempt.strftime('%b %d, %Y %I:%M %p')
+    if last_attempt else
+    last_run.strftime('%b %d, %Y %I:%M %p')
+    if last_run else "N/A"
+)
+
+pipeline_run_status = pipeline_status.get("status", "unknown") if pipeline_status else "unknown"
+
+if pipeline_run_status == "completed":
+    pipeline_status_label = "Pipeline Ran Successfully"
     pipeline_status_color = "#059669"
     pipeline_status_bg = "#ecfdf5"
-    amh_status_text = "Online"
-
-if minutes_since_run is not None and minutes_since_run > 60 and minutes_since_update is not None and minutes_since_update > 30:
-    pipeline_status_label = "Pipeline Delayed"
+    amh_status_text = "Completed"
+elif pipeline_run_status == "skipped_no_source_changes":
+    pipeline_status_label = "Pipeline Ran Successfully"
+    pipeline_status_color = "#059669"
+    pipeline_status_bg = "#ecfdf5"
+    amh_status_text = "No new items"
+elif str(pipeline_run_status).startswith("failed"):
+    pipeline_status_label = "Pipeline Failed"
     pipeline_status_color = "#dc2626"
     pipeline_status_bg = "#fef2f2"
-    amh_status_text = "Check scheduler"
+    amh_status_text = "Failed"
+elif pipeline_run_status == "started":
+    pipeline_status_label = "Pipeline Running"
+    pipeline_status_color = "#d97706"
+    pipeline_status_bg = "#fffbeb"
+    amh_status_text = "In progress"
+else:
+    pipeline_status_label = "Pipeline Status Unknown"
+    pipeline_status_color = "#6b7280"
+    pipeline_status_bg = "#f9fafb"
+    amh_status_text = "Unknown"
 
 
 
@@ -1013,16 +1025,13 @@ if selected_view == "Live Today":
                     ● {pipeline_status_label}
                 </div>
                 <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                    Live Data Timestamp: {live_data_updated_str}
+                    App Last Refreshed: {app_refreshed_str}
                 </div>
                 <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                    Status File Updated: {status_file_updated_str}
+                    Pipeline Last Run: {pipeline_last_run_str}
                 </div>
                 <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                    Pipeline Reported Run: {pipeline_reported_run_str}
-                </div>
-                <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                    New Items (1 hr): {today_metrics['current_speed']}
+                    Pipeline Result: {amh_status_text}
                 </div>
             </div>
             """,
