@@ -432,9 +432,6 @@ pipeline_status = load_pipeline_status(mtime=status_mtime, refresh_count=refresh
 #st.write("rejects_live_raw rows:", len(rejects_live_raw))
 
 
-pipeline_status = load_pipeline_status(mtime=status_mtime)
-
-
 checkins_updated = None
 if len(df_live_raw) > 0 and "datetime" in df_live_raw.columns:
     latest_dt = df_live_raw["datetime"].max()
