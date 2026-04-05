@@ -1200,7 +1200,7 @@ if selected_view == "Live Today":
                     border_color="#93c5fd"
                 )
 
-    # Quality & Impact
+    # Rejects
     with live_group2:
         st.markdown(
             """
@@ -1217,7 +1217,7 @@ if selected_view == "Live Today":
                     color: #ffffff;
                     line-height: 1.2;
                 ">
-                    Quality & Impact
+                    Rejects
                 </div>
             </div>
             """,
