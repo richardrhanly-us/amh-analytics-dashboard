@@ -993,9 +993,6 @@ if selected_view == "Live Today":
                 <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
                     New Items (1 hr): {today_metrics['current_speed']}
                 </div>
-                <div style="font-size: 12px; color: #6b7280;">
-                    AMH Status: {amh_status_text}
-                </div>
             </div>
             """,
             unsafe_allow_html=True
