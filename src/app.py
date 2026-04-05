@@ -587,7 +587,7 @@ df["day_of_week"] = df["datetime"].dt.day_name()
 rejects_df["date"] = rejects_df["datetime"].dt.date
 rejects_df["day_of_week"] = rejects_df["datetime"].dt.day_name()
 
-df["destination_clean"] = df[""destination_clean"].apply(normalize_transit_destination)
+df["destination_clean"] = df["destination_clean"].apply(normalize_transit_destination)
 df["transit_destination"] = df["destination_clean"]
 
 valid_transit_destinations = [
