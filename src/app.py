@@ -822,30 +822,46 @@ live_reject_deviation = today_reject_rate - historical_daily_avg_reject
 live_reject_card_border = "#e5e7eb"
 live_reject_value_color = "#1f2937"
 live_reject_subtitle_color = "#6b7280"
+
+reject_count_card_border = "#e5e7eb"
+reject_count_value_color = "#1f2937"
+reject_count_subtitle_color = "#6b7280"
+
 live_alert_title = ""
 live_alert_text = ""
 show_live_alert = False
 
-if historical_daily_avg_reject > 0:
-    if today_reject_rate >= historical_daily_avg_reject + 2:
-        live_reject_card_border = "#dc2626"
-        live_reject_value_color = "#dc2626"
-        live_reject_subtitle_color = "#dc2626"
-        show_live_alert = True
-        live_alert_title = "Operational Alert"
+if today_reject_rate >= 10:
+    live_reject_card_border = "#d97706"
+    live_reject_value_color = "#d97706"
+    live_reject_subtitle_color = "#d97706"
+
+    show_live_alert = True
+    live_alert_title = "Operational Alert"
+
+    if historical_daily_avg_reject > 0:
         live_alert_text = (
             f"Today's reject rate is {today_reject_rate:.2f}%, which is {live_reject_deviation:+.2f}% "
             f"above the typical daily rate of {historical_daily_avg_reject:.2f}%. "
             f"Review today's top reject issues and check AMH conditions around the busiest hours."
         )
-    elif today_reject_rate >= historical_daily_avg_reject + 1:
-        live_reject_card_border = "#d97706"
-        live_reject_value_color = "#d97706"
-        live_reject_subtitle_color = "#d97706"
     else:
-        live_reject_card_border = "#059669"
-        live_reject_value_color = "#059669"
-        live_reject_subtitle_color = "#059669"
+        live_alert_text = (
+            f"Today's reject rate is {today_reject_rate:.2f}%, which is above the 10% alert threshold. "
+            f"Review today's top reject issues and check AMH conditions around the busiest hours."
+        )
+elif today_reject_rate >= 7:
+    live_reject_card_border = "#f59e0b"
+    live_reject_value_color = "#b45309"
+    live_reject_subtitle_color = "#b45309"
+elif today_reject_rate >= 5:
+    live_reject_card_border = "#fcd34d"
+    live_reject_value_color = "#92400e"
+    live_reject_subtitle_color = "#92400e"
+else:
+    live_reject_card_border = "#059669"
+    live_reject_value_color = "#059669"
+    live_reject_subtitle_color = "#059669"
         
         
 alerts = get_system_alerts(
@@ -997,23 +1013,16 @@ if selected_view == "Live Today":
         quality1, quality2 = st.columns(2)
 
         with quality1:
-            reject_subtitle = f"{today_rejects:,} failures today"
-            if historical_daily_avg_reject > 0:
-                reject_subtitle = (
-                    f"{live_reject_deviation:+.2f}% vs avg daily "
-                    f"rate ({historical_daily_avg_reject:.2f}%)"
-                )
-
             render_kpi_card(
                 "Rejects",
                 f"{today_rejects:,}",
-                reject_subtitle,
-                live_reject_subtitle_color,
+                "Failures today",
+                "#6b7280",
                 value_font_size="2.2rem",
-                border_color=live_reject_card_border,
-                value_color=live_reject_value_color
+                border_color=reject_count_card_border,
+                value_color=reject_count_value_color
             )
-
+        
         with quality2:
             reject_rate_subtitle = "Of checkins today"
             if historical_daily_avg_reject > 0:
@@ -1021,7 +1030,7 @@ if selected_view == "Live Today":
                     f"{live_reject_deviation:+.2f}% vs avg daily "
                     f"rate ({historical_daily_avg_reject:.2f}%)"
                 )
-
+        
             render_kpi_card(
                 "Reject Rate",
                 f"{today_reject_rate:.2f}%",
