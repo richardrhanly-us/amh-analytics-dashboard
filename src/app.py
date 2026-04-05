@@ -417,13 +417,10 @@ df_history_raw = load_checkins_history_df(mtime=status_mtime)
 rejects_live_raw = load_rejects_df(mtime=status_mtime)
 rejects_history_raw = load_rejects_history_df(mtime=status_mtime)
 
-DEBUG = TRUE
-
-if DEBUG:
-    st.write("df_live_raw columns:", list(df_live_raw.columns))
-    st.write("df_live_raw rows:", len(df_live_raw))
-    st.write("rejects_live_raw columns:", list(rejects_live_raw.columns))
-    st.write("rejects_live_raw rows:", len(rejects_live_raw))
+st.write("df_live_raw columns:", list(df_live_raw.columns))
+st.write("df_live_raw rows:", len(df_live_raw))
+st.write("rejects_live_raw columns:", list(rejects_live_raw.columns))
+st.write("rejects_live_raw rows:", len(rejects_live_raw))
 
 
 pipeline_status = load_pipeline_status(mtime=status_mtime)
