@@ -1045,8 +1045,8 @@ if selected_view == "Live Today":
                 "Failures today",
                 "#6b7280",
                 value_font_size="2.2rem",
-                border_color="#93c5fd",
-                value_color="#059669"
+                border_color="#059669",
+                value_color="#1f2937"
             )
         
         with quality2:
