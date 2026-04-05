@@ -1884,7 +1884,10 @@ if selected_view == "Overview":
 
     overview_avg_hours_saved = labor_staff_df["hours_saved"].mean() if len(labor_staff_df) > 0 else 0.0
     overview_total_hours_saved = labor_staff_df["hours_saved"].sum() if len(labor_staff_df) > 0 else 0.0
-    overview_labor_value_saved = overview_total_hours_saved * HOURLY_COST_OVERVIEW
+    
+    # NEW (split avg vs total labor value)
+    overview_avg_labor_value = overview_avg_hours_saved * HOURLY_COST_OVERVIEW
+    overview_total_labor_value = overview_total_hours_saved * HOURLY_COST_OVERVIEW
     
     row1_col1, row1_col2, row1_col3 = st.columns(3)
     row2_col1, row2_col2, row2_col3 = st.columns(3)
@@ -2030,31 +2033,39 @@ if selected_view == "Overview":
             )
 
     with row4_col1:
-        render_kpi_card(
-            "Avg Hours Saved",
-            f"{overview_avg_hours_saved:,.2f}",
-            "Per day",
-            "#6b7280"
-        )
-
+        if overview_volume_mode == "Average per Day":
+            render_kpi_card(
+                "Avg Hours Saved",
+                f"{overview_avg_hours_saved:,.2f}",
+                "Per day",
+                "#6b7280"
+            )
+        else:
+            render_kpi_card(
+                "Total Hours Saved",
+                f"{overview_total_hours_saved:,.2f}",
+                "Across selected date range",
+                "#6b7280"
+            )
+    
     with row4_col2:
-        render_kpi_card(
-            "Total Hours Saved",
-            f"{overview_total_hours_saved:,.2f}",
-            "Across selected date range",
-            "#6b7280"
-        )
-
+        if overview_volume_mode == "Average per Day":
+            render_kpi_card(
+                "Avg Labor Value",
+                f"${overview_avg_labor_value:,.0f}",
+                "Per day",
+                "#6b7280"
+            )
+        else:
+            render_kpi_card(
+                "Total Labor Value",
+                f"${overview_total_labor_value:,.0f}",
+                "Across selected date range",
+                "#6b7280"
+            )
+    
     with row4_col3:
-        render_kpi_card(
-            "Estimated Labor Value",
-            f"${overview_labor_value_saved:,.0f}",
-            "Staff time avoided value",
-            "#6b7280"
-        )
-
-    st.divider()
-
+        st.empty()  # placeholder for ROI later
 if selected_view == "Reports":
     st.header("Reports")
     pdf_button_placeholder = st.empty()
