@@ -1260,8 +1260,7 @@ if selected_view == "Live Today":
                 "#6b7280",
                 value_font_size="2.2rem",
                 border_color="#93c5fd",
-                fill_pct=checkins_fill_pct,
-                fill_color="rgba(59, 130, 246, 0.14)"
+                fill_pct=checkins_fill_pct
             )
 
         with ops2:
