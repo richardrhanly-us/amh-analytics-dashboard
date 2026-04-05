@@ -496,6 +496,22 @@ minutes_since_run = None
 if last_run is not None:
     minutes_since_run = (now_ct - last_run).total_seconds() / 60
 
+    
+    live_data_updated_str = (
+        checkins_updated.strftime('%b %d, %Y %I:%M %p')
+        if checkins_updated else "N/A"
+    )
+    
+    status_file_updated_str = (
+        status_updated.strftime('%b %d, %Y %I:%M %p')
+        if status_updated else "N/A"
+    )
+    
+    pipeline_reported_run_str = (
+        last_run.strftime('%b %d, %Y %I:%M %p')
+        if last_run else "N/A"
+    )
+
 if checkins_updated is None:
     pipeline_status_label = "No Live Data"
     pipeline_status_color = "#dc2626"
@@ -974,20 +990,6 @@ if selected_view == "Live Today":
     with col1:
         st.header(f"{today.strftime('%A, %b %d')}")
     
-        if checkins_updated is not None:
-            st.markdown(
-                f"""
-                <div style="
-                    margin-top: -10px;
-                    margin-bottom: 12px;
-                    color: #6b7280;
-                    font-size: 0.95rem;
-                ">
-                    Last updated: {checkins_updated.strftime('%b %d, %Y %I:%M %p')}
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
 
         if st.button("Refresh Live Data"):
             st.cache_data.clear()
@@ -1011,10 +1013,13 @@ if selected_view == "Live Today":
                     ● {pipeline_status_label}
                 </div>
                 <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                    Last Update: {checkins_updated.strftime('%I:%M %p') if checkins_updated else "N/A"}
+                    Live Data Timestamp: {live_data_updated_str}
                 </div>
                 <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                    Last Pipeline Run: {last_run.strftime('%I:%M %p') if last_run else "N/A"}
+                    Status File Updated: {status_file_updated_str}
+                </div>
+                <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
+                    Pipeline Reported Run: {pipeline_reported_run_str}
                 </div>
                 <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
                     New Items (1 hr): {today_metrics['current_speed']}
