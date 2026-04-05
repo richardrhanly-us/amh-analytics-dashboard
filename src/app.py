@@ -925,102 +925,102 @@ if selected_view == "Live Today":
         )
         ops1, ops2, ops3 = st.columns(3)
 
-    # Operations
-    with ops1:
-        render_kpi_card(
-            "Checkins",
-            f"{today_checkins:,}",
-            "Processed today",
-            "#6b7280",
-            value_font_size="2.2rem",
-            border_color="#93c5fd",
-            fill_pct=checkins_fill_pct,
-            fill_color="rgba(59, 130, 246, 0.14)"
-        )
-    
-    with ops2:
-        render_kpi_card(
-            "Current Throughput",
-            f"{today_metrics['current_speed']}",
-            "Items this hour",
-            "#6b7280",
-            value_font_size="2.2rem",
-            border_color="#93c5fd"
-        )
-    
-    with ops3:
-        if today_peak_hour is not None:
+        # Operations
+        with ops1:
             render_kpi_card(
-                "Busiest Hour",
-                format_hour(today_peak_hour),
-                f"{today_peak_hour_count:,} items ({today_peak_hour_pct:.1f}%)",
+                "Checkins",
+                f"{today_checkins:,}",
+                "Processed today",
                 "#6b7280",
-                value_font_size="1.7rem",
+                value_font_size="2.2rem",
+                border_color="#93c5fd",
+                fill_pct=checkins_fill_pct,
+                fill_color="rgba(59, 130, 246, 0.14)"
+            )
+        
+        with ops2:
+            render_kpi_card(
+                "Current Throughput",
+                f"{today_metrics['current_speed']}",
+                "Items this hour",
+                "#6b7280",
+                value_font_size="2.2rem",
                 border_color="#93c5fd"
             )
-        else:
+        
+        with ops3:
+            if today_peak_hour is not None:
+                render_kpi_card(
+                    "Busiest Hour",
+                    format_hour(today_peak_hour),
+                    f"{today_peak_hour_count:,} items ({today_peak_hour_pct:.1f}%)",
+                    "#6b7280",
+                    value_font_size="1.7rem",
+                    border_color="#93c5fd"
+                )
+            else:
+                render_kpi_card(
+                    "Busiest Hour",
+                    "N/A",
+                    "No activity yet",
+                    "#6b7280",
+                    value_font_size="1.7rem",
+                    border_color="#93c5fd"
+                )
+        
+        # Quality
+        with quality1:
             render_kpi_card(
-                "Busiest Hour",
-                "N/A",
-                "No activity yet",
-                "#6b7280",
-                value_font_size="1.7rem",
-                border_color="#93c5fd"
+                "Rejects",
+                f"{today_rejects:,}",
+                reject_subtitle,
+                live_reject_subtitle_color,
+                value_font_size="2.2rem",
+                border_color=live_reject_card_border,
+                value_color=live_reject_value_color
             )
-    
-    # Quality
-    with quality1:
-        render_kpi_card(
-            "Rejects",
-            f"{today_rejects:,}",
-            reject_subtitle,
-            live_reject_subtitle_color,
-            value_font_size="2.2rem",
-            border_color=live_reject_card_border,
-            value_color=live_reject_value_color
-        )
-    
-    with quality2:
-        render_kpi_card(
-            "Reject Rate",
-            f"{today_reject_rate:.2f}%",
-            reject_subtitle,
-            live_reject_subtitle_color,
-            value_font_size="1.8rem",
-            border_color=live_reject_card_border,
-            value_color=live_reject_value_color
-        )
-    
-    # Routing
-    with route1:
-        render_kpi_card(
-            "Total Transit",
-            f"{today_total_transit:,}",
-            f"{total_transit_pct:.1f}% of today",
-            "#6b7280",
-            value_font_size="2.2rem",
-            border_color="#c4b5fd"
-        )
-    
-    with route2:
-        render_kpi_card(
-            "Westside",
-            f"{today_westside:,}",
-            f"{today_westside_pct:.1f}% of today",
-            "#6b7280",
-            value_font_size="2.2rem",
-            border_color="#c4b5fd"
-        )
-    
-    with route3:
-        render_kpi_card(
-            "Library Express",
-            f"{today_library_express:,}",
-            f"{today_library_express_pct:.1f}% of today",
-            "#6b7280",
-            value_font_size="1.6rem",
-            border_color="#c4b5fd"
-        )
+        
+        with quality2:
+            render_kpi_card(
+                "Reject Rate",
+                f"{today_reject_rate:.2f}%",
+                reject_subtitle,
+                live_reject_subtitle_color,
+                value_font_size="1.8rem",
+                border_color=live_reject_card_border,
+                value_color=live_reject_value_color
+            )
+        
+        # Routing
+        with route1:
+            render_kpi_card(
+                "Total Transit",
+                f"{today_total_transit:,}",
+                f"{total_transit_pct:.1f}% of today",
+                "#6b7280",
+                value_font_size="2.2rem",
+                border_color="#c4b5fd"
+            )
+        
+        with route2:
+            render_kpi_card(
+                "Westside",
+                f"{today_westside:,}",
+                f"{today_westside_pct:.1f}% of today",
+                "#6b7280",
+                value_font_size="2.2rem",
+                border_color="#c4b5fd"
+            )
+        
+        with route3:
+            render_kpi_card(
+                "Library Express",
+                f"{today_library_express:,}",
+                f"{today_library_express_pct:.1f}% of today",
+                "#6b7280",
+                value_font_size="1.6rem",
+                border_color="#c4b5fd"
+            )
 
 
 
