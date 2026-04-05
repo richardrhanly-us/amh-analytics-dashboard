@@ -61,13 +61,12 @@ div.stDownloadButton > button:hover {
 </style>
 """, unsafe_allow_html=True)
 
-
 def render_kpi_card(
     title,
     value,
     subtitle="",
     subtitle_color="#059669",
-    value_font_size="1.9rem",
+    value_font_size="2.35rem",
     border_color="#e5e7eb",
     value_color="#1f2937",
     value_wrap=False,
@@ -100,10 +99,11 @@ def render_kpi_card(
     if subtitle:
         subtitle_html = (
             f'<div style="'
-            f'font-size:0.9rem;'
+            f'font-size:1.02rem;'
+            f'font-weight:500;'
             f'color:{subtitle_color};'
-            f'margin-top:8px;'
-            f'line-height:1.3;'
+            f'margin-top:10px;'
+            f'line-height:1.45;'
             f'overflow:hidden;'
             f'position:relative;'
             f'z-index:2;'
@@ -116,7 +116,7 @@ def render_kpi_card(
         f'overflow:hidden;'
         f'border:2px solid {border_color};'
         f'border-radius:12px;'
-        f'padding:16px 18px;'
+        f'padding:18px 20px;'
         f'background-color:white;'
         f'min-height:185px;'
         f'height:185px;'
@@ -128,17 +128,18 @@ def render_kpi_card(
         f'">'
         f'{fill_html}'
         f'<div style="'
-        f'font-size:0.9rem;'
-        f'color:#6b7280;'
-        f'margin-bottom:8px;'
+        f'font-size:1.08rem;'
+        f'font-weight:600;'
+        f'color:#4b5563;'
+        f'margin-bottom:10px;'
         f'position:relative;'
         f'z-index:2;'
         f'">{title}</div>'
         f'<div style="'
         f'font-size:{value_font_size};'
-        f'font-weight:600;'
+        f'font-weight:700;'
         f'color:{value_color};'
-        f'line-height:1.2;'
+        f'line-height:1.15;'
         f'margin-bottom:4px;'
         f'white-space:{value_white_space};'
         f'word-break:{value_word_break};'
@@ -150,6 +151,7 @@ def render_kpi_card(
     )
 
     st.markdown(card_html, unsafe_allow_html=True)
+
     
 def get_file_updated_time(path):
     file_path = Path(path)
@@ -923,171 +925,102 @@ if selected_view == "Live Today":
         )
         ops1, ops2, ops3 = st.columns(3)
 
-        with ops1:
-            typical_daily_checkins = checkins_daily.mean() if len(checkins_daily) > 0 else 1
-            checkins_fill_pct = (today_checkins / typical_daily_checkins) if typical_daily_checkins > 0 else 0
-
+    # Operations
+    with ops1:
+        render_kpi_card(
+            "Checkins",
+            f"{today_checkins:,}",
+            "Processed today",
+            "#6b7280",
+            value_font_size="2.2rem",
+            border_color="#93c5fd",
+            fill_pct=checkins_fill_pct,
+            fill_color="rgba(59, 130, 246, 0.14)"
+        )
+    
+    with ops2:
+        render_kpi_card(
+            "Current Throughput",
+            f"{today_metrics['current_speed']}",
+            "Items this hour",
+            "#6b7280",
+            value_font_size="2.2rem",
+            border_color="#93c5fd"
+        )
+    
+    with ops3:
+        if today_peak_hour is not None:
             render_kpi_card(
-                "Checkins",
-                f"{today_checkins:,}",
-                "Processed today",
+                "Busiest Hour",
+                format_hour(today_peak_hour),
+                f"{today_peak_hour_count:,} items ({today_peak_hour_pct:.1f}%)",
                 "#6b7280",
-                value_font_size="1.15rem",
-                border_color="#93c5fd",
-                fill_pct=checkins_fill_pct,
-                fill_color="rgba(59, 130, 246, 0.14)"
-            )
-
-        with ops2:
-            render_kpi_card(
-                "Current Throughput",
-                f"{today_metrics['current_speed']}",
-                "Items this hour",
-                "#6b7280",
-                value_font_size="1.15rem",
+                value_font_size="1.7rem",
                 border_color="#93c5fd"
             )
-
-        with ops3:
-            if today_peak_hour is not None:
-                render_kpi_card(
-                    "Busiest Hour",
-                    format_hour(today_peak_hour),
-                    f"{today_peak_hour_count:,} items ({today_peak_hour_pct:.1f}%)",
-                    "#6b7280",
-                    value_font_size="1.05rem",
-                    border_color="#93c5fd"
-                )
-            else:
-                render_kpi_card(
-                    "Busiest Hour",
-                    "N/A",
-                    "No activity yet",
-                    "#6b7280",
-                    value_font_size="1.05rem",
-                    border_color="#93c5fd"
-                )
-
-    # Quality & Impact
-    with live_group2:
-        st.markdown(
-            """
-            <div style="
-                border: 2px solid #34d399;
-                border-radius: 14px;
-                padding: 12px 14px;
-                background: #34d399;
-                margin-bottom: 8px;
-            ">
-                <div style="
-                    font-size: 0.95rem;
-                    font-weight: 700;
-                    color: #ffffff;
-                    line-height: 1.2;
-                ">
-                    Quality & Impact
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
+        else:
+            render_kpi_card(
+                "Busiest Hour",
+                "N/A",
+                "No activity yet",
+                "#6b7280",
+                value_font_size="1.7rem",
+                border_color="#93c5fd"
+            )
+    
+    # Quality
+    with quality1:
+        render_kpi_card(
+            "Rejects",
+            f"{today_rejects:,}",
+            reject_subtitle,
+            live_reject_subtitle_color,
+            value_font_size="2.2rem",
+            border_color=live_reject_card_border,
+            value_color=live_reject_value_color
         )
-
-        quality1, quality2 = st.columns(2)
-
-        with quality1:
-            reject_subtitle = f"{today_rejects:,} failures today"
-            if historical_daily_avg_reject > 0:
-                reject_subtitle = (
-                    f"{live_reject_deviation:+.2f}% vs avg daily "
-                    f"rate ({historical_daily_avg_reject:.2f}%)"
-                )
-        
-            render_kpi_card(
-                "Rejects",
-                f"{today_rejects:,}",
-                reject_subtitle,
-                live_reject_subtitle_color,
-                value_font_size="1.15rem",
-                border_color=live_reject_card_border,
-                value_color=live_reject_value_color
-            )
-
-        with quality2:
-            reject_subtitle = "Of checkins today"
-            if historical_daily_avg_reject > 0:
-                reject_subtitle = (
-                    f"{live_reject_deviation:+.2f}% vs avg daily "
-                    f"rate ({historical_daily_avg_reject:.2f}%)"
-                )
-
-            render_kpi_card(
-                "Reject Rate",
-                f"{today_reject_rate:.2f}%",
-                reject_subtitle,
-                live_reject_subtitle_color,
-                value_font_size="1.05rem",
-                border_color=live_reject_card_border,
-                value_color=live_reject_value_color
-            )
-
-
-
+    
+    with quality2:
+        render_kpi_card(
+            "Reject Rate",
+            f"{today_reject_rate:.2f}%",
+            reject_subtitle,
+            live_reject_subtitle_color,
+            value_font_size="1.8rem",
+            border_color=live_reject_card_border,
+            value_color=live_reject_value_color
+        )
+    
     # Routing
-    with live_group3:
-        st.markdown(
-            """
-            <div style="
-                border: 2px solid #a78bfa;
-                border-radius: 14px;
-                padding: 12px 14px;
-                background: #a78bfa;
-                margin-bottom: 8px;
-            ">
-                <div style="
-                    font-size: 0.95rem;
-                    font-weight: 700;
-                    color: #ffffff;
-                    line-height: 1.2;
-                ">
-                    Routing
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
+    with route1:
+        render_kpi_card(
+            "Total Transit",
+            f"{today_total_transit:,}",
+            f"{total_transit_pct:.1f}% of today",
+            "#6b7280",
+            value_font_size="2.2rem",
+            border_color="#c4b5fd"
         )
-
-        route1, route2, route3 = st.columns(3)
-
-        with route1:
-            total_transit_pct = (today_total_transit / today_checkins * 100) if today_checkins > 0 else 0
-            render_kpi_card(
-                "Total Transit",
-                f"{today_total_transit:,}",
-                f"{total_transit_pct:.1f}% of today",
-                "#6b7280",
-                value_font_size="1.15rem",
-                border_color="#c4b5fd"
-            )
-
-        with route2:
-            render_kpi_card(
-                "Westside",
-                f"{today_westside:,}",
-                f"{today_westside_pct:.1f}% of today",
-                "#6b7280",
-                value_font_size="1.15rem",
-                border_color="#c4b5fd"
-            )
-
-        with route3:
-            render_kpi_card(
-                "Library Express",
-                f"{today_library_express:,}",
-                f"{today_library_express_pct:.1f}% of today",
-                "#6b7280",
-                value_font_size="1.05rem",
-                border_color="#c4b5fd"
-            )
+    
+    with route2:
+        render_kpi_card(
+            "Westside",
+            f"{today_westside:,}",
+            f"{today_westside_pct:.1f}% of today",
+            "#6b7280",
+            value_font_size="2.2rem",
+            border_color="#c4b5fd"
+        )
+    
+    with route3:
+        render_kpi_card(
+            "Library Express",
+            f"{today_library_express:,}",
+            f"{today_library_express_pct:.1f}% of today",
+            "#6b7280",
+            value_font_size="1.6rem",
+            border_color="#c4b5fd"
+        )
 
 
 
