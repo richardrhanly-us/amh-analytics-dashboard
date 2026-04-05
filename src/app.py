@@ -2151,6 +2151,31 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
     
             display_df["Avg Checkins Per Hour"] = display_df["Avg Checkins Per Hour"].round(1)
     
+            if len(avg_hourly) > 0:
+                busiest_hour_row = avg_hourly.loc[avg_hourly["avg_items_per_hour"].idxmax()]
+            
+                st.markdown(
+                    f"""
+                    <div style="
+                        border-left: 4px solid #2563eb;
+                        background-color: #f9fafb;
+                        padding: 14px 16px;
+                        border-radius: 8px;
+                        margin-top: 8px;
+                        margin-bottom: 16px;
+                    ">
+                        <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                            Hourly Summary
+                        </div>
+                        <div style="color: #4b5563; line-height: 1.4;">
+                            Busiest average hour: {busiest_hour_row["hour_label"]} at
+                            {busiest_hour_row["avg_items_per_hour"]:,.1f} checkins per hour.
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+            
             st.dataframe(display_df, use_container_width=True)
             download_button(display_df, "throughput_report.csv")
     
