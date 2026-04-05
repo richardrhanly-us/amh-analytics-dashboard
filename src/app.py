@@ -1715,16 +1715,25 @@ if selected_view == "Overview":
                 f"{pd.to_datetime(peak_day_date).strftime('%b %d, %Y')}"
             )
     
-        # --- AVERAGE MODE (NEW FIX) ---
+        # --- AVERAGE MODE ---
+        weekday_source = df.copy()
+        weekday_source["date_only"] = weekday_source["datetime"].dt.date
+        weekday_source["day_of_week"] = weekday_source["datetime"].dt.day_name()
+
+        weekday_daily = (
+            weekday_source.groupby(["date_only", "day_of_week"])
+            .size()
+            .reset_index(name="daily_checkins")
+        )
+
         weekday_avg = (
-            df.assign(day_of_week=df["datetime"].dt.day_name())
-              .groupby("day_of_week")
-              .size()
-              .div(df["datetime"].dt.date.nunique())
-              .reindex([
-                  "Monday", "Tuesday", "Wednesday",
-                  "Thursday", "Friday", "Saturday", "Sunday"
-              ])
+            weekday_daily.groupby("day_of_week")["daily_checkins"]
+            .mean()
+            .reindex([
+                "Monday", "Tuesday", "Wednesday",
+                "Thursday", "Friday", "Saturday", "Sunday"
+            ])
+            .fillna(0)
         )
 
     if len(df) > 0 and len(weekday_avg) > 0:
