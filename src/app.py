@@ -996,6 +996,7 @@ if selected_view == "Live Today":
                 border-radius: 10px;
                 padding: 12px;
                 background-color: {pipeline_status_bg};
+                margin-bottom: 12px;
             ">
                 <div style="font-size: 12px; color: #6b7280; margin-bottom: 6px;">
                     Pipeline Status
