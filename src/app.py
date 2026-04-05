@@ -2894,7 +2894,7 @@ if selected_view == "Transits":
         base_rejects_df = rejects_df.copy()
         date_label = f"{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}"
 
-        base_df["destination_clean"] = base_df["d"destination_clean"].apply(normalize_transit_destination)
+        base_df["destination_clean"] = base_df["destination_clean"].apply(normalize_transit_destination)
         base_df["transit_destination"] = base_df["destination_clean"]
 
     st.caption(f"Showing: {date_label}")
