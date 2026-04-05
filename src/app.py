@@ -3150,9 +3150,11 @@ if selected_view == "Transits":
         "Westside",
         "Library Express",
     ]
-
-    if len(base_df) > 0:
+    
+    if len(base_df) > 0 and "datetime" in base_df.columns:
         base_df = base_df.copy()
+        base_df["date"] = base_df["datetime"].dt.date
+        base_df["day_of_week"] = base_df["datetime"].dt.day_name()
         base_df["destination_clean"] = base_df["destination"].astype(str).str.strip()
         base_df["transit_destination"] = base_df["destination"].apply(normalize_transit_destination)
     
@@ -3163,14 +3165,19 @@ if selected_view == "Transits":
     
         base_df["destination_clean"] = base_df["destination_report"]
     else:
-        base_df = base_df.copy()
-        base_df["destination_clean"] = pd.Series(dtype="object")
-        base_df["transit_destination"] = pd.Series(dtype="object")
-        base_df["destination_report"] = pd.Series(dtype="object")
+        base_df = pd.DataFrame({
+            "datetime": pd.Series(dtype="datetime64[ns]"),
+            "date": pd.Series(dtype="object"),
+            "day_of_week": pd.Series(dtype="object"),
+            "destination_clean": pd.Series(dtype="object"),
+            "transit_destination": pd.Series(dtype="object"),
+            "destination_report": pd.Series(dtype="object"),
+        })
     
     transit_df = base_df[
         base_df["transit_destination"].isin(valid_transit_destinations)
     ].copy()
+    
     transit_summary = get_transit_summary(base_df)
     transit_time_summary = get_transit_time_summary(transit_df)
 
