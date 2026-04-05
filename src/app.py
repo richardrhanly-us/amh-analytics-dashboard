@@ -508,43 +508,46 @@ if pipeline_status:
                 last_attempt = last_attempt.astimezone(ZoneInfo("America/Chicago"))
         except Exception:
             last_attempt = None
-
+            
 app_refreshed_str = now_ct.strftime('%b %d, %Y %I:%M %p')
 
 pipeline_last_run_str = (
-    last_attempt.strftime('%b %d, %Y %I:%M %p')
-    if last_attempt else
     last_run.strftime('%b %d, %Y %I:%M %p')
     if last_run else "N/A"
+)
+
+pipeline_last_attempt_str = (
+    last_attempt.strftime('%b %d, %Y %I:%M %p')
+    if last_attempt else "N/A"
 )
 
 pipeline_run_status = pipeline_status.get("status", "unknown") if pipeline_status else "unknown"
 
 if pipeline_run_status == "completed":
-    pipeline_status_label = "Pipeline Ran Successfully"
+    pipeline_status_label = "Pipeline Healthy"
     pipeline_status_color = "#059669"
     pipeline_status_bg = "#ecfdf5"
-    amh_status_text = "Completed"
+    pipeline_result_text = "Processed new items"
 elif pipeline_run_status == "skipped_no_source_changes":
-    pipeline_status_label = "Pipeline Ran Successfully"
+    pipeline_status_label = "Pipeline Healthy"
     pipeline_status_color = "#059669"
     pipeline_status_bg = "#ecfdf5"
-    amh_status_text = "No new items"
+    pipeline_result_text = "No new items (expected)"
 elif str(pipeline_run_status).startswith("failed"):
     pipeline_status_label = "Pipeline Failed"
     pipeline_status_color = "#dc2626"
     pipeline_status_bg = "#fef2f2"
-    amh_status_text = "Failed"
+    pipeline_result_text = "Error during run"
 elif pipeline_run_status == "started":
     pipeline_status_label = "Pipeline Running"
     pipeline_status_color = "#d97706"
     pipeline_status_bg = "#fffbeb"
-    amh_status_text = "In progress"
+    pipeline_result_text = "In progress"
 else:
     pipeline_status_label = "Pipeline Status Unknown"
     pipeline_status_color = "#6b7280"
     pipeline_status_bg = "#f9fafb"
-    amh_status_text = "Unknown"
+    pipeline_result_text = "Unknown"
 
 
 
@@ -1028,10 +1031,13 @@ if selected_view == "Live Today":
                     App Last Refreshed: {app_refreshed_str}
                 </div>
                 <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                    Pipeline Last Run: {pipeline_last_run_str}
+                    Last Successful Run: {pipeline_last_run_str}
                 </div>
                 <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                    Pipeline Result: {amh_status_text}
+                    Last Attempt: {pipeline_last_attempt_str}
+                </div>
+                <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
+                    Result: {pipeline_result_text}
                 </div>
             </div>
             """,
