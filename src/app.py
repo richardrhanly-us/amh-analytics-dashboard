@@ -241,56 +241,7 @@ def download_button(df, filename, key=None):
 def render_chart(chart):
     theme_base = st.get_option("theme.base") or "light"
 
-    if theme_base == "dark":
-        info_bg = "rgba(37, 99, 235, 0.14)"
-        info_border = "#3b82f6"
-        info_title = "#93c5fd"
-        info_text = "#dbeafe"
-    
-        success_bg = "rgba(5, 150, 105, 0.14)"
-        success_border = "#10b981"
-        success_title = "#6ee7b7"
-        success_text = "#d1fae5"
-    
-        warning_bg = "rgba(217, 119, 6, 0.14)"
-        warning_border = "#f59e0b"
-        warning_title = "#fcd34d"
-        warning_text = "#fef3c7"
-    
-        danger_bg = "rgba(220, 38, 38, 0.14)"
-        danger_border = "#ef4444"
-        danger_title = "#fca5a5"
-        danger_text = "#fee2e2"
-    
-        neutral_bg = "rgba(148, 163, 184, 0.10)"
-        neutral_border = "#64748b"
-        neutral_title = "#e5e7eb"
-        neutral_text = "#cbd5e1"
-    else:
-        info_bg = "#eff6ff"
-        info_border = "#2563eb"
-        info_title = "#1d4ed8"
-        info_text = "#1e3a8a"
-    
-        success_bg = "#ecfdf5"
-        success_border = "#059669"
-        success_title = "#047857"
-        success_text = "#065f46"
-    
-        warning_bg = "#fffbeb"
-        warning_border = "#d97706"
-        warning_title = "#92400e"
-        warning_text = "#78350f"
-    
-        danger_bg = "#fef2f2"
-        danger_border = "#dc2626"
-        danger_title = "#991b1b"
-        danger_text = "#7f1d1d"
-    
-        neutral_bg = "#f9fafb"
-        neutral_border = "#6b7280"
-        neutral_title = "#1f2937"
-        neutral_text = "#4b5563"
+
 
     if theme_base == "dark":
         axis_label_color = "#cbd5e1"
@@ -642,6 +593,57 @@ pipeline_run_status = pipeline_status.get("status", "unknown") if pipeline_statu
 status_code_text = str(pipeline_run_status)
 
 theme_base = st.get_option("theme.base") or "light"
+
+if theme_base == "dark":
+    info_bg = "rgba(37, 99, 235, 0.14)"
+    info_border = "#3b82f6"
+    info_title = "#93c5fd"
+    info_text = "#dbeafe"
+
+    success_bg = "rgba(5, 150, 105, 0.14)"
+    success_border = "#10b981"
+    success_title = "#6ee7b7"
+    success_text = "#d1fae5"
+
+    warning_bg = "rgba(217, 119, 6, 0.14)"
+    warning_border = "#f59e0b"
+    warning_title = "#fcd34d"
+    warning_text = "#fef3c7"
+
+    danger_bg = "rgba(220, 38, 38, 0.14)"
+    danger_border = "#ef4444"
+    danger_title = "#fca5a5"
+    danger_text = "#fee2e2"
+
+    neutral_bg = "rgba(148, 163, 184, 0.10)"
+    neutral_border = "#64748b"
+    neutral_title = "#e5e7eb"
+    neutral_text = "#cbd5e1"
+else:
+    info_bg = "#eff6ff"
+    info_border = "#2563eb"
+    info_title = "#1d4ed8"
+    info_text = "#1e3a8a"
+
+    success_bg = "#ecfdf5"
+    success_border = "#059669"
+    success_title = "#047857"
+    success_text = "#065f46"
+
+    warning_bg = "#fffbeb"
+    warning_border = "#d97706"
+    warning_title = "#92400e"
+    warning_text = "#78350f"
+
+    danger_bg = "#fef2f2"
+    danger_border = "#dc2626"
+    danger_title = "#991b1b"
+    danger_text = "#7f1d1d"
+
+    neutral_bg = "#f9fafb"
+    neutral_border = "#6b7280"
+    neutral_title = "#1f2937"
+    neutral_text = "#4b5563"
 
 if pipeline_run_status == "completed":
     pipeline_status_label = "Pipeline Healthy"
