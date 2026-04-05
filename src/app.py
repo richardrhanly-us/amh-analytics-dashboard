@@ -193,7 +193,33 @@ def format_hour_plain(hour_value):
         return "N/A"
 
     return pd.to_datetime(f"{int(hour_value):02d}:00").strftime("%I:%M %p")
-        
+
+
+
+def format_relative_time(dt_value, now_value):
+    if dt_value is None:
+        return "N/A"
+
+    minutes = int((now_value - dt_value).total_seconds() // 60)
+
+    if minutes < 1:
+        return "just now"
+    if minutes == 1:
+        return "1 min ago"
+    if minutes < 60:
+        return f"{minutes} min ago"
+
+    hours = minutes // 60
+    if hours == 1:
+        return "1 hr ago"
+    if hours < 24:
+        return f"{hours} hrs ago"
+
+    days = hours // 24
+    if days == 1:
+        return "1 day ago"
+    return f"{days} days ago"
+
 def download_button(df, filename, key=None):
     csv = df.to_csv(index=False).encode("utf-8")
 
@@ -486,12 +512,24 @@ last_run = None
 checkins_rows = 0
 rejects_rows = 0
 transit_items = 0
+problem_items = 0
+uploaded_checkins_rows = 0
+uploaded_rejects_rows = 0
+checkins_bad_datetime_rows = 0
+rejects_bad_datetime_rows = 0
+destination_breakdown = {}
 
 if pipeline_status:
     last_run_raw = pipeline_status.get("last_run")
     checkins_rows = pipeline_status.get("checkins_rows", 0)
     rejects_rows = pipeline_status.get("rejects_rows", 0)
     transit_items = pipeline_status.get("transit_items", 0)
+    problem_items = pipeline_status.get("problem_items", 0)
+    uploaded_checkins_rows = pipeline_status.get("uploaded_checkins_rows", 0)
+    uploaded_rejects_rows = pipeline_status.get("uploaded_rejects_rows", 0)
+    checkins_bad_datetime_rows = pipeline_status.get("checkins_bad_datetime_rows", 0)
+    rejects_bad_datetime_rows = pipeline_status.get("rejects_bad_datetime_rows", 0)
+    destination_breakdown = pipeline_status.get("destination_breakdown", {}) or {}
 
     if last_run_raw:
         try:
@@ -538,13 +576,17 @@ pipeline_last_attempt_str = (
     if last_attempt else "N/A"
 )
 
+pipeline_last_run_ago = format_relative_time(last_run, now_ct)
+pipeline_last_attempt_ago = format_relative_time(last_attempt, now_ct)
+
 pipeline_run_status = pipeline_status.get("status", "unknown") if pipeline_status else "unknown"
+status_code_text = str(pipeline_run_status)
 
 if pipeline_run_status == "completed":
     pipeline_status_label = "Pipeline Healthy"
     pipeline_status_color = "#059669"
     pipeline_status_bg = "#ecfdf5"
-    pipeline_result_text = "Processed new items"
+    pipeline_result_text = f"Processed {uploaded_checkins_rows:,} new items"
 elif pipeline_run_status == "skipped_no_source_changes":
     pipeline_status_label = "Pipeline Healthy"
     pipeline_status_color = "#059669"
@@ -567,6 +609,13 @@ else:
     pipeline_result_text = "Unknown"
 
 pipeline_expanded = pipeline_run_status not in ["completed", "skipped_no_source_changes"]
+
+if isinstance(destination_breakdown, dict) and destination_breakdown:
+    destination_breakdown_text = ", ".join(
+        [f"{k}: {int(v):,}" for k, v in destination_breakdown.items()]
+    )
+else:
+    destination_breakdown_text = "N/A"
 
 
 selected_view = st.segmented_control(
@@ -1065,20 +1114,55 @@ if selected_view == "Live Today":
                     background-color: transparent;
                     margin-bottom: 0;
                 ">
-                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 6px;">
+                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px;">
                         Pipeline Status
                     </div>
+    
                     <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
                         App Last Refreshed: {app_refreshed_str}
                     </div>
                     <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                        Last Successful Run: {pipeline_last_run_str}
+                        Last Successful Run: {pipeline_last_run_str} ({pipeline_last_run_ago})
                     </div>
-                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                        Last Attempt: {pipeline_last_attempt_str}
+                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px;">
+                        Last Attempt: {pipeline_last_attempt_str} ({pipeline_last_attempt_ago})
                     </div>
+    
                     <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
                         Result: {pipeline_result_text}
+                    </div>
+                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px;">
+                        Status Code: {status_code_text}
+                    </div>
+    
+                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
+                        Parsed Checkins: {checkins_rows:,}
+                    </div>
+                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
+                        Parsed Rejects: {rejects_rows:,}
+                    </div>
+                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
+                        Uploaded Checkins: {uploaded_checkins_rows:,}
+                    </div>
+                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px;">
+                        Uploaded Rejects: {uploaded_rejects_rows:,}
+                    </div>
+    
+                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
+                        Bad Checkin Datetimes: {checkins_bad_datetime_rows:,}
+                    </div>
+                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
+                        Bad Reject Datetimes: {rejects_bad_datetime_rows:,}
+                    </div>
+                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
+                        Transit Items: {transit_items:,}
+                    </div>
+                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px;">
+                        Problem Items: {problem_items:,}
+                    </div>
+    
+                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
+                        Destination Breakdown: {destination_breakdown_text}
                     </div>
                 </div>
                 """,
