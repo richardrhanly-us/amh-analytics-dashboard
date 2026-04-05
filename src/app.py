@@ -73,13 +73,13 @@ def render_kpi_card(
     title,
     value,
     subtitle="",
-    subtitle_color="#059669",
+    subtitle_color="var(--text-color)",
     value_font_size="2.35rem",
-    border_color="#e5e7eb",
-    value_color="#1f2937",
+    border_color="rgba(148, 163, 184, 0.28)",
+    value_color="var(--text-color)",
     value_wrap=False,
     fill_pct=None,
-    fill_color="rgba(37, 99, 235, 0.12)"
+    fill_color="rgba(59, 130, 246, 0.12)"
 ):
     value_white_space = "normal" if value_wrap else "nowrap"
     value_word_break = "break-word" if value_wrap else "normal"
@@ -115,6 +115,7 @@ def render_kpi_card(
             f'overflow:hidden;'
             f'position:relative;'
             f'z-index:2;'
+            f'opacity:0.82;'
             f'">{subtitle}</div>'
         )
 
@@ -122,10 +123,10 @@ def render_kpi_card(
         f'<div style="'
         f'position:relative;'
         f'overflow:hidden;'
-        f'border:2px solid {border_color};'
+        f'border:1px solid {border_color};'
         f'border-radius:12px;'
         f'padding:18px 20px;'
-        f'background-color:white;'
+        f'background: var(--secondary-background-color);'
         f'min-height:185px;'
         f'height:185px;'
         f'display:flex;'
@@ -133,15 +134,17 @@ def render_kpi_card(
         f'justify-content:center;'
         f'align-items:center;'
         f'text-align:center;'
+        f'box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);'
         f'">'
         f'{fill_html}'
         f'<div style="'
         f'font-size:1.08rem;'
         f'font-weight:600;'
-        f'color:#4b5563;'
+        f'color: var(--text-color);'
         f'margin-bottom:10px;'
         f'position:relative;'
         f'z-index:2;'
+        f'opacity:0.80;'
         f'">{title}</div>'
         f'<div style="'
         f'font-size:{value_font_size};'
