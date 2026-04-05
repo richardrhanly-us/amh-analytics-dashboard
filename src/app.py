@@ -982,6 +982,11 @@ if selected_view == "Live Today":
                 """,
                 unsafe_allow_html=True
             )
+
+        if st.button("Refresh Live Data"):
+            st.cache_data.clear()
+            st.success("Live data cache cleared. Reloading latest available files...")
+            st.rerun()
     
     with col2:
         st.markdown(
@@ -1011,11 +1016,6 @@ if selected_view == "Live Today":
             """,
             unsafe_allow_html=True
         )
-
-    if st.button("Refresh Live Data"):
-        st.cache_data.clear()
-        st.success("Live data cache cleared. Reloading latest available files...")
-        st.rerun()
 
     
     # =============================
