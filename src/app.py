@@ -2219,40 +2219,42 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
         else:
             st.info("No throughput data available for the selected date range.")
 
-
     with st.expander("Today vs Typical Hourly Pattern", expanded=False):
-
+    
         if "datetime" in df_live_raw.columns:
             today_df_report = df_live_raw[df_live_raw["datetime"].dt.date == today].copy()
         else:
-            today_df_report = pd.DataFrame(columns=df_live_raw.columns)
-        
+            today_df_report = pd.DataFrame()
+    
         if "datetime" in df_history_raw.columns:
             historical_df_report = df_history_raw[df_history_raw["datetime"].dt.date < today].copy()
         else:
-            historical_df_report = pd.DataFrame(columns=df_history_raw.columns)
-
-        today_hourly = today_df_report["datetime"].dt.hour.value_counts().sort_index()
-
-        if len(historical_df_report) > 0 and historical_df_report["datetime"].dt.date.nunique() > 0:
+            historical_df_report = pd.DataFrame()
+    
+        if "datetime" in today_df_report.columns and len(today_df_report) > 0:
+            today_hourly = today_df_report["datetime"].dt.hour.value_counts().sort_index()
+        else:
+            today_hourly = pd.Series(dtype=float)
+    
+        if "datetime" in historical_df_report.columns and len(historical_df_report) > 0 and historical_df_report["datetime"].dt.date.nunique() > 0:
             typical_hourly = (
                 historical_df_report.groupby(historical_df_report["datetime"].dt.hour).size()
                 / historical_df_report["datetime"].dt.date.nunique()
             )
         else:
             typical_hourly = pd.Series(dtype=float)
-
+    
         all_hours = sorted(set(today_hourly.index).union(set(typical_hourly.index)))
-
+    
         compare_df = pd.DataFrame({"hour": all_hours})
         compare_df["today"] = compare_df["hour"].map(today_hourly).fillna(0)
         compare_df["typical"] = compare_df["hour"].map(typical_hourly).fillna(0).round(1)
         compare_df["delta"] = compare_df["today"] - compare_df["typical"]
         compare_df["hour_label"] = compare_df["hour"].apply(format_hour_plain)
-
+    
         if len(compare_df) > 0:
             max_delta_row = compare_df.loc[compare_df["delta"].idxmax()]
-
+    
             st.markdown(
                 f"""
                 <div style="
@@ -2274,19 +2276,19 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
                 """,
                 unsafe_allow_html=True
             )
-
+    
             compare_df = compare_df[(compare_df["hour"] >= 7) & (compare_df["hour"] <= 20)].copy()
-
+    
             compare_long = compare_df.melt(
                 id_vars=["hour", "hour_label"],
                 value_vars=["today", "typical"],
                 var_name="series",
                 value_name="items"
             )
-
+    
             compare_chart = build_hourly_line_chart(compare_long, "items", "Items", series_col="series")
             render_chart(compare_chart)
-
+    
             display_df = compare_df[["hour_label", "today", "typical", "delta"]].rename(
                 columns={"hour_label": "hour"}
             )
@@ -2294,6 +2296,7 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
             download_button(display_df, "today_vs_typical_hourly_pattern.csv")
         else:
             st.info("Not enough data available to compare today versus the typical hourly pattern.")
+
 
     
     # -----------------------------
