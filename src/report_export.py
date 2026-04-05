@@ -151,17 +151,6 @@ def build_director_report_data(
 def render_director_report_html(report_data: Dict[str, Any]) -> str:
     labor_value_html = ""
     if report_data.get("labor_value_saved") is not None:
-        labor_value_html = f"""
-        <div class="section">
-            <h2>Estimated Labor Value</h2>
-            <div class="info-box">
-                <div class="info-value">${report_data['labor_value_saved']:,.0f}</div>
-                <div class="info-sub">Estimated staff time avoided during this period</div>
-            </div>
-        </div>
-        """
-
-
 
         labor_value_method_html = ""
         if (
@@ -459,9 +448,11 @@ def render_director_report_html(report_data: Dict[str, Any]) -> str:
                     </div>
 
                     <div class="kpi-card">
-                        <div class="kpi-label">Busiest Day of Week</div>
-                        <div class="kpi-value" style="font-size:16px;">{report_data['busiest_weekday_avg']}</div>
-                        <div class="kpi-sub">Highest average daily volume</div>
+                        <div class="kpi-label">Estimated Labor Value</div>
+                        <div class="kpi-value">
+                            ${report_data['labor_value_saved']:,.0f}
+                        </div>
+                        <div class="kpi-sub">Estimated staff time avoided</div>
                     </div>
                 </div>
             </div>
