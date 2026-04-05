@@ -758,7 +758,7 @@ today_reject_rate = today_metrics["today_reject_rate"]
 historical_checkins_df = df_history_raw[df_history_raw["datetime"].dt.date < today].copy()
 
 if len(historical_checkins_df) > 0:
-    historical_checkins_df["destination_clean"] = historical_checkins_df[""destination_clean"].apply(normalize_transit_destination)
+    historical_checkins_df["destination_clean"] = historical_checkins_df["destination_clean"].apply(normalize_transit_destination)
 
     historical_westside_pct = (
         (historical_checkins_df["destination_clean"] == "Westside").sum()
@@ -2937,7 +2937,7 @@ if selected_view == "Transits":
     library_express_pct = (library_express_count / len(base_df) * 100) if len(base_df) > 0 else 0
 
     no_agency_dest_count = int(
-        base_df[""destination_clean"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False).sum()
+        base_df["destination_clean"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False).sum()
     )
 
     peak_transit_day = get_peak_transit_day_summary(transit_df, weekday_order)
@@ -3060,10 +3060,10 @@ if selected_view == "Transits":
                 base_df[base_df["transit_destination"] == "Library Express"]["datetime"].dt.date
             ).size()
             daily_no_agency = base_df[
-                base_df[""destination_clean"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False)
+                base_df["destination_clean"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False)
             ].groupby(
                 base_df[
-                    base_df[""destination_clean"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False)
+                    base_df["destination_clean"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False)
                 ]["datetime"].dt.date
             ).size()
 
@@ -3321,7 +3321,7 @@ if selected_view == "Transits":
         st.subheader('"No Agency Destination" Deep Dive')
         st.caption("Looks at items that failed routing to highlight system or configuration issues.")
         no_agency_df = base_df[
-            base_df[""destination_clean"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False)
+            base_df["destination_clean"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False)
         ].copy()
 
         if len(no_agency_df) > 0:
@@ -3423,7 +3423,7 @@ if selected_view == "Transits":
 
             current_days = max(1, base_df["datetime"].dt.date.nunique())
 
-            historical_df["transit_destination"] = historical_df[""destination_clean"].apply(normalize_transit_destination)
+            historical_df["transit_destination"] = historical_df["destination_clean"].apply(normalize_transit_destination)
             historical_transit_df = historical_df[
                 historical_df["transit_destination"].isin(valid_transit_destinations)
             ].copy()
