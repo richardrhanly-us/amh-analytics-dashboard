@@ -970,36 +970,36 @@ if selected_view == "Live Today":
         st.header(f"{today.strftime('%A, %b %d')}")
     
     with col2:
-        st.markdown(
-            f"""
-            <div style="
-                border: 1px solid #e5e7eb;
-                border-radius: 10px;
-                padding: 12px;
-                background-color: #f9fafb;
-            ">
-                <div style="font-size: 12px; color: #6b7280;">Pipeline Status</div>
-                <div style="font-size: 16px; font-weight: 700; color: {pipeline_status_color};">
-                    ● {pipeline_status_label}
-                </div>
-                <div style="font-size: 12px; color: #6b7280;">
-                    Last Update: {checkins_updated.strftime('%I:%M %p') if checkins_updated else "N/A"}
-                </div>
-                
-                <div style="font-size: 12px; color: #6b7280;">
-                    Last Update: {checkins_updated.strftime('%I:%M %p') if checkins_updated else "N/A"}
-                </div>
-                
-                <div style="font-size: 12px; color: #6b7280;">
-                    New Items (1 hr): {today_metrics['current_speed']}
-                </div>
-                <div style="font-size: 12px; color: #6b7280;">
-                    AMH Status: {amh_status_text}
-                </div>
+    st.markdown(
+        f"""
+        <div style="
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 12px;
+            background-color: {pipeline_status_bg};
+        ">
+            <div style="font-size: 12px; color: #6b7280; margin-bottom: 6px;">
+                Pipeline Status
             </div>
-            """,
-            unsafe_allow_html=True
-        )
+            <div style="font-size: 16px; font-weight: 700; color: {pipeline_status_color}; margin-bottom: 8px;">
+                ● {pipeline_status_label}
+            </div>
+            <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
+                Last Update: {checkins_updated.strftime('%I:%M %p') if checkins_updated else "N/A"}
+            </div>
+            <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
+                Last Pipeline Run: {last_run.strftime('%I:%M %p') if last_run else "N/A"}
+            </div>
+            <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
+                New Items (1 hr): {today_metrics['current_speed']}
+            </div>
+            <div style="font-size: 12px; color: #6b7280;">
+                AMH Status: {amh_status_text}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
     if checkins_updated is not None:
         st.markdown(
@@ -1244,39 +1244,6 @@ if selected_view == "Live Today":
             [f"{row['hour_label']} — {int(row['checkins']):,} items" for _, row in peak_hours_df.iterrows()]
         )
 
-    st.markdown(
-        f"""
-        <div style="
-            border: 1px solid #e5e7eb;
-            border-radius: 10px;
-            padding: 12px;
-            background-color: {pipeline_status_bg};
-        ">
-            <div style="font-size: 12px; color: #6b7280;">Pipeline Status</div>
-    
-            <div style="font-size: 16px; font-weight: 700; color: {pipeline_status_color};">
-                ● {pipeline_status_label}
-            </div>
-    
-            <div style="font-size: 12px; color: #6b7280;">
-                Last Update: {checkins_updated.strftime('%I:%M %p') if checkins_updated else "N/A"}
-            </div>
-    
-            <div style="font-size: 12px; color: #6b7280;">
-                Last Pipeline Run: {last_run.strftime('%I:%M %p') if last_run else "N/A"}
-            </div>
-    
-            <div style="font-size: 12px; color: #6b7280;">
-                New Items (1 hr): {today_metrics.get('current_speed', 0)}
-            </div>
-    
-            <div style="font-size: 12px; color: #6b7280;">
-                AMH Status: {amh_status_text}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
 
     if show_live_alert:
         st.markdown(
