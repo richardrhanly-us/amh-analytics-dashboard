@@ -3591,16 +3591,25 @@ if selected_view == "Transits":
         st.caption("Compares recent data against historical data to detect anomalous activity.")
 
         historical_df = df_history_raw[df_history_raw["datetime"].dt.date < today].copy()
-
+        
         if len(base_df) > 0 and len(historical_df) > 0:
             current_total_transit = len(transit_df)
             current_total_items = len(base_df)
             current_ws_pct = westside_pct
             current_le_pct = library_express_pct
-
+        
             current_days = max(1, base_df["datetime"].dt.date.nunique())
-
+        
+            historical_df["destination_clean"] = historical_df["destination"].astype(str).str.strip()
             historical_df["transit_destination"] = historical_df["destination_clean"].apply(normalize_transit_destination)
+        
+            historical_df["destination_report"] = historical_df["destination_clean"].copy()
+            historical_df.loc[historical_df["destination_report"] == "1", "destination_report"] = "Main"
+            historical_df.loc[historical_df["transit_destination"] == "Westside", "destination_report"] = "Westside"
+            historical_df.loc[historical_df["transit_destination"] == "Library Express", "destination_report"] = "Library Express"
+        
+            historical_df["destination_clean"] = historical_df["destination_report"]
+        
             historical_transit_df = historical_df[
                 historical_df["transit_destination"].isin(valid_transit_destinations)
             ].copy()
