@@ -1691,12 +1691,12 @@ if selected_view == "Overview":
     daily_counts = df["datetime"].dt.date.value_counts().sort_index()
     avg_daily_checkins = daily_counts.mean() if len(daily_counts) > 0 else 0
 
-overview_volume_mode = st.radio(
-    "Volume display",
-    ["Average per Day", "Total"],
-    horizontal=True,
-    key="overview_volume_mode"
-)
+    overview_volume_mode = st.radio(
+        "Volume display",
+        ["Average per Day", "Total"],
+        horizontal=True,
+        key="overview_volume_mode"
+    )
 
     days_in_range = df["datetime"].dt.date.nunique() if len(df) > 0 else 0
 
@@ -1833,44 +1833,44 @@ overview_volume_mode = st.radio(
         peak_day_avg_subtitle = f"{weekday_avg.max():,.1f} avg checkins/day"
 
 
-overview_avg_hours_saved = 0.0
-overview_total_hours_saved = 0.0
-overview_labor_value_saved = 0.0
-
-MANUAL_RATE_OVERVIEW = 45
-HOURLY_COST_OVERVIEW = 18.0
-
-if len(df) > 0:
-    labor_df = df.copy()
-    labor_df["date"] = labor_df["datetime"].dt.date
-    labor_df["hour"] = labor_df["datetime"].dt.hour
-
-    labor_daily_hourly = (
-        labor_df.groupby(["date", "hour"])
-        .size()
-        .reset_index(name="checkins")
-    )
-
-    labor_avg_hourly = (
-        labor_daily_hourly.groupby("hour")["checkins"]
-        .mean()
-        .reset_index(name="avg_items_per_hour")
-    )
-
-    if len(labor_avg_hourly) > 0:
-        labor_peak_row = labor_avg_hourly.loc[labor_avg_hourly["avg_items_per_hour"].idxmax()]
-        labor_threshold = labor_peak_row["avg_items_per_hour"] * 0.75
-        labor_peak_hours = labor_avg_hourly[
-            labor_avg_hourly["avg_items_per_hour"] >= labor_threshold
-        ].copy()
-
-        amh_rate_overview = (
-            labor_peak_hours["avg_items_per_hour"].mean()
-            if len(labor_peak_hours) > 0
-            else labor_peak_row["avg_items_per_hour"]
+    overview_avg_hours_saved = 0.0
+    overview_total_hours_saved = 0.0
+    overview_labor_value_saved = 0.0
+    
+    MANUAL_RATE_OVERVIEW = 45
+    HOURLY_COST_OVERVIEW = 18.0
+    
+    if len(df) > 0:
+        labor_df = df.copy()
+        labor_df["date"] = labor_df["datetime"].dt.date
+        labor_df["hour"] = labor_df["datetime"].dt.hour
+    
+        labor_daily_hourly = (
+            labor_df.groupby(["date", "hour"])
+            .size()
+            .reset_index(name="checkins")
         )
-    else:
-        amh_rate_overview = 130.0
+    
+        labor_avg_hourly = (
+            labor_daily_hourly.groupby("hour")["checkins"]
+            .mean()
+            .reset_index(name="avg_items_per_hour")
+        )
+    
+        if len(labor_avg_hourly) > 0:
+            labor_peak_row = labor_avg_hourly.loc[labor_avg_hourly["avg_items_per_hour"].idxmax()]
+            labor_threshold = labor_peak_row["avg_items_per_hour"] * 0.75
+            labor_peak_hours = labor_avg_hourly[
+                labor_avg_hourly["avg_items_per_hour"] >= labor_threshold
+            ].copy()
+    
+            amh_rate_overview = (
+                labor_peak_hours["avg_items_per_hour"].mean()
+                if len(labor_peak_hours) > 0
+                else labor_peak_row["avg_items_per_hour"]
+            )
+        else:
+            amh_rate_overview = 130.0
 
     labor_daily_counts = df["datetime"].dt.date.value_counts().sort_index()
     labor_staff_df = labor_daily_counts.reset_index()
