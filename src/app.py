@@ -590,30 +590,32 @@ pipeline_last_attempt_ago = format_relative_time(last_attempt, now_ct)
 pipeline_run_status = pipeline_status.get("status", "unknown") if pipeline_status else "unknown"
 status_code_text = str(pipeline_run_status)
 
+theme_base = st.get_option("theme.base") or "light"
+
 if pipeline_run_status == "completed":
     pipeline_status_label = "Pipeline Healthy"
     pipeline_status_color = "#059669"
-    pipeline_status_bg = "#ecfdf5"
+    pipeline_status_bg = "rgba(5, 150, 105, 0.14)" if theme_base == "dark" else "#ecfdf5"
     pipeline_result_text = f"Processed {uploaded_checkins_rows:,} new items"
 elif pipeline_run_status == "skipped_no_source_changes":
     pipeline_status_label = "Pipeline Healthy"
     pipeline_status_color = "#059669"
-    pipeline_status_bg = "#ecfdf5"
+    pipeline_status_bg = "rgba(5, 150, 105, 0.14)" if theme_base == "dark" else "#ecfdf5"
     pipeline_result_text = "No new items (expected)"
 elif str(pipeline_run_status).startswith("failed"):
     pipeline_status_label = "Pipeline Failed"
     pipeline_status_color = "#dc2626"
-    pipeline_status_bg = "#fef2f2"
+    pipeline_status_bg = "rgba(220, 38, 38, 0.14)" if theme_base == "dark" else "#fef2f2"
     pipeline_result_text = "Error during run"
 elif pipeline_run_status == "started":
     pipeline_status_label = "Pipeline Running"
     pipeline_status_color = "#d97706"
-    pipeline_status_bg = "#fffbeb"
+    pipeline_status_bg = "rgba(217, 119, 6, 0.14)" if theme_base == "dark" else "#fffbeb"
     pipeline_result_text = "In progress"
 else:
     pipeline_status_label = "Pipeline Status Unknown"
-    pipeline_status_color = "#6b7280"
-    pipeline_status_bg = "#f9fafb"
+    pipeline_status_color = "#94a3b8" if theme_base == "dark" else "#6b7280"
+    pipeline_status_bg = "rgba(148, 163, 184, 0.12)" if theme_base == "dark" else "#f9fafb"
     pipeline_result_text = "Unknown"
 
 pipeline_expanded = pipeline_run_status not in ["completed", "skipped_no_source_changes"]
