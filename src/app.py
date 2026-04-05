@@ -3151,10 +3151,26 @@ if selected_view == "Transits":
         "Library Express",
     ]
 
+    if len(base_df) > 0:
+        base_df = base_df.copy()
+        base_df["destination_clean"] = base_df["destination"].astype(str).str.strip()
+        base_df["transit_destination"] = base_df["destination"].apply(normalize_transit_destination)
+    
+        base_df["destination_report"] = base_df["destination_clean"].copy()
+        base_df.loc[base_df["destination_report"] == "1", "destination_report"] = "Main"
+        base_df.loc[base_df["transit_destination"] == "Westside", "destination_report"] = "Westside"
+        base_df.loc[base_df["transit_destination"] == "Library Express", "destination_report"] = "Library Express"
+    
+        base_df["destination_clean"] = base_df["destination_report"]
+    else:
+        base_df = base_df.copy()
+        base_df["destination_clean"] = pd.Series(dtype="object")
+        base_df["transit_destination"] = pd.Series(dtype="object")
+        base_df["destination_report"] = pd.Series(dtype="object")
+    
     transit_df = base_df[
         base_df["transit_destination"].isin(valid_transit_destinations)
     ].copy()
-
     transit_summary = get_transit_summary(base_df)
     transit_time_summary = get_transit_time_summary(transit_df)
 
