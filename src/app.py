@@ -454,11 +454,63 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+pipeline_status_label = "Unknown"
+pipeline_status_color = "#6b7280"
+pipeline_status_bg = "#f9fafb"
+amh_status_text = "Unknown"
+
+last_run = None
+checkins_rows = 0
+rejects_rows = 0
+transit_items = 0
+
 if pipeline_status:
-    last_run = pipeline_status.get("last_run", "Unknown")
+    last_run_raw = pipeline_status.get("last_run")
     checkins_rows = pipeline_status.get("checkins_rows", 0)
     rejects_rows = pipeline_status.get("rejects_rows", 0)
     transit_items = pipeline_status.get("transit_items", 0)
+
+    if last_run_raw:
+        try:
+            last_run = datetime.fromisoformat(last_run_raw)
+            if last_run.tzinfo is None:
+                last_run = last_run.replace(tzinfo=ZoneInfo("America/Chicago"))
+            else:
+                last_run = last_run.astimezone(ZoneInfo("America/Chicago"))
+        except Exception:
+            last_run = None
+
+now_ct = datetime.now(ZoneInfo("America/Chicago"))
+
+minutes_since_update = None
+if checkins_updated is not None:
+    minutes_since_update = (now_ct - checkins_updated).total_seconds() / 60
+
+minutes_since_run = None
+if last_run is not None:
+    minutes_since_run = (now_ct - last_run).total_seconds() / 60
+
+if checkins_updated is None:
+    pipeline_status_label = "No Live Data"
+    pipeline_status_color = "#dc2626"
+    pipeline_status_bg = "#fef2f2"
+    amh_status_text = "Offline / No feed"
+elif minutes_since_update is not None and minutes_since_update > 30:
+    pipeline_status_label = "Stale"
+    pipeline_status_color = "#d97706"
+    pipeline_status_bg = "#fffbeb"
+    amh_status_text = "No recent updates"
+else:
+    pipeline_status_label = "Live"
+    pipeline_status_color = "#059669"
+    pipeline_status_bg = "#ecfdf5"
+    amh_status_text = "Online"
+
+if minutes_since_run is not None and minutes_since_run > 60 and minutes_since_update is not None and minutes_since_update > 30:
+    pipeline_status_label = "Pipeline Delayed"
+    pipeline_status_color = "#dc2626"
+    pipeline_status_bg = "#fef2f2"
+    amh_status_text = "Check scheduler"
 
 
 
@@ -927,17 +979,22 @@ if selected_view == "Live Today":
                 background-color: #f9fafb;
             ">
                 <div style="font-size: 12px; color: #6b7280;">Pipeline Status</div>
-                <div style="font-size: 16px; font-weight: 600; color: #059669;">
-                    ● Live
+                <div style="font-size: 16px; font-weight: 700; color: {pipeline_status_color};">
+                    ● {pipeline_status_label}
                 </div>
                 <div style="font-size: 12px; color: #6b7280;">
                     Last Update: {checkins_updated.strftime('%I:%M %p') if checkins_updated else "N/A"}
                 </div>
+                
+                <div style="font-size: 12px; color: #6b7280;">
+                    Last Update: {checkins_updated.strftime('%I:%M %p') if checkins_updated else "N/A"}
+                </div>
+                
                 <div style="font-size: 12px; color: #6b7280;">
                     New Items (1 hr): {today_metrics['current_speed']}
                 </div>
                 <div style="font-size: 12px; color: #6b7280;">
-                    AMH Status: Online
+                    AMH Status: {amh_status_text}
                 </div>
             </div>
             """,
@@ -1191,7 +1248,7 @@ if selected_view == "Live Today":
             f"""
             <div style="
                 border-left: 4px solid #2563eb;
-                background-color: #f9fafb;
+                background-color: {pipeline_status_bg};
                 padding: 14px 16px;
                 border-radius: 8px;
                 margin-top: 0px;
