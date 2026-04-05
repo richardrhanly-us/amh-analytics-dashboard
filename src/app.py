@@ -23,7 +23,7 @@ from transit_logic import *
 
 st.set_page_config(
     page_title="SortView",
-    page_icon="📊",
+    page_icon="📚",
     layout="wide"
 )
 
