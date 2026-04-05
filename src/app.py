@@ -1030,23 +1030,39 @@ if selected_view == "Live Today":
             st.rerun()
     
     with col2:
-        expander_label = f"● {pipeline_status_label}"
+        expander_label = f"{pipeline_status_label}"
+    
+        st.markdown(
+            f"""
+            <style>
+            div[data-testid="stExpander"] details {{
+                border: 1px solid #e5e7eb;
+                border-radius: 10px;
+                background-color: {pipeline_status_bg};
+                overflow: hidden;
+            }}
+    
+            div[data-testid="stExpander"] summary {{
+                font-weight: 700;
+                color: {pipeline_status_color};
+            }}
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
     
         with st.expander(expander_label, expanded=pipeline_expanded):
             st.markdown(
                 f"""
                 <div style="
-                    border: 1px solid #e5e7eb;
+                    border: 0;
                     border-radius: 10px;
-                    padding: 12px;
-                    background-color: {pipeline_status_bg};
-                    margin-bottom: 4px;
+                    padding: 4px 2px 2px 2px;
+                    background-color: transparent;
+                    margin-bottom: 0;
                 ">
                     <div style="font-size: 12px; color: #6b7280; margin-bottom: 6px;">
                         Pipeline Status
-                    </div>
-                    <div style="font-size: 16px; font-weight: 700; color: {pipeline_status_color}; margin-bottom: 8px;">
-                        {pipeline_status_label}
                     </div>
                     <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
                         App Last Refreshed: {app_refreshed_str}
