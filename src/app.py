@@ -590,6 +590,13 @@ rejects_df["day_of_week"] = rejects_df["datetime"].dt.day_name()
 df["destination_clean"] = df["destination"].astype(str).str.strip()
 df["transit_destination"] = df["destination"].apply(normalize_transit_destination)
 
+df["destination_report"] = df["destination_clean"].copy()
+df.loc[df["destination_report"] == "1", "destination_report"] = "Main"
+df.loc[df["transit_destination"] == "Westside", "destination_report"] = "Westside"
+df.loc[df["transit_destination"] == "Library Express", "destination_report"] = "Library Express"
+
+df["destination_clean"] = df["destination_report"]
+
 valid_transit_destinations = [
     "Westside",
     "Library Express",
@@ -2269,7 +2276,7 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
     with st.expander("Destination Breakdown", expanded=False):
         
         destination_counts = (
-            df["destination_clean"]
+            df["destination_report"]
             .value_counts()
             .reset_index()
         )
@@ -2894,9 +2901,16 @@ if selected_view == "Transits":
         base_df = df.copy()
         base_rejects_df = rejects_df.copy()
         date_label = f"{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}"
-
-        base_df["destination_clean"] = base_df["destination"].apply(normalize_transit_destination)
-        base_df["transit_destination"] = base_df["destination_clean"]
+        
+        base_df["destination_clean"] = base_df["destination"].astype(str).str.strip()
+        base_df["transit_destination"] = base_df["destination"].apply(normalize_transit_destination)
+        
+        base_df["destination_report"] = base_df["destination_clean"].copy()
+        base_df.loc[base_df["destination_report"] == "1", "destination_report"] = "Main"
+        base_df.loc[base_df["transit_destination"] == "Westside", "destination_report"] = "Westside"
+        base_df.loc[base_df["transit_destination"] == "Library Express", "destination_report"] = "Library Express"
+        
+        base_df["destination_clean"] = base_df["destination_report"]
 
     st.caption(f"Showing: {date_label}")
 
