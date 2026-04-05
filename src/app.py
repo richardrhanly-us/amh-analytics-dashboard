@@ -1105,69 +1105,43 @@ if selected_view == "Live Today":
         )
     
         with st.expander(expander_label, expanded=pipeline_expanded):
+            st.caption("Pipeline Status")
+    
             st.markdown(
                 f"""
-                <div style="
-                    border: 0;
-                    border-radius: 10px;
-                    padding: 4px 2px 2px 2px;
-                    background-color: transparent;
-                    margin-bottom: 0;
-                ">
-                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px;">
-                        Pipeline Status
-                    </div>
-    
-                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                        App Last Refreshed: {app_refreshed_str}
-                    </div>
-                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                        Last Successful Run: {pipeline_last_run_str} ({pipeline_last_run_ago})
-                    </div>
-                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px;">
-                        Last Attempt: {pipeline_last_attempt_str} ({pipeline_last_attempt_ago})
-                    </div>
-    
-                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                        Result: {pipeline_result_text}
-                    </div>
-                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px;">
-                        Status Code: {status_code_text}
-                    </div>
-    
-                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                        Parsed Checkins: {checkins_rows:,}
-                    </div>
-                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                        Parsed Rejects: {rejects_rows:,}
-                    </div>
-                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                        Uploaded Checkins: {uploaded_checkins_rows:,}
-                    </div>
-                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px;">
-                        Uploaded Rejects: {uploaded_rejects_rows:,}
-                    </div>
-    
-                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                        Bad Checkin Datetimes: {checkins_bad_datetime_rows:,}
-                    </div>
-                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                        Bad Reject Datetimes: {rejects_bad_datetime_rows:,}
-                    </div>
-                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                        Transit Items: {transit_items:,}
-                    </div>
-                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px;">
-                        Problem Items: {problem_items:,}
-                    </div>
-    
-                    <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                        Destination Breakdown: {destination_breakdown_text}
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
+    App Last Refreshed: {app_refreshed_str}  
+    Last Successful Run: {pipeline_last_run_str} ({pipeline_last_run_ago})  
+    Last Attempt: {pipeline_last_attempt_str} ({pipeline_last_attempt_ago})  
+    Result: {pipeline_result_text}  
+    Status Code: `{status_code_text}`
+                """
             )
+    
+            st.markdown("##### Run Summary")
+            s1, s2 = st.columns(2)
+    
+            with s1:
+                st.markdown(
+                    f"""
+    Parsed Checkins: {checkins_rows:,}  
+    Parsed Rejects: {rejects_rows:,}  
+    Uploaded Checkins: {uploaded_checkins_rows:,}  
+    Uploaded Rejects: {uploaded_rejects_rows:,}
+                    """
+                )
+    
+            with s2:
+                st.markdown(
+                    f"""
+    Bad Checkin Datetimes: {checkins_bad_datetime_rows:,}  
+    Bad Reject Datetimes: {rejects_bad_datetime_rows:,}  
+    Transit Items: {transit_items:,}  
+    Problem Items: {problem_items:,}
+                    """
+                )
+    
+            st.markdown("##### Destination Breakdown")
+            st.caption(destination_breakdown_text)
 
     
     # =============================
