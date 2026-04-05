@@ -785,8 +785,15 @@ else:
 today_westside_pct = (today_westside / today_checkins * 100) if today_checkins > 0 else 0
 today_library_express_pct = (today_library_express / today_checkins * 100) if today_checkins > 0 else 0
 
-today_hourly_checkins = today_df["datetime"].dt.hour.value_counts().sort_index()
-today_hourly_rejects = today_rejects_df["datetime"].dt.hour.value_counts().sort_index()
+if "datetime" in today_df.columns:
+    today_hourly_checkins = today_df["datetime"].dt.hour.value_counts().sort_index()
+else:
+    today_hourly_checkins = pd.Series(dtype=int)
+
+if "datetime" in today_rejects_df.columns:
+    today_hourly_rejects = today_rejects_df["datetime"].dt.hour.value_counts().sort_index()
+else:
+    today_hourly_rejects = pd.Series(dtype=int)
 
 today_bin0_count = 0
 if "bin" in today_df.columns:
