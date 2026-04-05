@@ -2115,34 +2115,37 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
     with st.expander("Throughput", expanded=False):
         st.caption("Shows average checkins per hour per day across the selected date range, so multi-day ranges do not overstate throughput.")
 
-        if len(df) > 0:
-            throughput_df = df.copy()
-            throughput_df["date"] = throughput_df["datetime"].dt.date
-            throughput_df["hour"] = throughput_df["datetime"].dt.hour
 
-            daily_hourly = (
-                throughput_df.groupby(["date", "hour"])
-                .size()
-                .reset_index(name="checkins")
-            )
-
-            avg_hourly = (
-                daily_hourly.groupby("hour")["checkins"]
-                .mean()
-                .reset_index(name="avg_items_per_hour")
-            )
-
-            avg_hourly["hour_label"] = avg_hourly["hour"].apply(format_hour_plain)
-
-            peak_row = avg_hourly.loc[avg_hourly["avg_items_per_hour"].idxmax()]
-            avg_items_per_hour = avg_hourly["avg_items_per_hour"].mean()
-
-            peak_threshold = peak_row["avg_items_per_hour"] * 0.75
-            peak_hours_df = avg_hourly[avg_hourly["avg_items_per_hour"] >= peak_threshold].copy()
-            peak_times_avg = peak_hours_df["avg_items_per_hour"].mean() if len(peak_hours_df) > 0 else 0
-
-            days_in_range = throughput_df["date"].nunique()
-
+        display_df = avg_hourly.rename(columns={
+            "hour_label": "Hour",
+            "avg_items_per_hour": "Avg Checkins Per Hour"
+        })[["Hour", "Avg Checkins Per Hour"]]
+        
+        st.dataframe(display_df, use_container_width=True)
+        download_button(display_df, "throughput_report.csv")
+        
+        st.subheader("Average Checkins per Day by Weekday")
+        
+        weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        
+        weekday_daily = (
+            throughput_df.groupby(["date", throughput_df["datetime"].dt.day_name()])
+            .size()
+            .reset_index(name="daily_checkins")
+        )
+        weekday_daily.columns = ["date", "day_of_week", "daily_checkins"]
+        
+        weekday_avg = (
+            weekday_daily.groupby("day_of_week")["daily_checkins"]
+            .mean()
+            .reindex(weekday_order)
+            .fillna(0)
+            .reset_index(name="avg_checkins_per_day")
+        )
+        
+        if len(weekday_avg) > 0:
+            busiest_weekday_row = weekday_avg.loc[weekday_avg["avg_checkins_per_day"].idxmax()]
+        
             st.markdown(
                 f"""
                 <div style="
@@ -2157,60 +2160,33 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
                         Report Summary
                     </div>
                     <div style="color: #4b5563; line-height: 1.4;">
-                        Based on {days_in_range} day(s) in the selected range, the busiest average hour was {peak_row["hour_label"]}
-                        at {peak_row["avg_items_per_hour"]:,.1f} checkins per day.
-                        Average checkins per active hour: {avg_items_per_hour:,.1f}.
-                        Average during busiest hours: {peak_times_avg:,.1f}.
+                        Busiest average weekday: {busiest_weekday_row["day_of_week"]} at
+                        {busiest_weekday_row["avg_checkins_per_day"]:,.1f} checkins per day.
                     </div>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
-
-            k1, k2, k3 = st.columns(3)
-
-            with k1:
-                render_kpi_card(
-                    "Avg Checkins / Hour",
-                    f"{avg_items_per_hour:,.1f}",
-                    "Average per hour per day",
-                    "#6b7280",
-                    value_font_size="1.6rem"
-                )
-
-            with k2:
-                render_kpi_card(
-                    "Peak Hours Avg",
-                    f"{peak_times_avg:,.1f}",
-                    "Average during busiest hours",
-                    "#6b7280",
-                    value_font_size="1.6rem"
-                )
-
-            with k3:
-                render_kpi_card(
-                    "Days in Range",
-                    f"{days_in_range}",
-                    "Days used in this average",
-                    "#6b7280",
-                    value_font_size="1.6rem"
-                )
-
-            avg_hourly = avg_hourly[(avg_hourly["hour"] >= 7) & (avg_hourly["hour"] <= 20)].copy()
-            throughput_chart = build_hourly_bar_chart(
-                avg_hourly.rename(columns={"avg_items_per_hour": "items_per_hour"}),
-                "items_per_hour",
-                "Avg Checkins Per Hour"
+        
+            weekday_chart = build_category_bar_chart(
+                weekday_avg,
+                "day_of_week",
+                "avg_checkins_per_day",
+                "Avg Checkins Per Day",
+                "Day of Week"
             )
-            render_chart(throughput_chart)
+            render_chart(weekday_chart)
+        
+            weekday_display = weekday_avg.rename(columns={
+                "day_of_week": "Day of Week",
+                "avg_checkins_per_day": "Avg Checkins Per Day"
+            })[["Day of Week", "Avg Checkins Per Day"]]
+        
+            weekday_display["Avg Checkins Per Day"] = weekday_display["Avg Checkins Per Day"].round(1)
+        
+            st.dataframe(weekday_display, use_container_width=True)
+            download_button(weekday_display, "throughput_by_weekday_report.csv")
 
-            display_df = avg_hourly.rename(columns={
-                "hour_label": "Hour",
-                "avg_items_per_hour": "Avg Checkins Per Hour"
-            })[["Hour", "Avg Checkins Per Hour"]]
-
-            st.dataframe(display_df, use_container_width=True)
-            download_button(display_df, "throughput_report.csv")
         else:
             st.info("No throughput data available for the selected date range.")
 
