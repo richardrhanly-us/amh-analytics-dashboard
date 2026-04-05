@@ -1244,27 +1244,39 @@ if selected_view == "Live Today":
             [f"{row['hour_label']} — {int(row['checkins']):,} items" for _, row in peak_hours_df.iterrows()]
         )
 
-        st.markdown(
-            f"""
-            <div style="
-                border-left: 4px solid #2563eb;
-                background-color: {pipeline_status_bg};
-                padding: 14px 16px;
-                border-radius: 8px;
-                margin-top: 0px;
-                margin-bottom: 8px;
-            ">
-                <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                    Peak Hours Today
-                </div>
-                <div style="color: #4b5563; line-height: 1.6;">
-                    {peak_hours_text}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+    st.markdown(
+        f"""
+        <div style="
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 12px;
+            background-color: {pipeline_status_bg};
+        ">
+            <div style="font-size: 12px; color: #6b7280;">Pipeline Status</div>
     
+            <div style="font-size: 16px; font-weight: 700; color: {pipeline_status_color};">
+                ● {pipeline_status_label}
+            </div>
+    
+            <div style="font-size: 12px; color: #6b7280;">
+                Last Update: {checkins_updated.strftime('%I:%M %p') if checkins_updated else "N/A"}
+            </div>
+    
+            <div style="font-size: 12px; color: #6b7280;">
+                Last Pipeline Run: {last_run.strftime('%I:%M %p') if last_run else "N/A"}
+            </div>
+    
+            <div style="font-size: 12px; color: #6b7280;">
+                New Items (1 hr): {today_metrics.get('current_speed', 0)}
+            </div>
+    
+            <div style="font-size: 12px; color: #6b7280;">
+                AMH Status: {amh_status_text}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
     if show_live_alert:
         st.markdown(
