@@ -79,8 +79,16 @@ def render_kpi_card(
     value_color="var(--text-color)",
     value_wrap=False,
     fill_pct=None,
-    fill_color="rgba(59, 130, 246, 0.12)"
+    fill_color=None
 ):
+    theme_base = st.get_option("theme.base") or "light"
+
+    if fill_color is None:
+        if theme_base == "dark":
+            fill_color = "rgba(59, 130, 246, 0.18)"
+        else:
+            fill_color = "rgba(59, 130, 246, 0.12)"
+
     value_white_space = "normal" if value_wrap else "nowrap"
     value_word_break = "break-word" if value_wrap else "normal"
 
@@ -172,8 +180,6 @@ def get_file_updated_time(path):
             tz=ZoneInfo("America/Chicago")
         )
     return None
-
-
 
 
 def format_hour(hour):
