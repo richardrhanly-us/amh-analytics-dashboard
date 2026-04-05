@@ -963,7 +963,7 @@ if alerts:
 
     
 if selected_view == "Live Today":
-    col1, col2 = st.columns([4, 2])
+    col1, col2 = st.columns([6, 1])
     
     with col1:
         st.header(f"{today.strftime('%A, %b %d')}")
