@@ -566,7 +566,7 @@ else:
     pipeline_status_bg = "#f9fafb"
     pipeline_result_text = "Unknown"
 
-    pipeline_expanded = pipeline_run_status not in ["completed", "skipped_no_source_changes"]
+pipeline_expanded = pipeline_run_status not in ["completed", "skipped_no_source_changes"]
 
 
 selected_view = st.segmented_control(
