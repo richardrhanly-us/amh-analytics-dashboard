@@ -2136,20 +2136,6 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
     
             avg_hourly_chart_df = avg_hourly[(avg_hourly["hour"] >= 7) & (avg_hourly["hour"] <= 20)].copy()
     
-            throughput_chart = build_hourly_bar_chart(
-                avg_hourly_chart_df,
-                "avg_items_per_hour",
-                "Avg Checkins Per Hour"
-            )
-            render_chart(throughput_chart)
-    
-            display_df = avg_hourly_chart_df.rename(columns={
-                "hour_label": "Hour",
-                "avg_items_per_hour": "Avg Checkins Per Hour"
-            })[["Hour", "Avg Checkins Per Hour"]]
-    
-            display_df["Avg Checkins Per Hour"] = display_df["Avg Checkins Per Hour"].round(1)
-    
             if len(avg_hourly) > 0:
                 busiest_hour_row = avg_hourly.loc[avg_hourly["avg_items_per_hour"].idxmax()]
             
@@ -2174,6 +2160,20 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
                     """,
                     unsafe_allow_html=True
                 )
+            
+            throughput_chart = build_hourly_bar_chart(
+                avg_hourly_chart_df,
+                "avg_items_per_hour",
+                "Avg Checkins Per Hour"
+            )
+            render_chart(throughput_chart)
+            
+            display_df = avg_hourly_chart_df.rename(columns={
+                "hour_label": "Hour",
+                "avg_items_per_hour": "Avg Checkins Per Hour"
+            })[["Hour", "Avg Checkins Per Hour"]]
+            
+            display_df["Avg Checkins Per Hour"] = display_df["Avg Checkins Per Hour"].round(1)
             
             st.dataframe(display_df, use_container_width=True)
             download_button(display_df, "throughput_report.csv")
