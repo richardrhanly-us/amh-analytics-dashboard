@@ -2138,7 +2138,7 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
     
             if len(avg_hourly) > 0:
                 busiest_hour_row = avg_hourly.loc[avg_hourly["avg_items_per_hour"].idxmax()]
-            
+                st.subheader("Average Checkins per Hour")
                 st.markdown(
                     f"""
                     <div style="
@@ -2160,7 +2160,7 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
                     """,
                     unsafe_allow_html=True
                 )
-            st.subheader("Average Checkins per Hour")
+            
             throughput_chart = build_hourly_bar_chart(
                 avg_hourly_chart_df,
                 "avg_items_per_hour",
