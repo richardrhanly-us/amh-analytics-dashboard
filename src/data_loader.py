@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 
 CHECKINS_FILE = "data/processed/checkins_clean.csv"
 REJECTS_FILE = "data/processed/rejects_clean.csv"
@@ -17,19 +17,19 @@ def get_database_url():
 
     if not db_url:
         try:
-            db_url = st.secrets["DATABASE_URL"]
+            db_url = st.secrets.get("DATABASE_URL")
         except Exception:
             db_url = None
-
-    if not db_url:
-        raise ValueError("DATABASE_URL is not set in environment or Streamlit secrets")
 
     return db_url
 
 
 @st.cache_resource
 def get_engine():
-    return create_engine(get_database_url())
+    db_url = get_database_url()
+    if not db_url:
+        return None
+    return create_engine(db_url)
 
 
 def get_file_mtime(path):
@@ -39,30 +39,21 @@ def get_file_mtime(path):
     return 0
 
 
+def _read_table(query):
+    engine = get_engine()
 
-def load_checkins_history_df(mtime=None):
-    query = """
-        SELECT *
-        FROM checkins
-        ORDER BY event_time
-    """
-    df = pd.read_sql(query, get_engine())
+    if engine is None:
+        return pd.DataFrame()
 
-    if "event_time" in df.columns:
-        df["datetime"] = pd.to_datetime(df["event_time"], errors="coerce")
-    elif "datetime" in df.columns:
-        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
-
-    return df
+    try:
+        return pd.read_sql(text(query), engine)
+    except Exception:
+        return pd.DataFrame()
 
 
-def load_checkins_df(path=CHECKINS_FILE, mtime=None):
-    query = """
-        SELECT *
-        FROM checkins
-        ORDER BY event_time
-    """
-    df = pd.read_sql(query, get_engine())
+def _normalize_checkins_df(df):
+    if df.empty:
+        return df
 
     if "event_time" in df.columns:
         df["datetime"] = pd.to_datetime(df["event_time"], errors="coerce")
@@ -77,39 +68,63 @@ def load_checkins_df(path=CHECKINS_FILE, mtime=None):
     return df
 
 
+def _normalize_rejects_df(df):
+    if df.empty:
+        return df
 
+    if "event_time" in df.columns:
+        df["datetime"] = pd.to_datetime(df["event_time"], errors="coerce")
+    elif "datetime" in df.columns:
+        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+
+    if "error_message" not in df.columns:
+        df["error_message"] = ""
+
+    return df
+
+
+@st.cache_data
+def load_checkins_history_df(mtime=None):
+    query = """
+        SELECT *
+        FROM checkins
+        ORDER BY event_time
+    """
+    df = _read_table(query)
+    return _normalize_checkins_df(df)
+
+
+@st.cache_data
+def load_checkins_df(path=CHECKINS_FILE, mtime=None):
+    query = """
+        SELECT *
+        FROM checkins
+        ORDER BY event_time
+    """
+    df = _read_table(query)
+    return _normalize_checkins_df(df)
+
+
+@st.cache_data
 def load_rejects_df(path=REJECTS_FILE, mtime=None):
     query = """
         SELECT *
         FROM rejects
         ORDER BY event_time
     """
-    df = pd.read_sql(query, get_engine())
-
-    if "event_time" in df.columns:
-        df["datetime"] = pd.to_datetime(df["event_time"], errors="coerce")
-    elif "datetime" in df.columns:
-        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
-
-    return df
+    df = _read_table(query)
+    return _normalize_rejects_df(df)
 
 
-
-
+@st.cache_data
 def load_rejects_history_df(path="data/processed/rejects_history.csv", mtime=None):
     query = """
         SELECT *
         FROM rejects
         ORDER BY event_time
     """
-    df = pd.read_sql(query, get_engine())
-
-    if "event_time" in df.columns:
-        df["datetime"] = pd.to_datetime(df["event_time"], errors="coerce")
-    elif "datetime" in df.columns:
-        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
-
-    return df
+    df = _read_table(query)
+    return _normalize_rejects_df(df)
 
 
 @st.cache_data
@@ -119,5 +134,8 @@ def load_pipeline_status(path=STATUS_FILE, mtime=None):
     if not file_path.exists():
         return {}
 
-    with open(file_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
