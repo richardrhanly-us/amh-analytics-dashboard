@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 import altair as alt
 
 from streamlit_autorefresh import st_autorefresh
+from config import load_config
 
 st.set_page_config(
     page_title="SortView",
@@ -413,8 +414,15 @@ def build_hourly_line_chart(df, value_col, title_y, series_col=None, start_hour=
     return chart
 
 
+app_config = load_config()
 
-STATUS_FILE = "data/processed/pipeline_status.json"
+status_file_config = app_config["status_file"]
+status_file_path = Path(status_file_config)
+
+if not status_file_path.is_absolute():
+    status_file_path = (Path(__file__).resolve().parent / status_file_path).resolve()
+
+STATUS_FILE = str(status_file_path)
 
 status_updated = get_file_updated_time(STATUS_FILE)
 status_mtime = status_updated.timestamp() if status_updated else 0
@@ -425,7 +433,7 @@ df_history_raw = load_checkins_history_df(mtime=status_mtime, refresh_count=refr
 rejects_live_raw = load_rejects_df(mtime=status_mtime, refresh_count=refresh_count)
 rejects_history_raw = load_rejects_history_df(mtime=status_mtime, refresh_count=refresh_count)
 
-pipeline_status = load_pipeline_status(mtime=status_mtime, refresh_count=refresh_count)
+pipeline_status = load_pipeline_status(path=STATUS_FILE, mtime=status_mtime, refresh_count=refresh_count)
 
 # DEBUG
 #st.write("df_live_raw columns:", list(df_live_raw.columns))
