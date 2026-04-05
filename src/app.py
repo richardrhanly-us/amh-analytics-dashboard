@@ -587,8 +587,8 @@ df["day_of_week"] = df["datetime"].dt.day_name()
 rejects_df["date"] = rejects_df["datetime"].dt.date
 rejects_df["day_of_week"] = rejects_df["datetime"].dt.day_name()
 
-df["destination_clean"] = df["destination"].apply(normalize_transit_destination)
-df["transit_destination"] = df["destination_clean"]
+df["destination_clean"] = df["destination"].astype(str).str.strip()
+df["transit_destination"] = df["destination"].apply(normalize_transit_destination)
 
 valid_transit_destinations = [
     "Westside",
@@ -758,15 +758,16 @@ today_reject_rate = today_metrics["today_reject_rate"]
 historical_checkins_df = df_history_raw[df_history_raw["datetime"].dt.date < today].copy()
 
 if len(historical_checkins_df) > 0:
-    historical_checkins_df["destination_clean"] = historical_checkins_df["destination"].apply(normalize_transit_destination)
+    historical_checkins_df["destination_clean"] = historical_checkins_df["destination"].astype(str).str.strip()
+    historical_checkins_df["transit_destination"] = historical_checkins_df["destination"].apply(normalize_transit_destination)
 
     historical_westside_pct = (
-        (historical_checkins_df["destination_clean"] == "Westside").sum()
+        (historical_checkins_df["transit_destination"] == "Westside").sum()
         / len(historical_checkins_df)
     ) * 100
 
     historical_library_express_pct = (
-        (historical_checkins_df["destination_clean"] == "Library Express").sum()
+        (historical_checkins_df["transit_destination"] == "Library Express").sum()
         / len(historical_checkins_df)
     ) * 100
 else:
