@@ -85,7 +85,7 @@ def render_kpi_card(
 
     if fill_color is None:
         if theme_base == "dark":
-            fill_color = "rgba(59, 130, 246, 0.18)"
+            fill_color = "rgba(96, 165, 250, 0.28)"
         else:
             fill_color = "rgba(59, 130, 246, 0.12)"
 
