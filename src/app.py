@@ -242,6 +242,57 @@ def render_chart(chart):
     theme_base = st.get_option("theme.base") or "light"
 
     if theme_base == "dark":
+        info_bg = "rgba(37, 99, 235, 0.14)"
+        info_border = "#3b82f6"
+        info_title = "#93c5fd"
+        info_text = "#dbeafe"
+    
+        success_bg = "rgba(5, 150, 105, 0.14)"
+        success_border = "#10b981"
+        success_title = "#6ee7b7"
+        success_text = "#d1fae5"
+    
+        warning_bg = "rgba(217, 119, 6, 0.14)"
+        warning_border = "#f59e0b"
+        warning_title = "#fcd34d"
+        warning_text = "#fef3c7"
+    
+        danger_bg = "rgba(220, 38, 38, 0.14)"
+        danger_border = "#ef4444"
+        danger_title = "#fca5a5"
+        danger_text = "#fee2e2"
+    
+        neutral_bg = "rgba(148, 163, 184, 0.10)"
+        neutral_border = "#64748b"
+        neutral_title = "#e5e7eb"
+        neutral_text = "#cbd5e1"
+    else:
+        info_bg = "#eff6ff"
+        info_border = "#2563eb"
+        info_title = "#1d4ed8"
+        info_text = "#1e3a8a"
+    
+        success_bg = "#ecfdf5"
+        success_border = "#059669"
+        success_title = "#047857"
+        success_text = "#065f46"
+    
+        warning_bg = "#fffbeb"
+        warning_border = "#d97706"
+        warning_title = "#92400e"
+        warning_text = "#78350f"
+    
+        danger_bg = "#fef2f2"
+        danger_border = "#dc2626"
+        danger_title = "#991b1b"
+        danger_text = "#7f1d1d"
+    
+        neutral_bg = "#f9fafb"
+        neutral_border = "#6b7280"
+        neutral_title = "#1f2937"
+        neutral_text = "#4b5563"
+
+    if theme_base == "dark":
         axis_label_color = "#cbd5e1"
         axis_title_color = "#e5e7eb"
         grid_color = "rgba(148, 163, 184, 0.18)"
@@ -1353,17 +1404,17 @@ if selected_view == "Live Today":
         st.markdown(
             f"""
             <div style="
-                border-left: 5px solid #2563eb;
-                background-color: #eff6ff;
+                border-left: 5px solid {info_border};
+                background-color: {info_bg};
                 padding: 14px 16px;
                 border-radius: 8px;
                 margin-top: 18px;
                 margin-bottom: 12px;
             ">
-                <div style="font-weight: 600; color: #1d4ed8; margin-bottom: 6px;">
+                <div style="font-weight: 600; color: {info_title}; margin-bottom: 6px;">
                     Trends / Info
                 </div>
-                <ul style="margin: 0; padding-left: 18px; color: #1e3a8a;">
+                <ul style="margin: 0; padding-left: 18px; color: {info_text};">
                     {''.join(f"<li><b>{a['level'].upper()}</b>: {a['text']}</li>" for a in info_alerts)}
                 </ul>
             </div>
@@ -1380,22 +1431,21 @@ if selected_view == "Live Today":
             [f"{row['hour_label']} — {int(row['checkins']):,} items" for _, row in peak_hours_df.iterrows()]
         )
 
-
     if show_live_alert:
         st.markdown(
             f"""
             <div style="
-                border-left: 4px solid #dc2626;
-                background-color: #fef2f2;
+                border-left: 4px solid {danger_border};
+                background-color: {danger_bg};
                 padding: 14px 16px;
                 border-radius: 8px;
                 margin-top: 18px;
                 margin-bottom: 8px;
             ">
-                <div style="font-weight: 600; color: #991b1b; margin-bottom: 6px;">
+                <div style="font-weight: 600; color: {danger_title}; margin-bottom: 6px;">
                     {live_alert_title}
                 </div>
-                <div style="color: #7f1d1d; line-height: 1.4;">
+                <div style="color: {danger_text}; line-height: 1.4;">
                     {live_alert_text}
                 </div>
             </div>
