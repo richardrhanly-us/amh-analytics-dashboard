@@ -2,6 +2,12 @@
 # Streamlit dashboard for AMH analytics
 # Displays item flow, routing, rejects, and transit diagnostics in a web interface
 
+st.set_page_config(
+    page_title="SortView",
+    page_icon="📊",
+    layout="wide"
+)
+
 import streamlit as st
 import pandas as pd
 from pathlib import Path
