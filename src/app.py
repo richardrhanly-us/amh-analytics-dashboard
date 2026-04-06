@@ -3727,13 +3727,19 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
             annual_col1, annual_col2 = st.columns(2)
 
             with annual_col1:
+                annual_savings_value = "N/A"
+            
+                if st.session_state.get("roi_calculated", False):
+                    annual_roi_payload = build_roi_payload(df, df_history_raw, start_date, end_date)
+                    if annual_roi_payload:
+                        annual_savings_value = f"${annual_roi_payload['annual_labor_value']:,.0f}"
+            
                 render_kpi_card(
-                    "Annual Savings Rate",
-                    f"${annual_labor_value:,.0f}",
+                    "Annual Labor Value",
+                    annual_savings_value,
                     "Projected yearly labor value",
                     "#6b7280"
                 )
-
             with annual_col2:
                 render_kpi_card(
                     "Annual Operating Cost",
