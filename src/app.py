@@ -2518,60 +2518,59 @@ if selected_view == "Reports":
             
             if roi_mode == "Annualized Projection":
             
-
+                with roi1:
+                    render_kpi_card(
+                        "Annual Cost",
+                        f"${total_roi_cost:,.0f}",
+                        "Recurring annual cost only",
+                        "#6b7280"
+                    )
             
-            else:           
-            with roi1:
-                render_kpi_card(
-                    "Annual Cost",
-                    f"${total_roi_cost:,.0f}",
-                    "Recurring annual cost only",
-                    "#6b7280"
-                )
+                with roi2:
+                    render_kpi_card(
+                        "Current Annual Run Rate",
+                        f"${net_roi_value:,.0f}",
+                        f"Based on last {days_in_range:,} days of activity",
+                        "#6b7280",
+                        value_color="#059669" if net_roi_value >= 0 else "#dc2626"
+                    )
             
-            with roi2:
-                render_kpi_card(
-                    "Current Annual Run Rate",
-                    f"${net_roi_value:,.0f}",
-                    f"Based on last {days_in_range:,} days of activity",
-                    "#6b7280",
-                    value_color="#059669" if net_roi_value >= 0 else "#dc2626"
-                )
+                with roi3:
+                    if payback_months is not None:
+                        payback_years = payback_months / 12
+                        years_after_payback = installed_years - payback_years
             
-            with roi3:
-                if payback_months is not None:
-                    payback_years = payback_months / 12
-                    years_after_payback = installed_years - payback_years
-            
-                    if years_after_payback >= 0:
-                        break_even_value = "Paid Off"
-                        break_even_subtitle = f"Recovered cost ~{years_after_payback:,.1f} years ago"
-                        break_even_color = "#059669"
+                        if years_after_payback >= 0:
+                            break_even_value = "Paid Off"
+                            break_even_subtitle = f"Recovered cost ~{years_after_payback:,.1f} years ago"
+                            break_even_color = "#059669"
+                        else:
+                            break_even_value = f"{abs(years_after_payback):,.1f} yrs"
+                            break_even_subtitle = "Estimated time remaining to recover upfront cost"
+                            break_even_color = "#d97706"
                     else:
-                        break_even_value = f"{abs(years_after_payback):,.1f} yrs"
-                        break_even_subtitle = "Estimated time remaining to recover upfront cost"
-                        break_even_color = "#d97706"
-                else:
-                    break_even_value = "Not Reached"
-                    break_even_subtitle = "Current annual run rate does not recover upfront cost"
-                    break_even_color = "#dc2626"
+                        break_even_value = "Not Reached"
+                        break_even_subtitle = "Current annual run rate does not recover upfront cost"
+                        break_even_color = "#dc2626"
             
-                render_kpi_card(
-                    "Break-even Status",
-                    break_even_value,
-                    break_even_subtitle,
-                    "#6b7280",
-                    value_color=break_even_color
-                )
+                    render_kpi_card(
+                        "Break-even Status",
+                        break_even_value,
+                        break_even_subtitle,
+                        "#6b7280",
+                        value_color=break_even_color
+                    )
             
-            with roi4:
-                render_kpi_card(
-                    "Lifetime Value Generated",
-                    f"${since_install_labor_value:,.0f}",
-                    f"Estimated value created over {installed_years:,.1f} years",
-                    "#6b7280",
-                    value_color="#059669" if since_install_labor_value >= 0 else "#dc2626"
-                )
+                with roi4:
+                    render_kpi_card(
+                        "Lifetime Value Generated",
+                        f"${since_install_labor_value:,.0f}",
+                        f"Estimated value created over {installed_years:,.1f} years",
+                        "#6b7280",
+                        value_color="#059669" if since_install_labor_value >= 0 else "#dc2626"
+                    )
+            
+            else:
             
             # ===============================
             # LIFETIME HEADER (STATIC)
