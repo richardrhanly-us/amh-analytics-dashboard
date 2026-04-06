@@ -1085,7 +1085,12 @@ else:
     attention_text = " ".join(attention_items)
 
 live_now = datetime.now(ZoneInfo("America/Chicago"))
-today = live_now.date()
+
+if len(df_live_raw) > 0 and "datetime" in df_live_raw.columns:
+    latest_live_dt = df_live_raw["datetime"].max()
+    today = pd.to_datetime(latest_live_dt).date()
+else:
+    today = live_now.date()
 
 start_hour = 7
 end_hour = 20
