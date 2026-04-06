@@ -10,6 +10,7 @@ CHECKINS_FILE = "data/processed/checkins_clean.csv"
 REJECTS_FILE = "data/processed/rejects_clean.csv"
 STATUS_FILE = "data/processed/pipeline_status.json"
 CHECKINS_HISTORY_FILE = "data/processed/checkins_history.csv"
+REJECTS_HISTORY_FILE = "data/processed/rejects_history.csv"
 
 
 def get_database_url():
@@ -65,6 +66,12 @@ def _normalize_checkins_df(df):
     if "bin" not in df.columns and "sort_bin" in df.columns:
         df["bin"] = df["sort_bin"]
 
+    if "destination" not in df.columns:
+        if "destination_raw" in df.columns:
+            df["destination"] = df["destination_raw"]
+        elif "destination_clean" in df.columns:
+            df["destination"] = df["destination_clean"]
+
     return df
 
 
@@ -83,48 +90,102 @@ def _normalize_rejects_df(df):
     return df
 
 
-@st.cache_data(show_spinner=False)
-def load_checkins_history_df(mtime=None, refresh_count=0):
+def _load_checkins_from_db():
+    # Preferred source: routed/enriched view
     query = """
         SELECT *
-        FROM checkins
+        FROM checkins_routed
         ORDER BY event_time
     """
     df = _read_table(query)
+
+    if not df.empty:
+        return _normalize_checkins_df(df)
+
+    # Fallback if the routed view does not exist yet
+    fallback_query = """
+        SELECT *
+        FROM checkins_clean
+        ORDER BY event_time
+    """
+    df = _read_table(fallback_query)
     return _normalize_checkins_df(df)
+
+
+def _load_rejects_from_db():
+    query = """
+        SELECT *
+        FROM rejects_clean
+        ORDER BY event_time
+    """
+    df = _read_table(query)
+    return _normalize_rejects_df(df)
+
+
+def _load_checkins_from_csv(path):
+    file_path = Path(path)
+
+    if not file_path.exists():
+        return pd.DataFrame()
+
+    try:
+        df = pd.read_csv(file_path, low_memory=False)
+        return _normalize_checkins_df(df)
+    except Exception:
+        return pd.DataFrame()
+
+
+def _load_rejects_from_csv(path):
+    file_path = Path(path)
+
+    if not file_path.exists():
+        return pd.DataFrame()
+
+    try:
+        df = pd.read_csv(file_path, low_memory=False)
+        return _normalize_rejects_df(df)
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(show_spinner=False)
+def load_checkins_history_df(mtime=None, refresh_count=0):
+    df = _load_checkins_from_db()
+
+    if not df.empty:
+        return df
+
+    return _load_checkins_from_csv(CHECKINS_HISTORY_FILE)
 
 
 @st.cache_data(show_spinner=False)
 def load_checkins_df(path=CHECKINS_FILE, mtime=None, refresh_count=0):
-    query = """
-        SELECT *
-        FROM checkins
-        ORDER BY event_time
-    """
-    df = _read_table(query)
-    return _normalize_checkins_df(df)
+    df = _load_checkins_from_db()
+
+    if not df.empty:
+        return df
+
+    return _load_checkins_from_csv(path)
 
 
 @st.cache_data(show_spinner=False)
 def load_rejects_df(path=REJECTS_FILE, mtime=None, refresh_count=0):
-    query = """
-        SELECT *
-        FROM rejects
-        ORDER BY event_time
-    """
-    df = _read_table(query)
-    return _normalize_rejects_df(df)
+    df = _load_rejects_from_db()
+
+    if not df.empty:
+        return df
+
+    return _load_rejects_from_csv(path)
 
 
 @st.cache_data(show_spinner=False)
-def load_rejects_history_df(path="data/processed/rejects_history.csv", mtime=None, refresh_count=0):
-    query = """
-        SELECT *
-        FROM rejects
-        ORDER BY event_time
-    """
-    df = _read_table(query)
-    return _normalize_rejects_df(df)
+def load_rejects_history_df(path=REJECTS_HISTORY_FILE, mtime=None, refresh_count=0):
+    df = _load_rejects_from_db()
+
+    if not df.empty:
+        return df
+
+    return _load_rejects_from_csv(path)
 
 
 @st.cache_data(show_spinner=False)
@@ -174,7 +235,9 @@ def load_pipeline_status(path=STATUS_FILE, mtime=None, refresh_count=0):
                 row["destination_breakdown"] = json.loads(destination_breakdown)
             except Exception:
                 row["destination_breakdown"] = {}
-        elif destination_breakdown is None or (isinstance(destination_breakdown, float) and pd.isna(destination_breakdown)):
+        elif destination_breakdown is None or (
+            isinstance(destination_breakdown, float) and pd.isna(destination_breakdown)
+        ):
             row["destination_breakdown"] = {}
 
         return row
