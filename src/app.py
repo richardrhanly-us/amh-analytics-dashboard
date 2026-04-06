@@ -2528,7 +2528,7 @@ if selected_view == "Reports":
 
                 with roi2:
                     render_kpi_card(
-                        "2. Current Yearly Run Rate - 'How much $ saved at current rate'",
+                        "2. Twelve-month projection of savings at current rate'",
                         f"${net_roi_value:,.0f}",
                         f"Based on last {days_in_range:,} days of activity",
                         "#6b7280",
