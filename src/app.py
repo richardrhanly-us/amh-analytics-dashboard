@@ -371,18 +371,18 @@ def build_roi_payload(df, df_history_raw, start_date, end_date):
     annual_labor_value = labor_value_saved * (12 / months_in_range) if months_in_range > 0 else 0
     annual_operating_cost = (MONTHLY_COST * 12) + YEARLY_COST
 
-    # Payback based on annual net value (consistent with ROI)
-    if net_roi_value > 0:
-        payback_months = (UPFRONT_COST / net_roi_value) * 12
-    else:
-        payback_months = None
-
     if roi_mode == "Annualized Projection":
         total_roi_cost = annual_operating_cost
         net_roi_value = annual_labor_value - total_roi_cost
     else:
         total_roi_cost = observed_total_roi_cost
         net_roi_value = labor_value_saved - total_roi_cost
+
+    # Payback based on annual net value (consistent with ROI)
+    if net_roi_value > 0:
+        payback_months = (UPFRONT_COST / net_roi_value) * 12
+    else:
+        payback_months = None
 
     roi_pct = (net_roi_value / total_roi_cost) * 100 if total_roi_cost > 0 else None
 
@@ -2529,29 +2529,29 @@ if selected_view == "Reports":
                 margin-bottom: 16px;
             ">
                 <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                    Understanding Time to Recover Upfront Cost Estiamte
+                    Understanding Time to Recover Upfront Cost Estimate
                 </div>
                 <div style="color: #4b5563; line-height: 1.45;">
-                    The payback period estimates how long it takes for the AMH to recover its upfront cost 
-                    through ongoing operational savings.
+                    This estimate shows how long it would take for the AMH to recover its upfront cost
+                    based on its projected <b>annual net value</b>.
                     <br><br>
-                    It is calculated using the difference between:
+                    Annual net value means:
                     <ul style="margin-top: 6px; margin-bottom: 6px;">
-                        <li><b>Monthly labor value saved</b> (staff time avoided)</li>
-                        <li><b>Monthly equivalent recurring cost</b> (maintenance, support, etc.)</li>
+                        <li><b>Annual labor value saved</b> minus</li>
+                        <li><b>Annual recurring cost</b></li>
                     </ul>
                     In this case:
                     <br>
-                    Monthly labor value saved ≈ <b>${monthly_labor_value_saved:,.0f}/month</b><br>
-                    Monthly recurring cost ≈ <b>${monthly_equivalent_recurring_cost:,.0f}/month</b><br><br>
-                    Net monthly savings ≈ <b>${(monthly_labor_value_saved - monthly_equivalent_recurring_cost):,.0f}/month</b>
+                    Annual labor value ≈ <b>${annual_labor_value:,.0f}/year</b><br>
+                    Annual recurring cost ≈ <b>${annual_operating_cost:,.0f}/year</b><br><br>
+                    Annual net value ≈ <b>${net_roi_value:,.0f}/year</b>
                     <br><br>
                     With an upfront cost of <b>${UPFRONT_COST:,.0f}</b>, the system would recover its initial investment in approximately:
                     <br><br>
                     <b>{payback_months:,.1f} months</b>
                     <br><br>
                     <span style="color:#6b7280;">
-                    This is a projection based on current usage and assumes similar volume and labor conditions continue.
+                    This estimate is based on annualized savings and recurring costs, so it aligns with the annual ROI model shown above.
                     </span>
                 </div>
             </div>
@@ -2605,15 +2605,17 @@ ROI = (Net annual value ÷ Annual recurring cost) × 100
 
 #### Payback Period
 
-Payback period estimates how long it takes for ongoing savings to recover the upfront cost.
+Payback period estimates how long it takes for annual net savings to recover the upfront cost.
 
-Monthly labor value saved = ${monthly_labor_value_saved:,.2f}/month  
-Monthly equivalent recurring cost = ${monthly_equivalent_recurring_cost:,.2f}/month
+Annual net value = Annualized labor value − Annual recurring cost
 
-Payback period = Upfront cost ÷ (Monthly labor value saved − Monthly equivalent recurring cost)
+Annual net value = ${annual_labor_value:,.2f} − ${annual_operating_cost:,.2f}
 
-{f"**Estimated payback period = {payback_months:,.1f} months**" if payback_months is not None else "**Estimated payback period = N/A** because monthly savings do not currently exceed monthly recurring cost."}
-""")
+**Annual net value = ${net_roi_value:,.2f} per year**
+
+Payback period = (Upfront cost ÷ Annual net value) × 12
+
+{f"**Estimated payback period = ({UPFRONT_COST:,.2f} ÷ {net_roi_value:,.2f}) × 12 = {payback_months:,.1f} months**" if payback_months is not None else "**Estimated payback period = N/A** because annual net value is not positive."}
             else:
                 st.info(f"""### How Observed Operating Value Is Calculated
 
