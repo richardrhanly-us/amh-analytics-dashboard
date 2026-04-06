@@ -2876,7 +2876,7 @@ It uses the current annualized savings rate as a projection across the machine's
                     library_name="New Braunfels Public Library",
                     branch_name="Main Branch",
                     system_name="Tech Logic UltraSort",
-                    report_title="AMH Director Report",
+                    report_title="AMH Director Report - Cole Johnson",
                     hourly_cost=HOURLY_COST,
                 )
 
