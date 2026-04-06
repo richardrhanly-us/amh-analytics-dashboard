@@ -2407,7 +2407,7 @@ if selected_view == "Reports":
 
             with roi4:
                 render_kpi_card(
-                    "Payback Period",
+                    Time to recover cost estiamte,
                     f"{payback_months:,.1f} mo" if payback_months is not None else "N/A",
                     "Estimated break-even time",
                     "#6b7280"
@@ -2516,6 +2516,48 @@ if selected_view == "Reports":
                             + (f"Estimated payback period is {payback_months:,.1f} months." if payback_months is not None else "Payback period is not available because recurring savings do not currently exceed recurring costs.")
                         )
                     }
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+
+        st.markdown(
+            f"""
+            <div style="
+                border-left: 4px solid #f59e0b;
+                background-color: #f9fafb;
+                padding: 14px 16px;
+                border-radius: 8px;
+                margin-top: 8px;
+                margin-bottom: 16px;
+            ">
+                <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                    Understanding Payback Period
+                </div>
+                <div style="color: #4b5563; line-height: 1.45;">
+                    The payback period estimates how long it takes for the AMH to recover its upfront cost 
+                    through ongoing operational savings.
+                    <br><br>
+                    It is calculated using the difference between:
+                    <ul style="margin-top: 6px; margin-bottom: 6px;">
+                        <li><b>Monthly labor value saved</b> (staff time avoided)</li>
+                        <li><b>Monthly equivalent recurring cost</b> (maintenance, support, etc.)</li>
+                    </ul>
+                    In this case:
+                    <br>
+                    Monthly labor value saved ≈ <b>${monthly_labor_value_saved:,.0f}/month</b><br>
+                    Monthly recurring cost ≈ <b>${monthly_equivalent_recurring_cost:,.0f}/month</b><br><br>
+                    Net monthly savings ≈ <b>${(monthly_labor_value_saved - monthly_equivalent_recurring_cost):,.0f}/month</b>
+                    <br><br>
+                    With an upfront cost of <b>${UPFRONT_COST:,.0f}</b>, the system would recover its initial investment in approximately:
+                    <br><br>
+                    <b>{payback_months:,.1f} months</b>
+                    <br><br>
+                    <span style="color:#6b7280;">
+                    This is a projection based on current usage and assumes similar volume and labor conditions continue.
+                    </span>
                 </div>
             </div>
             """,
