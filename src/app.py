@@ -3723,9 +3723,8 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
                     "#6b7280"
                 )
 
-
             annual_col1, annual_col2 = st.columns(2)
-
+            
             annual_roi_payload = build_roi_payload(df, df_history_raw, start_date, end_date)
             
             with annual_col1:
