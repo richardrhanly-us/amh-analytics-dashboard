@@ -511,7 +511,7 @@ def build_director_report_pdf(
     library_name: str = "New Braunfels Public Library",
     branch_name: str = "Main Branch",
     system_name: str = "Tech Logic UltraSort",
-    report_title: str = "AMH Director Report",
+    report_title: str = "AMH Director Report - Cole Johnson",
 ) -> bytes:
     report_data = build_director_report_data(
         start_date=start_date,
