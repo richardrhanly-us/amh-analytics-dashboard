@@ -150,9 +150,22 @@ def build_director_report_data(
 
 def render_director_report_html(report_data: Dict[str, Any]) -> str:
     labor_value_html = ""
-    if report_data.get("labor_value_saved") is not None:
+    labor_value_method_html = ""
 
-        labor_value_method_html = ""
+    if report_data.get("labor_value_saved") is not None:
+        labor_value_html = f"""
+        <div class="section">
+            <h2>Labor Value Snapshot</h2>
+            <div class="summary-box">
+                Estimated labor value for the selected range is
+                <strong>${report_data['labor_value_saved']:,.0f}</strong>,
+                based on <strong>{report_data['total_hours_saved']:.1f}</strong> total staff hours saved
+                and an hourly labor cost of
+                <strong>${report_data['hourly_cost_display']:.2f}</strong>.
+            </div>
+        </div>
+        """
+
         if (
             report_data.get("labor_value_saved") is not None
             and report_data.get("hourly_cost_display") is not None
@@ -168,28 +181,28 @@ def render_director_report_html(report_data: Dict[str, Any]) -> str:
                     <div style="margin-bottom:10px;">
                         Estimated labor value is based on the selected date range and calculated in two steps:
                     </div>
-        
+
                     <div style="margin-bottom:10px;">
                         <strong>1. Total hours saved</strong><br>
                         Total hours saved = (Total checkins ÷ Manual rate) − (Total checkins ÷ Observed AMH rate)
                     </div>
-        
+
                     <div style="margin-bottom:10px;">
                         Total hours saved = ({report_data['total_checkins']:,} items ÷ {report_data['manual_rate']:.1f} items/hour)
                         − ({report_data['total_checkins']:,} items ÷ {report_data['amh_rate']:.1f} items/hour)
                     </div>
-        
+
                     <div style="margin-bottom:10px;">
                         Total hours saved = {report_data['manual_total_hours']:.1f} staff hours
                         − {report_data['amh_total_hours']:.1f} machine hours
                         = <strong>{report_data['total_hours_saved']:.1f} staff hours</strong>
                     </div>
-        
+
                     <div style="margin-bottom:10px;">
                         <strong>2. Estimated labor value</strong><br>
                         Estimated labor value = Total hours saved × Hourly labor cost
                     </div>
-        
+
                     <div>
                         Estimated labor value = {report_data['total_hours_saved']:.1f} staff hours
                         × ${report_data['hourly_cost_display']:.2f}/hour
@@ -198,7 +211,7 @@ def render_director_report_html(report_data: Dict[str, Any]) -> str:
                 </div>
             </div>
             """
-    
+
     rates_html = ""
     if report_data.get("manual_rate") is not None and report_data.get("amh_rate") is not None:
         rates_html = f"""
@@ -220,6 +233,78 @@ def render_director_report_html(report_data: Dict[str, Any]) -> str:
             </div>
         </div>
         """
+
+    roi_html = ""
+    if (
+        report_data.get("yearly_savings_after_cost") is not None
+        or report_data.get("since_install_net_value") is not None
+    ):
+        yearly_savings_text = (
+            f"${report_data['yearly_savings_after_cost']:,.0f}"
+            if report_data.get("yearly_savings_after_cost") is not None
+            else "N/A"
+        )
+
+        annual_cost_text = (
+            f"${report_data['annual_cost']:,.0f}"
+            if report_data.get("annual_cost") is not None
+            else "N/A"
+        )
+
+        payback_text = (
+            f"{report_data['payback_months']:,.1f} mo"
+            if report_data.get("payback_months") is not None
+            else "N/A"
+        )
+
+        since_install_net_text = (
+            f"${report_data['since_install_net_value']:,.0f}"
+            if report_data.get("since_install_net_value") is not None
+            else "N/A"
+        )
+
+        install_date_sub = (
+            f"Install date: {report_data['install_date']}"
+            if report_data.get("install_date")
+            else "Estimated cumulative net value"
+        )
+
+        roi_html = f"""
+        <div class="section">
+            <h2>ROI Snapshot</h2>
+            <div class="kpi-grid">
+                <div class="kpi-card">
+                    <div class="kpi-label">Yearly Savings After Cost</div>
+                    <div class="kpi-value">{yearly_savings_text}</div>
+                    <div class="kpi-sub">Projected annual net value</div>
+                </div>
+
+                <div class="kpi-card">
+                    <div class="kpi-label">Annual Cost</div>
+                    <div class="kpi-value">{annual_cost_text}</div>
+                    <div class="kpi-sub">Recurring annual cost only</div>
+                </div>
+
+                <div class="kpi-card">
+                    <div class="kpi-label">Time to Recover Cost</div>
+                    <div class="kpi-value">{payback_text}</div>
+                    <div class="kpi-sub">Based on annual net savings</div>
+                </div>
+
+                <div class="kpi-card">
+                    <div class="kpi-label">Since-Install Net Value</div>
+                    <div class="kpi-value">{since_install_net_text}</div>
+                    <div class="kpi-sub">{install_date_sub}</div>
+                </div>
+            </div>
+        </div>
+        """
+
+    labor_value_display = (
+        f"${report_data['labor_value_saved']:,.0f}"
+        if report_data.get("labor_value_saved") is not None
+        else "N/A"
+    )
 
     html = f"""
     <!DOCTYPE html>
@@ -449,13 +534,13 @@ def render_director_report_html(report_data: Dict[str, Any]) -> str:
 
                     <div class="kpi-card">
                         <div class="kpi-label">Estimated Labor Value</div>
-                        <div class="kpi-value">
-                            ${report_data['labor_value_saved']:,.0f}
-                        </div>
+                        <div class="kpi-value">{labor_value_display}</div>
                         <div class="kpi-sub">Estimated staff time avoided</div>
                     </div>
                 </div>
             </div>
+
+            {roi_html}
 
             {labor_value_html}
 
@@ -508,6 +593,12 @@ def build_director_report_pdf(
     manual_rate: Optional[float] = None,
     amh_rate: Optional[float] = None,
     hourly_cost: Optional[float] = None,
+    roi_mode: Optional[str] = None,
+    yearly_savings_after_cost: Optional[float] = None,
+    annual_cost: Optional[float] = None,
+    payback_months: Optional[float] = None,
+    since_install_net_value: Optional[float] = None,
+    install_date: Optional[str] = None,
     library_name: str = "New Braunfels Public Library",
     branch_name: str = "Main Branch",
     system_name: str = "Tech Logic UltraSort",
@@ -532,6 +623,12 @@ def build_director_report_pdf(
         branch_name=branch_name,
         system_name=system_name,
         report_title=report_title,
+        "roi_mode": roi_mode,
+        "yearly_savings_after_cost": safe_float(yearly_savings_after_cost) if yearly_savings_after_cost is not None else None,
+        "annual_cost": safe_float(annual_cost) if annual_cost is not None else None,
+        "payback_months": safe_float(payback_months) if payback_months is not None else None,
+        "since_install_net_value": safe_float(since_install_net_value) if since_install_net_value is not None else None,
+        "install_date": install_date,
     )
 
     html = render_director_report_html(report_data)
