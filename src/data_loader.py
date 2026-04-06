@@ -114,7 +114,10 @@ def _load_checkins_live_from_db():
     query = """
         SELECT *
         FROM checkins_routed
-        WHERE event_time::date = (now() AT TIME ZONE 'America/Chicago')::date
+        WHERE event_time::date = (
+            SELECT max(event_time)::date
+            FROM checkins_routed
+        )
         ORDER BY event_time
     """
     df = _read_table(query)
@@ -125,7 +128,10 @@ def _load_checkins_live_from_db():
     fallback_query = """
         SELECT *
         FROM checkins_clean
-        WHERE event_time::date = (now() AT TIME ZONE 'America/Chicago')::date
+        WHERE event_time::date = (
+            SELECT max(event_time)::date
+            FROM checkins_clean
+        )
         ORDER BY event_time
     """
     df = _read_table(fallback_query)
@@ -146,7 +152,10 @@ def _load_rejects_live_from_db():
     query = """
         SELECT *
         FROM rejects_clean
-        WHERE event_time::date = (now() AT TIME ZONE 'America/Chicago')::date
+        WHERE event_time::date = (
+            SELECT max(event_time)::date
+            FROM rejects_clean
+        )
         ORDER BY event_time
     """
     df = _read_table(query)
