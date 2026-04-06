@@ -2520,7 +2520,7 @@ if selected_view == "Reports":
 
                 with roi1:
                     render_kpi_card(
-                        "Annual Cost",
+                        "1. Yearly Cost - User provided",
                         f"${total_roi_cost:,.0f}",
                         "Recurring annual cost only",
                         "#6b7280"
@@ -2528,7 +2528,7 @@ if selected_view == "Reports":
 
                 with roi2:
                     render_kpi_card(
-                        "Current Annual Run Rate",
+                        "2. Current Yearly Run Rate - 'How much $ saved at current rate'",
                         f"${net_roi_value:,.0f}",
                         f"Based on last {days_in_range:,} days of activity",
                         "#6b7280",
@@ -2554,7 +2554,7 @@ if selected_view == "Reports":
                         break_even_color = "#dc2626"
 
                     render_kpi_card(
-                        "Break-even Status",
+                        "3. Break-even Status",
                         break_even_value,
                         break_even_subtitle,
                         "#6b7280",
@@ -2563,7 +2563,7 @@ if selected_view == "Reports":
 
                 with roi4:
                     render_kpi_card(
-                        "Lifetime Value Generated",
+                        "4. Lifetime Value Generated",
                         f"${since_install_labor_value:,.0f}",
                         f"Estimated value created over {installed_years:,.1f} years",
                         "#6b7280",
@@ -2616,7 +2616,7 @@ if selected_view == "Reports":
 
             with install_roi1:
                 render_kpi_card(
-                    "Years Since Install",
+                    "5. Years Since Install",
                     f"{installed_years:,.1f}",
                     pd.to_datetime(INSTALL_DATE).strftime("%b %d, %Y"),
                     "#6b7280"
@@ -2624,7 +2624,7 @@ if selected_view == "Reports":
 
             with install_roi2:
                 render_kpi_card(
-                    "Since-Install Value",
+                    "6. Since-Install Value",
                     f"${since_install_labor_value:,.0f}",
                     "Projected cumulative labor value",
                     "#6b7280"
@@ -2632,7 +2632,7 @@ if selected_view == "Reports":
 
             with install_roi3:
                 render_kpi_card(
-                    "Since-Install Net",
+                    "7. Since-Install Net",
                     f"${since_install_net_value:,.0f}",
                     "Value minus total cost",
                     "#6b7280",
@@ -2641,7 +2641,7 @@ if selected_view == "Reports":
 
             with install_roi4:
                 render_kpi_card(
-                    "Since-Install ROI",
+                    "8. Since-Install ROI",
                     f"{since_install_roi_pct:,.1f}%" if since_install_roi_pct is not None else "N/A",
                     "Estimated ROI since install",
                     "#6b7280",
