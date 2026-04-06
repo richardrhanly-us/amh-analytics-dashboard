@@ -188,6 +188,19 @@ def get_destination_reject_summary(df, rejects_df, transit_summary, valid_transi
     if len(df) == 0 or len(transit_summary) == 0:
         return pd.DataFrame()
 
+    if "barcode" not in df.columns:
+        return pd.DataFrame()
+
+    summary = transit_summary.copy()
+
+    if len(rejects_df) == 0 or "barcode" not in rejects_df.columns:
+        summary["reject_count"] = 0
+        summary["reject_rate_pct"] = 0.0
+        summary["top_reject_reason"] = "None"
+        summary["reason_count"] = 0
+        summary["top_reason_pct_of_destination_rejects"] = 0.0
+        return summary
+
     barcode_map = (
         df.sort_values("datetime")
         .drop_duplicates(subset=["barcode"], keep="last")
@@ -205,13 +218,15 @@ def get_destination_reject_summary(df, rejects_df, transit_summary, valid_transi
     ].copy()
 
     if len(transit_rejects) == 0:
-        summary = transit_summary.copy()
         summary["reject_count"] = 0
         summary["reject_rate_pct"] = 0.0
         summary["top_reject_reason"] = "None"
         summary["reason_count"] = 0
         summary["top_reason_pct_of_destination_rejects"] = 0.0
         return summary
+
+    if "error_simple" not in transit_rejects.columns:
+        transit_rejects["error_simple"] = "Unknown"
 
     destination_reject_counts = (
         transit_rejects["transit_destination"]
@@ -232,7 +247,7 @@ def get_destination_reject_summary(df, rejects_df, transit_summary, valid_transi
         })
     )
 
-    destination_reject_summary = transit_summary.merge(
+    destination_reject_summary = summary.merge(
         destination_reject_counts,
         on="destination",
         how="left"
