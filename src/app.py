@@ -2657,7 +2657,7 @@ if selected_view == "Reports":
                 
                 st.markdown("### How to interpret Annualized metrics")
                 render_explainer_card(
-                    f"Annual Cost — ${total_roi_cost:,.0f}",
+                    f"1. Annual Cost — ${total_roi_cost:,.0f}",
                     (
                         "This is the total recurring cost to operate the AMH for one full year."
                         f"<br><br>Inputs used:"
@@ -2671,7 +2671,7 @@ if selected_view == "Reports":
                 )
                 
                 render_explainer_card(
-                    f"Current Annual Run Rate — ${net_roi_value:,.0f}",
+                    f"2. Current Annual Run Rate — ${net_roi_value:,.0f}",
                     (
                         "This estimates how much net value the AMH is generating per year at its current usage level."
                         f"<br><br>What this represents:"
@@ -2691,7 +2691,7 @@ if selected_view == "Reports":
                 )
                 
                 render_explainer_card(
-                    f"Break-even Status — {break_even_value}",
+                    f"3. Break-even Status — {break_even_value}",
                     (
                         "This shows whether the AMH has already recovered its upfront purchase cost."
                         f"<br><br>Inputs used:"
@@ -2709,7 +2709,7 @@ if selected_view == "Reports":
                 )
                 
                 render_explainer_card(
-                    f"Lifetime Value Generated — ${since_install_labor_value:,.0f}",
+                    f"4. Lifetime Value Generated — ${since_install_labor_value:,.0f}",
                     (
                         "This estimates the total labor value created by the AMH over its full lifetime."
                         f"<br><br>Inputs used:"
@@ -2724,7 +2724,7 @@ if selected_view == "Reports":
                 )
                 st.markdown("### How to interpret Since Install metrics")
                 render_explainer_card(
-                    f"Years Since Install — {installed_years:,.1f}",
+                    f"5. Years Since Install — {installed_years:,.1f}",
                     (
                         "This is the amount of time between the install date and today."
                         f"<br><br>Inputs used:"
@@ -2735,7 +2735,7 @@ if selected_view == "Reports":
                 )
 
                 render_explainer_card(
-                    f"Since-Install Value — ${since_install_labor_value:,.0f}",
+                    f"6. Since-Install Value — ${since_install_labor_value:,.0f}",
                     (
                         "This estimates total labor value created over the machine's time in service."
                         f"<br><br>Inputs used:"
@@ -2749,7 +2749,7 @@ if selected_view == "Reports":
                 )
 
                 render_explainer_card(
-                    f"Since-Install Net — ${since_install_net_value:,.0f}",
+                    f"7. Since-Install Net — ${since_install_net_value:,.0f}",
                     (
                         "This estimates total value since install after subtracting total cost since install."
                         f"<br><br>Inputs used:"
@@ -2763,7 +2763,7 @@ if selected_view == "Reports":
                 )
 
                 render_explainer_card(
-                    f"Since-Install ROI — {since_install_roi_display}",
+                    f"8. Since-Install ROI — {since_install_roi_display}",
                     (
                         "This compares since-install net value against since-install total cost."
                         f"<br><br>Inputs used:"
