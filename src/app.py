@@ -2137,42 +2137,7 @@ if selected_view == "Reports":
             help="Adjust the hourly labor cost used to estimate labor value."
         )
 
-        st.markdown("##### ROI Inputs")
-
-        roi_col1, roi_col2, roi_col3 = st.columns(3)
-
-        with roi_col1:
-            UPFRONT_COST = st.number_input(
-                "Upfront cost ($)",
-                min_value=0.0,
-                max_value=10000000.0,
-                value=0.0,
-                step=100.0,
-                format="%.2f",
-                help="One-time purchase or implementation cost."
-            )
-
-        with roi_col2:
-            MONTHLY_COST = st.number_input(
-                "Monthly cost ($/month)",
-                min_value=0.0,
-                max_value=1000000.0,
-                value=0.0,
-                step=10.0,
-                format="%.2f",
-                help="Recurring monthly maintenance, service, or lease cost."
-            )
-
-        with roi_col3:
-            YEARLY_COST = st.number_input(
-                "Yearly cost ($/year)",
-                min_value=0.0,
-                max_value=1000000.0,
-                value=0.0,
-                step=50.0,
-                format="%.2f",
-                help="Recurring annual support, licensing, or maintenance cost."
-            )
+        
 
         st.markdown("##### ROI Mode")
 
