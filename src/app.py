@@ -2085,12 +2085,49 @@ if selected_view == "Reports":
         HOURLY_COST = st.number_input(
             "Hourly labor rate ($/hour)",
             min_value=0.0,
-            max_value=100.0,
+            max_value=1000.0,
             value=18.0,
             step=0.5,
             format="%.2f",
             help="Adjust the hourly labor cost used to estimate labor value."
         )
+
+        st.markdown("##### ROI Inputs")
+
+        roi_col1, roi_col2, roi_col3 = st.columns(3)
+
+        with roi_col1:
+            UPFRONT_COST = st.number_input(
+                "Upfront cost ($)",
+                min_value=0.0,
+                max_value=10000000.0,
+                value=0.0,
+                step=100.0,
+                format="%.2f",
+                help="One-time purchase or implementation cost."
+            )
+
+        with roi_col2:
+            MONTHLY_COST = st.number_input(
+                "Monthly cost ($/month)",
+                min_value=0.0,
+                max_value=1000000.0,
+                value=0.0,
+                step=10.0,
+                format="%.2f",
+                help="Recurring monthly maintenance, service, or lease cost."
+            )
+
+        with roi_col3:
+            YEARLY_COST = st.number_input(
+                "Yearly cost ($/year)",
+                min_value=0.0,
+                max_value=1000000.0,
+                value=0.0,
+                step=50.0,
+                format="%.2f",
+                help="Recurring annual support, licensing, or maintenance cost."
+            )
 
         if len(df) > 0 and len(df_history_raw) > 0:
             rate_df = df.copy()
@@ -2138,6 +2175,32 @@ if selected_view == "Reports":
             total_saved = staff_df["hours_saved"].sum()
             peak_day = staff_df.loc[staff_df["hours_saved"].idxmax()]
             labor_value_saved = total_saved * HOURLY_COST
+
+            days_in_range = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1)
+            months_in_range = days_in_range / 30.44
+            years_in_range = days_in_range / 365.25
+
+            prorated_monthly_cost = MONTHLY_COST * months_in_range
+            prorated_yearly_cost = YEARLY_COST * years_in_range
+            total_roi_cost = UPFRONT_COST + prorated_monthly_cost + prorated_yearly_cost
+
+            net_roi_value = labor_value_saved - total_roi_cost
+
+            if total_roi_cost > 0:
+                roi_pct = (net_roi_value / total_roi_cost) * 100
+            else:
+                roi_pct = None
+
+            monthly_labor_value_saved = labor_value_saved / months_in_range if months_in_range > 0 else 0
+            effective_monthly_cost = MONTHLY_COST + (YEARLY_COST / 12.0)
+
+            if monthly_labor_value_saved > effective_monthly_cost:
+                payback_months = (
+                    UPFRONT_COST / (monthly_labor_value_saved - effective_monthly_cost)
+                    if UPFRONT_COST > 0 else 0
+                )
+            else:
+                payback_months = None
 
             try:
                 from report_export import build_director_report_pdf
@@ -2225,7 +2288,66 @@ if selected_view == "Reports":
                     "Staff time avoided value",
                     "#6b7280"
                 )
-            
+            roi1, roi2, roi3, roi4 = st.columns(4)
+
+            with roi1:
+                render_kpi_card(
+                    "Total Cost",
+                    f"${total_roi_cost:,.0f}",
+                    "Across selected date range",
+                    "#6b7280"
+                )
+
+            with roi2:
+                render_kpi_card(
+                    "Net Value",
+                    f"${net_roi_value:,.0f}",
+                    "Labor value minus costs",
+                    "#6b7280",
+                    value_color="#059669" if net_roi_value >= 0 else "#dc2626"
+                )
+
+            with roi3:
+                render_kpi_card(
+                    "ROI",
+                    f"{roi_pct:,.1f}%" if roi_pct is not None else "N/A",
+                    "Return on investment",
+                    "#6b7280",
+                    value_color="#059669" if roi_pct is not None and roi_pct >= 0 else "#dc2626"
+                )
+
+            with roi4:
+                render_kpi_card(
+                    "Payback Period",
+                    f"{payback_months:,.1f} mo" if payback_months is not None else "N/A",
+                    "Estimated break-even time",
+                    "#6b7280"
+                )
+
+            st.markdown(
+                f"""
+                <div style="
+                    border-left: 4px solid #7c3aed;
+                    background-color: #f9fafb;
+                    padding: 14px 16px;
+                    border-radius: 8px;
+                    margin-top: 8px;
+                    margin-bottom: 16px;
+                ">
+                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                        ROI Summary
+                    </div>
+                    <div style="color: #4b5563; line-height: 1.4;">
+                        Total labor value saved over the selected range is ${labor_value_saved:,.0f}.
+                        Total ROI cost over the same period is ${total_roi_cost:,.0f}.
+                        Net value is ${net_roi_value:,.0f}.
+                        {"ROI is " + f"{roi_pct:,.1f}%." if roi_pct is not None else "ROI cannot be calculated because total cost is zero."}
+                        {" Estimated payback period is " + f"{payback_months:,.1f} months." if payback_months is not None else " Payback period is not available because recurring savings do not currently exceed recurring costs."}
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
             
             st.markdown(
                 f"""
@@ -2287,6 +2409,33 @@ Estimated labor value = Total hours saved × Hourly labor cost
 Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hour  
 
 **Estimated labor value = ${labor_value_saved:,.0f}**
+""")
+
+
+            st.info(f"""### ROI Calculation
+
+Selected range length = {days_in_range:,} day(s)
+
+Prorated monthly cost = ${MONTHLY_COST:,.2f} × {months_in_range:,.2f} month(s)  
+= ${prorated_monthly_cost:,.2f}
+
+Prorated yearly cost = ${YEARLY_COST:,.2f} × {years_in_range:,.2f} year(s)  
+= ${prorated_yearly_cost:,.2f}
+
+Total cost = Upfront cost + prorated monthly cost + prorated yearly cost  
+
+Total cost = ${UPFRONT_COST:,.2f} + ${prorated_monthly_cost:,.2f} + ${prorated_yearly_cost:,.2f}  
+= ${total_roi_cost:,.2f}
+
+Net value = labor value saved − total cost  
+
+Net value = ${labor_value_saved:,.2f} − ${total_roi_cost:,.2f}  
+= ${net_roi_value:,.2f}
+
+ROI = (net value ÷ total cost) × 100  
+{f"ROI = ({net_roi_value:,.2f} ÷ {total_roi_cost:,.2f}) × 100 = {roi_pct:,.2f}%" if roi_pct is not None else "ROI = N/A because total cost is 0."}
+
+Payback period compares monthly labor value saved against recurring monthly-equivalent cost.
 """)
  
     # -----------------------------
