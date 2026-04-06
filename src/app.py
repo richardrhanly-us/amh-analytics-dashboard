@@ -1472,7 +1472,7 @@ if selected_view == "Live Today":
                         margin-top:3px;
                         line-height:1.1;
                     ">
-                        <span>Slow</span>
+                        <span></span>
                         <span style="font-weight:600; color:#4b5563;">{activity_label}</span>
                         <span>Busy</span>
                     </div>
