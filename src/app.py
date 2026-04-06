@@ -2520,7 +2520,7 @@ if selected_view == "Reports":
 
                 with roi1:
                     render_kpi_card(
-                        "1. Yearly Cost - User provided",
+                        "1. Yearly Cost (User provided)",
                         f"${total_roi_cost:,.0f}",
                         "Recurring annual cost only",
                         "#6b7280"
@@ -2528,7 +2528,7 @@ if selected_view == "Reports":
 
                 with roi2:
                     render_kpi_card(
-                        "2. Twelve-month projection of savings at current rate'",
+                        "2. Twelve-month projection of savings at current rate",
                         f"${net_roi_value:,.0f}",
                         f"Based on last {days_in_range:,} days of activity",
                         "#6b7280",
@@ -2799,7 +2799,7 @@ if selected_view == "Reports":
                     (
                         "This is the estimated dollar value of staff time saved during the selected date range."
                         f"<br><br>Inputs used:"
-                        f"<br>• Hourly labor cost setting: <b>${HOURLY_COST:,.2f}</b> per hour"
+                        f"<br>• Hourly labor cost setting (User provided): <b>${HOURLY_COST:,.2f}</b> per hour"
                         f"<br>• Calculated observed labor value: <b>${labor_value_saved:,.0f}</b>"
                         f"<br><br>Meaning:"
                         f"<br>• This is the labor value created by the AMH during just this selected period."
@@ -2812,8 +2812,8 @@ if selected_view == "Reports":
                     (
                         "This is the prorated recurring operating cost for only the selected date range."
                         f"<br><br>Inputs used:"
-                        f"<br>• Yearly recurring cost setting: <b>${YEARLY_COST:,.0f}</b>"
-                        f"<br>• Monthly recurring cost setting: <b>${MONTHLY_COST:,.0f}</b>"
+                        f"<br>• Yearly recurring cost setting (User provided): <b>${YEARLY_COST:,.0f}</b>"
+                        f"<br>• Monthly recurring cost setting (User provided): <b>${MONTHLY_COST:,.0f}</b>"
                         f"<br>• Selected days: <b>{days_in_range:,}</b>"
                         f"<br>• Equivalent months: <b>{months_in_range:,.2f}</b>"
                         f"<br>• Equivalent years: <b>{years_in_range:,.4f}</b>"
