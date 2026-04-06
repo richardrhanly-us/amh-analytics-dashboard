@@ -1698,6 +1698,44 @@ if selected_view == "Overview":
         key="overview_volume_mode"
     )
 
+
+    st.markdown("##### ROI Inputs")
+
+    overview_roi1, overview_roi2, overview_roi3 = st.columns(3)
+
+    with overview_roi1:
+        OVERVIEW_UPFRONT_COST = st.number_input(
+            "Upfront cost ($)",
+            min_value=0.0,
+            max_value=10000000.0,
+            value=200000.0,
+            step=100.0,
+            format="%.2f",
+            key="overview_upfront_cost"
+        )
+
+    with overview_roi2:
+        OVERVIEW_MONTHLY_COST = st.number_input(
+            "Monthly cost ($/month)",
+            min_value=0.0,
+            max_value=1000000.0,
+            value=0.0,
+            step=10.0,
+            format="%.2f",
+            key="overview_monthly_cost"
+        )
+
+    with overview_roi3:
+        OVERVIEW_YEARLY_COST = st.number_input(
+            "Yearly cost ($/year)",
+            min_value=0.0,
+            max_value=1000000.0,
+            value=8000.0,
+            step=50.0,
+            format="%.2f",
+            key="overview_yearly_cost"
+        )
+
     days_in_range = df["datetime"].dt.date.nunique() if len(df) > 0 else 0
 
     avg_daily_westside = (westside_count / days_in_range) if days_in_range > 0 else 0
@@ -1917,42 +1955,6 @@ if selected_view == "Overview":
         overview_roi_pct = None
 
 
-    st.markdown("##### ROI Inputs")
-
-    overview_roi1, overview_roi2, overview_roi3 = st.columns(3)
-
-    with overview_roi1:
-        OVERVIEW_UPFRONT_COST = st.number_input(
-            "Upfront cost ($)",
-            min_value=0.0,
-            max_value=10000000.0,
-            value=200000.0,
-            step=100.0,
-            format="%.2f",
-            key="overview_upfront_cost"
-        )
-
-    with overview_roi2:
-        OVERVIEW_MONTHLY_COST = st.number_input(
-            "Monthly cost ($/month)",
-            min_value=0.0,
-            max_value=1000000.0,
-            value=0.0,
-            step=10.0,
-            format="%.2f",
-            key="overview_monthly_cost"
-        )
-
-    with overview_roi3:
-        OVERVIEW_YEARLY_COST = st.number_input(
-            "Yearly cost ($/year)",
-            min_value=0.0,
-            max_value=1000000.0,
-            value=8000.0,
-            step=50.0,
-            format="%.2f",
-            key="overview_yearly_cost"
-        )
     
     row1_col1, row1_col2, row1_col3 = st.columns(3)
     row2_col1, row2_col2, row2_col3 = st.columns(3)
