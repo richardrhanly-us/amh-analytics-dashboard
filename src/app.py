@@ -2199,17 +2199,17 @@ if selected_view == "Overview":
         if overview_roi_payload:
             if overview_roi_payload["roi_mode"] == "Annualized Projection":
                 render_kpi_card(
-                    "Annual ROI",
-                    f'{overview_roi_payload["roi_pct"]:,.1f}%' if overview_roi_payload["roi_pct"] is not None else "N/A",
-                    "From Reports ROI calculator",
+                    "Yearly Savings After Cost",
+                    f'${overview_roi_payload["net_roi_value"]:,.0f}',
+                    "Projected yearly savings after recurring cost",
                     "#6b7280",
-                    value_color="#059669" if overview_roi_payload["roi_pct"] is not None and overview_roi_payload["roi_pct"] >= 0 else "#dc2626"
+                    value_color="#059669" if overview_roi_payload["net_roi_value"] >= 0 else "#dc2626"
                 )
             else:
                 render_kpi_card(
                     "Observed Net Value",
                     f'${overview_roi_payload["observed_net_operating_value"]:,.0f}',
-                    "From Reports ROI calculator",
+                    "Selected range value minus recurring cost",
                     "#6b7280",
                     value_color="#059669" if overview_roi_payload["observed_net_operating_value"] >= 0 else "#dc2626"
                 )
