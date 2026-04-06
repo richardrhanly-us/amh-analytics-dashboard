@@ -371,14 +371,9 @@ def build_roi_payload(df, df_history_raw, start_date, end_date):
     annual_labor_value = labor_value_saved * (12 / months_in_range) if months_in_range > 0 else 0
     annual_operating_cost = (MONTHLY_COST * 12) + YEARLY_COST
 
-    monthly_labor_value_saved = labor_value_saved / months_in_range if months_in_range > 0 else 0
-    effective_monthly_cost = MONTHLY_COST + (YEARLY_COST / 12.0)
-
-    if monthly_labor_value_saved > effective_monthly_cost:
-        payback_months = (
-            UPFRONT_COST / (monthly_labor_value_saved - effective_monthly_cost)
-            if UPFRONT_COST > 0 else 0
-        )
+    # Payback based on annual net value (consistent with ROI)
+    if net_roi_value > 0:
+        payback_months = (UPFRONT_COST / net_roi_value) * 12
     else:
         payback_months = None
 
