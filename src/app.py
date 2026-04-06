@@ -2194,14 +2194,14 @@ if selected_view == "Overview":
             )
     
     with row4_col3:
-        overview_roi_payload = st.session_state.get("overview_roi_payload")
+        overview_roi_payload = build_roi_payload(df, df_history_raw, start_date, end_date)
 
         if overview_roi_payload:
             if overview_roi_payload["roi_mode"] == "Annualized Projection":
                 render_kpi_card(
                     "Annual ROI",
                     f'{overview_roi_payload["roi_pct"]:,.1f}%' if overview_roi_payload["roi_pct"] is not None else "N/A",
-                    "From Reports: Annualized Projection",
+                    "From Reports ROI calculator",
                     "#6b7280",
                     value_color="#059669" if overview_roi_payload["roi_pct"] is not None and overview_roi_payload["roi_pct"] >= 0 else "#dc2626"
                 )
@@ -2209,7 +2209,7 @@ if selected_view == "Overview":
                 render_kpi_card(
                     "Observed Net Value",
                     f'${overview_roi_payload["observed_net_operating_value"]:,.0f}',
-                    "From Reports: Observed Range",
+                    "From Reports ROI calculator",
                     "#6b7280",
                     value_color="#059669" if overview_roi_payload["observed_net_operating_value"] >= 0 else "#dc2626"
                 )
