@@ -2522,32 +2522,172 @@ if selected_view == "Reports":
             unsafe_allow_html=True
         )
 
-        st.markdown(
-            f"""
-            <div style="
-                border-left: 4px solid #2563eb;
-                background-color: #f9fafb;
-                padding: 14px 16px;
-                border-radius: 8px;
-                margin-top: 8px;
-                margin-bottom: 16px;
-            ">
-                <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                    Since-Install ROI Summary
-                </div>
-                <div style="color: #4b5563; line-height: 1.4;">
-                    Based on an install date of {pd.to_datetime(INSTALL_DATE).strftime("%b %d, %Y")},
-                    the system has been in service for about {installed_years:,.1f} years.
-                    Using the current annualized savings rate, estimated cumulative labor value is
-                    ${since_install_labor_value:,.0f}, estimated cumulative cost is
-                    ${since_install_total_cost:,.0f}, and net value is
-                    ${since_install_net_value:,.0f}.
-                    {"Since-install ROI is " + f"{since_install_roi_pct:,.1f}%." if since_install_roi_pct is not None else "Since-install ROI cannot be calculated because total cost is zero."}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+        with st.expander("Show ROI calculation details", expanded=False):
+            if roi_mode == "Annualized Projection":
+                st.info(f"""### How Annualized ROI Is Calculated
+
+#### Selected range
+This projection starts with the observed labor value from the selected date range.
+
+For **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**, the observed labor value is **${labor_value_saved:,.2f}** over **{days_in_range:,} day(s)**.
+
+#### Annualized Labor Value
+
+Observed period length = {months_in_range:,.2f} month(s)
+
+Annualized labor value = Observed labor value × (12 ÷ observed months)
+
+Annualized labor value = ${labor_value_saved:,.2f} × (12 ÷ {months_in_range:,.2f})
+
+**Annualized labor value = ${annual_labor_value:,.2f} per year**
+
+#### Annual Recurring Cost
+
+Monthly recurring cost = ${MONTHLY_COST:,.2f}/month  
+Yearly recurring cost = ${YEARLY_COST:,.2f}/year
+
+Annual recurring cost = (Monthly cost × 12) + Yearly cost
+
+Annual recurring cost = (${MONTHLY_COST:,.2f} × 12) + ${YEARLY_COST:,.2f}
+
+**Annual recurring cost = ${annual_operating_cost:,.2f} per year**
+
+#### Net Annual Value
+
+Net annual value = Annualized labor value − Annual recurring cost
+
+Net annual value = ${annual_labor_value:,.2f} − ${annual_operating_cost:,.2f}
+
+**Net annual value = ${net_roi_value:,.2f} per year**
+
+#### Annual ROI
+
+ROI = (Net annual value ÷ Annual recurring cost) × 100
+
+{f"**Annual ROI = ({net_roi_value:,.2f} ÷ {total_roi_cost:,.2f}) × 100 = {roi_pct:,.2f}%**" if roi_pct is not None else "**Annual ROI = N/A** because annual recurring cost is 0."}
+
+#### Payback Period
+
+Payback period estimates how long it takes for ongoing savings to recover the upfront cost.
+
+Monthly labor value saved = ${monthly_labor_value_saved:,.2f}/month  
+Monthly equivalent recurring cost = ${monthly_equivalent_recurring_cost:,.2f}/month
+
+Payback period = Upfront cost ÷ (Monthly labor value saved − Monthly equivalent recurring cost)
+
+{f"**Estimated payback period = {payback_months:,.1f} months**" if payback_months is not None else "**Estimated payback period = N/A** because monthly savings do not currently exceed monthly recurring cost."}
+""")
+            else:
+                st.info(f"""### How Observed Operating Value Is Calculated
+
+#### Selected range
+This version uses only the exact date range currently selected.
+
+Selected range = **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**  
+Range length = **{days_in_range:,} day(s)**  
+Observed period length = **{months_in_range:,.2f} month(s)**
+
+#### Observed Labor Value
+
+Observed labor value = Staff time saved in the selected range × Hourly labor cost
+
+Observed labor value = ${labor_value_saved:,.2f}
+
+**Observed labor value = ${labor_value_saved:,.2f}**
+
+#### Prorated Operating Cost
+
+Prorated monthly cost = Monthly cost × observed months
+
+Prorated monthly cost = ${MONTHLY_COST:,.2f} × {months_in_range:,.2f} month(s)
+
+**Prorated monthly cost = ${observed_prorated_monthly_cost:,.2f}**
+
+Prorated yearly cost = Yearly cost × observed years
+
+Prorated yearly cost = ${YEARLY_COST:,.2f} × {years_in_range:,.2f} year(s)
+
+**Prorated yearly cost = ${observed_prorated_yearly_cost:,.2f}**
+
+Observed operating cost = Prorated monthly cost + prorated yearly cost
+
+Observed operating cost = ${observed_prorated_monthly_cost:,.2f} + ${observed_prorated_yearly_cost:,.2f}
+
+**Observed operating cost = ${observed_operating_cost:,.2f}**
+
+#### Observed Net Value
+
+Observed net value = Observed labor value − Observed operating cost
+
+Observed net value = ${labor_value_saved:,.2f} − ${observed_operating_cost:,.2f}
+
+**Observed net value = ${observed_net_operating_value:,.2f}**
+
+#### Important Note
+
+The selected-range view focuses on **operating performance only**.  
+It does **not** include the upfront cost in the headline cards, because a short time window is not a meaningful way to evaluate a one-time capital purchase.
+
+Upfront cost entered = **${UPFRONT_COST:,.2f}**
+""")
+
+            st.info(f"""### How Since-Install ROI Is Calculated
+
+#### Time in Service
+
+Install date = **{pd.to_datetime(INSTALL_DATE).strftime("%b %d, %Y")}**
+
+Time in service = {installed_days:,} day(s)
+
+**Time in service = {installed_years:,.2f} year(s)**
+
+#### Estimated Cumulative Labor Value
+
+This estimate uses the current annualized labor value and projects it across the full time in service.
+
+Estimated cumulative labor value = Annualized labor value × Years in service
+
+Estimated cumulative labor value = ${annual_labor_value:,.2f} × {installed_years:,.2f}
+
+**Estimated cumulative labor value = ${since_install_labor_value:,.2f}**
+
+#### Estimated Cumulative Operating Cost
+
+Estimated cumulative operating cost = Annual recurring cost × Years in service
+
+Estimated cumulative operating cost = ${annual_operating_cost:,.2f} × {installed_years:,.2f}
+
+**Estimated cumulative operating cost = ${since_install_operating_cost:,.2f}**
+
+#### Total Cumulative Cost
+
+{"This version includes the original upfront cost." if INCLUDE_UPFRONT_IN_SINCE_INSTALL else "This version excludes the original upfront cost and uses operating cost only."}
+
+{"Total cumulative cost = Upfront cost + cumulative operating cost" if INCLUDE_UPFRONT_IN_SINCE_INSTALL else "Total cumulative cost = cumulative operating cost only"}
+
+{f"Total cumulative cost = ${UPFRONT_COST:,.2f} + ${since_install_operating_cost:,.2f}" if INCLUDE_UPFRONT_IN_SINCE_INSTALL else f"Total cumulative cost = ${since_install_operating_cost:,.2f}"}
+
+**Total cumulative cost = ${since_install_total_cost:,.2f}**
+
+#### Since-Install Net Value
+
+Since-install net value = Estimated cumulative labor value − Total cumulative cost
+
+Since-install net value = ${since_install_labor_value:,.2f} − ${since_install_total_cost:,.2f}
+
+**Since-install net value = ${since_install_net_value:,.2f}**
+
+#### Since-Install ROI
+
+Since-install ROI = (Net value ÷ Total cumulative cost) × 100
+
+{f"**Since-install ROI = ({since_install_net_value:,.2f} ÷ {since_install_total_cost:,.2f}) × 100 = {since_install_roi_pct:,.2f}%**" if since_install_roi_pct is not None else "**Since-install ROI = N/A** because total cumulative cost is 0."}
+
+#### Important Note
+
+This is an **estimated since-install ROI**, not an exact historical accounting value.  
+It uses the current annualized savings rate as a projection across the machine's time in service.
+""")
 
     else:
         st.info("No ROI data is available for the selected date range.")
