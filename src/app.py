@@ -2876,8 +2876,14 @@ It uses the current annualized savings rate as a projection across the machine's
                     library_name="New Braunfels Public Library",
                     branch_name="Main Branch",
                     system_name="Tech Logic UltraSort",
-                    report_title="AMH Director Report - Cole Johnson",
+                    report_title="AMH Director Report",
                     hourly_cost=HOURLY_COST,
+                    roi_mode=roi_mode,
+                    annual_cost=annual_operating_cost if roi_payload else None,
+                    yearly_savings_after_cost=net_roi_value if roi_payload and roi_mode == "Annualized Projection" else None,
+                    payback_months=payback_months if roi_payload and roi_mode == "Annualized Projection" else None,
+                    since_install_net_value=since_install_net_value if roi_payload else None,
+                    install_date=pd.to_datetime(INSTALL_DATE).strftime("%b %d, %Y") if roi_payload else None,
                 )
 
                 pdf_button_placeholder.download_button(
