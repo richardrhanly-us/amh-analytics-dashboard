@@ -2546,78 +2546,179 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
 """)
 
             if roi_mode == "Annualized Projection":
-                st.info(f"""### ROI Calculation
+                monthly_equivalent_recurring_cost = MONTHLY_COST + (YEARLY_COST / 12.0)
 
-Selected range length = {days_in_range:,} day(s)  
-Observed labor value in selected range = ${labor_value_saved:,.2f}
+                st.info(f"""### How Annualized ROI Is Calculated
 
-Annualized labor value = ${labor_value_saved:,.2f} × (12 ÷ {months_in_range:,.2f})  
-= ${annual_labor_value:,.2f}
+#### Selected range
+This projection starts with the observed labor value from the selected date range.
 
-Annual recurring cost = (${MONTHLY_COST:,.2f} × 12) + ${YEARLY_COST:,.2f}  
-= ${annual_operating_cost:,.2f}
+For **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**, the observed labor value is **${labor_value_saved:,.2f}** over **{days_in_range:,} day(s)**.
 
-Net annual value = annualized labor value − annual recurring cost  
+#### Annualized Labor Value
 
-Net annual value = ${annual_labor_value:,.2f} − ${annual_operating_cost:,.2f}  
-= ${net_roi_value:,.2f}
+Observed period length = {months_in_range:,.2f} month(s)
 
-ROI = (net annual value ÷ annual recurring cost) × 100  
-{f"ROI = ({net_roi_value:,.2f} ÷ {total_roi_cost:,.2f}) × 100 = {roi_pct:,.2f}%" if roi_pct is not None else "ROI = N/A because total cost is 0."}
+Annualized labor value = Observed labor value × (12 ÷ observed months)
 
-Payback period = upfront cost ÷ (monthly labor value saved − monthly equivalent recurring cost)
+Annualized labor value = ${labor_value_saved:,.2f} × (12 ÷ {months_in_range:,.2f})
+
+**Annualized labor value = ${annual_labor_value:,.2f} per year**
+
+#### Annual Recurring Cost
+
+Monthly recurring cost = ${MONTHLY_COST:,.2f}/month  
+Yearly recurring cost = ${YEARLY_COST:,.2f}/year
+
+Annual recurring cost = (Monthly cost × 12) + Yearly cost
+
+Annual recurring cost = (${MONTHLY_COST:,.2f} × 12) + ${YEARLY_COST:,.2f}
+
+**Annual recurring cost = ${annual_operating_cost:,.2f} per year**
+
+#### Net Annual Value
+
+Net annual value = Annualized labor value − Annual recurring cost
+
+Net annual value = ${annual_labor_value:,.2f} − ${annual_operating_cost:,.2f}
+
+**Net annual value = ${net_roi_value:,.2f} per year**
+
+#### Annual ROI
+
+ROI = (Net annual value ÷ Annual recurring cost) × 100
+
+{f"**Annual ROI = ({net_roi_value:,.2f} ÷ {total_roi_cost:,.2f}) × 100 = {roi_pct:,.2f}%**" if roi_pct is not None else "**Annual ROI = N/A** because annual recurring cost is 0."}
+
+#### Payback Period
+
+Payback period estimates how long it takes for ongoing savings to recover the upfront cost.
+
+Monthly labor value saved = ${monthly_labor_value_saved:,.2f}/month  
+Monthly equivalent recurring cost = ${monthly_equivalent_recurring_cost:,.2f}/month
+
+Payback period = Upfront cost ÷ (Monthly labor value saved − Monthly equivalent recurring cost)
+
+{f"**Estimated payback period = {payback_months:,.1f} months**" if payback_months is not None else "**Estimated payback period = N/A** because monthly savings do not currently exceed monthly recurring cost."}
 """)
             else:
-                st.info(f"""### ROI Calculation
+                st.info(f"""### How Observed ROI Is Calculated
 
-Selected range length = {days_in_range:,} day(s)
+#### Selected range
+This version uses only the exact date range currently selected.
 
-Prorated monthly cost = ${MONTHLY_COST:,.2f} × {months_in_range:,.2f} month(s)  
-= ${observed_prorated_monthly_cost:,.2f}
+Selected range = **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**  
+Range length = **{days_in_range:,} day(s)**
 
-Prorated yearly cost = ${YEARLY_COST:,.2f} × {years_in_range:,.2f} year(s)  
-= ${observed_prorated_yearly_cost:,.2f}
+Observed labor value in this range = **${labor_value_display:,.2f}**
 
-Total cost = Upfront cost + prorated monthly cost + prorated yearly cost  
+#### Prorated Operating Cost
 
-Total cost = ${UPFRONT_COST:,.2f} + ${observed_prorated_monthly_cost:,.2f} + ${observed_prorated_yearly_cost:,.2f}  
-= ${total_roi_cost:,.2f}
+Monthly cost is prorated to match the selected range.
 
-Net value = labor value saved − total cost  
+Prorated monthly cost = Monthly cost × observed months
 
-Net value = ${labor_value_display:,.2f} − ${total_roi_cost:,.2f}  
-= ${net_roi_value:,.2f}
+Prorated monthly cost = ${MONTHLY_COST:,.2f} × {months_in_range:,.2f} month(s)
 
-ROI = (net value ÷ total cost) × 100  
-{f"ROI = ({net_roi_value:,.2f} ÷ {total_roi_cost:,.2f}) × 100 = {roi_pct:,.2f}%" if roi_pct is not None else "ROI = N/A because total cost is 0."}
+**Prorated monthly cost = ${observed_prorated_monthly_cost:,.2f}**
+
+Yearly cost is also prorated to match the selected range.
+
+Prorated yearly cost = Yearly cost × observed years
+
+Prorated yearly cost = ${YEARLY_COST:,.2f} × {years_in_range:,.2f} year(s)
+
+**Prorated yearly cost = ${observed_prorated_yearly_cost:,.2f}**
+
+#### Total Cost
+
+Total cost = Upfront cost + prorated monthly cost + prorated yearly cost
+
+Total cost = ${UPFRONT_COST:,.2f} + ${observed_prorated_monthly_cost:,.2f} + ${observed_prorated_yearly_cost:,.2f}
+
+**Total cost = ${total_roi_cost:,.2f}**
+
+#### Net Value
+
+Net value = Observed labor value − Total cost
+
+Net value = ${labor_value_display:,.2f} − ${total_roi_cost:,.2f}
+
+**Net value = ${net_roi_value:,.2f}**
+
+#### Observed ROI
+
+ROI = (Net value ÷ Total cost) × 100
+
+{f"**Observed ROI = ({net_roi_value:,.2f} ÷ {total_roi_cost:,.2f}) × 100 = {roi_pct:,.2f}%**" if roi_pct is not None else "**Observed ROI = N/A** because total cost is 0."}
+
+#### Payback Period
 
 Payback period compares monthly labor value saved against recurring monthly-equivalent cost.
+
+Monthly labor value saved = ${monthly_labor_value_saved:,.2f}/month  
+Monthly equivalent recurring cost = ${(MONTHLY_COST + (YEARLY_COST / 12.0)):,.2f}/month
+
+{f"**Estimated payback period = {payback_months:,.1f} months**" if payback_months is not None else "**Estimated payback period = N/A** because monthly savings do not currently exceed monthly recurring cost."}
 """)
 
 
+            st.info(f"""### How Since-Install ROI Is Calculated
 
-            st.info(f"""### Since-Install ROI Calculation
+#### Time in Service
 
-Install date = {pd.to_datetime(INSTALL_DATE).strftime("%b %d, %Y")}  
-Time in service = {installed_days:,} day(s)  
-= {installed_years:,.2f} year(s)
+Install date = **{pd.to_datetime(INSTALL_DATE).strftime("%b %d, %Y")}**
 
-Estimated cumulative labor value = annualized labor value × years in service  
-= ${annual_labor_value:,.2f} × {installed_years:,.2f}  
-= ${since_install_labor_value:,.2f}
+Time in service = {installed_days:,} day(s)
 
-Estimated cumulative operating cost = annual recurring cost × years in service  
-= ${annual_operating_cost:,.2f} × {installed_years:,.2f}  
-= ${since_install_operating_cost:,.2f}
+**Time in service = {installed_years:,.2f} year(s)**
 
-{f"Total cumulative cost = upfront cost + cumulative operating cost = ${UPFRONT_COST:,.2f} + ${since_install_operating_cost:,.2f} = ${since_install_total_cost:,.2f}" if INCLUDE_UPFRONT_IN_SINCE_INSTALL else f"Total cumulative cost = cumulative operating cost only = ${since_install_total_cost:,.2f}"}
+#### Estimated Cumulative Labor Value
 
-Since-install net value = cumulative labor value − cumulative cost  
-= ${since_install_labor_value:,.2f} − ${since_install_total_cost:,.2f}  
-= ${since_install_net_value:,.2f}
+This estimate uses the current annualized labor value and projects it across the full time in service.
 
-Since-install ROI = (net value ÷ cumulative cost) × 100  
-{f"Since-install ROI = ({since_install_net_value:,.2f} ÷ {since_install_total_cost:,.2f}) × 100 = {since_install_roi_pct:,.2f}%" if since_install_roi_pct is not None else "Since-install ROI = N/A because total cost is 0."}
+Estimated cumulative labor value = Annualized labor value × Years in service
+
+Estimated cumulative labor value = ${annual_labor_value:,.2f} × {installed_years:,.2f}
+
+**Estimated cumulative labor value = ${since_install_labor_value:,.2f}**
+
+#### Estimated Cumulative Operating Cost
+
+Estimated cumulative operating cost = Annual recurring cost × Years in service
+
+Estimated cumulative operating cost = ${annual_operating_cost:,.2f} × {installed_years:,.2f}
+
+**Estimated cumulative operating cost = ${since_install_operating_cost:,.2f}**
+
+#### Total Cumulative Cost
+
+{"This version includes the original upfront cost." if INCLUDE_UPFRONT_IN_SINCE_INSTALL else "This version excludes the original upfront cost and uses operating cost only."}
+
+{"Total cumulative cost = Upfront cost + cumulative operating cost" if INCLUDE_UPFRONT_IN_SINCE_INSTALL else "Total cumulative cost = cumulative operating cost only"}
+
+{f"Total cumulative cost = ${UPFRONT_COST:,.2f} + ${since_install_operating_cost:,.2f}" if INCLUDE_UPFRONT_IN_SINCE_INSTALL else f"Total cumulative cost = ${since_install_operating_cost:,.2f}"}
+
+**Total cumulative cost = ${since_install_total_cost:,.2f}**
+
+#### Since-Install Net Value
+
+Since-install net value = Estimated cumulative labor value − Total cumulative cost
+
+Since-install net value = ${since_install_labor_value:,.2f} − ${since_install_total_cost:,.2f}
+
+**Since-install net value = ${since_install_net_value:,.2f}**
+
+#### Since-Install ROI
+
+Since-install ROI = (Net value ÷ Total cumulative cost) × 100
+
+{f"**Since-install ROI = ({since_install_net_value:,.2f} ÷ {since_install_total_cost:,.2f}) × 100 = {since_install_roi_pct:,.2f}%**" if since_install_roi_pct is not None else "**Since-install ROI = N/A** because total cumulative cost is 0."}
+
+#### Important Note
+
+This is an **estimated since-install ROI**, not an exact historical accounting value.  
+It uses the current annualized savings rate as a projection across the machine's time in service.
 """)
  
     # -----------------------------
