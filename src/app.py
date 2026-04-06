@@ -1424,14 +1424,59 @@ if selected_view == "Live Today":
                 fill_pct=checkins_fill_pct
             )
         with ops2:
+            pct = today_metrics.get("current_speed_fill_pct", 0)
+        
+            # label based on intensity
+            if pct < 0.3:
+                activity_label = "Slow"
+            elif pct < 0.7:
+                activity_label = "Moderate"
+            else:
+                activity_label = "Busy"
+        
             render_kpi_card(
                 "Current Throughput",
                 f"{today_metrics['current_speed']}",
-                f"Items this hour<br><span style='font-size:0.92rem;'>Peak observed: {today_metrics['max_observed_hourly_throughput']:,}/hr</span>",
+                f"""
+                Items this hour<br>
+                <div style="margin-top:6px;">
+                    <div style="
+                        height:6px;
+                        border-radius:4px;
+                        background: linear-gradient(to right, #60a5fa, #f59e0b, #ef4444);
+                        position:relative;
+                    ">
+                        <div style="
+                            position:absolute;
+                            left:{pct * 100:.1f}%;
+                            top:-4px;
+                            width:2px;
+                            height:14px;
+                            background:#111827;
+                        "></div>
+                    </div>
+                    <div style="
+                        display:flex;
+                        justify-content:space-between;
+                        font-size:0.75rem;
+                        color:#6b7280;
+                        margin-top:2px;
+                    ">
+                        <span>Slow</span>
+                        <span>Busy</span>
+                    </div>
+                    <div style="
+                        font-size:0.85rem;
+                        margin-top:4px;
+                        color:#374151;
+                    ">
+                        {activity_label}
+                    </div>
+                </div>
+                """,
                 "#6b7280",
                 value_font_size="2.2rem",
-                border_color="#93c5fd",
-                fill_pct=today_metrics["current_speed_fill_pct"]
+                border_color="#93c5fd"
             )
 
         with ops3:
