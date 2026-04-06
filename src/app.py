@@ -2654,67 +2654,75 @@ if selected_view == "Reports":
                 payback_display = f"{payback_months:,.1f} months" if payback_months is not None else "Not available"
                 roi_display = f"{roi_pct:,.1f}%" if roi_pct is not None else "N/A"
                 since_install_roi_display = f"{since_install_roi_pct:,.1f}%" if since_install_roi_pct is not None else "N/A"
-
+                
+                st.markdown("### How to interpret Annualized metrics")
                 render_explainer_card(
                     f"Annual Cost — ${total_roi_cost:,.0f}",
                     (
-                        "This is the full yearly recurring cost used in the annualized model."
+                        "This is the total recurring cost to operate the AMH for one full year."
                         f"<br><br>Inputs used:"
-                        f"<br>• Yearly recurring cost setting: <b>${YEARLY_COST:,.0f}</b>"
-                        f"<br>• Monthly recurring cost setting: <b>${MONTHLY_COST:,.0f}</b>"
+                        f"<br>• Yearly cost setting: <b>${yearly_cost:,.0f}</b>"
+                        f"<br>• Monthly cost setting: <b>${monthly_cost:,.0f}</b>"
                         f"<br><br>Math:"
-                        f"<br>• Monthly annualized cost = ${MONTHLY_COST:,.0f} × 12 = <b>${MONTHLY_COST * 12:,.0f}</b>"
-                        f"<br>• Yearly recurring cost = <b>${YEARLY_COST:,.0f}</b>"
-                        f"<br><br>Final annual recurring cost:"
-                        f"<br>• <b>${MONTHLY_COST * 12:,.0f} + ${YEARLY_COST:,.0f} = ${total_roi_cost:,.0f}</b>"
-                        "<br><br>This does not include the original upfront purchase cost."
+                        f"<br>• Annual cost = yearly cost + (monthly cost × 12)"
+                        f"<br>• <b>${yearly_cost:,.0f} + (${monthly_cost:,.0f} × 12) = ${total_roi_cost:,.0f}</b>"
                     ),
-                    "#f59e0b"
+                    "#6b7280"
                 )
-
+                
                 render_explainer_card(
-                    f"Net Value — ${net_roi_value:,.0f}",
+                    f"Current Annual Run Rate — ${net_roi_value:,.0f}",
                     (
-                        "This is the estimated yearly value left after subtracting yearly recurring cost."
+                        "This estimates how much net value the AMH is generating per year at its current usage level."
+                        f"<br><br>What this represents:"
+                        f"<br>• Based only on the selected date range"
+                        f"<br>• Scaled up to a full 12-month equivalent"
+                        f"<br>• Then reduced by annual operating cost"
                         f"<br><br>Inputs used:"
-                        f"<br>• Annual labor value: <b>${annual_labor_value:,.0f}</b>"
-                        f"<br>• Annual recurring cost: <b>${total_roi_cost:,.0f}</b>"
+                        f"<br>• Selected range: <b>{days_in_range:,} days</b>"
+                        f"<br>• Annual labor value (scaled): <b>${annual_labor_value:,.0f}</b>"
+                        f"<br>• Annual operating cost: <b>${total_roi_cost:,.0f}</b>"
                         f"<br><br>Math:"
-                        f"<br>• Net value = annual labor value − annual recurring cost"
+                        f"<br>• Net run rate = annual labor value − annual operating cost"
                         f"<br>• <b>${annual_labor_value:,.0f} − ${total_roi_cost:,.0f} = ${net_roi_value:,.0f}</b>"
+                        f"<br><br>This is a current performance estimate, not a guaranteed future outcome."
                     ),
                     "#10b981"
                 )
-
+                
                 render_explainer_card(
-                    f"ROI — {roi_display}",
+                    f"Break-even Status — {break_even_value}",
                     (
-                        "This compares yearly net value against yearly recurring cost."
+                        "This shows whether the AMH has already recovered its upfront purchase cost."
                         f"<br><br>Inputs used:"
-                        f"<br>• Net yearly value: <b>${net_roi_value:,.0f}</b>"
-                        f"<br>• Annual recurring cost: <b>${total_roi_cost:,.0f}</b>"
+                        f"<br>• Upfront cost: <b>${UPFRONT_COST:,.0f}</b>"
+                        f"<br>• Current annual run rate: <b>${net_roi_value:,.0f}</b>"
+                        f"<br>• Years since install: <b>{installed_years:,.1f}</b>"
                         f"<br><br>Math:"
-                        f"<br>• ROI = net yearly value ÷ annual recurring cost × 100"
-                        f"<br>• <b>{roi_display}</b>"
+                        f"<br>• Break-even years = upfront cost ÷ annual run rate"
+                        f"<br>• Break-even point ≈ <b>{payback_months/12:,.1f} years</b>"
+                        f"<br><br>Status:"
+                        f"<br>• <b>{break_even_value}</b>"
+                        f"<br>• {break_even_subtitle}"
                     ),
                     "#3b82f6"
                 )
-
+                
                 render_explainer_card(
-                    f"Time to Recover Upfront Cost Estimate — {payback_display}",
+                    f"Lifetime Value Generated — ${since_install_labor_value:,.0f}",
                     (
-                        "This estimates how long it would take for yearly net value to recover the upfront cost."
+                        "This estimates the total labor value created by the AMH over its full lifetime."
                         f"<br><br>Inputs used:"
-                        f"<br>• Upfront cost: <b>${UPFRONT_COST:,.0f}</b>"
-                        f"<br>• Net yearly value: <b>${net_roi_value:,.0f}</b>"
+                        f"<br>• Annual labor value (current pace): <b>${annual_labor_value:,.0f}</b>"
+                        f"<br>• Years since install: <b>{installed_years:,.1f}</b>"
                         f"<br><br>Math:"
-                        f"<br>• Payback years = upfront cost ÷ net yearly value"
-                        f"<br>• Payback months = payback years × 12"
-                        f"<br>• <b>{payback_display}</b>"
+                        f"<br>• Lifetime value = annual labor value × years since install"
+                        f"<br>• <b>${annual_labor_value:,.0f} × {installed_years:,.1f} = ${since_install_labor_value:,.0f}</b>"
+                        f"<br><br>This is an estimate using current performance applied across the system's lifespan."
                     ),
                     "#f59e0b"
                 )
-
+                st.markdown("### How to interpret Since Install metrics")
                 render_explainer_card(
                     f"Years Since Install — {installed_years:,.1f}",
                     (
