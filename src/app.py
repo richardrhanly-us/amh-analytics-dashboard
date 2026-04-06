@@ -2407,7 +2407,7 @@ if selected_view == "Reports":
 
             with roi4:
                 render_kpi_card(
-                    "Time to recover cost estiamte",
+                    "Time to Recover Upfront Cost Estiamte",
                     f"{payback_months:,.1f} mo" if payback_months is not None else "N/A",
                     "Estimated break-even time",
                     "#6b7280"
@@ -2534,7 +2534,7 @@ if selected_view == "Reports":
                 margin-bottom: 16px;
             ">
                 <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                    Understanding Payback Period
+                    Understanding Time to Recover Upfront Cost Estiamte
                 </div>
                 <div style="color: #4b5563; line-height: 1.45;">
                     The payback period estimates how long it takes for the AMH to recover its upfront cost 
