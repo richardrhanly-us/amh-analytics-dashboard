@@ -110,7 +110,7 @@ def render_kpi_card(
             f'transition:height 0.6s ease;'
             f'"></div>'
         )
-
+        
     subtitle_html = ""
     if subtitle:
         subtitle_html = (
@@ -120,10 +120,11 @@ def render_kpi_card(
             f'color:{subtitle_color};'
             f'margin-top:10px;'
             f'line-height:1.45;'
-            f'overflow:hidden;'
+            f'overflow:visible;'
             f'position:relative;'
             f'z-index:2;'
             f'opacity:0.82;'
+            f'width:100%;'
             f'">{subtitle}</div>'
         )
 
@@ -134,12 +135,6 @@ def render_kpi_card(
         f'border:1px solid {border_color};'
         f'border-radius:12px;'
         f'padding:18px 20px;'
-        f'background: var(--secondary-background-color);'
-        f'min-height:185px;'
-        f'height:185px;'
-        f'display:flex;'
-        f'flex-direction:column;'
-        f'justify-content:center;'
         f'align-items:center;'
         f'text-align:center;'
         f'box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);'
@@ -1423,52 +1418,55 @@ if selected_view == "Live Today":
                 border_color="#93c5fd",
                 fill_pct=checkins_fill_pct
             )
+            
         with ops2:
             pct = today_metrics.get("current_speed_fill_pct", 0)
-        
-            # label based on intensity
+
             if pct < 0.3:
                 activity_label = "Slow"
             elif pct < 0.7:
                 activity_label = "Moderate"
             else:
                 activity_label = "Busy"
-        
+
             render_kpi_card(
                 "Current Throughput",
                 f"{today_metrics['current_speed']}",
                 f"""
-                Items this hour<br>
-                <div style="margin-top:6px;">
+                Items this hour
+                <div style="margin-top:8px; width:100%;">
                     <div style="
-                        height:6px;
-                        border-radius:4px;
-                        background: linear-gradient(to right, #60a5fa, #f59e0b, #ef4444);
                         position:relative;
+                        height:6px;
+                        border-radius:999px;
+                        background:linear-gradient(to right, #60a5fa, #f59e0b, #ef4444);
+                        width:100%;
                     ">
                         <div style="
                             position:absolute;
-                            left:{pct * 100:.1f}%;
+                            left:calc({pct * 100:.1f}% - 1px);
                             top:-4px;
-                            width:2px;
+                            width:3px;
                             height:14px;
+                            border-radius:2px;
                             background:#111827;
                         "></div>
                     </div>
                     <div style="
                         display:flex;
                         justify-content:space-between;
-                        font-size:0.75rem;
+                        font-size:0.74rem;
                         color:#6b7280;
-                        margin-top:2px;
+                        margin-top:4px;
                     ">
                         <span>Slow</span>
                         <span>Busy</span>
                     </div>
                     <div style="
-                        font-size:0.85rem;
-                        margin-top:4px;
+                        font-size:0.82rem;
                         color:#374151;
+                        margin-top:4px;
+                        font-weight:600;
                     ">
                         {activity_label}
                     </div>
