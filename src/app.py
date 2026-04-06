@@ -2614,265 +2614,258 @@ if selected_view == "Reports":
                 )
 
             st.markdown("### ROI Breakdown")
-
+            
             if roi_mode == "Annualized Projection":
                 payback_display = f"{payback_months:,.1f} months" if payback_months is not None else "Not available"
                 roi_display = f"{roi_pct:,.1f}%" if roi_pct is not None else "N/A"
-                roi_multiple_display = f"{roi_pct / 100:,.1f}×" if roi_pct is not None else "N/A"
+                roi_multiple_display = f"{roi_pct / 100:,.1f}x" if roi_pct is not None else "N/A"
                 since_install_roi_display = f"{since_install_roi_pct:,.1f}%" if since_install_roi_pct is not None else "N/A"
-
+            
                 render_explainer_card(
                     f"Annual Cost — ${total_roi_cost:,.0f}",
                     (
-                        "This is the recurring cost used in the annualized ROI model."
-                        "<br><br>Here is exactly what is included:"
-                        f"<br>• Yearly recurring cost setting: <b>${YEARLY_COST:,.0f} per year</b>"
-                        f"<br>• Monthly recurring cost setting: <b>${MONTHLY_COST:,.0f} per month</b>"
-                        "<br><br>For annualized mode, the dashboard converts monthly cost into a full 12-month amount:"
-                        f"<br>• Monthly cost portion = ${MONTHLY_COST:,.0f} × 12 = <b>${MONTHLY_COST * 12:,.0f}</b>"
-                        f"<br>• Yearly cost portion = <b>${YEARLY_COST:,.0f}</b>"
+                        "This is the yearly recurring cost used in annualized mode."
+                        "<br><br>Exactly what is being used:"
+                        f"<br>• Yearly recurring cost setting: ${YEARLY_COST:,.0f} per year"
+                        f"<br>• Monthly recurring cost setting: ${MONTHLY_COST:,.0f} per month"
+                        f"<br>• Monthly cost converted to annual: ${MONTHLY_COST:,.0f} × 12 = ${MONTHLY_COST * 12:,.0f}"
+                        f"<br>• Yearly cost kept as-is: ${YEARLY_COST:,.0f}"
                         f"<br><br>Final annual recurring cost:"
-                        f"<br>• <b>${MONTHLY_COST * 12:,.0f} + ${YEARLY_COST:,.0f} = ${total_roi_cost:,.0f}</b>"
-                        "<br><br>This does <b>not</b> include the original upfront purchase cost."
-                        " It is only the ongoing yearly operating cost."
+                        f"<br>• ${MONTHLY_COST * 12:,.0f} + ${YEARLY_COST:,.0f} = ${total_roi_cost:,.0f}"
+                        "<br><br>This does not include the original upfront purchase cost."
                     ),
                     "#f59e0b"
                 )
-
+            
                 render_explainer_card(
                     f"Net Value — ${net_roi_value:,.0f}",
                     (
-                        "This is the estimated yearly value created after subtracting yearly recurring cost."
-                        "<br><br>Here is exactly how it is calculated:"
-                        f"<br>• Annual labor value = <b>${annual_labor_value:,.0f}</b>"
-                        f"<br>• Annual recurring cost = <b>${total_roi_cost:,.0f}</b>"
+                        "This is the estimated yearly value left over after yearly recurring cost is subtracted."
                         "<br><br>Formula:"
                         "<br>• Net value = annual labor value − annual recurring cost"
+                        f"<br><br>Numbers used:"
+                        f"<br>• Annual labor value = ${annual_labor_value:,.0f}"
+                        f"<br>• Annual recurring cost = ${total_roi_cost:,.0f}"
                         f"<br><br>Final result:"
-                        f"<br>• <b>${annual_labor_value:,.0f} − ${total_roi_cost:,.0f} = ${net_roi_value:,.0f}</b>"
-                        "<br><br>If this number is positive, the AMH is estimated to create more yearly value than it costs to operate."
+                        f"<br>• ${annual_labor_value:,.0f} − ${total_roi_cost:,.0f} = ${net_roi_value:,.0f}"
                     ),
                     "#10b981"
                 )
-                
+            
                 render_explainer_card(
                     f"ROI — {roi_display}" + (f" ({roi_multiple_display})" if roi_pct is not None else ""),
                     (
-                        "This shows the return compared to recurring annual cost."
-                        "<br><br>Here is exactly how it is calculated:"
-                        f"<br>• Net yearly value = <b>${net_roi_value:,.0f}</b>"
-                        f"<br>• Annual recurring cost = <b>${total_roi_cost:,.0f}</b>"
+                        "This shows yearly return compared to yearly recurring cost."
                         "<br><br>Formula:"
                         "<br>• ROI = net yearly value ÷ annual recurring cost × 100"
+                        f"<br><br>Numbers used:"
+                        f"<br>• Net yearly value = ${net_roi_value:,.0f}"
+                        f"<br>• Annual recurring cost = ${total_roi_cost:,.0f}"
                         f"<br><br>Final result:"
-                        f"<br>• ROI = <b>{roi_display}</b>"
-                        f"<br>• Return multiple = <b>{roi_multiple_display}</b>"
+                        f"<br>• ROI = {roi_display}"
+                        f"<br>• Return multiple = {roi_multiple_display}"
                         "<br><br>A 100% ROI means the yearly net value equals the full yearly recurring cost."
                     ),
                     "#3b82f6"
                 )
-                
+            
                 render_explainer_card(
                     f"Time to Recover Upfront Cost Estimate — {payback_display}",
                     (
                         "This estimates how long it would take for yearly net value to recover the original upfront cost."
-                        "<br><br>Here is exactly how it is calculated:"
-                        f"<br>• Upfront cost setting = <b>${UPFRONT_COST:,.0f}</b>"
-                        f"<br>• Net yearly value = <b>${net_roi_value:,.0f}</b>"
                         "<br><br>Formula:"
                         "<br>• Payback years = upfront cost ÷ net yearly value"
                         "<br>• Payback months = payback years × 12"
+                        f"<br><br>Numbers used:"
+                        f"<br>• Upfront cost = ${UPFRONT_COST:,.0f}"
+                        f"<br>• Net yearly value = ${net_roi_value:,.0f}"
                         f"<br><br>Final result:"
-                        f"<br>• <b>{payback_display}</b>"
+                        f"<br>• {payback_display}"
                         "<br><br>If net yearly value is zero or negative, a payback period cannot be calculated."
                     ),
                     "#f59e0b"
                 )
-
+            
                 render_explainer_card(
                     f"Years Since Install — {installed_years:,.1f}",
                     (
                         "This is the amount of time between the install date you entered and today."
-                        "<br><br>Here is exactly what is used:"
-                        f"<br>• Install date setting = <b>{pd.to_datetime(INSTALL_DATE).strftime('%b %d, %Y')}</b>"
-                        f"<br>• Time in service = <b>{installed_years:,.1f} years</b>"
-                        "<br><br>This value is used for the since-install calculations below."
+                        "<br><br>Numbers used:"
+                        f"<br>• Install date setting = {pd.to_datetime(INSTALL_DATE).strftime('%b %d, %Y')}"
+                        f"<br>• Time in service = {installed_years:,.1f} years"
+                        "<br><br>This value is used in the since-install calculations below."
                     ),
                     "#6b7280"
                 )
-
+            
                 render_explainer_card(
                     f"Since-Install Value — ${since_install_labor_value:,.0f}",
                     (
-                        "This estimates the total labor value created over the machine’s time in service."
-                        "<br><br>Here is exactly how it is calculated:"
-                        f"<br>• Annual labor value = <b>${annual_labor_value:,.0f}</b>"
-                        f"<br>• Years since install = <b>{installed_years:,.1f}</b>"
+                        "This estimates total labor value created over the machine’s time in service."
                         "<br><br>Formula:"
                         "<br>• Since-install value = annual labor value × years since install"
+                        f"<br><br>Numbers used:"
+                        f"<br>• Annual labor value = ${annual_labor_value:,.0f}"
+                        f"<br>• Years since install = {installed_years:,.1f}"
                         f"<br><br>Final result:"
-                        f"<br>• <b>${annual_labor_value:,.0f} × {installed_years:,.1f} = ${since_install_labor_value:,.0f}</b>"
+                        f"<br>• ${annual_labor_value:,.0f} × {installed_years:,.1f} = ${since_install_labor_value:,.0f}"
                     ),
                     "#3b82f6"
                 )
-
-                render_explainer_card(
-                    f"Since-Install Net — ${since_install_net_value:,.0f}",
-                    (
-                        "This estimates total value since install after subtracting total cost."
-                        "<br><br>Here is exactly how it is calculated:"
-                        f"<br>• Since-install labor value = <b>${since_install_labor_value:,.0f}</b>"
-                        f"<br>• Since-install total cost = <b>${since_install_total_cost:,.0f}</b>"
-                        "<br><br>Formula:"
-                        "<br>• Since-install net = since-install labor value − since-install total cost"
-                        f"<br><br>Final result:"
-                        f"<br>• <b>${since_install_labor_value:,.0f} − ${since_install_total_cost:,.0f} = ${since_install_net_value:,.0f}</b>"
-                    ),
-                    "#10b981"
-                )
-                
-                render_explainer_card(
-                    f"Since-Install ROI — {since_install_roi_display}",
-                    (
-                        "This shows the estimated return since installation compared to total cost since installation."
-                        "<br><br>Here is exactly how it is calculated:"
-                        f"<br>• Since-install net value = <b>${since_install_net_value:,.0f}</b>"
-                        f"<br>• Since-install total cost = <b>${since_install_total_cost:,.0f}</b>"
-                        "<br><br>Formula:"
-                        "<br>• Since-install ROI = since-install net value ÷ since-install total cost × 100"
-                        f"<br><br>Final result:"
-                        f"<br>• <b>{since_install_roi_display}</b>"
-                    ),
-                    "#7c3aed"
-                )
-            else:
-                since_install_roi_display = f"{since_install_roi_pct:,.1f}%" if since_install_roi_pct is not None else "N/A"
-
-                render_explainer_card(
-                    f"Range Length — {days_in_range:,} days",
-                    (
-                        "This is the exact date range being used for the observed calculation."
-                        "<br><br>Here is exactly what is used:"
-                        f"<br>• Start date = <b>{pd.to_datetime(start_date).strftime('%b %d, %Y')}</b>"
-                        f"<br>• End date = <b>{pd.to_datetime(end_date).strftime('%b %d, %Y')}</b>"
-                        f"<br>• Total days = <b>{days_in_range:,}</b>"
-                        f"<br>• Equivalent months = <b>{months_in_range:,.2f}</b>"
-                        f"<br>• Equivalent years = <b>{years_in_range:,.4f}</b>"
-                        "<br><br>All observed values below are based only on this selected period."
-                    ),
-                    "#6b7280"
-                )
-                
-                render_explainer_card(
-                    f"Observed Labor Value — ${labor_value_saved:,.0f}",
-                    (
-                        "This is the estimated dollar value of staff time saved during the selected date range."
-                        "<br><br>Here is exactly what this number is based on:"
-                        f"<br>• Total hours saved in selected range = <b>{total_saved:,.2f} hours</b>"
-                        f"<br>• Hourly labor cost setting = <b>${HOURLY_COST:,.2f} per hour</b>"
-                        "<br><br>Formula:"
-                        "<br>• Observed labor value = total hours saved × hourly labor cost"
-                        f"<br><br>Final result:"
-                        f"<br>• <b>{total_saved:,.2f} × ${HOURLY_COST:,.2f} = ${labor_value_saved:,.0f}</b>"
-                        "<br><br>The hours saved value is calculated earlier in the ROI logic by comparing estimated manual processing time against estimated AMH processing time for the selected range."
-                    ),
-                    "#3b82f6"
-                )
-                
-                render_explainer_card(
-                    f"Observed Operating Cost — ${observed_operating_cost:,.0f}",
-                    (
-                        "This is the portion of your recurring operating cost applied only to the selected date range."
-                        "<br><br>Here is exactly what is used:"
-                        f"<br>• Yearly recurring cost setting = <b>${YEARLY_COST:,.0f} per year</b>"
-                        f"<br>• Monthly recurring cost setting = <b>${MONTHLY_COST:,.0f} per month</b>"
-                        f"<br>• Selected range length = <b>{days_in_range:,} days</b>"
-                        f"<br>• Equivalent months = <b>{months_in_range:,.2f}</b>"
-                        f"<br>• Equivalent years = <b>{years_in_range:,.4f}</b>"
-                        "<br><br>Prorated cost math:"
-                        f"<br>• Monthly portion = ${MONTHLY_COST:,.0f} × {months_in_range:,.2f} = <b>${observed_prorated_monthly_cost:,.0f}</b>"
-                        f"<br>• Yearly portion = ${YEARLY_COST:,.0f} × {years_in_range:,.4f} = <b>${observed_prorated_yearly_cost:,.0f}</b>"
-                        f"<br><br>Final observed operating cost:"
-                        f"<br>• <b>${observed_prorated_monthly_cost:,.0f} + ${observed_prorated_yearly_cost:,.0f} = ${observed_operating_cost:,.0f}</b>"
-                        "<br><br>This does <b>not</b> include the original upfront purchase cost."
-                    ),
-                    "#f59e0b"
-                )
-                
-                render_explainer_card(
-                    f"Observed Net Value — ${observed_net_operating_value:,.0f}",
-                    (
-                        "This is the net value created during the selected date range after recurring operating cost is subtracted."
-                        "<br><br>Here is exactly how it is calculated:"
-                        f"<br>• Observed labor value = <b>${labor_value_saved:,.0f}</b>"
-                        f"<br>• Observed operating cost = <b>${observed_operating_cost:,.0f}</b>"
-                        "<br><br>Formula:"
-                        "<br>• Observed net value = observed labor value − observed operating cost"
-                        f"<br><br>Final result:"
-                        f"<br>• <b>${labor_value_saved:,.0f} − ${observed_operating_cost:,.0f} = ${observed_net_operating_value:,.0f}</b>"
-                    ),
-                    "#10b981"
-                )
-                
-                render_explainer_card(
-                    f"Years Since Install — {installed_years:,.1f}",
-                    (
-                        "This is the amount of time between the install date you entered and today."
-                        "<br><br>Here is exactly what is used:"
-                        f"<br>• Install date setting = <b>{pd.to_datetime(INSTALL_DATE).strftime('%b %d, %Y')}</b>"
-                        f"<br>• Time in service = <b>{installed_years:,.1f} years</b>"
-                        "<br><br>This value is used for the since-install calculations below."
-                    ),
-                    "#6b7280"
-                )
-                
-                render_explainer_card(
-                    f"Since-Install Value — ${since_install_labor_value:,.0f}",
-                    (
-                        "This estimates the total labor value created over the machine’s time in service."
-                        "<br><br>Here is exactly how it is calculated:"
-                        f"<br>• Annual labor value = <b>${annual_labor_value:,.0f}</b>"
-                        f"<br>• Years since install = <b>{installed_years:,.1f}</b>"
-                        "<br><br>Formula:"
-                        "<br>• Since-install value = annual labor value × years since install"
-                        f"<br><br>Final result:"
-                        f"<br>• <b>${annual_labor_value:,.0f} × {installed_years:,.1f} = ${since_install_labor_value:,.0f}</b>"
-                    ),
-                    "#3b82f6"
-                )
-                
+            
                 render_explainer_card(
                     f"Since-Install Net — ${since_install_net_value:,.0f}",
                     (
                         "This estimates total value since install after subtracting total cost since install."
-                        "<br><br>Here is exactly how it is calculated:"
-                        f"<br>• Since-install labor value = <b>${since_install_labor_value:,.0f}</b>"
-                        f"<br>• Since-install total cost = <b>${since_install_total_cost:,.0f}</b>"
                         "<br><br>Formula:"
                         "<br>• Since-install net = since-install labor value − since-install total cost"
+                        f"<br><br>Numbers used:"
+                        f"<br>• Since-install labor value = ${since_install_labor_value:,.0f}"
+                        f"<br>• Since-install total cost = ${since_install_total_cost:,.0f}"
                         f"<br><br>Final result:"
-                        f"<br>• <b>${since_install_labor_value:,.0f} − ${since_install_total_cost:,.0f} = ${since_install_net_value:,.0f}</b>"
+                        f"<br>• ${since_install_labor_value:,.0f} − ${since_install_total_cost:,.0f} = ${since_install_net_value:,.0f}"
                     ),
                     "#10b981"
                 )
-
+            
                 render_explainer_card(
                     f"Since-Install ROI — {since_install_roi_display}",
                     (
-                        "This shows the estimated return since installation compared to total cost since installation."
-                        "<br><br>Here is exactly how it is calculated:"
-                        f"<br>• Since-install net value = <b>${since_install_net_value:,.0f}</b>"
-                        f"<br>• Since-install total cost = <b>${since_install_total_cost:,.0f}</b>"
+                        "This shows estimated return since installation compared to total cost since installation."
                         "<br><br>Formula:"
                         "<br>• Since-install ROI = since-install net value ÷ since-install total cost × 100"
+                        f"<br><br>Numbers used:"
+                        f"<br>• Since-install net value = ${since_install_net_value:,.0f}"
+                        f"<br>• Since-install total cost = ${since_install_total_cost:,.0f}"
                         f"<br><br>Final result:"
-                        f"<br>• <b>{since_install_roi_display}</b>"
+                        f"<br>• {since_install_roi_display}"
                     ),
                     "#7c3aed"
                 )
-
-        else:
-            if st.session_state.get("roi_calculated", False):
+            
+            else:
+                since_install_roi_display = f"{since_install_roi_pct:,.1f}%" if since_install_roi_pct is not None else "N/A"
+            
+                render_explainer_card(
+                    f"Range Length — {days_in_range:,} days",
+                    (
+                        "This is the exact date range used for the observed calculation."
+                        "<br><br>Numbers used:"
+                        f"<br>• Start date = {pd.to_datetime(start_date).strftime('%b %d, %Y')}"
+                        f"<br>• End date = {pd.to_datetime(end_date).strftime('%b %d, %Y')}"
+                        f"<br>• Total days = {days_in_range:,}"
+                        f"<br>• Equivalent months = {months_in_range:,.2f}"
+                        f"<br>• Equivalent years = {years_in_range:,.4f}"
+                        "<br><br>All observed values below are based only on this selected period."
+                    ),
+                    "#6b7280"
+                )
+            
+                render_explainer_card(
+                    f"Observed Labor Value — ${labor_value_saved:,.0f}",
+                    (
+                        "This is the estimated dollar value of staff time saved during the selected date range."
+                        "<br><br>Formula:"
+                        "<br>• Observed labor value = saved labor time × hourly labor cost"
+                        f"<br><br>Numbers used:"
+                        f"<br>• Hourly labor cost setting = ${HOURLY_COST:,.2f} per hour"
+                        f"<br>• Final observed labor value = ${labor_value_saved:,.0f}"
+                        "<br><br>This number comes from the saved-time calculation already performed in the ROI logic for the selected range."
+                    ),
+                    "#3b82f6"
+                )
+            
+                render_explainer_card(
+                    f"Observed Operating Cost — ${observed_operating_cost:,.0f}",
+                    (
+                        "This is the portion of your recurring operating cost applied only to the selected date range."
+                        "<br><br>Numbers used:"
+                        f"<br>• Yearly recurring cost setting = ${YEARLY_COST:,.0f} per year"
+                        f"<br>• Monthly recurring cost setting = ${MONTHLY_COST:,.0f} per month"
+                        f"<br>• Selected range length = {days_in_range:,} days"
+                        f"<br>• Equivalent months = {months_in_range:,.2f}"
+                        f"<br>• Equivalent years = {years_in_range:,.4f}"
+                        "<br><br>Prorated cost math:"
+                        f"<br>• Monthly portion = ${MONTHLY_COST:,.0f} × {months_in_range:,.2f} = ${observed_prorated_monthly_cost:,.0f}"
+                        f"<br>• Yearly portion = ${YEARLY_COST:,.0f} × {years_in_range:,.4f} = ${observed_prorated_yearly_cost:,.0f}"
+                        f"<br><br>Final observed operating cost:"
+                        f"<br>• ${observed_prorated_monthly_cost:,.0f} + ${observed_prorated_yearly_cost:,.0f} = ${observed_operating_cost:,.0f}"
+                        "<br><br>This does not include the original upfront purchase cost."
+                    ),
+                    "#f59e0b"
+                )
+            
+                render_explainer_card(
+                    f"Observed Net Value — ${observed_net_operating_value:,.0f}",
+                    (
+                        "This is the net value created during the selected date range after recurring operating cost is subtracted."
+                        "<br><br>Formula:"
+                        "<br>• Observed net value = observed labor value − observed operating cost"
+                        f"<br><br>Numbers used:"
+                        f"<br>• Observed labor value = ${labor_value_saved:,.0f}"
+                        f"<br>• Observed operating cost = ${observed_operating_cost:,.0f}"
+                        f"<br><br>Final result:"
+                        f"<br>• ${labor_value_saved:,.0f} − ${observed_operating_cost:,.0f} = ${observed_net_operating_value:,.0f}"
+                    ),
+                    "#10b981"
+                )
+            
+                render_explainer_card(
+                    f"Years Since Install — {installed_years:,.1f}",
+                    (
+                        "This is the amount of time between the install date you entered and today."
+                        "<br><br>Numbers used:"
+                        f"<br>• Install date setting = {pd.to_datetime(INSTALL_DATE).strftime('%b %d, %Y')}"
+                        f"<br>• Time in service = {installed_years:,.1f} years"
+                        "<br><br>This value is used in the since-install calculations below."
+                    ),
+                    "#6b7280"
+                )
+            
+                render_explainer_card(
+                    f"Since-Install Value — ${since_install_labor_value:,.0f}",
+                    (
+                        "This estimates total labor value created over the machine’s time in service."
+                        "<br><br>Formula:"
+                        "<br>• Since-install value = annual labor value × years since install"
+                        f"<br><br>Numbers used:"
+                        f"<br>• Annual labor value = ${annual_labor_value:,.0f}"
+                        f"<br>• Years since install = {installed_years:,.1f}"
+                        f"<br><br>Final result:"
+                        f"<br>• ${annual_labor_value:,.0f} × {installed_years:,.1f} = ${since_install_labor_value:,.0f}"
+                    ),
+                    "#3b82f6"
+                )
+            
+                render_explainer_card(
+                    f"Since-Install Net — ${since_install_net_value:,.0f}",
+                    (
+                        "This estimates total value since install after subtracting total cost since install."
+                        "<br><br>Formula:"
+                        "<br>• Since-install net = since-install labor value − since-install total cost"
+                        f"<br><br>Numbers used:"
+                        f"<br>• Since-install labor value = ${since_install_labor_value:,.0f}"
+                        f"<br>• Since-install total cost = ${since_install_total_cost:,.0f}"
+                        f"<br><br>Final result:"
+                        f"<br>• ${since_install_labor_value:,.0f} − ${since_install_total_cost:,.0f} = ${since_install_net_value:,.0f}"
+                    ),
+                    "#10b981"
+                )
+            
+                render_explainer_card(
+                    f"Since-Install ROI — {since_install_roi_display}",
+                    (
+                        "This shows estimated return since installation compared to total cost since installation."
+                        "<br><br>Formula:"
+                        "<br>• Since-install ROI = since-install net value ÷ since-install total cost × 100"
+                        f"<br><br>Numbers used:"
+                        f"<br>• Since-install net value = ${since_install_net_value:,.0f}"
+                        f"<br>• Since-install total cost = ${since_install_total_cost:,.0f}"
+                        f"<br><br>Final result:"
+                        f"<br>• {since_install_roi_display}"
+                    ),
+                    "#7c3aed"
+                )
                 st.info("No ROI data is available for the selected date range.")
             else:
                 st.info("Enter your assumptions above, then click Calculate ROI.")
