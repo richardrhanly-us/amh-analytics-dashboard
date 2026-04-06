@@ -1699,42 +1699,6 @@ if selected_view == "Overview":
     )
 
 
-    st.markdown("##### ROI Inputs")
-
-    overview_roi1, overview_roi2, overview_roi3 = st.columns(3)
-
-    with overview_roi1:
-        OVERVIEW_UPFRONT_COST = st.number_input(
-            "Upfront cost ($)",
-            min_value=0.0,
-            max_value=10000000.0,
-            value=200000.0,
-            step=100.0,
-            format="%.2f",
-            key="overview_upfront_cost"
-        )
-
-    with overview_roi2:
-        OVERVIEW_MONTHLY_COST = st.number_input(
-            "Monthly cost ($/month)",
-            min_value=0.0,
-            max_value=1000000.0,
-            value=0.0,
-            step=10.0,
-            format="%.2f",
-            key="overview_monthly_cost"
-        )
-
-    with overview_roi3:
-        OVERVIEW_YEARLY_COST = st.number_input(
-            "Yearly cost ($/year)",
-            min_value=0.0,
-            max_value=1000000.0,
-            value=8000.0,
-            step=50.0,
-            format="%.2f",
-            key="overview_yearly_cost"
-        )
 
     days_in_range = df["datetime"].dt.date.nunique() if len(df) > 0 else 0
 
@@ -1928,25 +1892,20 @@ if selected_view == "Overview":
     overview_total_labor_value = overview_total_hours_saved * HOURLY_COST_OVERVIEW
 
 
-    overview_days_in_range = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1)
-    overview_months_in_range = overview_days_in_range / 30.44
-    overview_years_in_range = overview_days_in_range / 365.25
-
-    if overview_volume_mode == "Average per Day":
-        overview_annual_labor_value = overview_avg_labor_value * 365.25
-        overview_annual_operating_cost = (OVERVIEW_MONTHLY_COST * 12) + OVERVIEW_YEARLY_COST
-        overview_summary_value = overview_annual_labor_value - overview_annual_operating_cost
-        overview_summary_label = "Annual Net Value"
-        overview_summary_subtitle = "Projected yearly value minus recurring cost"
-    else:
-        overview_observed_operating_cost = (
-            (OVERVIEW_MONTHLY_COST * overview_months_in_range)
-            + (OVERVIEW_YEARLY_COST * overview_years_in_range)
-        )
-        overview_summary_value = overview_total_labor_value - overview_observed_operating_cost
-        overview_summary_label = "Observed Net Value"
-        overview_summary_subtitle = "Selected range value minus recurring cost"
-
+            st.session_state["overview_roi_payload"] = {
+                "roi_mode": roi_mode,
+                "roi_pct": roi_pct,
+                "net_roi_value": net_roi_value,
+                "total_roi_cost": total_roi_cost,
+                "payback_months": payback_months,
+                "since_install_roi_pct": since_install_roi_pct,
+                "since_install_net_value": since_install_net_value,
+                "annual_labor_value": annual_labor_value,
+                "annual_operating_cost": annual_operating_cost,
+                "labor_value_saved": labor_value_saved,
+                "observed_operating_cost": observed_prorated_monthly_cost + observed_prorated_yearly_cost,
+                "observed_net_operating_value": labor_value_saved - (observed_prorated_monthly_cost + observed_prorated_yearly_cost),
+            }
 
     
     row1_col1, row1_col2, row1_col3 = st.columns(3)
@@ -2125,14 +2084,32 @@ if selected_view == "Overview":
             )
     
     with row4_col3:
-        render_kpi_card(
-            overview_summary_label,
-            f"${overview_summary_value:,.0f}",
-            overview_summary_subtitle,
-            "#6b7280",
-            value_color="#059669" if overview_summary_value >= 0 else "#dc2626"
-        )
+        overview_roi_payload = st.session_state.get("overview_roi_payload")
 
+        if overview_roi_payload:
+            if overview_roi_payload["roi_mode"] == "Annualized Projection":
+                render_kpi_card(
+                    "Annual ROI",
+                    f'{overview_roi_payload["roi_pct"]:,.1f}%' if overview_roi_payload["roi_pct"] is not None else "N/A",
+                    "From Reports ROI calculator",
+                    "#6b7280",
+                    value_color="#059669" if overview_roi_payload["roi_pct"] is not None and overview_roi_payload["roi_pct"] >= 0 else "#dc2626"
+                )
+            else:
+                render_kpi_card(
+                    "Observed Net Value",
+                    f'${overview_roi_payload["observed_net_operating_value"]:,.0f}',
+                    "From Reports ROI calculator",
+                    "#6b7280",
+                    value_color="#059669" if overview_roi_payload["observed_net_operating_value"] >= 0 else "#dc2626"
+                )
+        else:
+            render_kpi_card(
+                "ROI",
+                "Not Set",
+                "Open Reports to run ROI calculator",
+                "#6b7280"
+            )
 
 if selected_view == "Reports":
     st.header("Reports")
