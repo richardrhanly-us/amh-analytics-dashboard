@@ -2189,30 +2189,38 @@ if selected_view == "Overview":
             )
     
     with row4_col3:
-        overview_roi_payload = build_roi_payload(df, df_history_raw, start_date, end_date)
+        if st.session_state.get("roi_calculated", False):
+            overview_roi_payload = build_roi_payload(df, df_history_raw, start_date, end_date)
 
-        if overview_roi_payload:
-            if overview_roi_payload["roi_mode"] == "Annualized Projection":
-                render_kpi_card(
-                    "Yearly Savings After Cost",
-                    f'${overview_roi_payload["net_roi_value"]:,.0f}',
-                    "Projected yearly savings after recurring cost",
-                    "#6b7280",
-                    value_color="#059669" if overview_roi_payload["net_roi_value"] >= 0 else "#dc2626"
-                )
+            if overview_roi_payload:
+                if overview_roi_payload["roi_mode"] == "Annualized Projection":
+                    render_kpi_card(
+                        "Yearly Savings After Cost",
+                        f'${overview_roi_payload["net_roi_value"]:,.0f}',
+                        "Projected yearly savings after recurring cost",
+                        "#6b7280",
+                        value_color="#059669" if overview_roi_payload["net_roi_value"] >= 0 else "#dc2626"
+                    )
+                else:
+                    render_kpi_card(
+                        "Observed Net Value",
+                        f'${overview_roi_payload["observed_net_operating_value"]:,.0f}',
+                        "Selected range value minus recurring cost",
+                        "#6b7280",
+                        value_color="#059669" if overview_roi_payload["observed_net_operating_value"] >= 0 else "#dc2626"
+                    )
             else:
                 render_kpi_card(
-                    "Observed Net Value",
-                    f'${overview_roi_payload["observed_net_operating_value"]:,.0f}',
-                    "Selected range value minus recurring cost",
-                    "#6b7280",
-                    value_color="#059669" if overview_roi_payload["observed_net_operating_value"] >= 0 else "#dc2626"
+                    "ROI",
+                    "N/A",
+                    "No ROI data for current date range",
+                    "#6b7280"
                 )
         else:
             render_kpi_card(
                 "ROI",
-                "Not Set",
-                "Open Reports to run ROI calculator",
+                "Not Calculated",
+                "Go to Reports and click Calculate ROI",
                 "#6b7280"
             )
 
@@ -2333,7 +2341,23 @@ if selected_view == "Reports":
         help="Usually this should stay on, since purchase ROI should include the initial capital cost."
     )
 
-    roi_payload = build_roi_payload(df, df_history_raw, start_date, end_date)
+    calc_col1, calc_col2 = st.columns([1, 5])
+
+    with calc_col1:
+        calculate_roi_clicked = st.button("Calculate ROI", type="primary")
+
+    with calc_col2:
+        if st.button("Clear ROI Results"):
+            st.session_state["roi_calculated"] = False
+            st.rerun()
+
+    if calculate_roi_clicked:
+        st.session_state["roi_calculated"] = True
+
+    roi_payload = None
+
+    if st.session_state.get("roi_calculated", False):
+        roi_payload = build_roi_payload(df, df_history_raw, start_date, end_date)
 
     if roi_payload:
         roi_pct = roi_payload["roi_pct"]
@@ -2735,7 +2759,10 @@ It uses the current annualized savings rate as a projection across the machine's
 """)
 
     else:
-        st.info("No ROI data is available for the selected date range.")
+        if st.session_state.get("roi_calculated", False):
+            st.info("No ROI data is available for the selected date range.")
+        else:
+            st.info("Enter your assumptions above, then click Calculate ROI.")
 
     st.divider()
 
