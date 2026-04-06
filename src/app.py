@@ -2358,40 +2358,78 @@ if selected_view == "Reports":
                 
             roi1, roi2, roi3, roi4 = st.columns(4)
 
-            with roi1:
-                render_kpi_card(
-                    cost_label,
-                    f"${total_roi_cost:,.0f}",
-                    "Across selected date range" if roi_mode == "Observed (Selected Range)" else "Recurring annual cost only",
-                    "#6b7280"
-                )
+            if roi_mode == "Annualized Projection":
+                with roi1:
+                    render_kpi_card(
+                        "Annual Cost",
+                        f"${total_roi_cost:,.0f}",
+                        "Recurring annual cost only",
+                        "#6b7280"
+                    )
 
-            with roi2:
-                render_kpi_card(
-                    "Net Value",
-                    f"${net_roi_value:,.0f}",
-                    "Labor value minus costs",
-                    "#6b7280",
-                    value_color="#059669" if net_roi_value >= 0 else "#dc2626"
-                )
+                with roi2:
+                    render_kpi_card(
+                        "Net Value",
+                        f"${net_roi_value:,.0f}",
+                        "Labor value minus costs",
+                        "#6b7280",
+                        value_color="#059669" if net_roi_value >= 0 else "#dc2626"
+                    )
 
-            with roi3:
-                render_kpi_card(
-                    "ROI",
-                    f"{roi_pct:,.1f}%" if roi_pct is not None else "N/A",
-                    roi_subtitle,
-                    "#6b7280",
-                    value_color="#059669" if roi_pct is not None and roi_pct >= 0 else "#dc2626"
-                )
+                with roi3:
+                    render_kpi_card(
+                        "ROI",
+                        f"{roi_pct:,.1f}%" if roi_pct is not None else "N/A",
+                        "Projected annual return",
+                        "#6b7280",
+                        value_color="#059669" if roi_pct is not None and roi_pct >= 0 else "#dc2626"
+                    )
 
-            with roi4:
-                render_kpi_card(
-                    "Payback Period",
-                    f"{payback_months:,.1f} mo" if payback_months is not None else "N/A",
-                    "Estimated break-even time",
-                    "#6b7280"
-                )
+                with roi4:
+                    render_kpi_card(
+                        "Payback Period",
+                        f"{payback_months:,.1f} mo" if payback_months is not None else "N/A",
+                        "Estimated break-even time",
+                        "#6b7280"
+                    )
 
+            else:
+                observed_operating_cost = observed_prorated_monthly_cost + observed_prorated_yearly_cost
+                observed_net_operating_value = labor_value_saved - observed_operating_cost
+
+                with roi1:
+                    render_kpi_card(
+                        "Range Length",
+                        f"{days_in_range:,} days",
+                        f"{months_in_range:,.2f} months",
+                        "#6b7280",
+                        value_font_size="1.8rem"
+                    )
+
+                with roi2:
+                    render_kpi_card(
+                        "Observed Labor Value",
+                        f"${labor_value_saved:,.0f}",
+                        "Staff time avoided value",
+                        "#6b7280"
+                    )
+
+                with roi3:
+                    render_kpi_card(
+                        "Observed Operating Cost",
+                        f"${observed_operating_cost:,.0f}",
+                        "Prorated recurring cost only",
+                        "#6b7280"
+                    )
+
+                with roi4:
+                    render_kpi_card(
+                        "Observed Net Value",
+                        f"${observed_net_operating_value:,.0f}",
+                        "Labor value minus operating cost",
+                        "#6b7280",
+                        value_color="#059669" if observed_net_operating_value >= 0 else "#dc2626"
+                    )
 
             install_roi1, install_roi2, install_roi3, install_roi4 = st.columns(4)
 
@@ -2471,12 +2509,23 @@ if selected_view == "Reports":
                         ROI Summary
                     </div>
                     <div style="color: #4b5563; line-height: 1.4;">
-                        {"Using only the selected date range, " if roi_mode == "Observed (Selected Range)" else "Using an annualized projection based on the selected date range, "}
-                        labor value is ${labor_value_display:,.0f}.
-                        Total cost is ${total_roi_cost:,.0f}.
-                        Net value is ${net_roi_value:,.0f}.
-                        {"ROI is " + f"{roi_pct:,.1f}%." if roi_pct is not None else "ROI cannot be calculated because total cost is zero."}
-                        {" Estimated payback period is " + f"{payback_months:,.1f} months." if payback_months is not None else " Payback period is not available because recurring savings do not currently exceed recurring costs."}
+                        {
+                            (
+                                f"Using only the selected date range, observed labor value is ${labor_value_saved:,.0f}. "
+                                f"Observed operating cost is ${(observed_prorated_monthly_cost + observed_prorated_yearly_cost):,.0f}. "
+                                f"Observed net operating value is ${(labor_value_saved - (observed_prorated_monthly_cost + observed_prorated_yearly_cost)):,.0f}. "
+                                f"Upfront cost is excluded from these headline cards so the selected-range view stays focused on operating performance."
+                            )
+                            if roi_mode == "Observed (Selected Range)"
+                            else
+                            (
+                                f"Using an annualized projection based on the selected date range, labor value is ${labor_value_display:,.0f}. "
+                                f"Total annual recurring cost is ${total_roi_cost:,.0f}. "
+                                f"Net annual value is ${net_roi_value:,.0f}. "
+                                + (f"ROI is {roi_pct:,.1f}%. " if roi_pct is not None else "ROI cannot be calculated because annual recurring cost is zero. ")
+                                + (f"Estimated payback period is {payback_months:,.1f} months." if payback_months is not None else "Payback period is not available because recurring savings do not currently exceed recurring costs.")
+                            )
+                        }
                     </div>
                 </div>
                 """,
@@ -2602,19 +2651,27 @@ Payback period = Upfront cost ÷ (Monthly labor value saved − Monthly equivale
 {f"**Estimated payback period = {payback_months:,.1f} months**" if payback_months is not None else "**Estimated payback period = N/A** because monthly savings do not currently exceed monthly recurring cost."}
 """)
             else:
-                st.info(f"""### How Observed ROI Is Calculated
+                observed_operating_cost = observed_prorated_monthly_cost + observed_prorated_yearly_cost
+                observed_net_operating_value = labor_value_saved - observed_operating_cost
+
+                st.info(f"""### How Observed Operating Value Is Calculated
 
 #### Selected range
 This version uses only the exact date range currently selected.
 
 Selected range = **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**  
-Range length = **{days_in_range:,} day(s)**
+Range length = **{days_in_range:,} day(s)**  
+Observed period length = **{months_in_range:,.2f} month(s)**
 
-Observed labor value in this range = **${labor_value_display:,.2f}**
+#### Observed Labor Value
+
+Observed labor value = Staff time saved in the selected range × Hourly labor cost
+
+Observed labor value = ${labor_value_saved:,.2f}
+
+**Observed labor value = ${labor_value_saved:,.2f}**
 
 #### Prorated Operating Cost
-
-Monthly cost is prorated to match the selected range.
 
 Prorated monthly cost = Monthly cost × observed months
 
@@ -2622,44 +2679,32 @@ Prorated monthly cost = ${MONTHLY_COST:,.2f} × {months_in_range:,.2f} month(s)
 
 **Prorated monthly cost = ${observed_prorated_monthly_cost:,.2f}**
 
-Yearly cost is also prorated to match the selected range.
-
 Prorated yearly cost = Yearly cost × observed years
 
 Prorated yearly cost = ${YEARLY_COST:,.2f} × {years_in_range:,.2f} year(s)
 
 **Prorated yearly cost = ${observed_prorated_yearly_cost:,.2f}**
 
-#### Total Cost
+Observed operating cost = Prorated monthly cost + prorated yearly cost
 
-Total cost = Upfront cost + prorated monthly cost + prorated yearly cost
+Observed operating cost = ${observed_prorated_monthly_cost:,.2f} + ${observed_prorated_yearly_cost:,.2f}
 
-Total cost = ${UPFRONT_COST:,.2f} + ${observed_prorated_monthly_cost:,.2f} + ${observed_prorated_yearly_cost:,.2f}
+**Observed operating cost = ${observed_operating_cost:,.2f}**
 
-**Total cost = ${total_roi_cost:,.2f}**
+#### Observed Net Value
 
-#### Net Value
+Observed net value = Observed labor value − Observed operating cost
 
-Net value = Observed labor value − Total cost
+Observed net value = ${labor_value_saved:,.2f} − ${observed_operating_cost:,.2f}
 
-Net value = ${labor_value_display:,.2f} − ${total_roi_cost:,.2f}
+**Observed net value = ${observed_net_operating_value:,.2f}**
 
-**Net value = ${net_roi_value:,.2f}**
+#### Important Note
 
-#### Observed ROI
+The selected-range view focuses on **operating performance only**.  
+It does **not** include the upfront cost in the headline cards, because a short time window is not a meaningful way to evaluate a one-time capital purchase.
 
-ROI = (Net value ÷ Total cost) × 100
-
-{f"**Observed ROI = ({net_roi_value:,.2f} ÷ {total_roi_cost:,.2f}) × 100 = {roi_pct:,.2f}%**" if roi_pct is not None else "**Observed ROI = N/A** because total cost is 0."}
-
-#### Payback Period
-
-Payback period compares monthly labor value saved against recurring monthly-equivalent cost.
-
-Monthly labor value saved = ${monthly_labor_value_saved:,.2f}/month  
-Monthly equivalent recurring cost = ${(MONTHLY_COST + (YEARLY_COST / 12.0)):,.2f}/month
-
-{f"**Estimated payback period = {payback_months:,.1f} months**" if payback_months is not None else "**Estimated payback period = N/A** because monthly savings do not currently exceed monthly recurring cost."}
+Upfront cost entered = **${UPFRONT_COST:,.2f}**
 """)
 
 
