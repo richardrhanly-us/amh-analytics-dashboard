@@ -2347,7 +2347,7 @@ if selected_view == "Reports":
         with roi_mode_col2:
             INSTALL_DATE = st.date_input(
                 "Installed on",
-                value=st.session_state.get("roi_install_date", pd.to_datetime("2019-01-01").date()),
+                value=st.session_state.get("roi_install_date", pd.to_datetime("2019-05-01").date()),
                 key="roi_install_date",
                 help="Used to estimate ROI since the AMH was put into service."
             )
