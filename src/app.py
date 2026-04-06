@@ -110,16 +110,16 @@ def render_kpi_card(
             f'transition:height 0.6s ease;'
             f'"></div>'
         )
-        
+
     subtitle_html = ""
     if subtitle:
         subtitle_html = (
             f'<div style="'
-            f'font-size:1.02rem;'
+            f'font-size:0.98rem;'
             f'font-weight:500;'
             f'color:{subtitle_color};'
             f'margin-top:10px;'
-            f'line-height:1.45;'
+            f'line-height:1.35;'
             f'overflow:visible;'
             f'position:relative;'
             f'z-index:2;'
@@ -134,16 +134,22 @@ def render_kpi_card(
         f'overflow:hidden;'
         f'border:1px solid {border_color};'
         f'border-radius:12px;'
-        f'padding:18px 20px;'
+        f'padding:16px 18px;'
+        f'background:var(--secondary-background-color);'
+        f'min-height:185px;'
+        f'height:185px;'
+        f'display:flex;'
+        f'flex-direction:column;'
+        f'justify-content:center;'
         f'align-items:center;'
         f'text-align:center;'
-        f'box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);'
+        f'box-shadow:0 1px 2px rgba(0, 0, 0, 0.08);'
         f'">'
         f'{fill_html}'
         f'<div style="'
         f'font-size:1.08rem;'
         f'font-weight:600;'
-        f'color: var(--text-color);'
+        f'color:var(--text-color);'
         f'margin-bottom:10px;'
         f'position:relative;'
         f'z-index:2;'
@@ -1421,33 +1427,34 @@ if selected_view == "Live Today":
             
         with ops2:
             pct = today_metrics.get("current_speed_fill_pct", 0)
-
+        
             if pct < 0.3:
                 activity_label = "Slow"
             elif pct < 0.7:
                 activity_label = "Moderate"
             else:
                 activity_label = "Busy"
-
+        
             render_kpi_card(
                 "Current Throughput",
                 f"{today_metrics['current_speed']}",
                 f"""
                 Items this hour
-                <div style="margin-top:8px; width:100%;">
+                <div style="margin-top:6px; width:100%; padding:0 2px;">
                     <div style="
                         position:relative;
-                        height:6px;
+                        height:5px;
                         border-radius:999px;
                         background:linear-gradient(to right, #60a5fa, #f59e0b, #ef4444);
                         width:100%;
+                        margin:0 auto;
                     ">
                         <div style="
                             position:absolute;
                             left:calc({pct * 100:.1f}% - 1px);
-                            top:-4px;
+                            top:-3px;
                             width:3px;
-                            height:14px;
+                            height:11px;
                             border-radius:2px;
                             background:#111827;
                         "></div>
@@ -1455,20 +1462,15 @@ if selected_view == "Live Today":
                     <div style="
                         display:flex;
                         justify-content:space-between;
-                        font-size:0.74rem;
+                        align-items:center;
+                        font-size:0.72rem;
                         color:#6b7280;
-                        margin-top:4px;
+                        margin-top:3px;
+                        line-height:1.1;
                     ">
                         <span>Slow</span>
+                        <span style="font-weight:600; color:#4b5563;">{activity_label}</span>
                         <span>Busy</span>
-                    </div>
-                    <div style="
-                        font-size:0.82rem;
-                        color:#374151;
-                        margin-top:4px;
-                        font-weight:600;
-                    ">
-                        {activity_label}
                     </div>
                 </div>
                 """,
