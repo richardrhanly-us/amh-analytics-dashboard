@@ -2246,286 +2246,331 @@ if selected_view == "Reports":
     st.header("Reports")
     pdf_button_placeholder = st.empty()
 
-    # =========================================================
-    # ROI CALCULATOR
-    # =========================================================
-    with st.expander("ROI Calculator", expanded=False):
-        st.caption("Estimate operating value, annual ROI, payback period, and since-install return.")
+# =========================================================
+# ROI CALCULATOR
+# =========================================================
+with st.expander("ROI Calculator", expanded=False):
+    st.caption("Estimate operating value, annual ROI, payback period, and since-install return.")
 
-        roi_help_col1, roi_help_col2 = st.columns([3, 2])
-    
-        with roi_help_col1:
-            st.info(
-                "Use this section to set labor cost, capital cost, recurring cost, ROI mode, and install date. "
-                "The Overview tab will use these same ROI settings."
-            )
-    
-        with roi_help_col2:
-            st.markdown(
-                """
-                <div style="
-                    border-left: 4px solid #7c3aed;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-top: 2px;
-                    margin-bottom: 12px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        What this controls
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.45;">
-                        Labor value, observed net value, annual ROI, payback period,
-                        and since-install ROI.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-    
-        labor_input_col, upfront_col, monthly_col, yearly_col = st.columns(4)
-    
-        with labor_input_col:
-            HOURLY_COST = st.number_input(
-                "Hourly labor rate ($/hour)",
-                min_value=0.0,
-                max_value=1000.0,
-                value=st.session_state.get("roi_hourly_cost", 18.0),
-                step=0.5,
-                format="%.2f",
-                key="roi_hourly_cost",
-                help="Adjust the hourly labor cost used to estimate labor value."
-            )
-    
-        with upfront_col:
-            UPFRONT_COST = st.number_input(
-                "Upfront cost ($)",
-                min_value=0.0,
-                max_value=10000000.0,
-                value=st.session_state.get("roi_upfront_cost", 250000.0),
-                step=100.0,
-                format="%.2f",
-                key="roi_upfront_cost",
-                help="One-time purchase or implementation cost."
-            )
-    
-        with monthly_col:
-            MONTHLY_COST = st.number_input(
-                "Monthly cost ($/month)",
-                min_value=0.0,
-                max_value=1000000.0,
-                value=st.session_state.get("roi_monthly_cost", 0.0),
-                step=10.0,
-                format="%.2f",
-                key="roi_monthly_cost",
-                help="Recurring monthly maintenance, service, or lease cost."
-            )
-    
-        with yearly_col:
-            YEARLY_COST = st.number_input(
-                "Yearly cost ($/year)",
-                min_value=0.0,
-                max_value=1000000.0,
-                value=st.session_state.get("roi_yearly_cost", 8500.0),
-                step=50.0,
-                format="%.2f",
-                key="roi_yearly_cost",
-                help="Recurring annual support, licensing, or maintenance cost."
-            )
-    
-        roi_mode_col1, roi_mode_col2 = st.columns([2, 2])
-    
-        with roi_mode_col1:
-            roi_mode = st.radio(
-                "Calculation Mode",
-                ["Observed (Selected Range)", "Annualized Projection"],
-                horizontal=True,
-                key="roi_mode",
-                help="Observed uses only the selected date range. Annualized Projection scales the observed labor value to a 12-month estimate."
-            )
-    
-        with roi_mode_col2:
-            INSTALL_DATE = st.date_input(
-                "Installed on",
-                value=st.session_state.get("roi_install_date", pd.to_datetime("2019-01-01").date()),
-                key="roi_install_date",
-                help="Used to estimate ROI since the AMH was put into service."
-            )
-    
-        INCLUDE_UPFRONT_IN_SINCE_INSTALL = st.checkbox(
-            "Include upfront cost in since-install ROI",
-            value=st.session_state.get("roi_include_upfront_since_install", True),
-            key="roi_include_upfront_since_install",
-            help="Usually this should stay on, since purchase ROI should include the initial capital cost."
+    roi_help_col1, roi_help_col2 = st.columns([3, 2])
+
+    with roi_help_col1:
+        st.info(
+            "Use this section to set labor cost, capital cost, recurring cost, ROI mode, and install date. "
+            "The Overview tab will use these same ROI settings."
         )
-    
-        calc_col1, calc_col2 = st.columns([1, 5])
-    
-        with calc_col1:
-            calculate_roi_clicked = st.button("Calculate ROI", type="primary")
-    
-        with calc_col2:
-            if st.button("Clear ROI Results"):
-                st.session_state["roi_calculated"] = False
-                st.rerun()
-    
-        if calculate_roi_clicked:
-            st.session_state["roi_calculated"] = True
-    
-        roi_payload = None
-    
-        if st.session_state.get("roi_calculated", False):
-            roi_payload = build_roi_payload(df, df_history_raw, start_date, end_date)
-    
-        if roi_payload:
-            roi_pct = roi_payload["roi_pct"]
-            net_roi_value = roi_payload["net_roi_value"]
-            total_roi_cost = roi_payload["total_roi_cost"]
-            payback_months = roi_payload["payback_months"]
-            since_install_roi_pct = roi_payload["since_install_roi_pct"]
-            since_install_net_value = roi_payload["since_install_net_value"]
-            annual_labor_value = roi_payload["annual_labor_value"]
-            annual_operating_cost = roi_payload["annual_operating_cost"]
-            labor_value_saved = roi_payload["labor_value_saved"]
-            observed_operating_cost = roi_payload["observed_operating_cost"]
-            observed_net_operating_value = roi_payload["observed_net_operating_value"]
-    
-            months_in_range = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1) / 30.44
-            years_in_range = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1) / 365.25
-            days_in_range = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1)
-    
-            observed_prorated_monthly_cost = MONTHLY_COST * months_in_range
-            observed_prorated_yearly_cost = YEARLY_COST * years_in_range
-    
-            install_date_ts = pd.to_datetime(INSTALL_DATE)
-            today_ts = pd.Timestamp.today().normalize()
-            installed_days = max((today_ts - install_date_ts).days, 1)
-            installed_years = installed_days / 365.25
-    
-            since_install_labor_value = annual_labor_value * installed_years
-            since_install_operating_cost = annual_operating_cost * installed_years
-    
-            if INCLUDE_UPFRONT_IN_SINCE_INSTALL:
-                since_install_total_cost = UPFRONT_COST + since_install_operating_cost
-            else:
-                since_install_total_cost = since_install_operating_cost
-    
-            monthly_labor_value_saved = labor_value_saved / months_in_range if months_in_range > 0 else 0
-            monthly_equivalent_recurring_cost = MONTHLY_COST + (YEARLY_COST / 12.0)
-    
-            if roi_mode == "Annualized Projection":
-                roi1, roi2, roi3, roi4 = st.columns(4)
-    
-                with roi1:
-                    render_kpi_card(
-                        "Annual Cost",
-                        f"${total_roi_cost:,.0f}",
-                        "Recurring annual cost only",
-                        "#6b7280"
-                    )
-    
-                with roi2:
-                    render_kpi_card(
-                        "Net Value",
-                        f"${net_roi_value:,.0f}",
-                        "Labor value minus costs",
-                        "#6b7280",
-                        value_color="#059669" if net_roi_value >= 0 else "#dc2626"
-                    )
-    
-                with roi3:
-                    render_kpi_card(
-                        "ROI",
-                        f"{roi_pct:,.1f}%" if roi_pct is not None else "N/A",
-                        "Projected annual return",
-                        "#6b7280",
-                        value_color="#059669" if roi_pct is not None and roi_pct >= 0 else "#dc2626"
-                    )
-    
-                with roi4:
-                    render_kpi_card(
-                        "Time to Recover Upfront Cost Estiamte",
-                        f"{payback_months:,.1f} mo" if payback_months is not None else "N/A",
-                        "Estimated break-even time",
-                        "#6b7280"
-                    )
-            else:
-                roi1, roi2, roi3, roi4 = st.columns(4)
-    
-                with roi1:
-                    render_kpi_card(
-                        "Range Length",
-                        f"{days_in_range:,} days",
-                        f"{months_in_range:,.2f} months",
-                        "#6b7280",
-                        value_font_size="1.8rem"
-                    )
-    
-                with roi2:
-                    render_kpi_card(
-                        "Observed Labor Value",
-                        f"${labor_value_saved:,.0f}",
-                        "Staff time avoided value",
-                        "#6b7280"
-                    )
-    
-                with roi3:
-                    render_kpi_card(
-                        "Observed Operating Cost",
-                        f"${observed_operating_cost:,.0f}",
-                        "Prorated recurring cost only",
-                        "#6b7280"
-                    )
-    
-                with roi4:
-                    render_kpi_card(
-                        "Observed Net Value",
-                        f"${observed_net_operating_value:,.0f}",
-                        "Labor value minus operating cost",
-                        "#6b7280",
-                        value_color="#059669" if observed_net_operating_value >= 0 else "#dc2626"
-                    )
-    
-            install_roi1, install_roi2, install_roi3, install_roi4 = st.columns(4)
-    
-            with install_roi1:
+
+    with roi_help_col2:
+        st.markdown(
+            """
+            <div style="
+                border-left: 4px solid #7c3aed;
+                background-color: #f9fafb;
+                padding: 14px 16px;
+                border-radius: 8px;
+                margin-top: 2px;
+                margin-bottom: 12px;
+            ">
+                <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                    What this controls
+                </div>
+                <div style="color: #4b5563; line-height: 1.45;">
+                    Labor value, observed net value, annual ROI, payback period,
+                    and since-install ROI.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    labor_input_col, upfront_col, monthly_col, yearly_col = st.columns(4)
+
+    with labor_input_col:
+        HOURLY_COST = st.number_input(
+            "Hourly labor rate ($/hour)",
+            min_value=0.0,
+            max_value=1000.0,
+            value=st.session_state.get("roi_hourly_cost", 18.0),
+            step=0.5,
+            format="%.2f",
+            key="roi_hourly_cost",
+            help="Adjust the hourly labor cost used to estimate labor value."
+        )
+
+    with upfront_col:
+        UPFRONT_COST = st.number_input(
+            "Upfront cost ($)",
+            min_value=0.0,
+            max_value=10000000.0,
+            value=st.session_state.get("roi_upfront_cost", 250000.0),
+            step=100.0,
+            format="%.2f",
+            key="roi_upfront_cost",
+            help="One-time purchase or implementation cost."
+        )
+
+    with monthly_col:
+        MONTHLY_COST = st.number_input(
+            "Monthly cost ($/month)",
+            min_value=0.0,
+            max_value=1000000.0,
+            value=st.session_state.get("roi_monthly_cost", 0.0),
+            step=10.0,
+            format="%.2f",
+            key="roi_monthly_cost",
+            help="Recurring monthly maintenance, service, or lease cost."
+        )
+
+    with yearly_col:
+        YEARLY_COST = st.number_input(
+            "Yearly cost ($/year)",
+            min_value=0.0,
+            max_value=1000000.0,
+            value=st.session_state.get("roi_yearly_cost", 8500.0),
+            step=50.0,
+            format="%.2f",
+            key="roi_yearly_cost",
+            help="Recurring annual support, licensing, or maintenance cost."
+        )
+
+    roi_mode_col1, roi_mode_col2 = st.columns([2, 2])
+
+    with roi_mode_col1:
+        roi_mode = st.radio(
+            "Calculation Mode",
+            ["Observed (Selected Range)", "Annualized Projection"],
+            horizontal=True,
+            key="roi_mode",
+            help="Observed uses only the selected date range. Annualized Projection scales the observed labor value to a 12-month estimate."
+        )
+
+    with roi_mode_col2:
+        INSTALL_DATE = st.date_input(
+            "Installed on",
+            value=st.session_state.get("roi_install_date", pd.to_datetime("2019-01-01").date()),
+            key="roi_install_date",
+            help="Used to estimate ROI since the AMH was put into service."
+        )
+
+    INCLUDE_UPFRONT_IN_SINCE_INSTALL = st.checkbox(
+        "Include upfront cost in since-install ROI",
+        value=st.session_state.get("roi_include_upfront_since_install", True),
+        key="roi_include_upfront_since_install",
+        help="Usually this should stay on, since purchase ROI should include the initial capital cost."
+    )
+
+    calc_col1, calc_col2 = st.columns([1, 5])
+
+    with calc_col1:
+        calculate_roi_clicked = st.button("Calculate ROI", type="primary")
+
+    with calc_col2:
+        if st.button("Clear ROI Results"):
+            st.session_state["roi_calculated"] = False
+            st.rerun()
+
+    if calculate_roi_clicked:
+        st.session_state["roi_calculated"] = True
+
+    roi_payload = None
+
+    if st.session_state.get("roi_calculated", False):
+        roi_payload = build_roi_payload(df, df_history_raw, start_date, end_date)
+
+    if roi_payload:
+        roi_pct = roi_payload["roi_pct"]
+        net_roi_value = roi_payload["net_roi_value"]
+        total_roi_cost = roi_payload["total_roi_cost"]
+        payback_months = roi_payload["payback_months"]
+        since_install_roi_pct = roi_payload["since_install_roi_pct"]
+        since_install_net_value = roi_payload["since_install_net_value"]
+        annual_labor_value = roi_payload["annual_labor_value"]
+        annual_operating_cost = roi_payload["annual_operating_cost"]
+        labor_value_saved = roi_payload["labor_value_saved"]
+        observed_operating_cost = roi_payload["observed_operating_cost"]
+        observed_net_operating_value = roi_payload["observed_net_operating_value"]
+
+        months_in_range = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1) / 30.44
+        years_in_range = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1) / 365.25
+        days_in_range = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1)
+
+        observed_prorated_monthly_cost = MONTHLY_COST * months_in_range
+        observed_prorated_yearly_cost = YEARLY_COST * years_in_range
+
+        install_date_ts = pd.to_datetime(INSTALL_DATE)
+        today_ts = pd.Timestamp.today().normalize()
+        installed_days = max((today_ts - install_date_ts).days, 1)
+        installed_years = installed_days / 365.25
+
+        since_install_labor_value = annual_labor_value * installed_years
+        since_install_operating_cost = annual_operating_cost * installed_years
+
+        if INCLUDE_UPFRONT_IN_SINCE_INSTALL:
+            since_install_total_cost = UPFRONT_COST + since_install_operating_cost
+        else:
+            since_install_total_cost = since_install_operating_cost
+
+        monthly_labor_value_saved = labor_value_saved / months_in_range if months_in_range > 0 else 0
+        monthly_equivalent_recurring_cost = MONTHLY_COST + (YEARLY_COST / 12.0)
+
+        if roi_mode == "Annualized Projection":
+            roi1, roi2, roi3, roi4 = st.columns(4)
+
+            with roi1:
                 render_kpi_card(
-                    "Years Since Install",
-                    f"{installed_years:,.1f}",
-                    pd.to_datetime(INSTALL_DATE).strftime("%b %d, %Y"),
+                    "Annual Cost",
+                    f"${total_roi_cost:,.0f}",
+                    "Recurring annual cost only",
                     "#6b7280"
                 )
-    
-            with install_roi2:
+
+            with roi2:
                 render_kpi_card(
-                    "Since-Install Value",
-                    f"${since_install_labor_value:,.0f}",
-                    "Projected cumulative labor value",
+                    "Net Value",
+                    f"${net_roi_value:,.0f}",
+                    "Labor value minus costs",
+                    "#6b7280",
+                    value_color="#059669" if net_roi_value >= 0 else "#dc2626"
+                )
+
+            with roi3:
+                render_kpi_card(
+                    "ROI",
+                    f"{roi_pct:,.1f}%" if roi_pct is not None else "N/A",
+                    "Projected annual return",
+                    "#6b7280",
+                    value_color="#059669" if roi_pct is not None and roi_pct >= 0 else "#dc2626"
+                )
+
+            with roi4:
+                render_kpi_card(
+                    "Time to Recover Upfront Cost Estiamte",
+                    f"{payback_months:,.1f} mo" if payback_months is not None else "N/A",
+                    "Estimated break-even time",
                     "#6b7280"
                 )
-    
-            with install_roi3:
+        else:
+            roi1, roi2, roi3, roi4 = st.columns(4)
+
+            with roi1:
                 render_kpi_card(
-                    "Since-Install Net",
-                    f"${since_install_net_value:,.0f}",
-                    "Value minus total cost",
+                    "Range Length",
+                    f"{days_in_range:,} days",
+                    f"{months_in_range:,.2f} months",
                     "#6b7280",
-                    value_color="#059669" if since_install_net_value >= 0 else "#dc2626"
+                    value_font_size="1.8rem"
                 )
-    
-            with install_roi4:
+
+            with roi2:
                 render_kpi_card(
-                    "Since-Install ROI",
-                    f"{since_install_roi_pct:,.1f}%" if since_install_roi_pct is not None else "N/A",
-                    "Estimated ROI since install",
-                    "#6b7280",
-                    value_color="#059669" if since_install_roi_pct is not None and since_install_roi_pct >= 0 else "#dc2626"
+                    "Observed Labor Value",
+                    f"${labor_value_saved:,.0f}",
+                    "Staff time avoided value",
+                    "#6b7280"
                 )
-    
+
+            with roi3:
+                render_kpi_card(
+                    "Observed Operating Cost",
+                    f"${observed_operating_cost:,.0f}",
+                    "Prorated recurring cost only",
+                    "#6b7280"
+                )
+
+            with roi4:
+                render_kpi_card(
+                    "Observed Net Value",
+                    f"${observed_net_operating_value:,.0f}",
+                    "Labor value minus operating cost",
+                    "#6b7280",
+                    value_color="#059669" if observed_net_operating_value >= 0 else "#dc2626"
+                )
+
+        install_roi1, install_roi2, install_roi3, install_roi4 = st.columns(4)
+
+        with install_roi1:
+            render_kpi_card(
+                "Years Since Install",
+                f"{installed_years:,.1f}",
+                pd.to_datetime(INSTALL_DATE).strftime("%b %d, %Y"),
+                "#6b7280"
+            )
+
+        with install_roi2:
+            render_kpi_card(
+                "Since-Install Value",
+                f"${since_install_labor_value:,.0f}",
+                "Projected cumulative labor value",
+                "#6b7280"
+            )
+
+        with install_roi3:
+            render_kpi_card(
+                "Since-Install Net",
+                f"${since_install_net_value:,.0f}",
+                "Value minus total cost",
+                "#6b7280",
+                value_color="#059669" if since_install_net_value >= 0 else "#dc2626"
+            )
+
+        with install_roi4:
+            render_kpi_card(
+                "Since-Install ROI",
+                f"{since_install_roi_pct:,.1f}%" if since_install_roi_pct is not None else "N/A",
+                "Estimated ROI since install",
+                "#6b7280",
+                value_color="#059669" if since_install_roi_pct is not None and since_install_roi_pct >= 0 else "#dc2626"
+            )
+
+        st.markdown(
+            f"""
+            <div style="
+                border-left: 4px solid #7c3aed;
+                background-color: #f9fafb;
+                padding: 14px 16px;
+                border-radius: 8px;
+                margin-top: 8px;
+                margin-bottom: 16px;
+            ">
+                <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                    ROI Summary
+                </div>
+                <div style="color: #4b5563; line-height: 1.4;">
+                    {
+                        (
+                            f"Using only the selected date range, observed labor value is ${labor_value_saved:,.0f}. "
+                            f"Observed operating cost is ${observed_operating_cost:,.0f}. "
+                            f"Observed net operating value is ${observed_net_operating_value:,.0f}. "
+                            f"Upfront cost is excluded from these headline cards so the selected-range view stays focused on operating performance."
+                        )
+                        if roi_mode == "Observed (Selected Range)"
+                        else
+                        (
+                            f"Using an annualized projection based on the selected date range, labor value is ${annual_labor_value:,.0f}. "
+                            f"Total annual recurring cost is ${total_roi_cost:,.0f}. "
+                            f"Net annual value is ${net_roi_value:,.0f}. "
+                            + (f"ROI is {roi_pct:,.1f}%. " if roi_pct is not None else "ROI cannot be calculated because annual recurring cost is zero. ")
+                            + (f"Estimated payback period is {payback_months:,.1f} months." if payback_months is not None else "Payback period is not available because recurring savings do not currently exceed recurring costs.")
+                        )
+                    }
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+
+        if roi_mode == "Annualized Projection":
+            payback_value_text = (
+                f"{payback_months:,.1f} months"
+                if payback_months is not None
+                else "N/A"
+            )
+
             st.markdown(
                 f"""
                 <div style="
-                    border-left: 4px solid #7c3aed;
+                    border-left: 4px solid #f59e0b;
                     background-color: #f9fafb;
                     padding: 14px 16px;
                     border-radius: 8px;
@@ -2533,290 +2578,245 @@ if selected_view == "Reports":
                     margin-bottom: 16px;
                 ">
                     <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        ROI Summary
+                        Understanding Time to Recover Upfront Cost Estimate
                     </div>
-                    <div style="color: #4b5563; line-height: 1.4;">
-                        {
-                            (
-                                f"Using only the selected date range, observed labor value is ${labor_value_saved:,.0f}. "
-                                f"Observed operating cost is ${observed_operating_cost:,.0f}. "
-                                f"Observed net operating value is ${observed_net_operating_value:,.0f}. "
-                                f"Upfront cost is excluded from these headline cards so the selected-range view stays focused on operating performance."
-                            )
-                            if roi_mode == "Observed (Selected Range)"
-                            else
-                            (
-                                f"Using an annualized projection based on the selected date range, labor value is ${annual_labor_value:,.0f}. "
-                                f"Total annual recurring cost is ${total_roi_cost:,.0f}. "
-                                f"Net annual value is ${net_roi_value:,.0f}. "
-                                + (f"ROI is {roi_pct:,.1f}%. " if roi_pct is not None else "ROI cannot be calculated because annual recurring cost is zero. ")
-                                + (f"Estimated payback period is {payback_months:,.1f} months." if payback_months is not None else "Payback period is not available because recurring savings do not currently exceed recurring costs.")
-                            )
-                        }
+                    <div style="color: #4b5563; line-height: 1.45;">
+                        This estimate shows how long it would take for the AMH to recover its upfront cost
+                        based on its projected <b>annual net value</b>.
+                        <br><br>
+                        Annual net value means:
+                        <ul style="margin-top: 6px; margin-bottom: 6px;">
+                            <li><b>Annual labor value saved</b> minus</li>
+                            <li><b>Annual recurring cost</b></li>
+                        </ul>
+                        In this case:
+                        <br>
+                        Annual labor value ≈ <b>${annual_labor_value:,.0f}/year</b><br>
+                        Annual recurring cost ≈ <b>${annual_operating_cost:,.0f}/year</b><br><br>
+                        Annual net value ≈ <b>${net_roi_value:,.0f}/year</b>
+                        <br><br>
+                        With an upfront cost of <b>${UPFRONT_COST:,.0f}</b>, the system would recover its initial investment in approximately:
+                        <br><br>
+                        <b>{payback_value_text}</b>
+                        <br><br>
+                        <span style="color:#6b7280;">
+                        This estimate is based on annualized savings and recurring costs, so it aligns with the annual ROI model shown above.
+                        </span>
                     </div>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
-    
-    
-            if roi_mode == "Annualized Projection":
-                payback_value_text = (
-                    f"{payback_months:,.1f} months"
-                    if payback_months is not None
-                    else "N/A"
-                )
-    
-                st.markdown(
-                    f"""
-                    <div style="
-                        border-left: 4px solid #f59e0b;
-                        background-color: #f9fafb;
-                        padding: 14px 16px;
-                        border-radius: 8px;
-                        margin-top: 8px;
-                        margin-bottom: 16px;
-                    ">
-                        <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                            Understanding Time to Recover Upfront Cost Estimate
-                        </div>
-                        <div style="color: #4b5563; line-height: 1.45;">
-                            This estimate shows how long it would take for the AMH to recover its upfront cost
-                            based on its projected <b>annual net value</b>.
-                            <br><br>
-                            Annual net value means:
-                            <ul style="margin-top: 6px; margin-bottom: 6px;">
-                                <li><b>Annual labor value saved</b> minus</li>
-                                <li><b>Annual recurring cost</b></li>
-                            </ul>
-                            In this case:
-                            <br>
-                            Annual labor value ≈ <b>${annual_labor_value:,.0f}/year</b><br>
-                            Annual recurring cost ≈ <b>${annual_operating_cost:,.0f}/year</b><br><br>
-                            Annual net value ≈ <b>${net_roi_value:,.0f}/year</b>
-                            <br><br>
-                            With an upfront cost of <b>${UPFRONT_COST:,.0f}</b>, the system would recover its initial investment in approximately:
-                            <br><br>
-                            <b>{payback_value_text}</b>
-                            <br><br>
-                            <span style="color:#6b7280;">
-                            This estimate is based on annualized savings and recurring costs, so it aligns with the annual ROI model shown above.
-                            </span>
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-            else:
-                st.markdown(
-                    f"""
-                    <div style="
-                        border-left: 4px solid #f59e0b;
-                        background-color: #f9fafb;
-                        padding: 14px 16px;
-                        border-radius: 8px;
-                        margin-top: 8px;
-                        margin-bottom: 16px;
-                    ">
-                        <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                            Understanding Time to Recover Upfront Cost Estimate
-                        </div>
-                        <div style="color: #4b5563; line-height: 1.45;">
-                            Payback period is only shown in <b>Annualized Projection</b> mode.
-                            <br><br>
-                            In <b>Observed (Selected Range)</b> mode, the calculator is focused on the exact operating value
-                            for the selected date range, not on long-term recovery of the upfront investment.
-                            <br><br>
-                            To estimate time to recover the original purchase cost, switch the calculator to
-                            <b>Annualized Projection</b>.
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-    
-            with st.expander("Show ROI calculation details", expanded=False):
-                if roi_mode == "Annualized Projection":
-                    st.info(f"""### How Annualized ROI Is Calculated
-    
-    #### Selected range
-    This projection starts with the observed labor value from the selected date range.
-    
-    For **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**, the observed labor value is **${labor_value_saved:,.2f}** over **{days_in_range:,} day(s)**.
-    
-    #### Annualized Labor Value
-    
-    Observed period length = {months_in_range:,.2f} month(s)
-    
-    Annualized labor value = Observed labor value × (12 ÷ observed months)
-    
-    Annualized labor value = ${labor_value_saved:,.2f} × (12 ÷ {months_in_range:,.2f})
-    
-    **Annualized labor value = ${annual_labor_value:,.2f} per year**
-    
-    #### Annual Recurring Cost
-    
-    Monthly recurring cost = ${MONTHLY_COST:,.2f}/month  
-    Yearly recurring cost = ${YEARLY_COST:,.2f}/year
-    
-    Annual recurring cost = (Monthly cost × 12) + Yearly cost
-    
-    Annual recurring cost = (${MONTHLY_COST:,.2f} × 12) + ${YEARLY_COST:,.2f}
-    
-    **Annual recurring cost = ${annual_operating_cost:,.2f} per year**
-    
-    #### Net Annual Value
-    
-    Net annual value = Annualized labor value − Annual recurring cost
-    
-    Net annual value = ${annual_labor_value:,.2f} − ${annual_operating_cost:,.2f}
-    
-    **Net annual value = ${net_roi_value:,.2f} per year**
-    
-    #### Annual ROI
-    
-    ROI = (Net annual value ÷ Annual recurring cost) × 100
-    
-    {f"**Annual ROI = ({net_roi_value:,.2f} ÷ {total_roi_cost:,.2f}) × 100 = {roi_pct:,.2f}%**" if roi_pct is not None else "**Annual ROI = N/A** because annual recurring cost is 0."}
-    
-    #### Payback Period
-    
-    Payback period estimates how long it takes for annual net savings to recover the upfront cost.
-    
-    Annual net value = Annualized labor value − Annual recurring cost
-    
-    Annual net value = ${annual_labor_value:,.2f} − ${annual_operating_cost:,.2f}
-    
-    **Annual net value = ${net_roi_value:,.2f} per year**
-    
-    Payback period = (Upfront cost ÷ Annual net value) × 12
-    
-    {
-        f"**Estimated payback period = ({UPFRONT_COST:,.2f} ÷ {net_roi_value:,.2f}) × 12 = {payback_months:,.1f} months**"
-        if payback_months is not None
-        else
-        "**Estimated payback period = N/A** because annual net value is not positive."
-    }
-    """)
-                else:
-                    st.info(f"""### How Observed Operating Value Is Calculated
-    
-    #### Selected range
-    This version uses only the exact date range currently selected.
-    
-    Selected range = **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**  
-    Range length = **{days_in_range:,} day(s)**  
-    Observed period length = **{months_in_range:,.2f} month(s)**
-    
-    #### Observed Labor Value
-    
-    Observed labor value = Staff time saved in the selected range × Hourly labor cost
-    
-    Observed labor value = ${labor_value_saved:,.2f}
-    
-    **Observed labor value = ${labor_value_saved:,.2f}**
-    
-    #### Prorated Operating Cost
-    
-    Prorated monthly cost = Monthly cost × observed months
-    
-    Prorated monthly cost = ${MONTHLY_COST:,.2f} × {months_in_range:,.2f} month(s)
-    
-    **Prorated monthly cost = ${observed_prorated_monthly_cost:,.2f}**
-    
-    Prorated yearly cost = Yearly cost × observed years
-    
-    Prorated yearly cost = ${YEARLY_COST:,.2f} × {years_in_range:,.2f} year(s)
-    
-    **Prorated yearly cost = ${observed_prorated_yearly_cost:,.2f}**
-    
-    Observed operating cost = Prorated monthly cost + prorated yearly cost
-    
-    Observed operating cost = ${observed_prorated_monthly_cost:,.2f} + ${observed_prorated_yearly_cost:,.2f}
-    
-    **Observed operating cost = ${observed_operating_cost:,.2f}**
-    
-    #### Observed Net Value
-    
-    Observed net value = Observed labor value − Observed operating cost
-    
-    Observed net value = ${labor_value_saved:,.2f} − ${observed_operating_cost:,.2f}
-    
-    **Observed net value = ${observed_net_operating_value:,.2f}**
-    
-    #### Important Note
-    
-    The selected-range view focuses on **operating performance only**.  
-    It does **not** include the upfront cost in the headline cards, because a short time window is not a meaningful way to evaluate a one-time capital purchase.
-    
-    Upfront cost entered = **${UPFRONT_COST:,.2f}**
-    """)
-    
-                st.info(f"""### How Since-Install ROI Is Calculated
-    
-    #### Time in Service
-    
-    Install date = **{pd.to_datetime(INSTALL_DATE).strftime("%b %d, %Y")}**
-    
-    Time in service = {installed_days:,} day(s)
-    
-    **Time in service = {installed_years:,.2f} year(s)**
-    
-    #### Estimated Cumulative Labor Value
-    
-    This estimate uses the current annualized labor value and projects it across the full time in service.
-    
-    Estimated cumulative labor value = Annualized labor value × Years in service
-    
-    Estimated cumulative labor value = ${annual_labor_value:,.2f} × {installed_years:,.2f}
-    
-    **Estimated cumulative labor value = ${since_install_labor_value:,.2f}**
-    
-    #### Estimated Cumulative Operating Cost
-    
-    Estimated cumulative operating cost = Annual recurring cost × Years in service
-    
-    Estimated cumulative operating cost = ${annual_operating_cost:,.2f} × {installed_years:,.2f}
-    
-    **Estimated cumulative operating cost = ${since_install_operating_cost:,.2f}**
-    
-    #### Total Cumulative Cost
-    
-    {"This version includes the original upfront cost." if INCLUDE_UPFRONT_IN_SINCE_INSTALL else "This version excludes the original upfront cost and uses operating cost only."}
-    
-    {"Total cumulative cost = Upfront cost + cumulative operating cost" if INCLUDE_UPFRONT_IN_SINCE_INSTALL else "Total cumulative cost = cumulative operating cost only"}
-    
-    {f"Total cumulative cost = ${UPFRONT_COST:,.2f} + ${since_install_operating_cost:,.2f}" if INCLUDE_UPFRONT_IN_SINCE_INSTALL else f"Total cumulative cost = ${since_install_operating_cost:,.2f}"}
-    
-    **Total cumulative cost = ${since_install_total_cost:,.2f}**
-    
-    #### Since-Install Net Value
-    
-    Since-install net value = Estimated cumulative labor value − Total cumulative cost
-    
-    Since-install net value = ${since_install_labor_value:,.2f} − ${since_install_total_cost:,.2f}
-    
-    **Since-install net value = ${since_install_net_value:,.2f}**
-    
-    #### Since-Install ROI
-    
-    Since-install ROI = (Net value ÷ Total cumulative cost) × 100
-    
-    {f"**Since-install ROI = ({since_install_net_value:,.2f} ÷ {since_install_total_cost:,.2f}) × 100 = {since_install_roi_pct:,.2f}%**" if since_install_roi_pct is not None else "**Since-install ROI = N/A** because total cumulative cost is 0."}
-    
-    #### Important Note
-    
-    This is an **estimated since-install ROI**, not an exact historical accounting value.  
-    It uses the current annualized savings rate as a projection across the machine's time in service.
-    """)
-    
         else:
-            if st.session_state.get("roi_calculated", False):
-                st.info("No ROI data is available for the selected date range.")
+            st.markdown(
+                f"""
+                <div style="
+                    border-left: 4px solid #f59e0b;
+                    background-color: #f9fafb;
+                    padding: 14px 16px;
+                    border-radius: 8px;
+                    margin-top: 8px;
+                    margin-bottom: 16px;
+                ">
+                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                        Understanding Time to Recover Upfront Cost Estimate
+                    </div>
+                    <div style="color: #4b5563; line-height: 1.45;">
+                        Payback period is only shown in <b>Annualized Projection</b> mode.
+                        <br><br>
+                        In <b>Observed (Selected Range)</b> mode, the calculator is focused on the exact operating value
+                        for the selected date range, not on long-term recovery of the upfront investment.
+                        <br><br>
+                        To estimate time to recover the original purchase cost, switch the calculator to
+                        <b>Annualized Projection</b>.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+        with st.expander("Show ROI calculation details", expanded=False):
+            if roi_mode == "Annualized Projection":
+                st.info(f"""### How Annualized ROI Is Calculated
+
+#### Selected range
+This projection starts with the observed labor value from the selected date range.
+
+For **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**, the observed labor value is **${labor_value_saved:,.2f}** over **{days_in_range:,} day(s)**.
+
+#### Annualized Labor Value
+
+Observed period length = {months_in_range:,.2f} month(s)
+
+Annualized labor value = Observed labor value × (12 ÷ observed months)
+
+Annualized labor value = ${labor_value_saved:,.2f} × (12 ÷ {months_in_range:,.2f})
+
+**Annualized labor value = ${annual_labor_value:,.2f} per year**
+
+#### Annual Recurring Cost
+
+Monthly recurring cost = ${MONTHLY_COST:,.2f}/month  
+Yearly recurring cost = ${YEARLY_COST:,.2f}/year
+
+Annual recurring cost = (Monthly cost × 12) + Yearly cost
+
+Annual recurring cost = (${MONTHLY_COST:,.2f} × 12) + ${YEARLY_COST:,.2f}
+
+**Annual recurring cost = ${annual_operating_cost:,.2f} per year**
+
+#### Net Annual Value
+
+Net annual value = Annualized labor value − Annual recurring cost
+
+Net annual value = ${annual_labor_value:,.2f} − ${annual_operating_cost:,.2f}
+
+**Net annual value = ${net_roi_value:,.2f} per year**
+
+#### Annual ROI
+
+ROI = (Net annual value ÷ Annual recurring cost) × 100
+
+{f"**Annual ROI = ({net_roi_value:,.2f} ÷ {total_roi_cost:,.2f}) × 100 = {roi_pct:,.2f}%**" if roi_pct is not None else "**Annual ROI = N/A** because annual recurring cost is 0."}
+
+#### Payback Period
+
+Payback period estimates how long it takes for annual net savings to recover the upfront cost.
+
+Annual net value = Annualized labor value − Annual recurring cost
+
+Annual net value = ${annual_labor_value:,.2f} − ${annual_operating_cost:,.2f}
+
+**Annual net value = ${net_roi_value:,.2f} per year**
+
+Payback period = (Upfront cost ÷ Annual net value) × 12
+
+{
+    f"**Estimated payback period = ({UPFRONT_COST:,.2f} ÷ {net_roi_value:,.2f}) × 12 = {payback_months:,.1f} months**"
+    if payback_months is not None
+    else
+    "**Estimated payback period = N/A** because annual net value is not positive."
+}
+""")
             else:
-                st.info("Enter your assumptions above, then click Calculate ROI.")
-    
-        st.divider()
+                st.info(f"""### How Observed Operating Value Is Calculated
+
+#### Selected range
+This version uses only the exact date range currently selected.
+
+Selected range = **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**  
+Range length = **{days_in_range:,} day(s)**  
+Observed period length = **{months_in_range:,.2f} month(s)**
+
+#### Observed Labor Value
+
+Observed labor value = Staff time saved in the selected range × Hourly labor cost
+
+Observed labor value = ${labor_value_saved:,.2f}
+
+**Observed labor value = ${labor_value_saved:,.2f}**
+
+#### Prorated Operating Cost
+
+Prorated monthly cost = Monthly cost × observed months
+
+Prorated monthly cost = ${MONTHLY_COST:,.2f} × {months_in_range:,.2f} month(s)
+
+**Prorated monthly cost = ${observed_prorated_monthly_cost:,.2f}**
+
+Prorated yearly cost = Yearly cost × observed years
+
+Prorated yearly cost = ${YEARLY_COST:,.2f} × {years_in_range:,.2f} year(s)
+
+**Prorated yearly cost = ${observed_prorated_yearly_cost:,.2f}**
+
+Observed operating cost = Prorated monthly cost + prorated yearly cost
+
+Observed operating cost = ${observed_prorated_monthly_cost:,.2f} + ${observed_prorated_yearly_cost:,.2f}
+
+**Observed operating cost = ${observed_operating_cost:,.2f}**
+
+#### Observed Net Value
+
+Observed net value = Observed labor value − Observed operating cost
+
+Observed net value = ${labor_value_saved:,.2f} − ${observed_operating_cost:,.2f}
+
+**Observed net value = ${observed_net_operating_value:,.2f}**
+
+#### Important Note
+
+The selected-range view focuses on **operating performance only**.  
+It does **not** include the upfront cost in the headline cards, because a short time window is not a meaningful way to evaluate a one-time capital purchase.
+
+Upfront cost entered = **${UPFRONT_COST:,.2f}**
+""")
+
+            st.info(f"""### How Since-Install ROI Is Calculated
+
+#### Time in Service
+
+Install date = **{pd.to_datetime(INSTALL_DATE).strftime("%b %d, %Y")}**
+
+Time in service = {installed_days:,} day(s)
+
+**Time in service = {installed_years:,.2f} year(s)**
+
+#### Estimated Cumulative Labor Value
+
+This estimate uses the current annualized labor value and projects it across the full time in service.
+
+Estimated cumulative labor value = Annualized labor value × Years in service
+
+Estimated cumulative labor value = ${annual_labor_value:,.2f} × {installed_years:,.2f}
+
+**Estimated cumulative labor value = ${since_install_labor_value:,.2f}**
+
+#### Estimated Cumulative Operating Cost
+
+Estimated cumulative operating cost = Annual recurring cost × Years in service
+
+Estimated cumulative operating cost = ${annual_operating_cost:,.2f} × {installed_years:,.2f}
+
+**Estimated cumulative operating cost = ${since_install_operating_cost:,.2f}**
+
+#### Total Cumulative Cost
+
+{"This version includes the original upfront cost." if INCLUDE_UPFRONT_IN_SINCE_INSTALL else "This version excludes the original upfront cost and uses operating cost only."}
+
+{"Total cumulative cost = Upfront cost + cumulative operating cost" if INCLUDE_UPFRONT_IN_SINCE_INSTALL else "Total cumulative cost = cumulative operating cost only"}
+
+{f"Total cumulative cost = ${UPFRONT_COST:,.2f} + ${since_install_operating_cost:,.2f}" if INCLUDE_UPFRONT_IN_SINCE_INSTALL else f"Total cumulative cost = ${since_install_operating_cost:,.2f}"}
+
+**Total cumulative cost = ${since_install_total_cost:,.2f}**
+
+#### Since-Install Net Value
+
+Since-install net value = Estimated cumulative labor value − Total cumulative cost
+
+Since-install net value = ${since_install_labor_value:,.2f} − ${since_install_total_cost:,.2f}
+
+**Since-install net value = ${since_install_net_value:,.2f}**
+
+#### Since-Install ROI
+
+Since-install ROI = (Net value ÷ Total cumulative cost) × 100
+
+{f"**Since-install ROI = ({since_install_net_value:,.2f} ÷ {since_install_total_cost:,.2f}) × 100 = {since_install_roi_pct:,.2f}%**" if since_install_roi_pct is not None else "**Since-install ROI = N/A** because total cumulative cost is 0."}
+
+#### Important Note
+
+This is an **estimated since-install ROI**, not an exact historical accounting value.  
+It uses the current annualized savings rate as a projection across the machine's time in service.
+""")
+
+    else:
+        if st.session_state.get("roi_calculated", False):
+            st.info("No ROI data is available for the selected date range.")
+        else:
+            st.info("Enter your assumptions above, then click Calculate ROI.")
+
+    st.divider()
 
     # =========================================================
     # LABOR & EFFICIENCY
