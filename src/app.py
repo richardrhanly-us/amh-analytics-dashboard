@@ -1409,7 +1409,7 @@ if selected_view == "Live Today":
                     border_color="#93c5fd"
                 )
 
-    # Rejects
+    # Routing (moved to middle, takes green)
     with live_group2:
         st.markdown(
             """
@@ -1418,60 +1418,6 @@ if selected_view == "Live Today":
                 border-radius: 14px;
                 padding: 12px 14px;
                 background: #34d399;
-                margin-bottom: 8px;
-            ">
-                <div style="
-                    font-size: 0.95rem;
-                    font-weight: 700;
-                    color: #ffffff;
-                    line-height: 1.2;
-                ">
-                    Rejects
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        quality1, quality2 = st.columns(2)
-
-        with quality1:
-            render_kpi_card(
-                "Rejects",
-                f"{today_rejects:,}",
-                "Failures today",
-                "#6b7280",
-                value_font_size="2.2rem",
-                border_color="#059669"
-            )
-        
-        with quality2:
-            reject_rate_subtitle = "Of checkins today"
-            if historical_daily_avg_reject > 0:
-                reject_rate_subtitle = (
-                    f"{live_reject_deviation:+.2f}% vs avg daily "
-                    f"rate ({historical_daily_avg_reject:.2f}%)"
-                )
-        
-            render_kpi_card(
-                "Reject Rate",
-                f"{today_reject_rate:.2f}%",
-                reject_rate_subtitle,
-                live_reject_subtitle_color,
-                value_font_size="1.8rem",
-                border_color=live_reject_card_border,
-                value_color=live_reject_value_color
-            )
-
-    # Routing
-    with live_group3:
-        st.markdown(
-            """
-            <div style="
-                border: 2px solid #a78bfa;
-                border-radius: 14px;
-                padding: 12px 14px;
-                background: #a78bfa;
                 margin-bottom: 8px;
             ">
                 <div style="
@@ -1497,7 +1443,7 @@ if selected_view == "Live Today":
                 f"{total_transit_pct:.1f}% of today",
                 "#6b7280",
                 value_font_size="2.2rem",
-                border_color="#c4b5fd"
+                border_color="#34d399"
             )
 
         with route2:
@@ -1507,7 +1453,7 @@ if selected_view == "Live Today":
                 f"{today_westside_pct:.1f}% of today",
                 "#6b7280",
                 value_font_size="2.2rem",
-                border_color="#c4b5fd"
+                border_color="#34d399"
             )
 
         with route3:
@@ -1517,9 +1463,62 @@ if selected_view == "Live Today":
                 f"{today_library_express_pct:.1f}% of today",
                 "#6b7280",
                 value_font_size="1.6rem",
+                border_color="#34d399"
+            )
+
+    # Rejects (moved to right, takes purple)
+    with live_group3:
+        st.markdown(
+            """
+            <div style="
+                border: 2px solid #a78bfa;
+                border-radius: 14px;
+                padding: 12px 14px;
+                background: #a78bfa;
+                margin-bottom: 8px;
+            ">
+                <div style="
+                    font-size: 0.95rem;
+                    font-weight: 700;
+                    color: #ffffff;
+                    line-height: 1.2;
+                ">
+                    Rejects
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        quality1, quality2 = st.columns(2)
+
+        with quality1:
+            render_kpi_card(
+                "Rejects",
+                f"{today_rejects:,}",
+                "Failures today",
+                "#6b7280",
+                value_font_size="2.2rem",
                 border_color="#c4b5fd"
             )
 
+        with quality2:
+            reject_rate_subtitle = "Of checkins today"
+            if historical_daily_avg_reject > 0:
+                reject_rate_subtitle = (
+                    f"{live_reject_deviation:+.2f}% vs avg daily "
+                    f"rate ({historical_daily_avg_reject:.2f}%)"
+                )
+
+            render_kpi_card(
+                "Reject Rate",
+                f"{today_reject_rate:.2f}%",
+                reject_rate_subtitle,
+                live_reject_subtitle_color,
+                value_font_size="1.8rem",
+                border_color="#c4b5fd",
+                value_color=live_reject_value_color
+            )
 
 
     if info_alerts:
