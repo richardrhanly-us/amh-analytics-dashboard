@@ -2762,23 +2762,19 @@ if selected_view == "Reports":
                     ),
                     "#6b7280"
                 )
-
+                
                 render_explainer_card(
                     f"Observed Labor Value — ${labor_value_saved:,.0f}",
                     (
                         "This is the estimated dollar value of staff time saved during the selected date range."
-                        "<br><br>Here is exactly how it is calculated:"
-                        f"<br>• Manual processing rate = <b>{MANUAL_RATE} items/hour</b>"
-                        f"<br>• Estimated AMH processing rate = <b>{AMH_RATE:,.1f} items/hour</b>"
+                        "<br><br>Here is exactly what this number is based on:"
+                        f"<br>• Total hours saved in selected range = <b>{total_saved:,.2f} hours</b>"
                         f"<br>• Hourly labor cost setting = <b>${HOURLY_COST:,.2f} per hour</b>"
-                        "<br><br>For each day in the selected range:"
-                        "<br>• Manual hours = checkins ÷ manual rate"
-                        "<br>• AMH hours = checkins ÷ AMH rate"
-                        "<br>• Hours saved = manual hours − AMH hours"
-                        f"<br><br>• Total hours saved in selected range = <b>{total_saved:,.2f} hours</b>"
-                        "<br><br>Final formula:"
-                        "<br>• Labor value = total hours saved × hourly labor cost"
+                        "<br><br>Formula:"
+                        "<br>• Observed labor value = total hours saved × hourly labor cost"
+                        f"<br><br>Final result:"
                         f"<br>• <b>{total_saved:,.2f} × ${HOURLY_COST:,.2f} = ${labor_value_saved:,.0f}</b>"
+                        "<br><br>The hours saved value is calculated earlier in the ROI logic by comparing estimated manual processing time against estimated AMH processing time for the selected range."
                     ),
                     "#3b82f6"
                 )
