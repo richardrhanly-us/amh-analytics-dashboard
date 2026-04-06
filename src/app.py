@@ -1105,6 +1105,8 @@ today_metrics = get_today_metrics(df_live_raw, rejects_live_raw, today)
 
 # fix current throughput: use most recent active hour instead of only the exact wall-clock hour
 current_speed = 0
+current_speed_fill_pct = 0
+max_observed_hourly_throughput = 1
 
 if len(today_metrics["today_df"]) > 0 and "datetime" in today_metrics["today_df"].columns:
     today_df_for_speed = today_metrics["today_df"].copy()
@@ -1115,7 +1117,31 @@ if len(today_metrics["today_df"]) > 0 and "datetime" in today_metrics["today_df"
         latest_activity_hour = today_df_for_speed["datetime"].max().hour
         current_speed = int((today_df_for_speed["datetime"].dt.hour == latest_activity_hour).sum())
 
+# historical max hourly throughput baseline
+if len(df_history_raw) > 0 and "datetime" in df_history_raw.columns:
+    hourly_baseline_df = df_history_raw.copy()
+    hourly_baseline_df["datetime"] = pd.to_datetime(hourly_baseline_df["datetime"], errors="coerce")
+    hourly_baseline_df = hourly_baseline_df.dropna(subset=["datetime"])
+
+    if len(hourly_baseline_df) > 0:
+        hourly_baseline_df["date"] = hourly_baseline_df["datetime"].dt.date
+        hourly_baseline_df["hour"] = hourly_baseline_df["datetime"].dt.hour
+
+        hourly_counts = (
+            hourly_baseline_df.groupby(["date", "hour"])
+            .size()
+            .reset_index(name="checkins")
+        )
+
+        if len(hourly_counts) > 0:
+            max_observed_hourly_throughput = int(hourly_counts["checkins"].max())
+
+max_observed_hourly_throughput = max(max_observed_hourly_throughput, 1)
+current_speed_fill_pct = current_speed / max_observed_hourly_throughput
+
 today_metrics["current_speed"] = current_speed
+today_metrics["current_speed_fill_pct"] = current_speed_fill_pct
+today_metrics["max_observed_hourly_throughput"] = max_observed_hourly_throughput
 
 
 today_df = today_metrics["today_df"]
@@ -1397,15 +1423,15 @@ if selected_view == "Live Today":
                 border_color="#93c5fd",
                 fill_pct=checkins_fill_pct
             )
-
         with ops2:
             render_kpi_card(
                 "Current Throughput",
                 f"{today_metrics['current_speed']}",
-                "Items this hour",
+                f"Items this hour<br><span style='font-size:0.92rem;'>Peak observed: {today_metrics['max_observed_hourly_throughput']:,}/hr</span>",
                 "#6b7280",
                 value_font_size="2.2rem",
-                border_color="#93c5fd"
+                border_color="#93c5fd",
+                fill_pct=today_metrics["current_speed_fill_pct"]
             )
 
         with ops3:
