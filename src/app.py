@@ -2137,6 +2137,24 @@ if selected_view == "Reports":
             horizontal=True,
             help="Observed uses only the selected date range. Annualized Projection scales the observed labor value to a 12-month estimate."
         )
+
+        st.markdown("##### Install Details")
+
+        install_col1, install_col2 = st.columns(2)
+
+        with install_col1:
+            INSTALL_DATE = st.date_input(
+                "Installed on",
+                value=pd.to_datetime("2019-01-01").date(),
+                help="Used to estimate ROI since the AMH was put into service."
+            )
+
+        with install_col2:
+            INCLUDE_UPFRONT_IN_SINCE_INSTALL = st.checkbox(
+                "Include upfront cost in since-install ROI",
+                value=True,
+                help="Usually this should stay on, since purchase ROI should include the initial capital cost."
+            )
         
         if len(df) > 0 and len(df_history_raw) > 0:
             rate_df = df.copy()
@@ -2228,6 +2246,29 @@ if selected_view == "Reports":
             else:
                 roi_pct = None
 
+
+            install_date_ts = pd.to_datetime(INSTALL_DATE)
+            today_ts = pd.Timestamp.today().normalize()
+
+            installed_days = max((today_ts - install_date_ts).days, 1)
+            installed_months = installed_days / 30.44
+            installed_years = installed_days / 365.25
+
+            since_install_labor_value = annual_labor_value * installed_years
+            since_install_operating_cost = annual_operating_cost * installed_years
+
+            if INCLUDE_UPFRONT_IN_SINCE_INSTALL:
+                since_install_total_cost = UPFRONT_COST + since_install_operating_cost
+            else:
+                since_install_total_cost = since_install_operating_cost
+
+            since_install_net_value = since_install_labor_value - since_install_total_cost
+
+            if since_install_total_cost > 0:
+                since_install_roi_pct = (since_install_net_value / since_install_total_cost) * 100
+            else:
+                since_install_roi_pct = None
+            
             try:
                 from report_export import build_director_report_pdf
 
@@ -2351,6 +2392,71 @@ if selected_view == "Reports":
                     "#6b7280"
                 )
 
+
+            install_roi1, install_roi2, install_roi3, install_roi4 = st.columns(4)
+
+            with install_roi1:
+                render_kpi_card(
+                    "Years Since Install",
+                    f"{installed_years:,.1f}",
+                    pd.to_datetime(INSTALL_DATE).strftime("%b %d, %Y"),
+                    "#6b7280"
+                )
+
+            with install_roi2:
+                render_kpi_card(
+                    "Since-Install Value",
+                    f"${since_install_labor_value:,.0f}",
+                    "Projected cumulative labor value",
+                    "#6b7280"
+                )
+
+            with install_roi3:
+                render_kpi_card(
+                    "Since-Install Net",
+                    f"${since_install_net_value:,.0f}",
+                    "Value minus total cost",
+                    "#6b7280",
+                    value_color="#059669" if since_install_net_value >= 0 else "#dc2626"
+                )
+
+            with install_roi4:
+                render_kpi_card(
+                    "Since-Install ROI",
+                    f"{since_install_roi_pct:,.1f}%" if since_install_roi_pct is not None else "N/A",
+                    "Estimated ROI since install",
+                    "#6b7280",
+                    value_color="#059669" if since_install_roi_pct is not None and since_install_roi_pct >= 0 else "#dc2626"
+                )
+
+
+            st.markdown(
+                f"""
+                <div style="
+                    border-left: 4px solid #2563eb;
+                    background-color: #f9fafb;
+                    padding: 14px 16px;
+                    border-radius: 8px;
+                    margin-top: 8px;
+                    margin-bottom: 16px;
+                ">
+                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                        Since-Install ROI Summary
+                    </div>
+                    <div style="color: #4b5563; line-height: 1.4;">
+                        Based on an install date of {pd.to_datetime(INSTALL_DATE).strftime("%b %d, %Y")},
+                        the system has been in service for about {installed_years:,.1f} years.
+                        Using the current annualized savings rate, estimated cumulative labor value is
+                        ${since_install_labor_value:,.0f}, estimated cumulative cost is
+                        ${since_install_total_cost:,.0f}, and net value is
+                        ${since_install_net_value:,.0f}.
+                        {"Since-install ROI is " + f"{since_install_roi_pct:,.1f}%." if since_install_roi_pct is not None else "Since-install ROI cannot be calculated because total cost is zero."}
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            
             st.markdown(
                 f"""
                 <div style="
@@ -2486,6 +2592,32 @@ ROI = (net value ÷ total cost) × 100
 {f"ROI = ({net_roi_value:,.2f} ÷ {total_roi_cost:,.2f}) × 100 = {roi_pct:,.2f}%" if roi_pct is not None else "ROI = N/A because total cost is 0."}
 
 Payback period compares monthly labor value saved against recurring monthly-equivalent cost.
+""")
+
+
+
+            st.info(f"""### Since-Install ROI Calculation
+
+Install date = {pd.to_datetime(INSTALL_DATE).strftime("%b %d, %Y")}  
+Time in service = {installed_days:,} day(s)  
+= {installed_years:,.2f} year(s)
+
+Estimated cumulative labor value = annualized labor value × years in service  
+= ${annual_labor_value:,.2f} × {installed_years:,.2f}  
+= ${since_install_labor_value:,.2f}
+
+Estimated cumulative operating cost = annual recurring cost × years in service  
+= ${annual_operating_cost:,.2f} × {installed_years:,.2f}  
+= ${since_install_operating_cost:,.2f}
+
+{f"Total cumulative cost = upfront cost + cumulative operating cost = ${UPFRONT_COST:,.2f} + ${since_install_operating_cost:,.2f} = ${since_install_total_cost:,.2f}" if INCLUDE_UPFRONT_IN_SINCE_INSTALL else f"Total cumulative cost = cumulative operating cost only = ${since_install_total_cost:,.2f}"}
+
+Since-install net value = cumulative labor value − cumulative cost  
+= ${since_install_labor_value:,.2f} − ${since_install_total_cost:,.2f}  
+= ${since_install_net_value:,.2f}
+
+Since-install ROI = (net value ÷ cumulative cost) × 100  
+{f"Since-install ROI = ({since_install_net_value:,.2f} ÷ {since_install_total_cost:,.2f}) × 100 = {since_install_roi_pct:,.2f}%" if since_install_roi_pct is not None else "Since-install ROI = N/A because total cost is 0."}
 """)
  
     # -----------------------------
