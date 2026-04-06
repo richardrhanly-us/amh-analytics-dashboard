@@ -2867,11 +2867,11 @@ if selected_view == "Reports":
                     "#7c3aed"
                 )
 
-else:
-    if st.session_state.get("roi_calculated", False):
-        st.info("No ROI data is available for the selected date range.")
-    else:
-        st.info("Enter your assumptions above, then click Calculate ROI.")
+        else:
+            if st.session_state.get("roi_calculated", False):
+                st.info("No ROI data is available for the selected date range.")
+            else:
+                st.info("Enter your assumptions above, then click Calculate ROI.")
     # =========================================================
     # LABOR & EFFICIENCY
     # =========================================================
