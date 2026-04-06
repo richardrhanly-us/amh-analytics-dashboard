@@ -2541,46 +2541,80 @@ if selected_view == "Reports":
         )
 
 
-        st.markdown(
-            f"""
-            <div style="
-                border-left: 4px solid #f59e0b;
-                background-color: #f9fafb;
-                padding: 14px 16px;
-                border-radius: 8px;
-                margin-top: 8px;
-                margin-bottom: 16px;
-            ">
-                <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                    Understanding Time to Recover Upfront Cost Estimate
+        if roi_mode == "Annualized Projection":
+            payback_value_text = (
+                f"{payback_months:,.1f} months"
+                if payback_months is not None
+                else "N/A"
+            )
+
+            st.markdown(
+                f"""
+                <div style="
+                    border-left: 4px solid #f59e0b;
+                    background-color: #f9fafb;
+                    padding: 14px 16px;
+                    border-radius: 8px;
+                    margin-top: 8px;
+                    margin-bottom: 16px;
+                ">
+                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                        Understanding Time to Recover Upfront Cost Estimate
+                    </div>
+                    <div style="color: #4b5563; line-height: 1.45;">
+                        This estimate shows how long it would take for the AMH to recover its upfront cost
+                        based on its projected <b>annual net value</b>.
+                        <br><br>
+                        Annual net value means:
+                        <ul style="margin-top: 6px; margin-bottom: 6px;">
+                            <li><b>Annual labor value saved</b> minus</li>
+                            <li><b>Annual recurring cost</b></li>
+                        </ul>
+                        In this case:
+                        <br>
+                        Annual labor value ≈ <b>${annual_labor_value:,.0f}/year</b><br>
+                        Annual recurring cost ≈ <b>${annual_operating_cost:,.0f}/year</b><br><br>
+                        Annual net value ≈ <b>${net_roi_value:,.0f}/year</b>
+                        <br><br>
+                        With an upfront cost of <b>${UPFRONT_COST:,.0f}</b>, the system would recover its initial investment in approximately:
+                        <br><br>
+                        <b>{payback_value_text}</b>
+                        <br><br>
+                        <span style="color:#6b7280;">
+                        This estimate is based on annualized savings and recurring costs, so it aligns with the annual ROI model shown above.
+                        </span>
+                    </div>
                 </div>
-                <div style="color: #4b5563; line-height: 1.45;">
-                    This estimate shows how long it would take for the AMH to recover its upfront cost
-                    based on its projected <b>annual net value</b>.
-                    <br><br>
-                    Annual net value means:
-                    <ul style="margin-top: 6px; margin-bottom: 6px;">
-                        <li><b>Annual labor value saved</b> minus</li>
-                        <li><b>Annual recurring cost</b></li>
-                    </ul>
-                    In this case:
-                    <br>
-                    Annual labor value ≈ <b>${annual_labor_value:,.0f}/year</b><br>
-                    Annual recurring cost ≈ <b>${annual_operating_cost:,.0f}/year</b><br><br>
-                    Annual net value ≈ <b>${net_roi_value:,.0f}/year</b>
-                    <br><br>
-                    With an upfront cost of <b>${UPFRONT_COST:,.0f}</b>, the system would recover its initial investment in approximately:
-                    <br><br>
-                    <b>{payback_months:,.1f} months</b>
-                    <br><br>
-                    <span style="color:#6b7280;">
-                    This estimate is based on annualized savings and recurring costs, so it aligns with the annual ROI model shown above.
-                    </span>
+                """,
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(
+                f"""
+                <div style="
+                    border-left: 4px solid #f59e0b;
+                    background-color: #f9fafb;
+                    padding: 14px 16px;
+                    border-radius: 8px;
+                    margin-top: 8px;
+                    margin-bottom: 16px;
+                ">
+                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                        Understanding Time to Recover Upfront Cost Estimate
+                    </div>
+                    <div style="color: #4b5563; line-height: 1.45;">
+                        Payback period is only shown in <b>Annualized Projection</b> mode.
+                        <br><br>
+                        In <b>Observed (Selected Range)</b> mode, the calculator is focused on the exact operating value
+                        for the selected date range, not on long-term recovery of the upfront investment.
+                        <br><br>
+                        To estimate time to recover the original purchase cost, switch the calculator to
+                        <b>Annualized Projection</b>.
+                    </div>
                 </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+                """,
+                unsafe_allow_html=True
+            )
 
         with st.expander("Show ROI calculation details", expanded=False):
             if roi_mode == "Annualized Projection":
