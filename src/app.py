@@ -2503,9 +2503,21 @@ if selected_view == "Reports":
                     unsafe_allow_html=True
                 )
 
+            # ===============================
+            # ROW HEADER (MODE DEPENDENT)
+            # ===============================
             if roi_mode == "Annualized Projection":
-                roi1, roi2, roi3, roi4 = st.columns(4)
-
+                st.markdown("### Annualized Metrics")
+            else:
+                st.markdown("### Selected Range Metrics")
+            
+            # ===============================
+            # FIRST ROW (MODE DEPENDENT KPIs)
+            # ===============================
+            roi1, roi2, roi3, roi4 = st.columns(4)
+            
+            if roi_mode == "Annualized Projection":
+            
                 with roi1:
                     render_kpi_card(
                         "Annual Cost",
@@ -2513,7 +2525,7 @@ if selected_view == "Reports":
                         "Recurring annual cost only",
                         "#6b7280"
                     )
-
+            
                 with roi2:
                     render_kpi_card(
                         "Net Value",
@@ -2522,7 +2534,7 @@ if selected_view == "Reports":
                         "#6b7280",
                         value_color="#059669" if net_roi_value >= 0 else "#dc2626"
                     )
-
+            
                 with roi3:
                     render_kpi_card(
                         "ROI",
@@ -2531,7 +2543,7 @@ if selected_view == "Reports":
                         "#6b7280",
                         value_color="#059669" if roi_pct is not None and roi_pct >= 0 else "#dc2626"
                     )
-
+            
                 with roi4:
                     render_kpi_card(
                         "Time to Recover Upfront Cost Estimate",
@@ -2539,10 +2551,9 @@ if selected_view == "Reports":
                         "Estimated break-even time",
                         "#6b7280"
                     )
-
+            
             else:
-                roi1, roi2, roi3, roi4 = st.columns(4)
-
+            
                 with roi1:
                     render_kpi_card(
                         "Range Length",
@@ -2551,7 +2562,7 @@ if selected_view == "Reports":
                         "#6b7280",
                         value_font_size="1.8rem"
                     )
-
+            
                 with roi2:
                     render_kpi_card(
                         "Observed Labor Value",
@@ -2559,7 +2570,7 @@ if selected_view == "Reports":
                         "Staff time avoided value",
                         "#6b7280"
                     )
-
+            
                 with roi3:
                     render_kpi_card(
                         "Observed Operating Cost",
@@ -2567,7 +2578,7 @@ if selected_view == "Reports":
                         "Prorated recurring cost only",
                         "#6b7280"
                     )
-
+            
                 with roi4:
                     render_kpi_card(
                         "Observed Net Value",
@@ -2576,8 +2587,11 @@ if selected_view == "Reports":
                         "#6b7280",
                         value_color="#059669" if observed_net_operating_value >= 0 else "#dc2626"
                     )
-
-            install_roi1, install_roi2, install_roi3, install_roi4 = st.columns(4)
+            
+            # ===============================
+            # LIFETIME HEADER (STATIC)
+            # ===============================
+            st.markdown("### Lifetime Performance")
 
             with install_roi1:
                 render_kpi_card(
