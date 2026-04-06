@@ -2525,192 +2525,114 @@ if selected_view == "Reports":
         st.markdown("### ROI Breakdown")
 
         if roi_mode == "Observed (Selected Range)":
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #6b7280;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-top: 8px;
-                    margin-bottom: 12px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Range Length — {days_in_range:,} days
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.45;">
-                        This is the exact time window used for the observed ROI calculation.
-                        <br><br>
-                        In this case, the selected range covers <b>{days_in_range:,} days</b>, or about <b>{months_in_range:,.2f} months</b>.
-                        <br><br>
-                        👉 All observed values below are based only on this selected period.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+            observed_cards = [
+                (
+                    "#6b7280",
+                    f"Range Length — {days_in_range:,} days",
+                    (
+                        "This is the exact time window used for the observed ROI calculation."
+                        f"<br><br>In this case, the selected range covers <b>{days_in_range:,} days</b>, "
+                        f"or about <b>{months_in_range:,.2f} months</b>."
+                        "<br><br>👉 All observed values below are based only on this selected period."
+                    ),
+                ),
+                (
+                    "#3b82f6",
+                    f"Observed Labor Value — ${labor_value_saved:,.0f}",
+                    (
+                        "This is the estimated value of staff time avoided during the selected range."
+                        "<br><br>It is based on the time the AMH saved compared to manual check-in work, "
+                        "using your defined hourly labor rate."
+                        f"<br><br>👉 Over this selected period, the AMH created about "
+                        f"<b>${labor_value_saved:,.0f}</b> in labor value."
+                    ),
+                ),
+                (
+                    "#f59e0b",
+                    f"Observed Operating Cost — ${observed_operating_cost:,.0f}",
+                    (
+                        "This is the prorated recurring cost for the same selected date range."
+                        "<br><br>It includes only ongoing operating costs, not the original upfront purchase cost."
+                        f"<br><br>👉 During this period, the AMH used about "
+                        f"<b>${observed_operating_cost:,.0f}</b> in recurring cost."
+                    ),
+                ),
+                (
+                    "#10b981",
+                    f"Observed Net Value — ${observed_net_operating_value:,.0f}",
+                    (
+                        "This is the net value created during the selected period after recurring cost."
+                        "<br><br>It is calculated as observed labor value minus observed operating cost."
+                        f"<br><br>👉 Over this date range, the AMH produced about "
+                        f"<b>${observed_net_operating_value:,.0f}</b> in net operating value."
+                    ),
+                ),
+                (
+                    "#6b7280",
+                    f"Years Since Install — {installed_years:,.1f}",
+                    (
+                        "This shows how long the AMH has been in service since "
+                        f"<b>{pd.to_datetime(INSTALL_DATE).strftime('%b %d, %Y')}</b>."
+                        f"<br><br>👉 The machine has been operating for about "
+                        f"<b>{installed_years:,.1f} years</b>."
+                    ),
+                ),
+                (
+                    "#3b82f6",
+                    f"Since-Install Value — ${since_install_labor_value:,.0f}",
+                    (
+                        "This is the projected cumulative labor value created over the machine’s time in service."
+                        "<br><br>It extends the current annualized savings rate across the installed period."
+                        f"<br><br>👉 Since installation, the AMH has generated about "
+                        f"<b>${since_install_labor_value:,.0f}</b> in labor value."
+                    ),
+                ),
+                (
+                    "#10b981",
+                    f"Since-Install Net — ${since_install_net_value:,.0f}",
+                    (
+                        "This is the projected value since install after subtracting total cumulative cost."
+                        f"<br><br>👉 Since installation, the AMH has produced about "
+                        f"<b>${since_install_net_value:,.0f}</b> in net value."
+                    ),
+                ),
+                (
+                    "#7c3aed",
+                    (
+                        f"Since-Install ROI — {since_install_roi_pct:,.1f}%"
+                        if since_install_roi_pct is not None else
+                        "Since-Install ROI — N/A"
+                    ),
+                    (
+                        "This compares the AMH’s projected net value since install against its total cumulative cost."
+                        f"<br><br>👉 Since installation, the system has returned about "
+                        f"<b>{f'{since_install_roi_pct:,.1f}%' if since_install_roi_pct is not None else 'N/A'}</b> "
+                        "relative to total cost."
+                    ),
+                ),
+            ]
 
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #3b82f6;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-bottom: 12px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Observed Labor Value — ${labor_value_saved:,.0f}
+            for border_color, heading, body in observed_cards:
+                st.markdown(
+                    f"""
+                    <div style="
+                        border-left: 4px solid {border_color};
+                        background-color: #f9fafb;
+                        padding: 14px 16px;
+                        border-radius: 8px;
+                        margin-top: 8px;
+                        margin-bottom: 12px;
+                    ">
+                        <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                            {heading}
+                        </div>
+                        <div style="color: #4b5563; line-height: 1.45;">
+                            {body}
+                        </div>
                     </div>
-                    <div style="color: #4b5563; line-height: 1.45;">
-                        This is the estimated value of staff time avoided during the selected range.
-                        <br><br>
-                        It is based on the time the AMH saved compared to manual check-in work, using your defined hourly labor rate.
-                        <br><br>
-                        👉 Over this selected period, the AMH created about <b>${labor_value_saved:,.0f}</b> in labor value.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #f59e0b;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-bottom: 12px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Observed Operating Cost — ${observed_operating_cost:,.0f}
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.45;">
-                        This is the prorated recurring cost for the same selected date range.
-                        <br><br>
-                        It includes only ongoing operating costs, not the original upfront purchase cost.
-                        <br><br>
-                        👉 During this period, the AMH used about <b>${observed_operating_cost:,.0f}</b> in recurring cost.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #10b981;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-bottom: 12px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Observed Net Value — ${observed_net_operating_value:,.0f}
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.45;">
-                        This is the net value created during the selected period after recurring cost.
-                        <br><br>
-                        It is calculated as observed labor value minus observed operating cost.
-                        <br><br>
-                        👉 Over this date range, the AMH produced about <b>${observed_net_operating_value:,.0f}</b> in net operating value.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #6b7280;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-bottom: 12px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Years Since Install — {installed_years:,.1f}
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.45;">
-                        This shows how long the AMH has been in service since <b>{pd.to_datetime(INSTALL_DATE).strftime("%b %d, %Y")}</b>.
-                        <br><br>
-                        👉 The machine has been operating for about <b>{installed_years:,.1f} years</b>.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #3b82f6;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-bottom: 12px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Since-Install Value — ${since_install_labor_value:,.0f}
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.45;">
-                        This is the projected cumulative labor value created over the machine’s time in service.
-                        <br><br>
-                        It extends the current annualized savings rate across the installed period.
-                        <br><br>
-                        👉 Since installation, the AMH has generated about <b>${since_install_labor_value:,.0f}</b> in labor value.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #10b981;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-bottom: 12px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Since-Install Net — ${since_install_net_value:,.0f}
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.45;">
-                        This is the projected value since install after subtracting total cumulative cost.
-                        <br><br>
-                        👉 Since installation, the AMH has produced about <b>${since_install_net_value:,.0f}</b> in net value.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #7c3aed;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-bottom: 16px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Since-Install ROI — {since_install_roi_pct:,.1f}%
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.45;">
-                        This compares the AMH’s projected net value since install against its total cumulative cost.
-                        <br><br>
-                        👉 Since installation, the system has returned about <b>{since_install_roi_pct:,.1f}%</b> relative to total cost.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+                    """,
+                    unsafe_allow_html=True
+                )
 
         else:
             payback_display = (
@@ -2719,365 +2641,124 @@ if selected_view == "Reports":
                 else "Not available"
             )
 
+            roi_display = (
+                f"{roi_pct:,.1f}%"
+                if roi_pct is not None
+                else "N/A"
+            )
+
             roi_multiple_display = (
                 f"{roi_pct / 100:,.1f}×"
                 if roi_pct is not None
                 else "N/A"
             )
 
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #f59e0b;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-top: 8px;
-                    margin-bottom: 12px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Annual Cost — ${total_roi_cost:,.0f}
+            annual_cards = [
+                (
+                    "#f59e0b",
+                    f"Annual Cost — ${total_roi_cost:,.0f}",
+                    (
+                        "This is the yearly recurring cost used in the annualized ROI model."
+                        "<br><br>It does not include the upfront capital purchase."
+                        f"<br><br>👉 The AMH costs about <b>${total_roi_cost:,.0f} per year</b> "
+                        "to operate in this model."
+                    ),
+                ),
+                (
+                    "#10b981",
+                    f"Net Value — ${net_roi_value:,.0f}",
+                    (
+                        "This is the projected annual financial benefit after recurring cost."
+                        "<br><br>It is calculated as annual labor value minus annual recurring cost."
+                        f"<br><br>👉 The AMH generates about <b>${net_roi_value:,.0f} per year</b> "
+                        "in net value."
+                    ),
+                ),
+                (
+                    "#3b82f6",
+                    f"ROI — {roi_display}" + (f" ({roi_multiple_display})" if roi_pct is not None else ""),
+                    (
+                        "ROI compares projected net annual value to annual recurring cost."
+                        "<br><br>A 100% ROI means the return equals the full cost again."
+                        f"<br><br>👉 This system returns about <b>{roi_multiple_display}</b> "
+                        "of its annual recurring cost."
+                    ),
+                ),
+                (
+                    "#f59e0b",
+                    f"Time to Recover Upfront Cost Estimate — {payback_display}",
+                    (
+                        "This estimates how long it would take for annual net value to recover "
+                        "the original upfront purchase cost."
+                        f"<br><br>👉 Estimated payback period: <b>{payback_display}</b>."
+                    ),
+                ),
+                (
+                    "#6b7280",
+                    f"Years Since Install — {installed_years:,.1f}",
+                    (
+                        "This shows how long the AMH has been in service since "
+                        f"<b>{pd.to_datetime(INSTALL_DATE).strftime('%b %d, %Y')}</b>."
+                        f"<br><br>👉 The machine has been operating for about "
+                        f"<b>{installed_years:,.1f} years</b>."
+                    ),
+                ),
+                (
+                    "#3b82f6",
+                    f"Since-Install Value — ${since_install_labor_value:,.0f}",
+                    (
+                        "This is the projected cumulative labor value created over the machine’s time in service."
+                        f"<br><br>👉 Since installation, the AMH has generated about "
+                        f"<b>${since_install_labor_value:,.0f}</b> in labor value."
+                    ),
+                ),
+                (
+                    "#10b981",
+                    f"Since-Install Net — ${since_install_net_value:,.0f}",
+                    (
+                        "This is projected value since install after total cumulative cost."
+                        f"<br><br>👉 Since installation, the AMH has produced about "
+                        f"<b>${since_install_net_value:,.0f}</b> in net value."
+                    ),
+                ),
+                (
+                    "#7c3aed",
+                    (
+                        f"Since-Install ROI — {since_install_roi_pct:,.1f}%"
+                        if since_install_roi_pct is not None else
+                        "Since-Install ROI — N/A"
+                    ),
+                    (
+                        "This compares the AMH’s projected cumulative net value against "
+                        "cumulative total cost since install."
+                        f"<br><br>👉 Since installation, the system has returned about "
+                        f"<b>{f'{since_install_roi_pct:,.1f}%' if since_install_roi_pct is not None else 'N/A'}</b> "
+                        "relative to total cost."
+                    ),
+                ),
+            ]
+
+            for border_color, heading, body in annual_cards:
+                st.markdown(
+                    f"""
+                    <div style="
+                        border-left: 4px solid {border_color};
+                        background-color: #f9fafb;
+                        padding: 14px 16px;
+                        border-radius: 8px;
+                        margin-top: 8px;
+                        margin-bottom: 12px;
+                    ">
+                        <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                            {heading}
+                        </div>
+                        <div style="color: #4b5563; line-height: 1.45;">
+                            {body}
+                        </div>
                     </div>
-                    <div style="color: #4b5563; line-height: 1.45;">
-                        This is the yearly recurring cost used in the annualized ROI model.
-                        <br><br>
-                        It does not include the upfront capital purchase.
-                        <br><br>
-                        👉 The AMH costs about <b>${total_roi_cost:,.0f} per year</b> to operate in this model.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #10b981;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-bottom: 12px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Net Value — ${net_roi_value:,.0f}
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.45;">
-                        This is the projected annual financial benefit after recurring cost.
-                        <br><br>
-                        It is calculated as annual labor value minus annual recurring cost.
-                        <br><br>
-                        👉 The AMH generates about <b>${net_roi_value:,.0f} per year</b> in net value.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #3b82f6;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-bottom: 12px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        ROI — {roi_pct:,.1f}%{" " if roi_pct is not None else ""}{f"({roi_multiple_display})" if roi_pct is not None else ""}
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.45;">
-                        ROI compares projected net annual value to annual recurring cost.
-                        <br><br>
-                        A 100% ROI means the return equals the full cost again.
-                        <br><br>
-                        👉 This system returns about <b>{roi_multiple_display}</b> of its annual recurring cost.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #f59e0b;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-bottom: 12px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Time to Recover Upfront Cost Estimate — {payback_display}
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.45;">
-                        This estimates how long it would take for annual net value to recover the original upfront purchase cost.
-                        <br><br>
-                        👉 Estimated payback period: <b>{payback_display}</b>.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #6b7280;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-bottom: 12px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Years Since Install — {installed_years:,.1f}
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.45;">
-                        This shows how long the AMH has been in service since <b>{pd.to_datetime(INSTALL_DATE).strftime("%b %d, %Y")}</b>.
-                        <br><br>
-                        👉 The machine has been operating for about <b>{installed_years:,.1f} years</b>.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #3b82f6;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-bottom: 12px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Since-Install Value — ${since_install_labor_value:,.0f}
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.45;">
-                        This is the projected cumulative labor value created over the machine’s time in service.
-                        <br><br>
-                        👉 Since installation, the AMH has generated about <b>${since_install_labor_value:,.0f}</b> in labor value.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #10b981;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-bottom: 12px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Since-Install Net — ${since_install_net_value:,.0f}
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.45;">
-                        This is projected value since install after total cumulative cost.
-                        <br><br>
-                        👉 Since installation, the AMH has produced about <b>${since_install_net_value:,.0f}</b> in net value.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #7c3aed;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-bottom: 16px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Since-Install ROI — {since_install_roi_pct:,.1f}%
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.45;">
-                        This compares the AMH’s projected cumulative net value against cumulative total cost since install.
-                        <br><br>
-                        👉 Since installation, the system has returned about <b>{since_install_roi_pct:,.1f}%</b> relative to total cost.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-#### Selected range
-This projection starts with the observed labor value from the selected date range.
-
-For **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**, the observed labor value is **${labor_value_saved:,.2f}** over **{days_in_range:,} day(s)**.
-
-#### Annualized Labor Value
-
-Observed period length = {months_in_range:,.2f} month(s)
-
-Annualized labor value = Observed labor value × (12 ÷ observed months)
-
-Annualized labor value = ${labor_value_saved:,.2f} × (12 ÷ {months_in_range:,.2f})
-
-**Annualized labor value = ${annual_labor_value:,.2f} per year**
-
-#### Annual Recurring Cost
-
-Monthly recurring cost = ${MONTHLY_COST:,.2f}/month  
-Yearly recurring cost = ${YEARLY_COST:,.2f}/year
-
-Annual recurring cost = (Monthly cost × 12) + Yearly cost
-
-Annual recurring cost = (${MONTHLY_COST:,.2f} × 12) + ${YEARLY_COST:,.2f}
-
-**Annual recurring cost = ${annual_operating_cost:,.2f} per year**
-
-#### Net Annual Value
-
-Net annual value = Annualized labor value − Annual recurring cost
-
-Net annual value = ${annual_labor_value:,.2f} − ${annual_operating_cost:,.2f}
-
-**Net annual value = ${net_roi_value:,.2f} per year**
-
-#### Annual ROI
-
-ROI = (Net annual value ÷ Annual recurring cost) × 100
-
-{f"**Annual ROI = ({net_roi_value:,.2f} ÷ {total_roi_cost:,.2f}) × 100 = {roi_pct:,.2f}%**" if roi_pct is not None else "**Annual ROI = N/A** because annual recurring cost is 0."}
-
-#### Payback Period
-
-Payback period estimates how long it takes for annual net savings to recover the upfront cost.
-
-Annual net value = Annualized labor value − Annual recurring cost
-
-Annual net value = ${annual_labor_value:,.2f} − ${annual_operating_cost:,.2f}
-
-**Annual net value = ${net_roi_value:,.2f} per year**
-
-Payback period = (Upfront cost ÷ Annual net value) × 12
-
-{
-    f"**Estimated payback period = ({UPFRONT_COST:,.2f} ÷ {net_roi_value:,.2f}) × 12 = {payback_months:,.1f} months**"
-    if payback_months is not None
-    else
-    "**Estimated payback period = N/A** because annual net value is not positive."
-}
-""")
-                else:
-                    st.info(f"""### How Observed Operating Value Is Calculated
-
-#### Selected range
-This version uses only the exact date range currently selected.
-
-Selected range = **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**  
-Range length = **{days_in_range:,} day(s)**  
-Observed period length = **{months_in_range:,.2f} month(s)**
-
-#### Observed Labor Value
-
-Observed labor value = Staff time saved in the selected range × Hourly labor cost
-
-Observed labor value = ${labor_value_saved:,.2f}
-
-**Observed labor value = ${labor_value_saved:,.2f}**
-
-#### Prorated Operating Cost
-
-Prorated monthly cost = Monthly cost × observed months
-
-Prorated monthly cost = ${MONTHLY_COST:,.2f} × {months_in_range:,.2f} month(s)
-
-**Prorated monthly cost = ${observed_prorated_monthly_cost:,.2f}**
-
-Prorated yearly cost = Yearly cost × observed years
-
-Prorated yearly cost = ${YEARLY_COST:,.2f} × {years_in_range:,.2f} year(s)
-
-**Prorated yearly cost = ${observed_prorated_yearly_cost:,.2f}**
-
-Observed operating cost = Prorated monthly cost + prorated yearly cost
-
-Observed operating cost = ${observed_prorated_monthly_cost:,.2f} + ${observed_prorated_yearly_cost:,.2f}
-
-**Observed operating cost = ${observed_operating_cost:,.2f}**
-
-#### Observed Net Value
-
-Observed net value = Observed labor value − Observed operating cost
-
-Observed net value = ${labor_value_saved:,.2f} − ${observed_operating_cost:,.2f}
-
-**Observed net value = ${observed_net_operating_value:,.2f}**
-
-#### Important Note
-
-The selected-range view focuses on **operating performance only**.  
-It does **not** include the upfront cost in the headline cards, because a short time window is not a meaningful way to evaluate a one-time capital purchase.
-
-Upfront cost entered = **${UPFRONT_COST:,.2f}**
-""")
-
-                st.info(f"""### How Since-Install ROI Is Calculated
-
-#### Time in Service
-
-Install date = **{pd.to_datetime(INSTALL_DATE).strftime("%b %d, %Y")}**
-
-Time in service = {installed_days:,} day(s)
-
-**Time in service = {installed_years:,.2f} year(s)**
-
-#### Estimated Cumulative Labor Value
-
-This estimate uses the current annualized labor value and projects it across the full time in service.
-
-Estimated cumulative labor value = Annualized labor value × Years in service
-
-Estimated cumulative labor value = ${annual_labor_value:,.2f} × {installed_years:,.2f}
-
-**Estimated cumulative labor value = ${since_install_labor_value:,.2f}**
-
-#### Estimated Cumulative Operating Cost
-
-Estimated cumulative operating cost = Annual recurring cost × Years in service
-
-Estimated cumulative operating cost = ${annual_operating_cost:,.2f} × {installed_years:,.2f}
-
-**Estimated cumulative operating cost = ${since_install_operating_cost:,.2f}**
-
-#### Total Cumulative Cost
-
-{"This version includes the original upfront cost." if INCLUDE_UPFRONT_IN_SINCE_INSTALL else "This version excludes the original upfront cost and uses operating cost only."}
-
-{"Total cumulative cost = Upfront cost + cumulative operating cost" if INCLUDE_UPFRONT_IN_SINCE_INSTALL else "Total cumulative cost = cumulative operating cost only"}
-
-{f"Total cumulative cost = ${UPFRONT_COST:,.2f} + ${since_install_operating_cost:,.2f}" if INCLUDE_UPFRONT_IN_SINCE_INSTALL else f"Total cumulative cost = ${since_install_operating_cost:,.2f}"}
-
-**Total cumulative cost = ${since_install_total_cost:,.2f}**
-
-#### Since-Install Net Value
-
-Since-install net value = Estimated cumulative labor value − Total cumulative cost
-
-Since-install net value = ${since_install_labor_value:,.2f} − ${since_install_total_cost:,.2f}
-
-**Since-install net value = ${since_install_net_value:,.2f}**
-
-#### Since-Install ROI
-
-Since-install ROI = (Net value ÷ Total cumulative cost) × 100
-
-{f"**Since-install ROI = ({since_install_net_value:,.2f} ÷ {since_install_total_cost:,.2f}) × 100 = {since_install_roi_pct:,.2f}%**" if since_install_roi_pct is not None else "**Since-install ROI = N/A** because total cumulative cost is 0."}
-
-#### Important Note
-
-This is an **estimated since-install ROI**, not an exact historical accounting value.  
-It uses the current annualized savings rate as a projection across the machine's time in service.
-""")
+                    """,
+                    unsafe_allow_html=True
+                )
 
         else:
             if st.session_state.get("roi_calculated", False):
