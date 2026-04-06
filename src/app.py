@@ -2552,7 +2552,7 @@ if selected_view == "Reports":
                     (
                         "This is the yearly recurring cost used in the annualized ROI model."
                         "<br><br>It does not include the upfront capital purchase."
-                        f"<br><br>👉 The AMH costs about <b>${total_roi_cost:,.0f} per year</b> to operate in this model."
+                        f"<br><br> The AMH costs about <b>${total_roi_cost:,.0f} per year</b> to operate in this model."
                     ),
                     "#f59e0b"
                 )
@@ -2562,7 +2562,7 @@ if selected_view == "Reports":
                     (
                         "This is the projected annual financial benefit after recurring cost."
                         "<br><br>It is calculated as annual labor value minus annual recurring cost."
-                        f"<br><br>👉 The AMH generates about <b>${net_roi_value:,.0f} per year</b> in net value."
+                        f"<br><br> The AMH generates about <b>${net_roi_value:,.0f} per year</b> in net value."
                     ),
                     "#10b981"
                 )
@@ -2572,7 +2572,7 @@ if selected_view == "Reports":
                     (
                         "ROI compares projected net annual value to annual recurring cost."
                         "<br><br>A 100% ROI means the return equals the full cost again."
-                        f"<br><br>👉 This system returns about <b>{roi_multiple_display}</b> of its annual recurring cost."
+                        f"<br><br> This system returns about <b>{roi_multiple_display}</b> of its annual recurring cost."
                     ),
                     "#3b82f6"
                 )
@@ -2581,7 +2581,7 @@ if selected_view == "Reports":
                     f"Time to Recover Upfront Cost Estimate — {payback_display}",
                     (
                         "This estimates how long it would take for annual net value to recover the original upfront purchase cost."
-                        f"<br><br>👉 Estimated payback period: <b>{payback_display}</b>."
+                        f"<br><br> Estimated payback period: <b>{payback_display}</b>."
                     ),
                     "#f59e0b"
                 )
@@ -2591,7 +2591,7 @@ if selected_view == "Reports":
                     (
                         "This shows how long the AMH has been in service since "
                         f"<b>{pd.to_datetime(INSTALL_DATE).strftime('%b %d, %Y')}</b>."
-                        f"<br><br>👉 The machine has been operating for about <b>{installed_years:,.1f} years</b>."
+                        f"<br><br> The machine has been operating for about <b>{installed_years:,.1f} years</b>."
                     ),
                     "#6b7280"
                 )
@@ -2600,7 +2600,7 @@ if selected_view == "Reports":
                     f"Since-Install Value — ${since_install_labor_value:,.0f}",
                     (
                         "This is the projected cumulative labor value created over the machine’s time in service."
-                        f"<br><br>👉 Since installation, the AMH has generated about <b>${since_install_labor_value:,.0f}</b> in labor value."
+                        f"<br><br> Since installation, the AMH has generated about <b>${since_install_labor_value:,.0f}</b> in labor value."
                     ),
                     "#3b82f6"
                 )
@@ -2609,7 +2609,7 @@ if selected_view == "Reports":
                     f"Since-Install Net — ${since_install_net_value:,.0f}",
                     (
                         "This is projected value since install after total cumulative cost."
-                        f"<br><br>👉 Since installation, the AMH has produced about <b>${since_install_net_value:,.0f}</b> in net value."
+                        f"<br><br> Since installation, the AMH has produced about <b>${since_install_net_value:,.0f}</b> in net value."
                     ),
                     "#10b981"
                 )
@@ -2618,7 +2618,7 @@ if selected_view == "Reports":
                     f"Since-Install ROI — {since_install_roi_display}",
                     (
                         "This compares the AMH’s projected cumulative net value against cumulative total cost since install."
-                        f"<br><br>👉 Since installation, the system has returned about <b>{since_install_roi_display}</b> relative to total cost."
+                        f"<br><br> Since installation, the system has returned about <b>{since_install_roi_display}</b> relative to total cost."
                     ),
                     "#7c3aed"
                 )
@@ -2631,7 +2631,7 @@ if selected_view == "Reports":
                     (
                         "This is the exact time window used for the observed ROI calculation."
                         f"<br><br>In this case, the selected range covers <b>{days_in_range:,} days</b>, or about <b>{months_in_range:,.2f} months</b>."
-                        "<br><br>👉 All observed values below are based only on this selected period."
+                        "<br><br> All observed values below are based only on this selected period."
                     ),
                     "#6b7280"
                 )
@@ -2641,7 +2641,7 @@ if selected_view == "Reports":
                     (
                         "This is the estimated value of staff time avoided during the selected range."
                         "<br><br>It is based on the time the AMH saved compared to manual check-in work, using your defined hourly labor rate."
-                        f"<br><br>👉 Over this selected period, the AMH created about <b>${labor_value_saved:,.0f}</b> in labor value."
+                        f"<br><br> Over this selected period, the AMH created about <b>${labor_value_saved:,.0f}</b> in labor value."
                     ),
                     "#3b82f6"
                 )
@@ -2651,7 +2651,7 @@ if selected_view == "Reports":
                     (
                         "This is the prorated recurring cost for the same selected date range."
                         "<br><br>It includes only ongoing operating costs, not the original upfront purchase cost."
-                        f"<br><br>👉 During this period, the AMH used about <b>${observed_operating_cost:,.0f}</b> in recurring cost."
+                        f"<br><br> During this period, the AMH used about <b>${observed_operating_cost:,.0f}</b> in recurring cost."
                     ),
                     "#f59e0b"
                 )
@@ -2661,7 +2661,7 @@ if selected_view == "Reports":
                     (
                         "This is the net value created during the selected period after recurring cost."
                         "<br><br>It is calculated as observed labor value minus observed operating cost."
-                        f"<br><br>👉 Over this date range, the AMH produced about <b>${observed_net_operating_value:,.0f}</b> in net operating value."
+                        f"<br><br> Over this date range, the AMH produced about <b>${observed_net_operating_value:,.0f}</b> in net operating value."
                     ),
                     "#10b981"
                 )
@@ -2671,7 +2671,7 @@ if selected_view == "Reports":
                     (
                         "This shows how long the AMH has been in service since "
                         f"<b>{pd.to_datetime(INSTALL_DATE).strftime('%b %d, %Y')}</b>."
-                        f"<br><br>👉 The machine has been operating for about <b>{installed_years:,.1f} years</b>."
+                        f"<br><br> The machine has been operating for about <b>{installed_years:,.1f} years</b>."
                     ),
                     "#6b7280"
                 )
@@ -2681,7 +2681,7 @@ if selected_view == "Reports":
                     (
                         "This is the projected cumulative labor value created over the machine’s time in service."
                         "<br><br>It extends the current annualized savings rate across the installed period."
-                        f"<br><br>👉 Since installation, the AMH has generated about <b>${since_install_labor_value:,.0f}</b> in labor value."
+                        f"<br><br> Since installation, the AMH has generated about <b>${since_install_labor_value:,.0f}</b> in labor value."
                     ),
                     "#3b82f6"
                 )
@@ -2690,7 +2690,7 @@ if selected_view == "Reports":
                     f"Since-Install Net — ${since_install_net_value:,.0f}",
                     (
                         "This is the projected value since install after subtracting total cumulative cost."
-                        f"<br><br>👉 Since installation, the AMH has produced about <b>${since_install_net_value:,.0f}</b> in net value."
+                        f"<br><br> Since installation, the AMH has produced about <b>${since_install_net_value:,.0f}</b> in net value."
                     ),
                     "#10b981"
                 )
@@ -2699,7 +2699,7 @@ if selected_view == "Reports":
                     f"Since-Install ROI — {since_install_roi_display}",
                     (
                         "This compares the AMH’s projected net value since install against its total cumulative cost."
-                        f"<br><br>👉 Since installation, the system has returned about <b>{since_install_roi_display}</b> relative to total cost."
+                        f"<br><br> Since installation, the system has returned about <b>{since_install_roi_display}</b> relative to total cost."
                     ),
                     "#7c3aed"
                 )
