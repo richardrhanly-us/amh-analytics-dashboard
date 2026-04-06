@@ -2520,8 +2520,7 @@ if selected_view == "Reports":
             
 
             
-            else:
-            
+            else:           
                 with roi1:
                     render_kpi_card(
                         "Annual Cost",
