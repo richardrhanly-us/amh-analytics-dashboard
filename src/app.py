@@ -2521,7 +2521,86 @@ if selected_view == "Reports":
                     "#6b7280",
                     value_color="#059669" if since_install_roi_pct is not None and since_install_roi_pct >= 0 else "#dc2626"
                 )
-
+            
+            st.markdown("### ROI Breakdown")
+            
+            # --- NET VALUE ---
+            st.markdown(
+                f"""
+                <div style="
+                    border-left: 4px solid #10b981;
+                    background-color: #f9fafb;
+                    padding: 14px 16px;
+                    border-radius: 8px;
+                    margin-top: 8px;
+                    margin-bottom: 12px;
+                ">
+                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                        Net Annual Value — ${net_roi_value:,.0f}
+                    </div>
+                    <div style="color: #4b5563;">
+                        This is the real financial benefit after costs.
+                        <br><br>
+                        It represents labor value minus yearly operating cost (${total_roi_cost:,.0f}).
+                        <br><br>
+                        👉 The AMH generates about <b>${net_roi_value:,.0f}</b> in net value per year.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            
+            # --- ROI ---
+            st.markdown(
+                f"""
+                <div style="
+                    border-left: 4px solid #3b82f6;
+                    background-color: #f9fafb;
+                    padding: 14px 16px;
+                    border-radius: 8px;
+                    margin-bottom: 12px;
+                ">
+                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                        Return on Investment — {roi_pct:,.1f}%
+                    </div>
+                    <div style="color: #4b5563;">
+                        ROI shows how much value you get compared to cost.
+                        <br><br>
+                        A 100% ROI means doubling your investment.
+                        <br><br>
+                        👉 This system returns about <b>{roi_pct/100:.1f}×</b> its cost annually.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            
+            # --- PAYBACK ---
+            st.markdown(
+                f"""
+                <div style="
+                    border-left: 4px solid #f59e0b;
+                    background-color: #f9fafb;
+                    padding: 14px 16px;
+                    border-radius: 8px;
+                    margin-bottom: 12px;
+                ">
+                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                        Payback Period — {payback_months:,.1f} months
+                    </div>
+                    <div style="color: #4b5563;">
+                        This is how long it takes for the system to pay for itself.
+                        <br><br>
+                        After this point, all value generated is net positive.
+                        <br><br>
+                        👉 The AMH pays itself off in about <b>{payback_months:,.1f} months</b>.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            
+            # --- SINCE INSTALL ---
             st.markdown(
                 f"""
                 <div style="
@@ -2529,30 +2608,17 @@ if selected_view == "Reports":
                     background-color: #f9fafb;
                     padding: 14px 16px;
                     border-radius: 8px;
-                    margin-top: 8px;
                     margin-bottom: 16px;
                 ">
                     <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        ROI Summary
+                        Total Value Since Install — ${since_install_net:,.0f}
                     </div>
-                    <div style="color: #4b5563; line-height: 1.4;">
-                        {
-                            (
-                                f"Using only the selected date range, observed labor value is ${labor_value_saved:,.0f}. "
-                                f"Observed operating cost is ${observed_operating_cost:,.0f}. "
-                                f"Observed net operating value is ${observed_net_operating_value:,.0f}. "
-                                f"Upfront cost is excluded from these headline cards so the selected-range view stays focused on operating performance."
-                            )
-                            if roi_mode == "Observed (Selected Range)"
-                            else
-                            (
-                                f"Using an annualized projection based on the selected date range, labor value is ${annual_labor_value:,.0f}. "
-                                f"Total annual recurring cost is ${total_roi_cost:,.0f}. "
-                                f"Net annual value is ${net_roi_value:,.0f}. "
-                                + (f"ROI is {roi_pct:,.1f}%. " if roi_pct is not None else "ROI cannot be calculated because annual recurring cost is zero. ")
-                                + (f"Estimated payback period is {payback_months:,.1f} months." if payback_months is not None else "Payback period is not available because recurring savings do not currently exceed recurring costs.")
-                            )
-                        }
+                    <div style="color: #4b5563;">
+                        This is the total net value generated since installation.
+                        <br><br>
+                        It accounts for all labor savings minus total costs over time.
+                        <br><br>
+                        👉 The system has generated about <b>${since_install_net:,.0f}</b> in value so far.
                     </div>
                 </div>
                 """,
