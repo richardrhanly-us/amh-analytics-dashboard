@@ -2591,6 +2591,8 @@ if selected_view == "Reports":
             # ===============================
             # LIFETIME HEADER (STATIC)
             # ===============================
+
+            install_roi1, install_roi2, install_roi3, install_roi4 = st.columns(4)
             st.markdown("### Lifetime Performance")
 
             with install_roi1:
