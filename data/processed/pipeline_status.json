@@ -1,5 +1,8 @@
 {
+  "status": "completed",
   "last_run": "2026-04-04T00:05:06",
+  "last_attempt": "2026-04-04T00:05:06",
+  "updated_at": "2026-04-04T00:05:06",
   "checkins_rows": 3647,
   "rejects_rows": 144,
   "checkins_history_rows": 61745,
@@ -8,6 +11,8 @@
   "rejects_bad_datetime_rows": 0,
   "transit_items": 436,
   "problem_items": 0,
+  "uploaded_checkins_rows": 3647,
+  "uploaded_rejects_rows": 144,
   "destination_breakdown": {
     "Main": 3211,
     "Westside": 374,
