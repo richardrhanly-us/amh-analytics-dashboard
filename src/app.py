@@ -2407,7 +2407,7 @@ if selected_view == "Reports":
 
             with roi4:
                 render_kpi_card(
-                    Time to recover cost estiamte,
+                    "Time to recover cost estiamte",
                     f"{payback_months:,.1f} mo" if payback_months is not None else "N/A",
                     "Estimated break-even time",
                     "#6b7280"
