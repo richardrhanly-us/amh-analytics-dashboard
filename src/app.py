@@ -2276,7 +2276,7 @@ if selected_view == "Reports":
             "Hourly labor rate ($/hour)",
             min_value=0.0,
             max_value=1000.0,
-            value=st.session_state.get("roi_hourly_cost", 14.0),
+            value=st.session_state.get("roi_hourly_cost", 18.0),
             step=0.5,
             format="%.2f",
             key="roi_hourly_cost",
