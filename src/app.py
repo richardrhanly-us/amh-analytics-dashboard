@@ -1473,7 +1473,6 @@ if selected_view == "Live Today":
                         line-height:1.1;
                     ">
                         <span>Slow</span>
-                        <span style="font-weight:600; color:#4b5563;">Current</span>
                         <span>Busy</span>
                     </div>
                 </div>
