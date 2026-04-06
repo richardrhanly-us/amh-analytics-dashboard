@@ -1961,7 +1961,7 @@ if selected_view == "Overview":
     overview_labor_value_saved = 0.0
     
     MANUAL_RATE_OVERVIEW = 45
-            overview_roi_payload = build_roi_payload(df, df_history_raw, start_date, end_date)
+    overview_roi_payload = build_roi_payload(df, df_history_raw, start_date, end_date)
     HOURLY_COST_OVERVIEW = (
         overview_roi_payload["hourly_cost"]
         if overview_roi_payload and "hourly_cost" in overview_roi_payload
