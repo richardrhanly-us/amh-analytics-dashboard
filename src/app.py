@@ -2661,11 +2661,11 @@ if selected_view == "Reports":
                     (
                         "This is the total recurring cost to operate the AMH for one full year."
                         f"<br><br>Inputs used:"
-                        f"<br>• Yearly cost setting: <b>${yearly_cost:,.0f}</b>"
-                        f"<br>• Monthly cost setting: <b>${monthly_cost:,.0f}</b>"
+                        f"<br>• Yearly cost setting: <b>${YEARLY_COST:,.0f}</b>"
+                        f"<br>• Monthly cost setting: <b>${MONTHLY_COST:,.0f}</b>"
                         f"<br><br>Math:"
                         f"<br>• Annual cost = yearly cost + (monthly cost × 12)"
-                        f"<br>• <b>${yearly_cost:,.0f} + (${monthly_cost:,.0f} × 12) = ${total_roi_cost:,.0f}</b>"
+                        f"<br>• <b>${YEARLY_COST:,.0f} + (${MONTHLY_COST:,.0f} × 12) = ${total_roi_cost:,.0f}</b>"
                     ),
                     "#6b7280"
                 )
