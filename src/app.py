@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 
-refresh_count = st_autorefresh(interval=30000, key="amh_auto_refresh")
+refresh_count = 0
 
 
 from data_loader import load_checkins_df, load_checkins_history_df, load_rejects_df, load_rejects_history_df, load_pipeline_status
