@@ -90,8 +90,7 @@ def _normalize_rejects_df(df):
     return df
 
 
-def _load_checkins_from_db():
-    # Preferred source: routed/enriched view
+def _load_checkins_history_from_db():
     query = """
         SELECT *
         FROM checkins_routed
@@ -102,7 +101,6 @@ def _load_checkins_from_db():
     if not df.empty:
         return _normalize_checkins_df(df)
 
-    # Fallback if the routed view does not exist yet
     fallback_query = """
         SELECT *
         FROM checkins_clean
@@ -112,10 +110,43 @@ def _load_checkins_from_db():
     return _normalize_checkins_df(df)
 
 
-def _load_rejects_from_db():
+def _load_checkins_live_from_db():
+    query = """
+        SELECT *
+        FROM checkins_routed
+        WHERE event_time::date = (now() AT TIME ZONE 'America/Chicago')::date
+        ORDER BY event_time
+    """
+    df = _read_table(query)
+
+    if not df.empty:
+        return _normalize_checkins_df(df)
+
+    fallback_query = """
+        SELECT *
+        FROM checkins_clean
+        WHERE event_time::date = (now() AT TIME ZONE 'America/Chicago')::date
+        ORDER BY event_time
+    """
+    df = _read_table(fallback_query)
+    return _normalize_checkins_df(df)
+
+
+def _load_rejects_history_from_db():
     query = """
         SELECT *
         FROM rejects_clean
+        ORDER BY event_time
+    """
+    df = _read_table(query)
+    return _normalize_rejects_df(df)
+
+
+def _load_rejects_live_from_db():
+    query = """
+        SELECT *
+        FROM rejects_clean
+        WHERE event_time::date = (now() AT TIME ZONE 'America/Chicago')::date
         ORDER BY event_time
     """
     df = _read_table(query)
@@ -150,7 +181,7 @@ def _load_rejects_from_csv(path):
 
 @st.cache_data(show_spinner=False)
 def load_checkins_history_df(mtime=None, refresh_count=0):
-    df = _load_checkins_from_db()
+    df = _load_checkins_history_from_db()
 
     if not df.empty:
         return df
@@ -160,7 +191,7 @@ def load_checkins_history_df(mtime=None, refresh_count=0):
 
 @st.cache_data(show_spinner=False)
 def load_checkins_df(path=CHECKINS_FILE, mtime=None, refresh_count=0):
-    df = _load_checkins_from_db()
+    df = _load_checkins_live_from_db()
 
     if not df.empty:
         return df
@@ -170,7 +201,7 @@ def load_checkins_df(path=CHECKINS_FILE, mtime=None, refresh_count=0):
 
 @st.cache_data(show_spinner=False)
 def load_rejects_df(path=REJECTS_FILE, mtime=None, refresh_count=0):
-    df = _load_rejects_from_db()
+    df = _load_rejects_live_from_db()
 
     if not df.empty:
         return df
@@ -180,7 +211,7 @@ def load_rejects_df(path=REJECTS_FILE, mtime=None, refresh_count=0):
 
 @st.cache_data(show_spinner=False)
 def load_rejects_history_df(path=REJECTS_HISTORY_FILE, mtime=None, refresh_count=0):
-    df = _load_rejects_from_db()
+    df = _load_rejects_history_from_db()
 
     if not df.empty:
         return df
