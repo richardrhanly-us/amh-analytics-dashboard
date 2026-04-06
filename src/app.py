@@ -1103,6 +1103,20 @@ else:
     
 today_metrics = get_today_metrics(df_live_raw, rejects_live_raw, today)
 
+# fix current throughput: use most recent active hour instead of only the exact wall-clock hour
+current_speed = 0
+
+if len(today_metrics["today_df"]) > 0 and "datetime" in today_metrics["today_df"].columns:
+    today_df_for_speed = today_metrics["today_df"].copy()
+    today_df_for_speed["datetime"] = pd.to_datetime(today_df_for_speed["datetime"], errors="coerce")
+    today_df_for_speed = today_df_for_speed.dropna(subset=["datetime"])
+
+    if len(today_df_for_speed) > 0:
+        latest_activity_hour = today_df_for_speed["datetime"].max().hour
+        current_speed = int((today_df_for_speed["datetime"].dt.hour == latest_activity_hour).sum())
+
+today_metrics["current_speed"] = current_speed
+
 
 today_df = today_metrics["today_df"]
 today_rejects_df = today_metrics["today_rejects_df"]
