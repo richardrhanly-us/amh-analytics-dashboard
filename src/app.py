@@ -303,7 +303,128 @@ def render_chart(chart):
     )
 
     st.altair_chart(chart, use_container_width=True)
-    
+
+
+def build_roi_payload(df, df_history_raw, start_date, end_date):
+    if len(df) == 0 or len(df_history_raw) == 0:
+        return None
+
+    MANUAL_RATE = 45
+    HOURLY_COST = st.session_state.get("roi_hourly_cost", 18.0)
+    UPFRONT_COST = st.session_state.get("roi_upfront_cost", 200000.0)
+    MONTHLY_COST = st.session_state.get("roi_monthly_cost", 0.0)
+    YEARLY_COST = st.session_state.get("roi_yearly_cost", 8000.0)
+    roi_mode = st.session_state.get("roi_mode", "Annualized Projection")
+    INSTALL_DATE = st.session_state.get("roi_install_date", pd.to_datetime("2019-01-01").date())
+    INCLUDE_UPFRONT_IN_SINCE_INSTALL = st.session_state.get("roi_include_upfront_since_install", True)
+
+    rate_df = df.copy()
+    rate_df["date"] = rate_df["datetime"].dt.date
+    rate_df["hour"] = rate_df["datetime"].dt.hour
+
+    daily_hourly = (
+        rate_df.groupby(["date", "hour"])
+        .size()
+        .reset_index(name="checkins")
+    )
+
+    avg_hourly = (
+        daily_hourly.groupby("hour")["checkins"]
+        .mean()
+        .reset_index(name="avg_items_per_hour")
+    )
+
+    if len(avg_hourly) > 0:
+        peak_row = avg_hourly.loc[avg_hourly["avg_items_per_hour"].idxmax()]
+        threshold = peak_row["avg_items_per_hour"] * 0.75
+        peak_hours = avg_hourly[avg_hourly["avg_items_per_hour"] >= threshold].copy()
+
+        AMH_RATE = (
+            peak_hours["avg_items_per_hour"].mean()
+            if len(peak_hours) > 0
+            else peak_row["avg_items_per_hour"]
+        )
+    else:
+        AMH_RATE = 130.0
+
+    daily_counts = df["datetime"].dt.date.value_counts().sort_index()
+    staff_df = daily_counts.reset_index()
+    staff_df.columns = ["date", "checkins"]
+
+    staff_df["manual_hours"] = staff_df["checkins"] / MANUAL_RATE
+    staff_df["amh_hours"] = staff_df["checkins"] / AMH_RATE
+    staff_df["hours_saved"] = (staff_df["manual_hours"] - staff_df["amh_hours"]).clip(lower=0)
+
+    total_saved = staff_df["hours_saved"].sum()
+    labor_value_saved = total_saved * HOURLY_COST
+
+    days_in_range = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1)
+    months_in_range = days_in_range / 30.44
+    years_in_range = days_in_range / 365.25
+
+    observed_prorated_monthly_cost = MONTHLY_COST * months_in_range
+    observed_prorated_yearly_cost = YEARLY_COST * years_in_range
+    observed_operating_cost = observed_prorated_monthly_cost + observed_prorated_yearly_cost
+    observed_total_roi_cost = UPFRONT_COST + observed_prorated_monthly_cost + observed_prorated_yearly_cost
+    observed_net_operating_value = labor_value_saved - observed_operating_cost
+
+    annual_labor_value = labor_value_saved * (12 / months_in_range) if months_in_range > 0 else 0
+    annual_operating_cost = (MONTHLY_COST * 12) + YEARLY_COST
+
+    monthly_labor_value_saved = labor_value_saved / months_in_range if months_in_range > 0 else 0
+    effective_monthly_cost = MONTHLY_COST + (YEARLY_COST / 12.0)
+
+    if monthly_labor_value_saved > effective_monthly_cost:
+        payback_months = (
+            UPFRONT_COST / (monthly_labor_value_saved - effective_monthly_cost)
+            if UPFRONT_COST > 0 else 0
+        )
+    else:
+        payback_months = None
+
+    if roi_mode == "Annualized Projection":
+        total_roi_cost = annual_operating_cost
+        net_roi_value = annual_labor_value - total_roi_cost
+    else:
+        total_roi_cost = observed_total_roi_cost
+        net_roi_value = labor_value_saved - total_roi_cost
+
+    roi_pct = (net_roi_value / total_roi_cost) * 100 if total_roi_cost > 0 else None
+
+    install_date_ts = pd.to_datetime(INSTALL_DATE)
+    today_ts = pd.Timestamp.today().normalize()
+    installed_days = max((today_ts - install_date_ts).days, 1)
+    installed_years = installed_days / 365.25
+
+    since_install_labor_value = annual_labor_value * installed_years
+    since_install_operating_cost = annual_operating_cost * installed_years
+
+    if INCLUDE_UPFRONT_IN_SINCE_INSTALL:
+        since_install_total_cost = UPFRONT_COST + since_install_operating_cost
+    else:
+        since_install_total_cost = since_install_operating_cost
+
+    since_install_net_value = since_install_labor_value - since_install_total_cost
+    since_install_roi_pct = (
+        (since_install_net_value / since_install_total_cost) * 100
+        if since_install_total_cost > 0 else None
+    )
+
+    return {
+        "roi_mode": roi_mode,
+        "roi_pct": roi_pct,
+        "net_roi_value": net_roi_value,
+        "total_roi_cost": total_roi_cost,
+        "payback_months": payback_months,
+        "since_install_roi_pct": since_install_roi_pct,
+        "since_install_net_value": since_install_net_value,
+        "annual_labor_value": annual_labor_value,
+        "annual_operating_cost": annual_operating_cost,
+        "labor_value_saved": labor_value_saved,
+        "observed_operating_cost": observed_operating_cost,
+        "observed_net_operating_value": observed_net_operating_value,
+        "hourly_cost": HOURLY_COST,
+    }
     
 def get_hour_range_df(start_hour=7, end_hour=20):
     hour_df = pd.DataFrame({"hour": list(range(start_hour, end_hour + 1))})
@@ -1840,7 +1961,7 @@ if selected_view == "Overview":
     overview_labor_value_saved = 0.0
     
     MANUAL_RATE_OVERVIEW = 45
-    overview_roi_payload = st.session_state.get("overview_roi_payload")
+            overview_roi_payload = build_roi_payload(df, df_history_raw, start_date, end_date)
     HOURLY_COST_OVERVIEW = (
         overview_roi_payload["hourly_cost"]
         if overview_roi_payload and "hourly_cost" in overview_roi_payload
@@ -2120,12 +2241,13 @@ if selected_view == "Reports":
             "Hourly labor rate ($/hour)",
             min_value=0.0,
             max_value=1000.0,
-            value=18.0,
+            value=st.session_state.get("roi_hourly_cost", 18.0),
             step=0.5,
             format="%.2f",
+            key="roi_hourly_cost",
             help="Adjust the hourly labor cost used to estimate labor value."
         )
-
+        roi_payload = build_roi_payload(df, df_history_raw, start_date, end_date)
         st.markdown("##### ROI Inputs")
 
         roi_col1, roi_col2, roi_col3 = st.columns(3)
@@ -2135,9 +2257,10 @@ if selected_view == "Reports":
                 "Upfront cost ($)",
                 min_value=0.0,
                 max_value=10000000.0,
-                value=200000.0,
+                value=st.session_state.get("roi_upfront_cost", 200000.0),
                 step=100.0,
                 format="%.2f",
+                key="roi_upfront_cost",
                 help="One-time purchase or implementation cost."
             )
 
@@ -2146,9 +2269,10 @@ if selected_view == "Reports":
                 "Monthly cost ($/month)",
                 min_value=0.0,
                 max_value=1000000.0,
-                value=0.0,
+                value=st.session_state.get("roi_monthly_cost", 0.0),
                 step=10.0,
                 format="%.2f",
+                key="roi_monthly_cost",
                 help="Recurring monthly maintenance, service, or lease cost."
             )
 
@@ -2157,18 +2281,20 @@ if selected_view == "Reports":
                 "Yearly cost ($/year)",
                 min_value=0.0,
                 max_value=1000000.0,
-                value=8000.0,
+                value=st.session_state.get("roi_yearly_cost", 8000.0),
                 step=50.0,
                 format="%.2f",
+                key="roi_yearly_cost",
                 help="Recurring annual support, licensing, or maintenance cost."
             )
 
         st.markdown("##### ROI Mode")
-
+        
         roi_mode = st.radio(
             "Calculation Mode",
             ["Observed (Selected Range)", "Annualized Projection"],
             horizontal=True,
+            key="roi_mode",
             help="Observed uses only the selected date range. Annualized Projection scales the observed labor value to a 12-month estimate."
         )
 
@@ -2179,14 +2305,16 @@ if selected_view == "Reports":
         with install_col1:
             INSTALL_DATE = st.date_input(
                 "Installed on",
-                value=pd.to_datetime("2019-01-01").date(),
+                value=st.session_state.get("roi_install_date", pd.to_datetime("2019-01-01").date()),
+                key="roi_install_date",
                 help="Used to estimate ROI since the AMH was put into service."
             )
 
         with install_col2:
             INCLUDE_UPFRONT_IN_SINCE_INSTALL = st.checkbox(
                 "Include upfront cost in since-install ROI",
-                value=True,
+                value=st.session_state.get("roi_include_upfront_since_install", True),
+                key="roi_include_upfront_since_install",
                 help="Usually this should stay on, since purchase ROI should include the initial capital cost."
             )
 
