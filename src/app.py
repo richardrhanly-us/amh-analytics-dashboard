@@ -1840,7 +1840,12 @@ if selected_view == "Overview":
     overview_labor_value_saved = 0.0
     
     MANUAL_RATE_OVERVIEW = 45
-    HOURLY_COST_OVERVIEW = 18.0
+    overview_roi_payload = st.session_state.get("overview_roi_payload")
+    HOURLY_COST_OVERVIEW = (
+        overview_roi_payload["hourly_cost"]
+        if overview_roi_payload and "hourly_cost" in overview_roi_payload
+        else 18.0
+    )
     
     if len(df) > 0:
         labor_df = df.copy()
@@ -1890,22 +1895,6 @@ if selected_view == "Overview":
     # NEW (split avg vs total labor value)
     overview_avg_labor_value = overview_avg_hours_saved * HOURLY_COST_OVERVIEW
     overview_total_labor_value = overview_total_hours_saved * HOURLY_COST_OVERVIEW
-
-
-    st.session_state["overview_roi_payload"] = {
-        "roi_mode": roi_mode,
-        "roi_pct": roi_pct,
-        "net_roi_value": net_roi_value,
-        "total_roi_cost": total_roi_cost,
-        "payback_months": payback_months,
-        "since_install_roi_pct": since_install_roi_pct,
-        "since_install_net_value": since_install_net_value,
-        "annual_labor_value": annual_labor_value,
-        "annual_operating_cost": annual_operating_cost,
-        "labor_value_saved": labor_value_saved,
-        "observed_operating_cost": observed_prorated_monthly_cost + observed_prorated_yearly_cost,
-        "observed_net_operating_value": labor_value_saved - (observed_prorated_monthly_cost + observed_prorated_yearly_cost),
-    }
 
     
     row1_col1, row1_col2, row1_col3 = st.columns(3)
@@ -2091,7 +2080,7 @@ if selected_view == "Overview":
                 render_kpi_card(
                     "Annual ROI",
                     f'{overview_roi_payload["roi_pct"]:,.1f}%' if overview_roi_payload["roi_pct"] is not None else "N/A",
-                    "From Reports ROI calculator",
+                    "From Reports: Annualized Projection",
                     "#6b7280",
                     value_color="#059669" if overview_roi_payload["roi_pct"] is not None and overview_roi_payload["roi_pct"] >= 0 else "#dc2626"
                 )
@@ -2099,7 +2088,7 @@ if selected_view == "Overview":
                 render_kpi_card(
                     "Observed Net Value",
                     f'${overview_roi_payload["observed_net_operating_value"]:,.0f}',
-                    "From Reports ROI calculator",
+                    "From Reports: Observed Range",
                     "#6b7280",
                     value_color="#059669" if overview_roi_payload["observed_net_operating_value"] >= 0 else "#dc2626"
                 )
@@ -2137,7 +2126,42 @@ if selected_view == "Reports":
             help="Adjust the hourly labor cost used to estimate labor value."
         )
 
-        
+        st.markdown("##### ROI Inputs")
+
+        roi_col1, roi_col2, roi_col3 = st.columns(3)
+
+        with roi_col1:
+            UPFRONT_COST = st.number_input(
+                "Upfront cost ($)",
+                min_value=0.0,
+                max_value=10000000.0,
+                value=200000.0,
+                step=100.0,
+                format="%.2f",
+                help="One-time purchase or implementation cost."
+            )
+
+        with roi_col2:
+            MONTHLY_COST = st.number_input(
+                "Monthly cost ($/month)",
+                min_value=0.0,
+                max_value=1000000.0,
+                value=0.0,
+                step=10.0,
+                format="%.2f",
+                help="Recurring monthly maintenance, service, or lease cost."
+            )
+
+        with roi_col3:
+            YEARLY_COST = st.number_input(
+                "Yearly cost ($/year)",
+                min_value=0.0,
+                max_value=1000000.0,
+                value=8000.0,
+                step=50.0,
+                format="%.2f",
+                help="Recurring annual support, licensing, or maintenance cost."
+            )
 
         st.markdown("##### ROI Mode")
 
@@ -2165,7 +2189,7 @@ if selected_view == "Reports":
                 value=True,
                 help="Usually this should stay on, since purchase ROI should include the initial capital cost."
             )
-        
+
         if len(df) > 0 and len(df_history_raw) > 0:
             rate_df = df.copy()
             rate_df["date"] = rate_df["datetime"].dt.date
@@ -2223,7 +2247,6 @@ if selected_view == "Reports":
 
             annual_labor_value = labor_value_saved * (12 / months_in_range) if months_in_range > 0 else 0
             annual_operating_cost = (MONTHLY_COST * 12) + YEARLY_COST
-            annual_total_with_upfront = UPFRONT_COST + annual_operating_cost
 
             monthly_labor_value_saved = labor_value_saved / months_in_range if months_in_range > 0 else 0
             effective_monthly_cost = MONTHLY_COST + (YEARLY_COST / 12.0)
@@ -2240,28 +2263,22 @@ if selected_view == "Reports":
                 labor_value_display = annual_labor_value
                 total_roi_cost = annual_operating_cost
                 net_roi_value = labor_value_display - total_roi_cost
-                cost_label = "Annual Cost"
                 labor_value_label = "Annual Labor Value"
-                roi_subtitle = "Projected annual return"
             else:
                 labor_value_display = labor_value_saved
                 total_roi_cost = observed_total_roi_cost
                 net_roi_value = labor_value_display - total_roi_cost
-                cost_label = "Total Cost"
                 labor_value_label = "Estimated Labor Value"
-                roi_subtitle = "Return on investment"
 
             if total_roi_cost > 0:
                 roi_pct = (net_roi_value / total_roi_cost) * 100
             else:
                 roi_pct = None
 
-
             install_date_ts = pd.to_datetime(INSTALL_DATE)
             today_ts = pd.Timestamp.today().normalize()
 
             installed_days = max((today_ts - install_date_ts).days, 1)
-            installed_months = installed_days / 30.44
             installed_years = installed_days / 365.25
 
             since_install_labor_value = annual_labor_value * installed_years
@@ -2278,7 +2295,25 @@ if selected_view == "Reports":
                 since_install_roi_pct = (since_install_net_value / since_install_total_cost) * 100
             else:
                 since_install_roi_pct = None
-            
+
+            observed_operating_cost = observed_prorated_monthly_cost + observed_prorated_yearly_cost
+            observed_net_operating_value = labor_value_saved - observed_operating_cost
+
+            st.session_state["overview_roi_payload"] = {
+                "roi_mode": roi_mode,
+                "roi_pct": roi_pct,
+                "net_roi_value": net_roi_value,
+                "total_roi_cost": total_roi_cost,
+                "payback_months": payback_months,
+                "since_install_roi_pct": since_install_roi_pct,
+                "since_install_net_value": since_install_net_value,
+                "annual_labor_value": annual_labor_value,
+                "annual_operating_cost": annual_operating_cost,
+                "labor_value_saved": labor_value_saved,
+                "observed_operating_cost": observed_operating_cost,
+                "observed_net_operating_value": observed_net_operating_value,
+            }
+
             try:
                 from report_export import build_director_report_pdf
 
@@ -2336,12 +2371,11 @@ if selected_view == "Reports":
                 unsafe_allow_html=True
             )
 
-
             k1, k2, k3, k4 = st.columns(4)
-            
+
             with k1:
                 render_kpi_card("Avg Hours Saved", f"{avg_saved:,.2f}", "Per day", "#6b7280")
-            
+
             with k2:
                 render_kpi_card(
                     "Peak Day Saved",
@@ -2349,7 +2383,7 @@ if selected_view == "Reports":
                     pd.to_datetime(peak_day["date"]).strftime("%b %d, %Y"),
                     "#6b7280"
                 )
-            
+
             with k3:
                 render_kpi_card(
                     "Total Hours Saved",
@@ -2357,7 +2391,7 @@ if selected_view == "Reports":
                     "Across selected date range",
                     "#6b7280"
                 )
-            
+
             with k4:
                 render_kpi_card(
                     labor_value_label,
@@ -2365,7 +2399,7 @@ if selected_view == "Reports":
                     "Staff time avoided value" if roi_mode == "Observed (Selected Range)" else "Projected yearly impact",
                     "#6b7280"
                 )
-                
+
             roi1, roi2, roi3, roi4 = st.columns(4)
 
             if roi_mode == "Annualized Projection":
@@ -2404,9 +2438,6 @@ if selected_view == "Reports":
                     )
 
             else:
-                observed_operating_cost = observed_prorated_monthly_cost + observed_prorated_yearly_cost
-                observed_net_operating_value = labor_value_saved - observed_operating_cost
-
                 with roi1:
                     render_kpi_card(
                         "Range Length",
