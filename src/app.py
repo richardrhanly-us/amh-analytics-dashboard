@@ -2937,29 +2937,26 @@ It uses the current annualized savings rate as a projection across the machine's
                 """,
                 unsafe_allow_html=True
             )
-
-            k1, k2, k3, k4 = st.columns(4)
-
+            
+            k1, k2, k3 = st.columns(3)
+            
             with k1:
-                render_kpi_card("Avg Hours Saved", f"{avg_saved:,.2f}", "Per day", "#6b7280")
-
-            with k2:
                 render_kpi_card(
-                    "Peak Day Saved",
-                    f"{peak_day['hours_saved']:,.2f}",
-                    pd.to_datetime(peak_day["date"]).strftime("%b %d, %Y"),
+                    "Avg Hours Saved",
+                    f"{avg_saved:,.2f}",
+                    "Per day",
                     "#6b7280"
                 )
-
-            with k3:
+            
+            with k2:
                 render_kpi_card(
                     "Total Hours Saved",
                     f"{total_saved:,.2f}",
                     "Across selected date range",
                     "#6b7280"
                 )
-
-            with k4:
+            
+            with k3:
                 render_kpi_card(
                     "Estimated Labor Value",
                     f"${labor_value_saved:,.0f}",
@@ -2973,9 +2970,6 @@ It uses the current annualized savings rate as a projection across the machine's
             On an average day in the selected range, the AMH reduces staff workload by about **{avg_saved:,.2f} hours** compared to manual check-in processing.  
             This is equivalent to roughly **{(avg_saved/8):,.2f} full staff shifts per day**.
             
-            **Peak Day Saved — {peak_day['hours_saved']:,.2f} hours**  
-            On the busiest day (**{pd.to_datetime(peak_day["date"]).strftime('%b %d, %Y')}**), the AMH reduced workload by **{peak_day['hours_saved']:,.2f} hours**.  
-            This represents the maximum operational impact observed in the selected period.
             
             **Total Hours Saved — {total_saved:,.2f} hours**  
             Across the full selected date range, the AMH reduced total staff workload by **{total_saved:,.2f} hours**.  
