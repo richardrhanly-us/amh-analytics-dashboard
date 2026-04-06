@@ -2246,11 +2246,11 @@ if selected_view == "Reports":
     st.header("Reports")
     pdf_button_placeholder = st.empty()
 
-# =========================================================
-# ROI CALCULATOR
-# =========================================================
-with st.expander("ROI Calculator", expanded=False):
-    st.caption("Estimate operating value, annual ROI, payback period, and since-install return.")
+    # =========================================================
+    # ROI CALCULATOR
+    # =========================================================
+    with st.expander("ROI Calculator", expanded=False):
+        st.caption("Estimate operating value, annual ROI, payback period, and since-install return.")
 
     roi_help_col1, roi_help_col2 = st.columns([3, 2])
 
