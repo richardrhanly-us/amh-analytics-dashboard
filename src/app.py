@@ -2129,6 +2129,15 @@ if selected_view == "Reports":
                 help="Recurring annual support, licensing, or maintenance cost."
             )
 
+        st.markdown("##### ROI Mode")
+
+        roi_mode = st.radio(
+            "Calculation Mode",
+            ["Observed (Selected Range)", "Annualized Projection"],
+            horizontal=True,
+            help="Observed uses only the selected date range. Annualized Projection scales the observed labor value to a 12-month estimate."
+        )
+        
         if len(df) > 0 and len(df_history_raw) > 0:
             rate_df = df.copy()
             rate_df["date"] = rate_df["datetime"].dt.date
@@ -2180,16 +2189,13 @@ if selected_view == "Reports":
             months_in_range = days_in_range / 30.44
             years_in_range = days_in_range / 365.25
 
-            prorated_monthly_cost = MONTHLY_COST * months_in_range
-            prorated_yearly_cost = YEARLY_COST * years_in_range
-            total_roi_cost = UPFRONT_COST + prorated_monthly_cost + prorated_yearly_cost
+            observed_prorated_monthly_cost = MONTHLY_COST * months_in_range
+            observed_prorated_yearly_cost = YEARLY_COST * years_in_range
+            observed_total_roi_cost = UPFRONT_COST + observed_prorated_monthly_cost + observed_prorated_yearly_cost
 
-            net_roi_value = labor_value_saved - total_roi_cost
-
-            if total_roi_cost > 0:
-                roi_pct = (net_roi_value / total_roi_cost) * 100
-            else:
-                roi_pct = None
+            annual_labor_value = labor_value_saved * (12 / months_in_range) if months_in_range > 0 else 0
+            annual_operating_cost = (MONTHLY_COST * 12) + YEARLY_COST
+            annual_total_with_upfront = UPFRONT_COST + annual_operating_cost
 
             monthly_labor_value_saved = labor_value_saved / months_in_range if months_in_range > 0 else 0
             effective_monthly_cost = MONTHLY_COST + (YEARLY_COST / 12.0)
@@ -2201,6 +2207,26 @@ if selected_view == "Reports":
                 )
             else:
                 payback_months = None
+
+            if roi_mode == "Annualized Projection":
+                labor_value_display = annual_labor_value
+                total_roi_cost = annual_operating_cost
+                net_roi_value = labor_value_display - total_roi_cost
+                cost_label = "Annual Cost"
+                labor_value_label = "Annual Labor Value"
+                roi_subtitle = "Projected annual return"
+            else:
+                labor_value_display = labor_value_saved
+                total_roi_cost = observed_total_roi_cost
+                net_roi_value = labor_value_display - total_roi_cost
+                cost_label = "Total Cost"
+                labor_value_label = "Estimated Labor Value"
+                roi_subtitle = "Return on investment"
+
+            if total_roi_cost > 0:
+                roi_pct = (net_roi_value / total_roi_cost) * 100
+            else:
+                roi_pct = None
 
             try:
                 from report_export import build_director_report_pdf
@@ -2283,18 +2309,19 @@ if selected_view == "Reports":
             
             with k4:
                 render_kpi_card(
-                    "Estimated Labor Value",
-                    f"${labor_value_saved:,.0f}",
-                    "Staff time avoided value",
+                    labor_value_label,
+                    f"${labor_value_display:,.0f}",
+                    "Staff time avoided value" if roi_mode == "Observed (Selected Range)" else "Projected yearly impact",
                     "#6b7280"
                 )
+                
             roi1, roi2, roi3, roi4 = st.columns(4)
 
             with roi1:
                 render_kpi_card(
-                    "Total Cost",
+                    cost_label,
                     f"${total_roi_cost:,.0f}",
-                    "Across selected date range",
+                    "Across selected date range" if roi_mode == "Observed (Selected Range)" else "Recurring annual cost only",
                     "#6b7280"
                 )
 
@@ -2311,7 +2338,7 @@ if selected_view == "Reports":
                 render_kpi_card(
                     "ROI",
                     f"{roi_pct:,.1f}%" if roi_pct is not None else "N/A",
-                    "Return on investment",
+                    roi_subtitle,
                     "#6b7280",
                     value_color="#059669" if roi_pct is not None and roi_pct >= 0 else "#dc2626"
                 )
@@ -2338,8 +2365,9 @@ if selected_view == "Reports":
                         ROI Summary
                     </div>
                     <div style="color: #4b5563; line-height: 1.4;">
-                        Total labor value saved over the selected range is ${labor_value_saved:,.0f}.
-                        Total ROI cost over the same period is ${total_roi_cost:,.0f}.
+                        {"Using only the selected date range, " if roi_mode == "Observed (Selected Range)" else "Using an annualized projection based on the selected date range, "}
+                        labor value is ${labor_value_display:,.0f}.
+                        Total cost is ${total_roi_cost:,.0f}.
                         Net value is ${net_roi_value:,.0f}.
                         {"ROI is " + f"{roi_pct:,.1f}%." if roi_pct is not None else "ROI cannot be calculated because total cost is zero."}
                         {" Estimated payback period is " + f"{payback_months:,.1f} months." if payback_months is not None else " Payback period is not available because recurring savings do not currently exceed recurring costs."}
@@ -2411,25 +2439,47 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
 **Estimated labor value = ${labor_value_saved:,.0f}**
 """)
 
+            if roi_mode == "Annualized Projection":
+                st.info(f"""### ROI Calculation
 
-            st.info(f"""### ROI Calculation
+Selected range length = {days_in_range:,} day(s)  
+Observed labor value in selected range = ${labor_value_saved:,.2f}
+
+Annualized labor value = ${labor_value_saved:,.2f} × (12 ÷ {months_in_range:,.2f})  
+= ${annual_labor_value:,.2f}
+
+Annual recurring cost = (${MONTHLY_COST:,.2f} × 12) + ${YEARLY_COST:,.2f}  
+= ${annual_operating_cost:,.2f}
+
+Net annual value = annualized labor value − annual recurring cost  
+
+Net annual value = ${annual_labor_value:,.2f} − ${annual_operating_cost:,.2f}  
+= ${net_roi_value:,.2f}
+
+ROI = (net annual value ÷ annual recurring cost) × 100  
+{f"ROI = ({net_roi_value:,.2f} ÷ {total_roi_cost:,.2f}) × 100 = {roi_pct:,.2f}%" if roi_pct is not None else "ROI = N/A because total cost is 0."}
+
+Payback period = upfront cost ÷ (monthly labor value saved − monthly equivalent recurring cost)
+""")
+            else:
+                st.info(f"""### ROI Calculation
 
 Selected range length = {days_in_range:,} day(s)
 
 Prorated monthly cost = ${MONTHLY_COST:,.2f} × {months_in_range:,.2f} month(s)  
-= ${prorated_monthly_cost:,.2f}
+= ${observed_prorated_monthly_cost:,.2f}
 
 Prorated yearly cost = ${YEARLY_COST:,.2f} × {years_in_range:,.2f} year(s)  
-= ${prorated_yearly_cost:,.2f}
+= ${observed_prorated_yearly_cost:,.2f}
 
 Total cost = Upfront cost + prorated monthly cost + prorated yearly cost  
 
-Total cost = ${UPFRONT_COST:,.2f} + ${prorated_monthly_cost:,.2f} + ${prorated_yearly_cost:,.2f}  
+Total cost = ${UPFRONT_COST:,.2f} + ${observed_prorated_monthly_cost:,.2f} + ${observed_prorated_yearly_cost:,.2f}  
 = ${total_roi_cost:,.2f}
 
 Net value = labor value saved − total cost  
 
-Net value = ${labor_value_saved:,.2f} − ${total_roi_cost:,.2f}  
+Net value = ${labor_value_display:,.2f} − ${total_roi_cost:,.2f}  
 = ${net_roi_value:,.2f}
 
 ROI = (net value ÷ total cost) × 100  
@@ -3150,6 +3200,25 @@ Payback period compares monthly labor value saved against recurring monthly-equi
                     "#6b7280"
                 )
 
+
+            annual_col1, annual_col2 = st.columns(2)
+
+            with annual_col1:
+                render_kpi_card(
+                    "Annual Savings Rate",
+                    f"${annual_labor_value:,.0f}",
+                    "Projected yearly labor value",
+                    "#6b7280"
+                )
+
+            with annual_col2:
+                render_kpi_card(
+                    "Annual Operating Cost",
+                    f"${annual_operating_cost:,.0f}",
+                    "Monthly + yearly recurring cost",
+                    "#6b7280"
+                )
+            
             if len(overflow_daily) > 0:
                 st.subheader("Exception Bin Rate by Day")
                 chart_df = overflow_daily["exception_rate_pct"]
