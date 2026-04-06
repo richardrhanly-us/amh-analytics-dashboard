@@ -1888,6 +1888,71 @@ if selected_view == "Overview":
     # NEW (split avg vs total labor value)
     overview_avg_labor_value = overview_avg_hours_saved * HOURLY_COST_OVERVIEW
     overview_total_labor_value = overview_total_hours_saved * HOURLY_COST_OVERVIEW
+
+
+    overview_days_in_range = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1)
+    overview_months_in_range = overview_days_in_range / 30.44
+    overview_years_in_range = overview_days_in_range / 365.25
+
+    if overview_volume_mode == "Average per Day":
+        overview_labor_value_for_roi = overview_avg_labor_value * 365.25
+        overview_cost_for_roi = (OVERVIEW_MONTHLY_COST * 12) + OVERVIEW_YEARLY_COST
+        overview_net_value = overview_labor_value_for_roi - overview_cost_for_roi
+        overview_roi_label = "Annual ROI"
+        overview_roi_subtitle = "Projected annual return"
+    else:
+        overview_labor_value_for_roi = overview_total_labor_value
+        overview_cost_for_roi = (
+            OVERVIEW_UPFRONT_COST
+            + (OVERVIEW_MONTHLY_COST * overview_months_in_range)
+            + (OVERVIEW_YEARLY_COST * overview_years_in_range)
+        )
+        overview_net_value = overview_labor_value_for_roi - overview_cost_for_roi
+        overview_roi_label = "ROI"
+        overview_roi_subtitle = "Selected range return"
+
+    if overview_cost_for_roi > 0:
+        overview_roi_pct = (overview_net_value / overview_cost_for_roi) * 100
+    else:
+        overview_roi_pct = None
+
+
+    st.markdown("##### ROI Inputs")
+
+    overview_roi1, overview_roi2, overview_roi3 = st.columns(3)
+
+    with overview_roi1:
+        OVERVIEW_UPFRONT_COST = st.number_input(
+            "Upfront cost ($)",
+            min_value=0.0,
+            max_value=10000000.0,
+            value=200000.0,
+            step=100.0,
+            format="%.2f",
+            key="overview_upfront_cost"
+        )
+
+    with overview_roi2:
+        OVERVIEW_MONTHLY_COST = st.number_input(
+            "Monthly cost ($/month)",
+            min_value=0.0,
+            max_value=1000000.0,
+            value=0.0,
+            step=10.0,
+            format="%.2f",
+            key="overview_monthly_cost"
+        )
+
+    with overview_roi3:
+        OVERVIEW_YEARLY_COST = st.number_input(
+            "Yearly cost ($/year)",
+            min_value=0.0,
+            max_value=1000000.0,
+            value=8000.0,
+            step=50.0,
+            format="%.2f",
+            key="overview_yearly_cost"
+        )
     
     row1_col1, row1_col2, row1_col3 = st.columns(3)
     row2_col1, row2_col2, row2_col3 = st.columns(3)
@@ -2065,7 +2130,16 @@ if selected_view == "Overview":
             )
     
     with row4_col3:
-        st.empty()  # placeholder for ROI later
+        render_kpi_card(
+            overview_roi_label,
+            f"{overview_roi_pct:,.1f}%" if overview_roi_pct is not None else "N/A",
+            overview_roi_subtitle,
+            "#6b7280",
+            value_color="#059669" if overview_roi_pct is not None and overview_roi_pct >= 0 else "#dc2626"
+        )
+
+
+
 if selected_view == "Reports":
     st.header("Reports")
     pdf_button_placeholder = st.empty()
