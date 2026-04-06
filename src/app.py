@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 
-refresh_count = st_autorefresh(interval=120000, key="amh_auto_refresh")
+refresh_count = st_autorefresh(interval=30000, key="amh_auto_refresh")
 
 
 from data_loader import load_checkins_df, load_checkins_history_df, load_rejects_df, load_rejects_history_df, load_pipeline_status
@@ -592,16 +592,20 @@ def build_hourly_line_chart(df, value_col, title_y, series_col=None, start_hour=
 
     return chart
 
+# Load pipeline status first so its updated_at can drive cache invalidation
+pipeline_status = load_pipeline_status(refresh_count=refresh_count)
 
 status_mtime = 0
+if pipeline_status:
+    status_updated_at = pipeline_status.get("updated_at")
+    if status_updated_at:
+        status_mtime = str(status_updated_at)
 
 df_live_raw = load_checkins_df(mtime=status_mtime, refresh_count=refresh_count)
 df_history_raw = load_checkins_history_df(mtime=status_mtime, refresh_count=refresh_count)
 
 rejects_live_raw = load_rejects_df(mtime=status_mtime, refresh_count=refresh_count)
 rejects_history_raw = load_rejects_history_df(mtime=status_mtime, refresh_count=refresh_count)
-
-pipeline_status = load_pipeline_status(mtime=status_mtime, refresh_count=refresh_count)
 
 # DEBUG
 #st.write("df_live_raw columns:", list(df_live_raw.columns))
