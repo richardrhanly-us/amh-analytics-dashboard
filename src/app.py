@@ -1933,26 +1933,19 @@ if selected_view == "Overview":
     overview_years_in_range = overview_days_in_range / 365.25
 
     if overview_volume_mode == "Average per Day":
-        overview_labor_value_for_roi = overview_avg_labor_value * 365.25
-        overview_cost_for_roi = (OVERVIEW_MONTHLY_COST * 12) + OVERVIEW_YEARLY_COST
-        overview_net_value = overview_labor_value_for_roi - overview_cost_for_roi
-        overview_roi_label = "Annual ROI"
-        overview_roi_subtitle = "Projected annual return"
+        overview_annual_labor_value = overview_avg_labor_value * 365.25
+        overview_annual_operating_cost = (OVERVIEW_MONTHLY_COST * 12) + OVERVIEW_YEARLY_COST
+        overview_summary_value = overview_annual_labor_value - overview_annual_operating_cost
+        overview_summary_label = "Annual Net Value"
+        overview_summary_subtitle = "Projected yearly value minus recurring cost"
     else:
-        overview_labor_value_for_roi = overview_total_labor_value
-        overview_cost_for_roi = (
-            OVERVIEW_UPFRONT_COST
-            + (OVERVIEW_MONTHLY_COST * overview_months_in_range)
+        overview_observed_operating_cost = (
+            (OVERVIEW_MONTHLY_COST * overview_months_in_range)
             + (OVERVIEW_YEARLY_COST * overview_years_in_range)
         )
-        overview_net_value = overview_labor_value_for_roi - overview_cost_for_roi
-        overview_roi_label = "ROI"
-        overview_roi_subtitle = "Selected range return"
-
-    if overview_cost_for_roi > 0:
-        overview_roi_pct = (overview_net_value / overview_cost_for_roi) * 100
-    else:
-        overview_roi_pct = None
+        overview_summary_value = overview_total_labor_value - overview_observed_operating_cost
+        overview_summary_label = "Observed Net Value"
+        overview_summary_subtitle = "Selected range value minus recurring cost"
 
 
     
@@ -2133,13 +2126,12 @@ if selected_view == "Overview":
     
     with row4_col3:
         render_kpi_card(
-            overview_roi_label,
-            f"{overview_roi_pct:,.1f}%" if overview_roi_pct is not None else "N/A",
-            overview_roi_subtitle,
+            overview_summary_label,
+            f"${overview_summary_value:,.0f}",
+            overview_summary_subtitle,
             "#6b7280",
-            value_color="#059669" if overview_roi_pct is not None and overview_roi_pct >= 0 else "#dc2626"
+            value_color="#059669" if overview_summary_value >= 0 else "#dc2626"
         )
-
 
 
 if selected_view == "Reports":
