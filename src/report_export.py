@@ -75,7 +75,7 @@ def build_director_report_data(
     library_name: str = "New Braunfels Public Library",
     branch_name: str = "Main Branch",
     system_name: str = "Tech Logic UltraSort",
-    report_title: str = "AMH Director Report",
+    report_title: str = "AMH Director Report - Cole Johnson",
 ) -> Dict[str, Any]:
     days_in_range = df["datetime"].dt.date.nunique() if len(df) > 0 and "datetime" in df.columns else 0
     total_checkins = len(df)
