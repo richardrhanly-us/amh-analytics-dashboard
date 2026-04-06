@@ -2867,8 +2867,6 @@ if selected_view == "Reports":
                     "#7c3aed"
                 )
                 st.info("No ROI data is available for the selected date range.")
-            else:
-                st.info("Enter your assumptions above, then click Calculate ROI.")
 
     # =========================================================
     # LABOR & EFFICIENCY
