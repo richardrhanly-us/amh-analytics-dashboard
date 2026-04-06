@@ -2615,7 +2615,13 @@ Annual net value = ${annual_labor_value:,.2f} − ${annual_operating_cost:,.2f}
 
 Payback period = (Upfront cost ÷ Annual net value) × 12
 
-{f"**Estimated payback period = ({UPFRONT_COST:,.2f} ÷ {net_roi_value:,.2f}) × 12 = {payback_months:,.1f} months**" if payback_months is not None else "**Estimated payback period = N/A** because annual net value is not positive."}
+{
+    f"**Estimated payback period = ({UPFRONT_COST:,.2f} ÷ {net_roi_value:,.2f}) × 12 = {payback_months:,.1f} months**"
+    if payback_months is not None
+    else
+    "**Estimated payback period = N/A** because annual net value is not positive."
+}
+""")
             else:
                 st.info(f"""### How Observed Operating Value Is Calculated
 
