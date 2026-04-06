@@ -3726,24 +3726,28 @@ Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hou
 
             annual_col1, annual_col2 = st.columns(2)
 
-            with annual_col1:
-                annual_savings_value = "N/A"
+            annual_roi_payload = build_roi_payload(df, df_history_raw, start_date, end_date)
             
-                if st.session_state.get("roi_calculated", False):
-                    annual_roi_payload = build_roi_payload(df, df_history_raw, start_date, end_date)
-                    if annual_roi_payload:
-                        annual_savings_value = f"${annual_roi_payload['annual_labor_value']:,.0f}"
+            with annual_col1:
+                annual_labor_value_text = "N/A"
+                if annual_roi_payload and annual_roi_payload.get("annual_labor_value") is not None:
+                    annual_labor_value_text = f"${annual_roi_payload['annual_labor_value']:,.0f}"
             
                 render_kpi_card(
                     "Annual Labor Value",
-                    annual_savings_value,
+                    annual_labor_value_text,
                     "Projected yearly labor value",
                     "#6b7280"
                 )
+            
             with annual_col2:
+                annual_operating_cost_text = "N/A"
+                if annual_roi_payload and annual_roi_payload.get("annual_operating_cost") is not None:
+                    annual_operating_cost_text = f"${annual_roi_payload['annual_operating_cost']:,.0f}"
+            
                 render_kpi_card(
                     "Annual Operating Cost",
-                    f"${annual_operating_cost:,.0f}",
+                    annual_operating_cost_text,
                     "Monthly + yearly recurring cost",
                     "#6b7280"
                 )
