@@ -1892,20 +1892,20 @@ if selected_view == "Overview":
     overview_total_labor_value = overview_total_hours_saved * HOURLY_COST_OVERVIEW
 
 
-            st.session_state["overview_roi_payload"] = {
-                "roi_mode": roi_mode,
-                "roi_pct": roi_pct,
-                "net_roi_value": net_roi_value,
-                "total_roi_cost": total_roi_cost,
-                "payback_months": payback_months,
-                "since_install_roi_pct": since_install_roi_pct,
-                "since_install_net_value": since_install_net_value,
-                "annual_labor_value": annual_labor_value,
-                "annual_operating_cost": annual_operating_cost,
-                "labor_value_saved": labor_value_saved,
-                "observed_operating_cost": observed_prorated_monthly_cost + observed_prorated_yearly_cost,
-                "observed_net_operating_value": labor_value_saved - (observed_prorated_monthly_cost + observed_prorated_yearly_cost),
-            }
+    st.session_state["overview_roi_payload"] = {
+        "roi_mode": roi_mode,
+        "roi_pct": roi_pct,
+        "net_roi_value": net_roi_value,
+        "total_roi_cost": total_roi_cost,
+        "payback_months": payback_months,
+        "since_install_roi_pct": since_install_roi_pct,
+        "since_install_net_value": since_install_net_value,
+        "annual_labor_value": annual_labor_value,
+        "annual_operating_cost": annual_operating_cost,
+        "labor_value_saved": labor_value_saved,
+        "observed_operating_cost": observed_prorated_monthly_cost + observed_prorated_yearly_cost,
+        "observed_net_operating_value": labor_value_saved - (observed_prorated_monthly_cost + observed_prorated_yearly_cost),
+    }
 
     
     row1_col1, row1_col2, row1_col3 = st.columns(3)
