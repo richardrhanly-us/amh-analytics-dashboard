@@ -39,14 +39,30 @@ def upload(data: dict):
                     event_time TIMESTAMP,
                     message_code TEXT,
                     barcode TEXT,
+                    barcode_key TEXT,
                     title TEXT,
                     patron_id TEXT,
                     destination TEXT,
                     raw_message TEXT,
                     source_file TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE (event_time, message_code, barcode)
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
+            """))
+
+            conn.execute(text("""
+                ALTER TABLE acs_events
+                ADD COLUMN IF NOT EXISTS barcode_key TEXT
+            """))
+
+            conn.execute(text("""
+                UPDATE acs_events
+                SET barcode_key = COALESCE(barcode, '')
+                WHERE barcode_key IS NULL
+            """))
+
+            conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS acs_events_unique_idx
+                ON acs_events (event_time, message_code, barcode_key)
             """))
 
             for row in checkins:
@@ -94,7 +110,6 @@ def upload(data: dict):
 
                 inserted_rejects += result.rowcount
 
-
             for row in acs:
                 acs_row = {
                     "customer_id": row.get("customer_id"),
@@ -109,7 +124,7 @@ def upload(data: dict):
                     "raw_message": row.get("raw_message"),
                     "source_file": row.get("source_file"),
                 }
-            
+
                 result = conn.execute(text("""
                     INSERT INTO acs_events (
                         customer_id, branch_id, event_time,
@@ -123,7 +138,7 @@ def upload(data: dict):
                     )
                     ON CONFLICT DO NOTHING
                 """), acs_row)
-            
+
                 inserted_acs += result.rowcount
 
         return {
