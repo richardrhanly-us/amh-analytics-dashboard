@@ -3305,14 +3305,15 @@ Total Hours Saved = Avg Hours Saved × number of days in selected range
 
 Estimated Labor Value = Total hours saved × Hourly labor cost
 
-The formulas above are built on these defined variables:
+The formulas above are built on these defined variables, that each depend on the preceding varaiable's defintion for calculation:
+Average daily checkins -> Manual and AMH Time -> Average Hours saved -> Total Hours Saved -> Estimated Labor Value
 
-#### Average daily check-ins  
+##### Average daily check-ins  
 This is the average number of items checked in per day over the selected date range.
 
 For **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**, the average daily check-in volume is **{avg_daily_checkins:,.1f} items/day**.
 
-#### Manual Processing Time
+##### Manual Processing Time
 
 Manual rate = {MANUAL_RATE:.0f} items/hour*  
 
@@ -3322,7 +3323,7 @@ Manual time = {avg_daily_checkins:,.1f} items/day ÷ {MANUAL_RATE:.0f} items/hou
 
 \\*The manual check-in rate of {MANUAL_RATE:.0f} is based on circulation report data observed at the Westside branch during peak hours, where staff are working at their fastest steady pace.*
 
-#### AMH Processing Time
+##### AMH Processing Time
 
 Current AMH rate = {AMH_RATE:.1f} items/hour  
 
@@ -3330,7 +3331,7 @@ AMH time = {avg_daily_checkins:,.1f} items/day ÷ {AMH_RATE:.1f} items/hour
 
 **AMH time = {avg_daily_amh_hours:,.2f} machine hours/day**
 
-#### Average Hours saved Time Saved
+##### Average Hours saved
 
 Average Hours saved Time saved = Avg Manual time − Avg AMH time  
 
@@ -3338,7 +3339,7 @@ Average Hours saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh
 
 **Average Daily Staff Hours saved = {avg_saved:,.2f} staff hours/day**
 
-#### Total Hours Saved
+##### Total Hours Saved
 
 Total Hours Saved = Avg Hours Saved × number of days in selected range
 
@@ -3346,7 +3347,7 @@ Total Hours Saved = {avg_saved:,.2f} × {days_in_range:,}
 
 **Total Hours Saved = {total_saved:,.2f} hours**
 
-#### Estimated Labor Value
+##### Estimated Labor Value
 
 Estimated labor value = Total hours saved × Hourly labor cost  
 
