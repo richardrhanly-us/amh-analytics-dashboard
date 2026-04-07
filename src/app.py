@@ -3366,28 +3366,66 @@ if len(staff_df) > 0:
         st.info(f"""
 ##### Average Hours Saved
 
-Average Hours Saved = Avg Manual Time − Avg AMH Time  
+Average Daily Check-ins  
+= Total check-ins ÷ Total days  
 
-Average Hours Saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.2f} hours/day  
+Average Daily Check-ins  
+= {int(staff_df["checkins"].sum()):,} ÷ {staff_df["date"].nunique():,}  
 
-**Average Daily Staff Hours Saved = {avg_saved:,.2f} staff hours/day**
+Average Daily Check-ins  
+= {avg_daily_checkins:,.1f} items/day  
+
+---
+
+Average Daily Manual Time  
+= Average Daily Check-ins ÷ Manual processing rate  
+
+Average Daily Manual Time  
+= {avg_daily_checkins:,.1f} ÷ {MANUAL_RATE:.1f}  
+
+Average Daily Manual Time  
+= {avg_daily_manual_hours:,.2f} staff hours/day  
+
+---
+
+Average Daily AMH Time  
+= Average Daily Check-ins ÷ AMH processing rate  
+
+Average Daily AMH Time  
+= {avg_daily_checkins:,.1f} ÷ {AMH_RATE:,.1f}  
+
+Average Daily AMH Time  
+= {avg_daily_amh_hours:,.2f} machine hours/day  
+
+---
+
+Average Hours Saved per Day  
+= Average Daily Manual Time − Average Daily AMH Time  
+
+Average Hours Saved per Day  
+= {avg_daily_manual_hours:,.2f} − {avg_daily_amh_hours:,.2f}  
+
+**Average Hours Saved per Day = {avg_saved:,.2f} staff hours/day**
 
 ##### Total Hours Saved
 
-Total Hours Saved = Avg Hours Saved × number of days in selected range
+Total Hours Saved  
+= Average Hours Saved per Day × Total days  
 
-Total Hours Saved = {avg_saved:,.2f} × {staff_df["date"].nunique():,}
+Total Hours Saved  
+= {avg_saved:,.2f} × {staff_df["date"].nunique():,}  
 
 **Total Hours Saved = {total_saved:,.2f} hours**
 
 ##### Estimated Labor Value
 
-Estimated Labor Value = Total Hours Saved × Hourly labor cost  
+Estimated Labor Value  
+= Total Hours Saved × Hourly labor cost  
 
-Estimated Labor Value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hour  
+Estimated Labor Value  
+= {total_saved:,.2f} × ${HOURLY_COST:.2f}  
 
 **Estimated Labor Value = ${labor_value_saved:,.0f}**
-""")
 
     with st.expander("Processing rates and supporting methodology", expanded=False):
         st.info(f"""
