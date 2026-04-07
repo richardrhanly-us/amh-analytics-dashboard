@@ -2948,15 +2948,15 @@ if selected_view == "Reports":
 
     *Refer to How Staff Time Saved Is Calculated in Labor & Efficiency for further explanation on how Total hours saved and Hourly labor cost are calculated.* 
 
-    Total hours saved = {labor_value_saved:,.2f}
+    Total hours saved = **{total_saved:,.2f} hours**
     
-    Hourly labor cost = {HOURLY_COST:,.2f}
+    Hourly labor cost = **${HOURLY_COST:.2f}/hour**
     
     This is the estimated labor value created during the selected range.
     
     Observed labor value = Total hours saved × Hourly labor cost  
     
-    Observed labor value = {labor_value_saved / HOURLY_COST:,.2f} hours × ${HOURLY_COST:.2f}/hour
+    Observed labor value = {total_saved:,.2f} hours × ${HOURLY_COST:.2f}/hour  
     
     **Observed labor value = ${labor_value_saved:,.0f}**
 
