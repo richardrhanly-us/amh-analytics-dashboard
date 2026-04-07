@@ -2946,7 +2946,6 @@ if selected_view == "Reports":
     
     Hourly labor cost = {HOURLY_COST:,.2f}
     
-    See calulations for Total
     This is the estimated labor value created during the selected range.
     
     Observed labor value = Total hours saved × Hourly labor cost  
@@ -2955,7 +2954,6 @@ if selected_view == "Reports":
     
     **Observed labor value = ${labor_value_saved:,.0f}**
 
-    Refer to 'How Staff Time Saved Is Calculated' in Labor & Efficiency for further explanation on how 'Total hours saved' and 'Hourly labor cost' are calculated. 
     
     ---
     
@@ -3277,7 +3275,7 @@ if selected_view == "Reports":
                 render_kpi_card(
                     "Avg Hours Saved",
                     f"{avg_saved:,.2f}",
-                    "Per day",
+                    "Per day Across selected date range",
                     "#6b7280"
                 )
             
@@ -3297,23 +3295,17 @@ if selected_view == "Reports":
                     "#6b7280"
                 )
 
-            st.markdown(
-                f"""
-            **Avg Hours Saved — {avg_saved:,.2f} hours/day**  
-            On an average day in the selected range, the AMH reduces staff workload by about **{avg_saved:,.2f} hours** compared to manual check-in processing.  
-            This is equivalent to roughly **{(avg_saved/8):,.2f} full staff shifts per day**.
-            
-            
-            **Total Hours Saved — {total_saved:,.2f} hours**  
-            Across the full selected date range, the AMH reduced total staff workload by **{total_saved:,.2f} hours**.  
-            This is equivalent to approximately **{(total_saved/8):,.0f} full staff shifts** of labor.
-            
-            **Estimated Labor Value — ${labor_value_saved:,.0f}**  
-            This represents the estimated value of staff time avoided over the selected period based on the defined hourly labor rate.
-            """
-            )
-
             st.info(f"""### How Staff Time Saved Is Calculated
+
+To get to the values you see for Avg Hours Saved, Total Hours Saved, Estimated Labor Value we use these formulas:
+
+Avg Hours Saved = Avg Manual Time - Avg AMH Time
+
+Total Hours Saved = Avg Hours Saved × number of days in selected range
+
+Estimated Labor Value = Total hours saved × Hourly labor cost
+
+The formulas above are built on these defined variables:
 
 #### Average daily check-ins  
 This is the average number of items checked in per day over the selected date range.
@@ -3338,13 +3330,21 @@ AMH time = {avg_daily_checkins:,.1f} items/day ÷ {AMH_RATE:.1f} items/hour
 
 **AMH time = {avg_daily_amh_hours:,.2f} machine hours/day**
 
-#### Time Saved
+#### Average Hours saved Time Saved
 
-Time saved = Manual time − AMH time  
+Average Hours saved Time saved = Avg Manual time − Avg AMH time  
 
-Time saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.2f} hours/day  
+Average Hours saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.2f} hours/day  
 
-**Average Daily Staff time saved = {avg_saved:,.2f} staff hours/day**
+**Average Daily Staff Hours saved = {avg_saved:,.2f} staff hours/day**
+
+#### Total Hours Saved
+
+Total Hours Saved = Avg Hours Saved × number of days in selected range
+
+Total Hours Saved = {avg_saved:,.2f} × {days_in_range:,}
+
+**Total Hours Saved = {total_saved:,.2f} hours**
 
 #### Estimated Labor Value
 
