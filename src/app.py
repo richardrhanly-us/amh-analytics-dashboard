@@ -678,7 +678,7 @@ if pipeline_status:
         try:
             status_updated_dt = datetime.fromisoformat(str(status_updated_raw))
             if status_updated_dt.tzinfo is None:
-                status_updated_dt = status_updated_dt.replace(tzinfo=ZoneInfo("America/Chicago"))
+                status_updated_dt = status_updated_dt.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("America/Chicago"))
             else:
                 status_updated_dt = status_updated_dt.astimezone(ZoneInfo("America/Chicago"))
         except Exception:
