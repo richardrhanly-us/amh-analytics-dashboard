@@ -3381,12 +3381,14 @@ Average Daily Check-ins
 
 The manual processing rate is the estimated staff check-in throughput used for the Staff Time Saved, Labor Efficiency, and Staff Time Equivalent calculations.
 
-This rate was not estimated from a generic benchmark. It was built from actual Westside circulation activity reports collected from four separate months:
+The manual processing rate is calculated using Westside circulation activity reports from four months:
 
 - March 2026
 - June 2025
 - August 2025
 - September 2025
+
+These reports contain timestamped check-in activity, which is used to measure hourly throughput and identify peak operating periods.
 
 Each monthly sheet was processed using the same method.
 
