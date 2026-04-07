@@ -3361,7 +3361,7 @@ if selected_view == "Reports":
                     "#6b7280"
                 )
 
-if len(staff_df) > 0:
+if len(df) > 0 and len(df_history_raw) > 0:
     with st.expander("How the Staff Time Equivalent KPIs are calculated", expanded=False):
         st.info(f"""
 ##### Average Hours Saved
