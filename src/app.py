@@ -2895,6 +2895,7 @@ if selected_view == "Reports":
                 )
 
     
+    
                 with st.expander("How ROI is calculated", expanded=False):
     
                     st.markdown(f"""
@@ -3111,103 +3112,7 @@ if selected_view == "Reports":
     **Since-install ROI = {since_install_roi_pct:,.1f}%**
     """)
     
-                if payback_months is not None:
-                    st.info(f"""Break-even years = Upfront cost ÷ Current annual run rate  
-    
-    Break-even years = ${UPFRONT_COST:,.0f} ÷ ${net_roi_value:,.0f}  
-    
-    **Break-even years = {payback_months / 12:,.1f} years**
-    
-    Break-even status = **{break_even_value}**  
-    {break_even_subtitle}
-    """)
-                else:
-                    st.info("""Break-even years cannot be calculated because the current annual run rate is not positive.
-    
-    Break-even status = **Not Reached**
-    """)
-    
-                st.info
-                (f"""#### 8. Lifetime value generated
-                    This estimates the total labor value created over the machine’s installed life.
-                    
-                    Lifetime value generated = Annual labor value × Years since install  
-                    
-                    Lifetime value generated = ${annual_labor_value:,.0f} × {installed_years:,.1f}  
-                    
-                    **Lifetime value generated = ${since_install_labor_value:,.0f}**
-                    
-                    ---
-                    
-                    ### Since-install calculations
-                    
-                    #### 9. Years since install
-                    This is the elapsed time from the install date to today.
-                    
-                    Install date = **{pd.to_datetime(INSTALL_DATE).strftime('%b %d, %Y')}**  
-                    Years since install = **{installed_years:,.1f} years**
-                    
-                    #### 10. Since-install value
-                    This is the estimated total labor value created since installation.
-                    
-                    Since-install value = Annual labor value × Years since install  
-                    
-                    Since-install value = ${annual_labor_value:,.0f} × {installed_years:,.1f}  
-                    
-                    **Since-install value = ${since_install_labor_value:,.0f}**
-                    
-                    #### 11. Since-install operating cost
-                    This is the recurring operating cost accumulated over the installed life.
-                    
-                    Since-install operating cost = Annual operating cost × Years since install  
-                    
-                    Since-install operating cost = ${annual_operating_cost:,.0f} × {installed_years:,.1f}  
-                    
-                    **Since-install operating cost = ${since_install_operating_cost:,.0f}**
-                    
-                    #### 12. Since-install total cost
-                    This is the lifetime operating cost, plus upfront cost if that option is enabled.
-                    
-                    Since-install total cost = **${since_install_total_cost:,.0f}**
-                    """)
-                    
-                                if INCLUDE_UPFRONT_IN_SINCE_INSTALL:
-                                    st.info(f"""Since-install total cost includes upfront cost.
-                    
-                    Since-install total cost = Upfront cost + Since-install operating cost  
-                    
-                    Since-install total cost = ${UPFRONT_COST:,.0f} + ${since_install_operating_cost:,.0f}  
-                    
-                    **Since-install total cost = ${since_install_total_cost:,.0f}**
-                    """)
-                                else:
-                                    st.info(f"""Since-install total cost excludes upfront cost.
-                    
-                    Since-install total cost = Since-install operating cost  
-                    
-                    **Since-install total cost = ${since_install_total_cost:,.0f}**
-                    """)
-    
-                since_install_roi_display = f"{since_install_roi_pct:,.1f}%" if since_install_roi_pct is not None else "N/A"
-    
-                st.info(f"""#### 13. Since-install net
-    This is the estimated total value left after subtracting total cost since install.
-    
-    Since-install net = Since-install value − Since-install total cost  
-    
-    Since-install net = ${since_install_labor_value:,.0f} − ${since_install_total_cost:,.0f}  
-    
-    **Since-install net = ${since_install_net_value:,.0f}**
-    
-    #### 14. Since-install ROI
-    This compares since-install net value against since-install total cost.
-    
-    Since-install ROI = Since-install net ÷ Since-install total cost × 100  
-    
-    Since-install ROI = ${since_install_net_value:,.0f} ÷ ${since_install_total_cost:,.0f} × 100  
-    
-    **Since-install ROI = {since_install_roi_display}**
-    """)
+
 
         else:
             if st.session_state.get("roi_calculated", False):
