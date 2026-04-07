@@ -2917,7 +2917,7 @@ if selected_view == "Reports":
                 
                 Observed labor value = Total hours saved × Hourly labor cost  
                 
-                Observed labor value = {total_saved:,.2f} hours × ${HOURLY_COST:.2f}/hour  
+                Observed labor value = {labor_value_saved / HOURLY_COST:,.2f} hours × ${HOURLY_COST:.2f}/hour
                 
                 **Observed labor value = ${labor_value_saved:,.0f}**
                 
