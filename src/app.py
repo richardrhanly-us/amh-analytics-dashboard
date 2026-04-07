@@ -2940,7 +2940,7 @@ if selected_view == "Reports":
     
     #### 2. Observed labor value
 
-    *Refer to How Staff Time Saved Is Calculated in Labor & Efficiency for further explanation on how Total hours saved and *Hourly labor cost are calculated.* 
+    *Refer to How Staff Time Saved Is Calculated in Labor & Efficiency for further explanation on how Total hours saved and Hourly labor cost are calculated.* 
 
     Total hours saved = {labor_value_saved}
     
