@@ -2917,6 +2917,10 @@ if selected_view == "Reports":
     ---
     
     #### 2. Observed labor value
+
+    Total hours saved = 
+    Hourly labor cost = 
+    See calulations for Total
     This is the estimated labor value created during the selected range.
     
     Observed labor value = Total hours saved × Hourly labor cost  
@@ -2924,7 +2928,8 @@ if selected_view == "Reports":
     Observed labor value = {labor_value_saved / HOURLY_COST:,.2f} hours × ${HOURLY_COST:.2f}/hour
     
     **Observed labor value = ${labor_value_saved:,.0f}**
-    
+
+    Refer to 'How Staff Time Saved Is Calculated' in Labor & Efficiency for further explanation on how 'Total hours saved' and 'Hourly labor cost' are calculated. 
     ---
     
     #### 3. Observed operating cost
