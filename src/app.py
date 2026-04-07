@@ -11,6 +11,7 @@ import altair as alt
 from textwrap import dedent
 
 from streamlit_autorefresh import st_autorefresh
+import pytz
 
 st.set_page_config(
     page_title="SortView",
@@ -18,8 +19,17 @@ st.set_page_config(
     layout="wide"
 )
 
+# your local timezone
+LOCAL_TZ = pytz.timezone("America/Chicago")
 
-refresh_count = 0
+now = datetime.now(LOCAL_TZ)
+current_hour = now.hour
+
+# allow refresh only between 6 AM and 9 PM
+if 6 <= current_hour < 21:
+    refresh_count = st_autorefresh(interval=10 * 60 * 1000, key="auto_refresh")
+else:
+    refresh_count = 0
 
 
 from data_loader import load_checkins_df, load_checkins_history_df, load_rejects_df, load_rejects_history_df, load_pipeline_status
@@ -3315,6 +3325,7 @@ Average Daily Check-ins
 This is the average number of items checked in per day over the selected date range.
 
 Total check-ins = {int(staff_df["checkins"].sum()):,} items
+
 Total days in range = {days_in_range:,} days  
 
 Average daily check-ins = Total check-ins ÷ Total days  
@@ -3323,7 +3334,7 @@ Average daily check-ins = {int(staff_df["checkins"].sum()):,} ÷ {days_in_range:
 
 **Average daily check-ins = {avg_daily_checkins:,.1f} items/day**
 
-\\*The manual check-in rate of {MANUAL_RATE:.0f} is based on circulation report data observed at the Westside branch during peak hours, where staff are working at their fastest steady pace.*
+\\*The manual check-in rate of {MANUAL_RATE:.0f} is based on circulation report data observed at the Westside branch during peak hours.*
 
 ##### AMH Processing Time
 
