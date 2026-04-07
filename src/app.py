@@ -2896,86 +2896,86 @@ if selected_view == "Reports":
 
                 st.info(f"""### How ROI is calculated
     
-    #### 1. Selected date range
-    This ROI calculation uses data from the selected reporting window.
-    
-    Selected range = **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**  
-    Range length = **{days_in_range:,} days**  
-    Equivalent months = **{months_in_range:,.2f} months**  
-    Equivalent years = **{years_in_range:,.4f} years**
-    
-    ---
-    
-    ### Observed calculations
-    
-    #### 2. Observed labor value
-    This is the estimated labor value created during the selected range.
-    
-    Observed labor value = Total hours saved × Hourly labor cost  
-    
-    Observed labor value = **${labor_value_saved:,.0f}**
-    
-    Hourly labor cost = **${HOURLY_COST:.2f}/hour**
-    
-    #### 3. Observed operating cost
-    This is the recurring operating cost prorated only across the selected range.
-    
-    Observed monthly cost = Monthly cost × Equivalent months  
-    Observed monthly cost = ${MONTHLY_COST:,.2f} × {months_in_range:,.2f}  
-    **Observed monthly cost = ${MONTHLY_COST * months_in_range:,.0f}**
-    
-    Observed yearly cost = Yearly cost × Equivalent years  
-    Observed yearly cost = ${YEARLY_COST:,.2f} × {years_in_range:,.4f}  
-    **Observed yearly cost = ${YEARLY_COST * years_in_range:,.0f}**
-    
-    Observed operating cost = Observed monthly cost + Observed yearly cost  
-    Observed operating cost = ${MONTHLY_COST * months_in_range:,.0f} + ${YEARLY_COST * years_in_range:,.0f}  
-    **Observed operating cost = ${observed_operating_cost:,.0f}**
-    
-    #### 4. Observed net value
-    This is the labor value left after subtracting recurring operating cost for the selected range.
-    
-    Observed net value = Observed labor value − Observed operating cost  
-    
-    Observed net value = ${labor_value_saved:,.0f} − ${observed_operating_cost:,.0f}  
-    
-    **Observed net value = ${observed_net_operating_value:,.0f}**
-    
-    ---
-    
-    ### Annualized calculations
-    
-    #### 5. Annual cost
-    This is the full recurring operating cost for one year.
-    
-    Annual cost = Yearly cost + (Monthly cost × 12)  
-    
-    Annual cost = ${YEARLY_COST:,.0f} + (${MONTHLY_COST:,.0f} × 12)  
-    
-    **Annual cost = ${total_roi_cost:,.0f}**
-    
-    #### 6. Current annual run rate
-    This takes the selected period’s labor value and scales it to a full-year pace, then subtracts annual operating cost.
-    
-    Annual labor value = Observed labor value × (12 ÷ Equivalent months)  
-    
-    Annual labor value = ${labor_value_saved:,.0f} × (12 ÷ {months_in_range:,.2f})  
-    
-    **Annual labor value = ${annual_labor_value:,.0f}**
-    
-    Current annual run rate = Annual labor value − Annual cost  
-    
-    Current annual run rate = ${annual_labor_value:,.0f} − ${total_roi_cost:,.0f}  
-    
-    **Current annual run rate = ${net_roi_value:,.0f}/year**
-    
-    #### 7. Break-even status
-    This checks whether the AMH has already earned back its upfront cost at the current annual run rate.
-    
-    Upfront cost = **${UPFRONT_COST:,.0f}**  
-    Years since install = **{installed_years:,.1f} years**
-    
-    """)
+                #### 1. Selected date range
+                This ROI calculation uses data from the selected reporting window.
+                
+                Selected range = **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**  
+                Range length = **{days_in_range:,} days**  
+                Equivalent months = **{months_in_range:,.2f} months**  
+                Equivalent years = **{years_in_range:,.4f} years**
+                
+                ---
+                
+                ### Observed calculations
+                
+                #### 2. Observed labor value
+                This is the estimated labor value created during the selected range.
+                
+                Observed labor value = Total hours saved × Hourly labor cost  
+                
+                Observed labor value = **${labor_value_saved:,.0f}**
+                
+                Hourly labor cost = **${HOURLY_COST:.2f}/hour**
+                
+                #### 3. Observed operating cost
+                This is the recurring operating cost prorated only across the selected range.
+                
+                Observed monthly cost = Monthly cost × Equivalent months  
+                Observed monthly cost = ${MONTHLY_COST:,.2f} × {months_in_range:,.2f}  
+                **Observed monthly cost = ${MONTHLY_COST * months_in_range:,.0f}**
+                
+                Observed yearly cost = Yearly cost × Equivalent years  
+                Observed yearly cost = ${YEARLY_COST:,.2f} × {years_in_range:,.4f}  
+                **Observed yearly cost = ${YEARLY_COST * years_in_range:,.0f}**
+                
+                Observed operating cost = Observed monthly cost + Observed yearly cost  
+                Observed operating cost = ${MONTHLY_COST * months_in_range:,.0f} + ${YEARLY_COST * years_in_range:,.0f}  
+                **Observed operating cost = ${observed_operating_cost:,.0f}**
+                
+                #### 4. Observed net value
+                This is the labor value left after subtracting recurring operating cost for the selected range.
+                
+                Observed net value = Observed labor value − Observed operating cost  
+                
+                Observed net value = ${labor_value_saved:,.0f} − ${observed_operating_cost:,.0f}  
+                
+                **Observed net value = ${observed_net_operating_value:,.0f}**
+                
+                ---
+                
+                ### Annualized calculations
+                
+                #### 5. Annual cost
+                This is the full recurring operating cost for one year.
+                
+                Annual cost = Yearly cost + (Monthly cost × 12)  
+                
+                Annual cost = ${YEARLY_COST:,.0f} + (${MONTHLY_COST:,.0f} × 12)  
+                
+                **Annual cost = ${total_roi_cost:,.0f}**
+                
+                #### 6. Current annual run rate
+                This takes the selected period’s labor value and scales it to a full-year pace, then subtracts annual operating cost.
+                
+                Annual labor value = Observed labor value × (12 ÷ Equivalent months)  
+                
+                Annual labor value = ${labor_value_saved:,.0f} × (12 ÷ {months_in_range:,.2f})  
+                
+                **Annual labor value = ${annual_labor_value:,.0f}**
+                
+                Current annual run rate = Annual labor value − Annual cost  
+                
+                Current annual run rate = ${annual_labor_value:,.0f} − ${total_roi_cost:,.0f}  
+                
+                **Current annual run rate = ${net_roi_value:,.0f}/year**
+                
+                #### 7. Break-even status
+                This checks whether the AMH has already earned back its upfront cost at the current annual run rate.
+                
+                Upfront cost = **${UPFRONT_COST:,.0f}**  
+                Years since install = **{installed_years:,.1f} years**
+                
+                """)
     
                 if payback_months is not None:
                     st.info(f"""Break-even years = Upfront cost ÷ Current annual run rate  
