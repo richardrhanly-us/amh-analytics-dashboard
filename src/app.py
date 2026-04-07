@@ -2895,7 +2895,8 @@ if selected_view == "Reports":
                 )
 
 
-                st.info(f"""### How ROI is calculated
+                st.info(f"""
+                ### How ROI is calculated
                 
                 #### 1. Selected date range
                 This ROI calculation uses data from the selected reporting window.
