@@ -3339,7 +3339,7 @@ if selected_view == "Reports":
             
             with k1:
                 render_kpi_card(
-                    "Avg Hours Saved",
+                    "1. Avg Hours Saved",
                     f"{avg_saved:,.2f}",
                     "Per day Across selected date range",
                     "#6b7280"
@@ -3347,7 +3347,7 @@ if selected_view == "Reports":
             
             with k2:
                 render_kpi_card(
-                    "Total Hours Saved",
+                    "2. Total Hours Saved",
                     f"{total_saved:,.2f}",
                     "Across selected date range",
                     "#6b7280"
@@ -3355,7 +3355,7 @@ if selected_view == "Reports":
             
             with k3:
                 render_kpi_card(
-                    "Estimated Labor Value for selected date range",
+                    "3. Estimated Labor Value for selected date range",
                     f"${labor_value_saved:,.0f}",
                     "Staff time avoided value",
                     "#6b7280"
@@ -3364,7 +3364,7 @@ if selected_view == "Reports":
     if len(df) > 0 and len(df_history_raw) > 0:
         with st.expander("How the Staff Time Equivalent KPIs are calculated", expanded=False):
             st.info(f"""
-    ##### Average Hours Saved
+    ##### 1. Average Hours Saved
     
     Average Daily Check-ins
     = Total check-ins / Total days
@@ -3402,7 +3402,7 @@ if selected_view == "Reports":
     Average Hours Saved per Day
     = {avg_saved:,.2f} staff hours/day
     
-    ##### Total Hours Saved
+    ##### 2. Total Hours Saved
     
     Total Hours Saved
     = Average Hours Saved per Day * Total days
@@ -3413,7 +3413,7 @@ if selected_view == "Reports":
     Total Hours Saved
     = {total_saved:,.2f} hours
     
-    ##### Estimated Labor Value
+    ##### 3. Estimated Labor Value
     
     Estimated Labor Value
     = Total Hours Saved * Hourly labor cost
