@@ -2895,212 +2895,212 @@ if selected_view == "Reports":
                 )
 
 
-                st.info(f"""### How ROI is calculated
-                
-                #### 1. Selected date range
-                This ROI calculation uses data from the selected reporting window.
-                
-                For **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**, the selected reporting period is **{days_in_range:,} days**.
-                
-                Equivalent months = {days_in_range:,} days ÷ 30.44 days/month  
-                
-                **Equivalent months = {months_in_range:,.2f} months**
-                
-                Equivalent years = {days_in_range:,} days ÷ 365.25 days/year  
-                
-                **Equivalent years = {years_in_range:,.4f} years**
-                
-                ---
-                
-                #### 2. Observed labor value
-                This is the estimated labor value created during the selected range.
-                
-                Observed labor value = Total hours saved × Hourly labor cost  
-                
-                Observed labor value = {total_saved:,.2f} hours × ${HOURLY_COST:.2f}/hour  
-                
-                **Observed labor value = ${labor_value_saved:,.0f}**
-                
-                ---
-                
-                #### 3. Observed operating cost
-                This is the recurring operating cost prorated only across the selected range.
-                
-                Observed monthly cost = Monthly cost × Equivalent months  
-                
-                Observed monthly cost = ${MONTHLY_COST:,.2f} × {months_in_range:,.2f} months  
-                
-                **Observed monthly cost = ${MONTHLY_COST * months_in_range:,.0f}**
-                
-                Observed yearly cost = Yearly cost × Equivalent years  
-                
-                Observed yearly cost = ${YEARLY_COST:,.2f} × {years_in_range:,.4f} years  
-                
-                **Observed yearly cost = ${YEARLY_COST * years_in_range:,.0f}**
-                
-                Observed operating cost = Observed monthly cost + Observed yearly cost  
-                
-                Observed operating cost = ${MONTHLY_COST * months_in_range:,.0f} + ${YEARLY_COST * years_in_range:,.0f}  
-                
-                **Observed operating cost = ${observed_operating_cost:,.0f}**
-                
-                ---
-                
-                #### 4. Observed net value
-                This is the value left after subtracting recurring operating cost for the selected range.
-                
-                Observed net value = Observed labor value − Observed operating cost  
-                
-                Observed net value = ${labor_value_saved:,.0f} − ${observed_operating_cost:,.0f}  
-                
-                **Observed net value = ${observed_net_operating_value:,.0f}**
-                
-                ---
-                
-                #### 5. Annual cost
-                This is the full recurring operating cost for one year.
-                
-                Annual monthly cost = Monthly cost × 12 months  
-                
-                Annual monthly cost = ${MONTHLY_COST:,.2f} × 12  
-                
-                **Annual monthly cost = ${MONTHLY_COST * 12:,.0f}**
-                
-                Annual cost = Yearly cost + Annual monthly cost  
-                
-                Annual cost = ${YEARLY_COST:,.0f} + ${MONTHLY_COST * 12:,.0f}  
-                
-                **Annual cost = ${total_roi_cost:,.0f}**
-                
-                ---
-                
-                #### 6. Current annual run rate
-                This scales the selected period’s labor value to a full-year pace, then subtracts annual operating cost.
-                
-                Annual labor value = Observed labor value × (12 ÷ Equivalent months)  
-                
-                Annual labor value = ${labor_value_saved:,.0f} × (12 ÷ {months_in_range:,.2f})  
-                
-                **Annual labor value = ${annual_labor_value:,.0f}**
-                
-                Current annual run rate = Annual labor value − Annual cost  
-                
-                Current annual run rate = ${annual_labor_value:,.0f} − ${total_roi_cost:,.0f}  
-                
-                **Current annual run rate = ${net_roi_value:,.0f}/year**
-                
-                ---
-                
-                #### 7. Break-even status
-                This checks whether the AMH has already earned back its upfront cost at the current annual run rate.
-                
-                Break-even years = Upfront cost ÷ Current annual run rate  
-                
-                Break-even years = ${UPFRONT_COST:,.0f} ÷ ${net_roi_value:,.0f}  
-                """)
-                
-                if payback_months is not None:
-                    st.info(f"""**Break-even years = {payback_months / 12:,.1f} years**
-                
-                Years since install = {installed_years:,.1f} years  
-                
-                Break-even status = Years since install − Break-even years  
-                
-                Break-even status = {installed_years:,.1f} − {payback_months / 12:,.1f}  
-                
-                **{break_even_value}**  
-                {break_even_subtitle}
-                """)
-                else:
-                    st.info(f"""Break-even years cannot be calculated because the current annual run rate is not positive.
-                
-                Years since install = **{installed_years:,.1f} years**
-                
-                **Break-even status = Not Reached**
-                """)
-                
-                st.info(f"""#### 8. Lifetime value generated
-                This estimates the total labor value created over the machine's installed life.
-                
-                Lifetime value generated = Annual labor value × Years since install  
-                
-                Lifetime value generated = ${annual_labor_value:,.0f} × {installed_years:,.1f}  
-                
-                **Lifetime value generated = ${since_install_labor_value:,.0f}**
-                
-                ---
-                
-                #### 9. Years since install
-                This is the elapsed time from the install date to today.
-                
-                Install date = **{pd.to_datetime(INSTALL_DATE).strftime('%b %d, %Y')}**
-                
-                Years since install = **{installed_years:,.1f} years**
-                
-                ---
-                
-                #### 10. Since-install value
-                This is the estimated total labor value created since installation.
-                
-                Since-install value = Annual labor value × Years since install  
-                
-                Since-install value = ${annual_labor_value:,.0f} × {installed_years:,.1f}  
-                
-                **Since-install value = ${since_install_labor_value:,.0f}**
-                
-                ---
-                
-                #### 11. Since-install operating cost
-                This is the recurring operating cost accumulated over the installed life.
-                
-                Since-install operating cost = Annual operating cost × Years since install  
-                
-                Since-install operating cost = ${annual_operating_cost:,.0f} × {installed_years:,.1f}  
-                
-                **Since-install operating cost = ${since_install_operating_cost:,.0f}**
-                """)
-                
-                if INCLUDE_UPFRONT_IN_SINCE_INSTALL:
-                    st.info(f"""#### 12. Since-install total cost
-                This includes both recurring operating cost and the original upfront purchase cost.
-                
-                Since-install total cost = Upfront cost + Since-install operating cost  
-                
-                Since-install total cost = ${UPFRONT_COST:,.0f} + ${since_install_operating_cost:,.0f}  
-                
-                **Since-install total cost = ${since_install_total_cost:,.0f}**
-                """)
-                else:
-                    st.info(f"""#### 12. Since-install total cost
-                This includes recurring operating cost only.
-                
-                Since-install total cost = Since-install operating cost  
-                
-                Since-install total cost = ${since_install_operating_cost:,.0f}  
-                
-                **Since-install total cost = ${since_install_total_cost:,.0f}**
-                """)
-                
-                st.info(f"""#### 13. Since-install net
-                This is the estimated total value left after subtracting total cost since install.
-                
-                Since-install net = Since-install value − Since-install total cost  
-                
-                Since-install net = ${since_install_labor_value:,.0f} − ${since_install_total_cost:,.0f}  
-                
-                **Since-install net = ${since_install_net_value:,.0f}**
-                
-                ---
-                
-                #### 14. Since-install ROI
-                This compares since-install net value against since-install total cost.
-                
-                Since-install ROI = Since-install net ÷ Since-install total cost × 100  
-                
-                Since-install ROI = ${since_install_net_value:,.0f} ÷ ${since_install_total_cost:,.0f} × 100  
-                
-                **Since-install ROI = {since_install_roi_pct:,.1f}%**
-                """)
+                    st.info(f"""### How ROI is calculated
+                    
+                    #### 1. Selected date range
+                    This ROI calculation uses data from the selected reporting window.
+                    
+                    For **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**, the selected reporting period is **{days_in_range:,} days**.
+                    
+                    Equivalent months = {days_in_range:,} days ÷ 30.44 days/month  
+                    
+                    **Equivalent months = {months_in_range:,.2f} months**
+                    
+                    Equivalent years = {days_in_range:,} days ÷ 365.25 days/year  
+                    
+                    **Equivalent years = {years_in_range:,.4f} years**
+                    
+                    ---
+                    
+                    #### 2. Observed labor value
+                    This is the estimated labor value created during the selected range.
+                    
+                    Observed labor value = Total hours saved × Hourly labor cost  
+                    
+                    Observed labor value = {total_saved:,.2f} hours × ${HOURLY_COST:.2f}/hour  
+                    
+                    **Observed labor value = ${labor_value_saved:,.0f}**
+                    
+                    ---
+                    
+                    #### 3. Observed operating cost
+                    This is the recurring operating cost prorated only across the selected range.
+                    
+                    Observed monthly cost = Monthly cost × Equivalent months  
+                    
+                    Observed monthly cost = ${MONTHLY_COST:,.2f} × {months_in_range:,.2f} months  
+                    
+                    **Observed monthly cost = ${MONTHLY_COST * months_in_range:,.0f}**
+                    
+                    Observed yearly cost = Yearly cost × Equivalent years  
+                    
+                    Observed yearly cost = ${YEARLY_COST:,.2f} × {years_in_range:,.4f} years  
+                    
+                    **Observed yearly cost = ${YEARLY_COST * years_in_range:,.0f}**
+                    
+                    Observed operating cost = Observed monthly cost + Observed yearly cost  
+                    
+                    Observed operating cost = ${MONTHLY_COST * months_in_range:,.0f} + ${YEARLY_COST * years_in_range:,.0f}  
+                    
+                    **Observed operating cost = ${observed_operating_cost:,.0f}**
+                    
+                    ---
+                    
+                    #### 4. Observed net value
+                    This is the value left after subtracting recurring operating cost for the selected range.
+                    
+                    Observed net value = Observed labor value − Observed operating cost  
+                    
+                    Observed net value = ${labor_value_saved:,.0f} − ${observed_operating_cost:,.0f}  
+                    
+                    **Observed net value = ${observed_net_operating_value:,.0f}**
+                    
+                    ---
+                    
+                    #### 5. Annual cost
+                    This is the full recurring operating cost for one year.
+                    
+                    Annual monthly cost = Monthly cost × 12 months  
+                    
+                    Annual monthly cost = ${MONTHLY_COST:,.2f} × 12  
+                    
+                    **Annual monthly cost = ${MONTHLY_COST * 12:,.0f}**
+                    
+                    Annual cost = Yearly cost + Annual monthly cost  
+                    
+                    Annual cost = ${YEARLY_COST:,.0f} + ${MONTHLY_COST * 12:,.0f}  
+                    
+                    **Annual cost = ${total_roi_cost:,.0f}**
+                    
+                    ---
+                    
+                    #### 6. Current annual run rate
+                    This scales the selected period’s labor value to a full-year pace, then subtracts annual operating cost.
+                    
+                    Annual labor value = Observed labor value × (12 ÷ Equivalent months)  
+                    
+                    Annual labor value = ${labor_value_saved:,.0f} × (12 ÷ {months_in_range:,.2f})  
+                    
+                    **Annual labor value = ${annual_labor_value:,.0f}**
+                    
+                    Current annual run rate = Annual labor value − Annual cost  
+                    
+                    Current annual run rate = ${annual_labor_value:,.0f} − ${total_roi_cost:,.0f}  
+                    
+                    **Current annual run rate = ${net_roi_value:,.0f}/year**
+                    
+                    ---
+                    
+                    #### 7. Break-even status
+                    This checks whether the AMH has already earned back its upfront cost at the current annual run rate.
+                    
+                    Break-even years = Upfront cost ÷ Current annual run rate  
+                    
+                    Break-even years = ${UPFRONT_COST:,.0f} ÷ ${net_roi_value:,.0f}  
+                    """)
+                    
+                    if payback_months is not None:
+                        st.info(f"""**Break-even years = {payback_months / 12:,.1f} years**
+                    
+                    Years since install = {installed_years:,.1f} years  
+                    
+                    Break-even status = Years since install − Break-even years  
+                    
+                    Break-even status = {installed_years:,.1f} − {payback_months / 12:,.1f}  
+                    
+                    **{break_even_value}**  
+                    {break_even_subtitle}
+                    """)
+                    else:
+                        st.info(f"""Break-even years cannot be calculated because the current annual run rate is not positive.
+                    
+                    Years since install = **{installed_years:,.1f} years**
+                    
+                    **Break-even status = Not Reached**
+                    """)
+                    
+                    st.info(f"""#### 8. Lifetime value generated
+                    This estimates the total labor value created over the machine's installed life.
+                    
+                    Lifetime value generated = Annual labor value × Years since install  
+                    
+                    Lifetime value generated = ${annual_labor_value:,.0f} × {installed_years:,.1f}  
+                    
+                    **Lifetime value generated = ${since_install_labor_value:,.0f}**
+                    
+                    ---
+                    
+                    #### 9. Years since install
+                    This is the elapsed time from the install date to today.
+                    
+                    Install date = **{pd.to_datetime(INSTALL_DATE).strftime('%b %d, %Y')}**
+                    
+                    Years since install = **{installed_years:,.1f} years**
+                    
+                    ---
+                    
+                    #### 10. Since-install value
+                    This is the estimated total labor value created since installation.
+                    
+                    Since-install value = Annual labor value × Years since install  
+                    
+                    Since-install value = ${annual_labor_value:,.0f} × {installed_years:,.1f}  
+                    
+                    **Since-install value = ${since_install_labor_value:,.0f}**
+                    
+                    ---
+                    
+                    #### 11. Since-install operating cost
+                    This is the recurring operating cost accumulated over the installed life.
+                    
+                    Since-install operating cost = Annual operating cost × Years since install  
+                    
+                    Since-install operating cost = ${annual_operating_cost:,.0f} × {installed_years:,.1f}  
+                    
+                    **Since-install operating cost = ${since_install_operating_cost:,.0f}**
+                    """)
+                    
+                    if INCLUDE_UPFRONT_IN_SINCE_INSTALL:
+                        st.info(f"""#### 12. Since-install total cost
+                    This includes both recurring operating cost and the original upfront purchase cost.
+                    
+                    Since-install total cost = Upfront cost + Since-install operating cost  
+                    
+                    Since-install total cost = ${UPFRONT_COST:,.0f} + ${since_install_operating_cost:,.0f}  
+                    
+                    **Since-install total cost = ${since_install_total_cost:,.0f}**
+                    """)
+                    else:
+                        st.info(f"""#### 12. Since-install total cost
+                    This includes recurring operating cost only.
+                    
+                    Since-install total cost = Since-install operating cost  
+                    
+                    Since-install total cost = ${since_install_operating_cost:,.0f}  
+                    
+                    **Since-install total cost = ${since_install_total_cost:,.0f}**
+                    """)
+                    
+                    st.info(f"""#### 13. Since-install net
+                    This is the estimated total value left after subtracting total cost since install.
+                    
+                    Since-install net = Since-install value − Since-install total cost  
+                    
+                    Since-install net = ${since_install_labor_value:,.0f} − ${since_install_total_cost:,.0f}  
+                    
+                    **Since-install net = ${since_install_net_value:,.0f}**
+                    
+                    ---
+                    
+                    #### 14. Since-install ROI
+                    This compares since-install net value against since-install total cost.
+                    
+                    Since-install ROI = Since-install net ÷ Since-install total cost × 100  
+                    
+                    Since-install ROI = ${since_install_net_value:,.0f} ÷ ${since_install_total_cost:,.0f} × 100  
+                    
+                    **Since-install ROI = {since_install_roi_pct:,.1f}%**
+                    """)
     
                 if payback_months is not None:
                     st.info(f"""Break-even years = Upfront cost ÷ Current annual run rate  
