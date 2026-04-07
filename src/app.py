@@ -3318,15 +3318,17 @@ Average Daily Check-ins
 
 #### Average daily check-ins
 
+#### Average daily check-ins
+
 This is the average number of items checked in per day over the selected date range.
 
 Total check-ins = {int(staff_df["checkins"].sum()):,} items
 
-Total days in range = {days_in_range:,} days  
+Total days in range = {staff_df["date"].nunique():,} days  
 
 Average daily check-ins = Total check-ins ÷ Total days  
 
-Average daily check-ins = {int(staff_df["checkins"].sum()):,} ÷ {days_in_range:,}
+Average daily check-ins = {int(staff_df["checkins"].sum()):,} ÷ {staff_df["date"].nunique():,}
 
 **Average daily check-ins = {avg_daily_checkins:,.1f} items/day**
 
