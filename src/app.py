@@ -1374,8 +1374,6 @@ if selected_view == "Live Today":
     
         with st.expander(expander_label, expanded=pipeline_expanded):
             st.markdown("##### Pipeline Status"
-
-            st.markdown(
                 f"""
 App Last Refreshed: {app_refreshed_str}  
 Latest Checkin in DB: {latest_checkin_str} ({latest_checkin_ago})  
