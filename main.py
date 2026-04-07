@@ -94,29 +94,37 @@ def upload(data: dict):
 
                 inserted_rejects += result.rowcount
 
+
             for row in acs:
+                acs_row = {
+                    "customer_id": row.get("customer_id"),
+                    "branch_id": row.get("branch_id"),
+                    "event_time": row.get("event_time"),
+                    "message_code": row.get("message_code"),
+                    "barcode": row.get("barcode"),
+                    "barcode_key": row.get("barcode") or "",
+                    "title": row.get("title"),
+                    "patron_id": row.get("patron_id"),
+                    "destination": row.get("destination"),
+                    "raw_message": row.get("raw_message"),
+                    "source_file": row.get("source_file"),
+                }
+            
                 result = conn.execute(text("""
                     INSERT INTO acs_events (
                         customer_id, branch_id, event_time,
-                        message_code, barcode, title,
-                        patron_id, destination,
-                        raw_message, source_file
+                        message_code, barcode, barcode_key, title,
+                        patron_id, destination, raw_message, source_file
                     )
-                    SELECT
+                    VALUES (
                         :customer_id, :branch_id, :event_time,
-                        :message_code, :barcode, :title,
-                        :patron_id, :destination,
-                        :raw_message, :source_file
-                    WHERE NOT EXISTS (
-                        SELECT 1
-                        FROM acs_events
-                        WHERE event_time = :event_time
-                          AND message_code = :message_code
-                          AND coalesce(barcode, '') = coalesce(:barcode, '')
+                        :message_code, :barcode, :barcode_key, :title,
+                        :patron_id, :destination, :raw_message, :source_file
                     )
-                """), row)
-
-    inserted_acs += result.rowcount
+                    ON CONFLICT DO NOTHING
+                """), acs_row)
+            
+                inserted_acs += result.rowcount
 
         return {
             "status": "success",
