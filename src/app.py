@@ -3375,7 +3375,7 @@ Average Hours saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh
 
 Total Hours Saved = Avg Hours Saved × number of days in selected range
 
-Total Hours Saved = {avg_saved:,.2f} × {days_in_range:,}
+Total Hours Saved = {avg_saved:,.2f} × {staff_df["date"].nunique():,}
 
 **Total Hours Saved = {total_saved:,.2f} hours**
 
