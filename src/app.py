@@ -2701,254 +2701,251 @@ if selected_view == "Reports":
                     value_color="#059669" if since_install_roi_pct is not None and since_install_roi_pct >= 0 else "#dc2626"
                 )
 
-            st.markdown("### ROI Breakdown")
-
-            if roi_mode == "Annualized Projection":
-                payback_display = f"{payback_months:,.1f} months" if payback_months is not None else "Not available"
-                roi_display = f"{roi_pct:,.1f}%" if roi_pct is not None else "N/A"
-                since_install_roi_display = f"{since_install_roi_pct:,.1f}%" if since_install_roi_pct is not None else "N/A"
-                
-                st.markdown("### How to interpret Annualized metrics")
-                render_explainer_card(
-                    f"1. Annual Cost — ${total_roi_cost:,.0f}",
-                    (
-                        "This is the total recurring cost to operate the AMH for one full year."
-                        f"<br><br>Inputs used:"
-                        f"<br>• Yearly cost setting: <b>${YEARLY_COST:,.0f}</b>"
-                        f"<br>• Monthly cost setting: <b>${MONTHLY_COST:,.0f}</b>"
-                        f"<br><br>Math:"
-                        f"<br>• Annual cost = yearly cost + (monthly cost × 12)"
-                        f"<br>• <b>${YEARLY_COST:,.0f} + (${MONTHLY_COST:,.0f} × 12) = ${total_roi_cost:,.0f}</b>"
-                    ),
-                    "#6b7280"
-                )
-                
-                render_explainer_card(
-                    f"2. Current Annual Run Rate — ${net_roi_value:,.0f}",
-                    (
-                        "This estimates how much net value the AMH is generating per year at its current usage level."
-                        f"<br><br>What this represents:"
-                        f"<br>• Based only on the selected date range"
-                        f"<br>• Scaled up to a full 12-month equivalent"
-                        f"<br>• Then reduced by annual operating cost"
-                        f"<br><br>Inputs used:"
-                        f"<br>• Selected range: <b>{days_in_range:,} days</b>"
-                        f"<br>• Annual labor value (scaled): <b>${annual_labor_value:,.0f}</b>"
-                        f"<br>• Annual operating cost: <b>${total_roi_cost:,.0f}</b>"
-                        f"<br><br>Math:"
-                        f"<br>• Net run rate = annual labor value − annual operating cost"
-                        f"<br>• <b>${annual_labor_value:,.0f} − ${total_roi_cost:,.0f} = ${net_roi_value:,.0f}</b>"
-                        f"<br><br>This is a current performance estimate, not a guaranteed future outcome."
-                    ),
-                    "#10b981"
-                )
-                
-                render_explainer_card(
-                    f"3. Break-even Status — {break_even_value}",
-                    (
-                        "This shows whether the AMH has already recovered its upfront purchase cost."
-                        f"<br><br>Inputs used:"
-                        f"<br>• Upfront cost: <b>${UPFRONT_COST:,.0f}</b>"
-                        f"<br>• Current annual run rate: <b>${net_roi_value:,.0f}</b>"
-                        f"<br>• Years since install: <b>{installed_years:,.1f}</b>"
-                        f"<br><br>Math:"
-                        f"<br>• Break-even years = upfront cost ÷ annual run rate"
-                        f"<br>• Break-even point ≈ <b>{payback_months/12:,.1f} years</b>"
-                        f"<br><br>Status:"
-                        f"<br>• <b>{break_even_value}</b>"
-                        f"<br>• {break_even_subtitle}"
-                    ),
-                    "#3b82f6"
-                )
-                
-                render_explainer_card(
-                    f"4. Lifetime Value Generated — ${since_install_labor_value:,.0f}",
-                    (
-                        "This estimates the total labor value created by the AMH over its full lifetime."
-                        f"<br><br>Inputs used:"
-                        f"<br>• Annual labor value (current pace): <b>${annual_labor_value:,.0f}</b>"
-                        f"<br>• Years since install: <b>{installed_years:,.1f}</b>"
-                        f"<br><br>Math:"
-                        f"<br>• Lifetime value = annual labor value × years since install"
-                        f"<br>• <b>${annual_labor_value:,.0f} × {installed_years:,.1f} = ${since_install_labor_value:,.0f}</b>"
-                        f"<br><br>This is an estimate using current performance applied across the system's lifespan."
-                    ),
-                    "#f59e0b"
-                )
-                st.markdown("### How to interpret Since Install metrics")
-                render_explainer_card(
-                    f"5. Years Since Install — {installed_years:,.1f}",
-                    (
-                        "This is the amount of time between the install date and today."
-                        f"<br><br>Inputs used:"
-                        f"<br>• Install date: <b>{pd.to_datetime(INSTALL_DATE).strftime('%b %d, %Y')}</b>"
-                        f"<br>• Years in service: <b>{installed_years:,.1f}</b>"
-                    ),
-                    "#6b7280"
-                )
-
-                render_explainer_card(
-                    f"6. Since-Install Value — ${since_install_labor_value:,.0f}",
-                    (
-                        "This estimates total labor value created over the machine's time in service."
-                        f"<br><br>Inputs used:"
-                        f"<br>• Annual labor value: <b>${annual_labor_value:,.0f}</b>"
-                        f"<br>• Years since install: <b>{installed_years:,.1f}</b>"
-                        f"<br><br>Math:"
-                        f"<br>• Since-install value = annual labor value × years since install"
-                        f"<br>• <b>${since_install_labor_value:,.0f}</b>"
-                    ),
-                    "#3b82f6"
-                )
-
-                render_explainer_card(
-                    f"7. Since-Install Net — ${since_install_net_value:,.0f}",
-                    (
-                        "This estimates total value since install after subtracting total cost since install."
-                        f"<br><br>Inputs used:"
-                        f"<br>• Since-install labor value: <b>${since_install_labor_value:,.0f}</b>"
-                        f"<br>• Since-install total cost: <b>${since_install_total_cost:,.0f}</b>"
-                        f"<br><br>Math:"
-                        f"<br>• Since-install net = since-install labor value − since-install total cost"
-                        f"<br>• <b>${since_install_labor_value:,.0f} − ${since_install_total_cost:,.0f} = ${since_install_net_value:,.0f}</b>"
-                    ),
-                    "#10b981"
-                )
-
-                render_explainer_card(
-                    f"8. Since-Install ROI — {since_install_roi_display}",
-                    (
-                        "This compares since-install net value against since-install total cost."
-                        f"<br><br>Inputs used:"
-                        f"<br>• Since-install net value: <b>${since_install_net_value:,.0f}</b>"
-                        f"<br>• Since-install total cost: <b>${since_install_total_cost:,.0f}</b>"
-                        f"<br><br>Math:"
-                        f"<br>• Since-install ROI = since-install net value ÷ since-install total cost × 100"
-                        f"<br>• <b>{since_install_roi_display}</b>"
-                    ),
-                    "#7c3aed"
-                )
-
-            else:
-                since_install_roi_display = f"{since_install_roi_pct:,.1f}%" if since_install_roi_pct is not None else "N/A"
-
-                render_explainer_card(
-                    f"Range Length — {days_in_range:,} days",
-                    (
-                        "This is the exact selected date range used for the observed calculation."
-                        f"<br><br>Inputs used:"
-                        f"<br>• Start date: <b>{pd.to_datetime(start_date).strftime('%b %d, %Y')}</b>"
-                        f"<br>• End date: <b>{pd.to_datetime(end_date).strftime('%b %d, %Y')}</b>"
-                        f"<br>• Total days: <b>{days_in_range:,}</b>"
-                        f"<br>• Equivalent months: <b>{months_in_range:,.2f}</b>"
-                        f"<br>• Equivalent years: <b>{years_in_range:,.4f}</b>"
-                        "<br><br>All observed values below use only this selected period."
-                    ),
-                    "#6b7280"
-                )
-
-                render_explainer_card(
-                    f"Observed Labor Value — ${labor_value_saved:,.0f}",
-                    (
-                        "This is the estimated dollar value of staff time saved during the selected date range."
-                        f"<br><br>Inputs used:"
-                        f"<br>• Hourly labor cost setting (User provided): <b>${HOURLY_COST:,.2f}</b> per hour"
-                        f"<br>• Calculated observed labor value: <b>${labor_value_saved:,.0f}</b>"
-                        f"<br><br>Meaning:"
-                        f"<br>• This is the labor value created by the AMH during just this selected period."
-                    ),
-                    "#3b82f6"
-                )
-
-                render_explainer_card(
-                    f"Observed Operating Cost — ${observed_operating_cost:,.0f}",
-                    (
-                        "This is the prorated recurring operating cost for only the selected date range."
-                        f"<br><br>Inputs used:"
-                        f"<br>• Yearly recurring cost setting (User provided): <b>${YEARLY_COST:,.0f}</b>"
-                        f"<br>• Monthly recurring cost setting (User provided): <b>${MONTHLY_COST:,.0f}</b>"
-                        f"<br>• Selected days: <b>{days_in_range:,}</b>"
-                        f"<br>• Equivalent months: <b>{months_in_range:,.2f}</b>"
-                        f"<br>• Equivalent years: <b>{years_in_range:,.4f}</b>"
-                        f"<br><br>Math:"
-                        f"<br>• Monthly portion = ${MONTHLY_COST:,.0f} × {months_in_range:,.2f}"
-                        f"<br>• Yearly portion = ${YEARLY_COST:,.0f} × {years_in_range:,.4f}"
-                        f"<br><br>Final observed operating cost:"
-                        f"<br>• <b>${observed_operating_cost:,.0f}</b>"
-                        "<br><br>This does not include the original upfront purchase cost."
-                    ),
-                    "#f59e0b"
-                )
-
-                render_explainer_card(
-                    f"Observed Net Value — ${observed_net_operating_value:,.0f}",
-                    (
-                        "This is the value left after subtracting observed operating cost from observed labor value."
-                        f"<br><br>Inputs used:"
-                        f"<br>• Observed labor value: <b>${labor_value_saved:,.0f}</b>"
-                        f"<br>• Observed operating cost: <b>${observed_operating_cost:,.0f}</b>"
-                        f"<br><br>Math:"
-                        f"<br>• Observed net value = observed labor value − observed operating cost"
-                        f"<br>• <b>${labor_value_saved:,.0f} − ${observed_operating_cost:,.0f} = ${observed_net_operating_value:,.0f}</b>"
-                    ),
-                    "#10b981"
-                )
-
-                render_explainer_card(
-                    f"Years Since Install — {installed_years:,.1f}",
-                    (
-                        "This is the amount of time between the install date and today."
-                        f"<br><br>Inputs used:"
-                        f"<br>• Install date: <b>{pd.to_datetime(INSTALL_DATE).strftime('%b %d, %Y')}</b>"
-                        f"<br>• Years in service: <b>{installed_years:,.1f}</b>"
-                    ),
-                    "#6b7280"
-                )
-
-                render_explainer_card(
-                    f"Since-Install Value — ${since_install_labor_value:,.0f}",
-                    (
-                        "This estimates total labor value created over the machine's time in service."
-                        f"<br><br>Inputs used:"
-                        f"<br>• Annual labor value: <b>${annual_labor_value:,.0f}</b>"
-                        f"<br>• Years since install: <b>{installed_years:,.1f}</b>"
-                        f"<br><br>Final estimated since-install labor value:"
-                        f"<br>• <b>${since_install_labor_value:,.0f}</b>"
-                    ),
-                    "#3b82f6"
-                )
-
-                render_explainer_card(
-                    f"Since-Install Net — ${since_install_net_value:,.0f}",
-                    (
-                        "This estimates total value since install after subtracting total cost since install."
-                        f"<br><br>Inputs used:"
-                        f"<br>• Since-install labor value: <b>${since_install_labor_value:,.0f}</b>"
-                        f"<br>• Since-install total cost: <b>${since_install_total_cost:,.0f}</b>"
-                        f"<br><br>Math:"
-                        f"<br>• Since-install net = since-install labor value − since-install total cost"
-                        f"<br>• <b>${since_install_labor_value:,.0f} − ${since_install_total_cost:,.0f} = ${since_install_net_value:,.0f}</b>"
-                    ),
-                    "#10b981"
-                )
-
-                render_explainer_card(
-                    f"Since-Install ROI — {since_install_roi_display}",
-                    (
-                        "This compares since-install net value against since-install total cost."
-                        f"<br><br>Inputs used:"
-                        f"<br>• Since-install net value: <b>${since_install_net_value:,.0f}</b>"
-                        f"<br>• Since-install total cost: <b>${since_install_total_cost:,.0f}</b>"
-                        f"<br><br>Math:"
-                        f"<br>• Since-install ROI = since-install net value ÷ since-install total cost × 100"
-                        f"<br>• <b>{since_install_roi_display}</b>"
-                    ),
-                    "#7c3aed"
-                )
-
-    
-    
-                with st.expander("How ROI is calculated", expanded=False):
+            with st.expander("ROI Breakdown", expanded=False):
+                st.markdown("### ROI Breakdown")
+            
+                if roi_mode == "Annualized Projection":
+                    payback_display = f"{payback_months:,.1f} months" if payback_months is not None else "Not available"
+                    roi_display = f"{roi_pct:,.1f}%" if roi_pct is not None else "N/A"
+                    since_install_roi_display = f"{since_install_roi_pct:,.1f}%" if since_install_roi_pct is not None else "N/A"
+                    
+                    st.markdown("### How to interpret Annualized metrics")
+                    render_explainer_card(
+                        f"1. Annual Cost — ${total_roi_cost:,.0f}",
+                        (
+                            "This is the total recurring cost to operate the AMH for one full year."
+                            f"<br><br>Inputs used:"
+                            f"<br>• Yearly cost setting: <b>${YEARLY_COST:,.0f}</b>"
+                            f"<br>• Monthly cost setting: <b>${MONTHLY_COST:,.0f}</b>"
+                            f"<br><br>Math:"
+                            f"<br>• Annual cost = yearly cost + (monthly cost × 12)"
+                            f"<br>• <b>${YEARLY_COST:,.0f} + (${MONTHLY_COST:,.0f} × 12) = ${total_roi_cost:,.0f}</b>"
+                        ),
+                        "#6b7280"
+                    )
+                    
+                    render_explainer_card(
+                        f"2. Current Annual Run Rate — ${net_roi_value:,.0f}",
+                        (
+                            "This estimates how much net value the AMH is generating per year at its current usage level."
+                            f"<br><br>What this represents:"
+                            f"<br>• Based only on the selected date range"
+                            f"<br>• Scaled up to a full 12-month equivalent"
+                            f"<br>• Then reduced by annual operating cost"
+                            f"<br><br>Inputs used:"
+                            f"<br>• Selected range: <b>{days_in_range:,} days</b>"
+                            f"<br>• Annual labor value (scaled): <b>${annual_labor_value:,.0f}</b>"
+                            f"<br>• Annual operating cost: <b>${total_roi_cost:,.0f}</b>"
+                            f"<br><br>Math:"
+                            f"<br>• Net run rate = annual labor value − annual operating cost"
+                            f"<br>• <b>${annual_labor_value:,.0f} − ${total_roi_cost:,.0f} = ${net_roi_value:,.0f}</b>"
+                            f"<br><br>This is a current performance estimate, not a guaranteed future outcome."
+                        ),
+                        "#10b981"
+                    )
+                    
+                    render_explainer_card(
+                        f"3. Break-even Status — {break_even_value}",
+                        (
+                            "This shows whether the AMH has already recovered its upfront purchase cost."
+                            f"<br><br>Inputs used:"
+                            f"<br>• Upfront cost: <b>${UPFRONT_COST:,.0f}</b>"
+                            f"<br>• Current annual run rate: <b>${net_roi_value:,.0f}</b>"
+                            f"<br>• Years since install: <b>{installed_years:,.1f}</b>"
+                            f"<br><br>Math:"
+                            f"<br>• Break-even years = upfront cost ÷ annual run rate"
+                            f"<br>• Break-even point ≈ <b>{payback_months/12:,.1f} years</b>"
+                            f"<br><br>Status:"
+                            f"<br>• <b>{break_even_value}</b>"
+                            f"<br>• {break_even_subtitle}"
+                        ),
+                        "#3b82f6"
+                    )
+                    
+                    render_explainer_card(
+                        f"4. Lifetime Value Generated — ${since_install_labor_value:,.0f}",
+                        (
+                            "This estimates the total labor value created by the AMH over its full lifetime."
+                            f"<br><br>Inputs used:"
+                            f"<br>• Annual labor value (current pace): <b>${annual_labor_value:,.0f}</b>"
+                            f"<br>• Years since install: <b>{installed_years:,.1f}</b>"
+                            f"<br><br>Math:"
+                            f"<br>• Lifetime value = annual labor value × years since install"
+                            f"<br>• <b>${annual_labor_value:,.0f} × {installed_years:,.1f} = ${since_install_labor_value:,.0f}</b>"
+                            f"<br><br>This is an estimate using current performance applied across the system's lifespan."
+                        ),
+                        "#f59e0b"
+                    )
+                    st.markdown("### How to interpret Since Install metrics")
+                    render_explainer_card(
+                        f"5. Years Since Install — {installed_years:,.1f}",
+                        (
+                            "This is the amount of time between the install date and today."
+                            f"<br><br>Inputs used:"
+                            f"<br>• Install date: <b>{pd.to_datetime(INSTALL_DATE).strftime('%b %d, %Y')}</b>"
+                            f"<br>• Years in service: <b>{installed_years:,.1f}</b>"
+                        ),
+                        "#6b7280"
+                    )
+            
+                    render_explainer_card(
+                        f"6. Since-Install Value — ${since_install_labor_value:,.0f}",
+                        (
+                            "This estimates total labor value created over the machine's time in service."
+                            f"<br><br>Inputs used:"
+                            f"<br>• Annual labor value: <b>${annual_labor_value:,.0f}</b>"
+                            f"<br>• Years since install: <b>{installed_years:,.1f}</b>"
+                            f"<br><br>Math:"
+                            f"<br>• Since-install value = annual labor value × years since install"
+                            f"<br>• <b>${since_install_labor_value:,.0f}</b>"
+                        ),
+                        "#3b82f6"
+                    )
+            
+                    render_explainer_card(
+                        f"7. Since-Install Net — ${since_install_net_value:,.0f}",
+                        (
+                            "This estimates total value since install after subtracting total cost since install."
+                            f"<br><br>Inputs used:"
+                            f"<br>• Since-install labor value: <b>${since_install_labor_value:,.0f}</b>"
+                            f"<br>• Since-install total cost: <b>${since_install_total_cost:,.0f}</b>"
+                            f"<br><br>Math:"
+                            f"<br>• Since-install net = since-install labor value − since-install total cost"
+                            f"<br>• <b>${since_install_labor_value:,.0f} − ${since_install_total_cost:,.0f} = ${since_install_net_value:,.0f}</b>"
+                        ),
+                        "#10b981"
+                    )
+            
+                    render_explainer_card(
+                        f"8. Since-Install ROI — {since_install_roi_display}",
+                        (
+                            "This compares since-install net value against since-install total cost."
+                            f"<br><br>Inputs used:"
+                            f"<br>• Since-install net value: <b>${since_install_net_value:,.0f}</b>"
+                            f"<br>• Since-install total cost: <b>${since_install_total_cost:,.0f}</b>"
+                            f"<br><br>Math:"
+                            f"<br>• Since-install ROI = since-install net value ÷ since-install total cost × 100"
+                            f"<br>• <b>{since_install_roi_display}</b>"
+                        ),
+                        "#7c3aed"
+                    )
+            
+                else:
+                    since_install_roi_display = f"{since_install_roi_pct:,.1f}%" if since_install_roi_pct is not None else "N/A"
+            
+                    render_explainer_card(
+                        f"Range Length — {days_in_range:,} days",
+                        (
+                            "This is the exact selected date range used for the observed calculation."
+                            f"<br><br>Inputs used:"
+                            f"<br>• Start date: <b>{pd.to_datetime(start_date).strftime('%b %d, %Y')}</b>"
+                            f"<br>• End date: <b>{pd.to_datetime(end_date).strftime('%b %d, %Y')}</b>"
+                            f"<br>• Total days: <b>{days_in_range:,}</b>"
+                            f"<br>• Equivalent months: <b>{months_in_range:,.2f}</b>"
+                            f"<br>• Equivalent years: <b>{years_in_range:,.4f}</b>"
+                            "<br><br>All observed values below use only this selected period."
+                        ),
+                        "#6b7280"
+                    )
+            
+                    render_explainer_card(
+                        f"Observed Labor Value — ${labor_value_saved:,.0f}",
+                        (
+                            "This is the estimated dollar value of staff time saved during the selected date range."
+                            f"<br><br>Inputs used:"
+                            f"<br>• Hourly labor cost setting (User provided): <b>${HOURLY_COST:,.2f}</b> per hour"
+                            f"<br>• Calculated observed labor value: <b>${labor_value_saved:,.0f}</b>"
+                            f"<br><br>Meaning:"
+                            f"<br>• This is the labor value created by the AMH during just this selected period."
+                        ),
+                        "#3b82f6"
+                    )
+            
+                    render_explainer_card(
+                        f"Observed Operating Cost — ${observed_operating_cost:,.0f}",
+                        (
+                            "This is the prorated recurring operating cost for only the selected date range."
+                            f"<br><br>Inputs used:"
+                            f"<br>• Yearly recurring cost setting (User provided): <b>${YEARLY_COST:,.0f}</b>"
+                            f"<br>• Monthly recurring cost setting (User provided): <b>${MONTHLY_COST:,.0f}</b>"
+                            f"<br>• Selected days: <b>{days_in_range:,}</b>"
+                            f"<br>• Equivalent months: <b>{months_in_range:,.2f}</b>"
+                            f"<br>• Equivalent years: <b>{years_in_range:,.4f}</b>"
+                            f"<br><br>Math:"
+                            f"<br>• Monthly portion = ${MONTHLY_COST:,.0f} × {months_in_range:,.2f}"
+                            f"<br>• Yearly portion = ${YEARLY_COST:,.0f} × {years_in_range:,.4f}"
+                            f"<br><br>Final observed operating cost:"
+                            f"<br>• <b>${observed_operating_cost:,.0f}</b>"
+                            "<br><br>This does not include the original upfront purchase cost."
+                        ),
+                        "#f59e0b"
+                    )
+            
+                    render_explainer_card(
+                        f"Observed Net Value — ${observed_net_operating_value:,.0f}",
+                        (
+                            "This is the value left after subtracting observed operating cost from observed labor value."
+                            f"<br><br>Inputs used:"
+                            f"<br>• Observed labor value: <b>${labor_value_saved:,.0f}</b>"
+                            f"<br>• Observed operating cost: <b>${observed_operating_cost:,.0f}</b>"
+                            f"<br><br>Math:"
+                            f"<br>• Observed net value = observed labor value − observed operating cost"
+                            f"<br>• <b>${labor_value_saved:,.0f} − ${observed_operating_cost:,.0f} = ${observed_net_operating_value:,.0f}</b>"
+                        ),
+                        "#10b981"
+                    )
+            
+                    render_explainer_card(
+                        f"Years Since Install — {installed_years:,.1f}",
+                        (
+                            "This is the amount of time between the install date and today."
+                            f"<br><br>Inputs used:"
+                            f"<br>• Install date: <b>{pd.to_datetime(INSTALL_DATE).strftime('%b %d, %Y')}</b>"
+                            f"<br>• Years in service: <b>{installed_years:,.1f}</b>"
+                        ),
+                        "#6b7280"
+                    )
+            
+                    render_explainer_card(
+                        f"Since-Install Value — ${since_install_labor_value:,.0f}",
+                        (
+                            "This estimates total labor value created over the machine's time in service."
+                            f"<br><br>Inputs used:"
+                            f"<br>• Annual labor value: <b>${annual_labor_value:,.0f}</b>"
+                            f"<br>• Years since install: <b>{installed_years:,.1f}</b>"
+                            f"<br><br>Final estimated since-install labor value:"
+                            f"<br>• <b>${since_install_labor_value:,.0f}</b>"
+                        ),
+                        "#3b82f6"
+                    )
+            
+                    render_explainer_card(
+                        f"Since-Install Net — ${since_install_net_value:,.0f}",
+                        (
+                            "This estimates total value since install after subtracting total cost since install."
+                            f"<br><br>Inputs used:"
+                            f"<br>• Since-install labor value: <b>${since_install_labor_value:,.0f}</b>"
+                            f"<br>• Since-install total cost: <b>${since_install_total_cost:,.0f}</b>"
+                            f"<br><br>Math:"
+                            f"<br>• Since-install net = since-install labor value − since-install total cost"
+                            f"<br>• <b>${since_install_labor_value:,.0f} − ${since_install_total_cost:,.0f} = ${since_install_net_value:,.0f}</b>"
+                        ),
+                        "#10b981"
+                    )
+            
+                    render_explainer_card(
+                        f"Since-Install ROI — {since_install_roi_display}",
+                        (
+                            "This compares since-install net value against since-install total cost."
+                            f"<br><br>Inputs used:"
+                            f"<br>• Since-install net value: <b>${since_install_net_value:,.0f}</b>"
+                            f"<br>• Since-install total cost: <b>${since_install_total_cost:,.0f}</b>"
+                            f"<br><br>Math:"
+                            f"<br>• Since-install ROI = since-install net value ÷ since-install total cost × 100"
+                            f"<br>• <b>{since_install_roi_display}</b>"
+                        ),
+                        "#7c3aed"
+                    )
     
                     st.markdown(f"""
     The following formulas are used to calculate the ROI metrics shown above:
