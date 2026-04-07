@@ -2364,6 +2364,14 @@ if selected_view == "Reports":
     st.header("Reports")
     pdf_button_placeholder = st.empty()
 
+
+    # =========================================================
+    # LABOR & EFFICIENCY
+    # =========================================================
+    st.subheader("Labor & Efficiency")
+    st.caption("Estimates staff time saved by Automated Materials Handler processing.")
+
+
     # =========================================================
     # ROI CALCULATOR
     # =========================================================
@@ -3215,11 +3223,6 @@ if selected_view == "Reports":
                 st.info("No ROI data is available for the selected date range.")
             else:
                 st.info("Enter your assumptions above, then click Calculate ROI.")
-    # =========================================================
-    # LABOR & EFFICIENCY
-    # =========================================================
-    st.subheader("Labor & Efficiency")
-    st.caption("Estimates staff time saved by Automated Materials Handler processing.")
 
     with st.expander("Staff Time Equivalent", expanded=False):
         st.caption("Estimates staff time saved by comparing manual processing time against observed AMH processing time.")
