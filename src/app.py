@@ -19,17 +19,20 @@ st.set_page_config(
     layout="wide"
 )
 
-# your local timezone
-LOCAL_TZ = pytz.timezone("America/Chicago")
+APP_TZ = ZoneInfo("America/Chicago")
 
-now = datetime.now(LOCAL_TZ)
-current_hour = now.hour
+def is_operating_hours(now_ct: datetime) -> bool:
+    # 7:00 AM through 8:59 PM
+    return 7 <= now_ct.hour < 21
 
-# allow refresh only between 6 AM and 9 PM
-if 6 <= current_hour < 21:
-    refresh_count = st_autorefresh(interval=10 * 60 * 1000, key="auto_refresh")
-else:
-    refresh_count = 0
+now_ct = datetime.now(APP_TZ)
+
+refresh_count = 0
+if is_operating_hours(now_ct):
+    refresh_count = st_autorefresh(
+        interval=10 * 60 * 1000,   # 10 minutes
+        key="sortview_auto_refresh"
+    )
 
 
 from data_loader import load_checkins_df, load_checkins_history_df, load_rejects_df, load_rejects_history_df, load_pipeline_status
@@ -602,6 +605,18 @@ def build_hourly_line_chart(df, value_col, title_y, series_col=None, start_hour=
         )
 
     return chart
+
+# ----------------------------------------
+# AUTO REFRESH CACHE BUSTER
+# ----------------------------------------
+if "last_refresh_count" not in st.session_state:
+    st.session_state["last_refresh_count"] = refresh_count
+
+auto_refresh_triggered = refresh_count != st.session_state["last_refresh_count"]
+
+if auto_refresh_triggered:
+    st.cache_data.clear()
+    st.session_state["last_refresh_count"] = refresh_count
 
 # Load pipeline status first so its updated_at can drive cache invalidation
 pipeline_status = load_pipeline_status(refresh_count=refresh_count)
