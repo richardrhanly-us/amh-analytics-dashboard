@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import altair as alt
+from textwrap import dedent
 
 from streamlit_autorefresh import st_autorefresh
 
@@ -2894,8 +2895,8 @@ if selected_view == "Reports":
                 )
 
 
-                st.info(f"""### How ROI is calculated
-    
+                st.info(f"""
+                ### How ROI is calculated    
                 #### 1. Selected date range
                 This ROI calculation uses data from the selected reporting window.
                 
