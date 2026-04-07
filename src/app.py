@@ -1373,9 +1373,7 @@ if selected_view == "Live Today":
         )
     
         with st.expander(expander_label, expanded=pipeline_expanded):
-            st.markdown("##### Pipeline Status")
-    
-            st.markdown("##### Pipeline Status")
+            st.markdown("##### Pipeline Status"
 
             st.markdown(
                 f"""
