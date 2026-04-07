@@ -2942,7 +2942,7 @@ if selected_view == "Reports":
 
     *Refer to How Staff Time Saved Is Calculated in Labor & Efficiency for further explanation on how Total hours saved and Hourly labor cost are calculated.* 
 
-    Total hours saved = {labor_value_saved}
+    Total hours saved = {labor_value_saved:,.2f}
     
     Hourly labor cost = {HOURLY_COST:,.2f}
     
