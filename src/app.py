@@ -644,9 +644,11 @@ st.markdown(
 pipeline_status_label = "Unknown"
 pipeline_status_color = "#6b7280"
 pipeline_status_bg = "#f9fafb"
-amh_status_text = "Unknown"
 
+status_updated_dt = None
 last_run = None
+last_attempt = None
+
 checkins_rows = 0
 rejects_rows = 0
 transit_items = 0
@@ -658,7 +660,10 @@ rejects_bad_datetime_rows = 0
 destination_breakdown = {}
 
 if pipeline_status:
+    status_updated_raw = pipeline_status.get("updated_at")
     last_run_raw = pipeline_status.get("last_run")
+    last_attempt_raw = pipeline_status.get("last_attempt")
+
     checkins_rows = pipeline_status.get("checkins_rows", 0)
     rejects_rows = pipeline_status.get("rejects_rows", 0)
     transit_items = pipeline_status.get("transit_items", 0)
@@ -669,9 +674,19 @@ if pipeline_status:
     rejects_bad_datetime_rows = pipeline_status.get("rejects_bad_datetime_rows", 0)
     destination_breakdown = pipeline_status.get("destination_breakdown", {}) or {}
 
+    if status_updated_raw:
+        try:
+            status_updated_dt = datetime.fromisoformat(str(status_updated_raw))
+            if status_updated_dt.tzinfo is None:
+                status_updated_dt = status_updated_dt.replace(tzinfo=ZoneInfo("America/Chicago"))
+            else:
+                status_updated_dt = status_updated_dt.astimezone(ZoneInfo("America/Chicago"))
+        except Exception:
+            status_updated_dt = None
+
     if last_run_raw:
         try:
-            last_run = datetime.fromisoformat(last_run_raw)
+            last_run = datetime.fromisoformat(str(last_run_raw))
             if last_run.tzinfo is None:
                 last_run = last_run.replace(tzinfo=ZoneInfo("America/Chicago"))
             else:
@@ -679,30 +694,24 @@ if pipeline_status:
         except Exception:
             last_run = None
 
-now_ct = datetime.now(ZoneInfo("America/Chicago"))
-
-minutes_since_update = None
-if checkins_updated is not None:
-    minutes_since_update = (now_ct - checkins_updated).total_seconds() / 60
-
-minutes_since_run = None
-if last_run is not None:
-    minutes_since_run = (now_ct - last_run).total_seconds() / 60
-
-last_attempt = None
-if pipeline_status:
-    last_attempt_raw = pipeline_status.get("last_attempt")
     if last_attempt_raw:
         try:
-            last_attempt = datetime.fromisoformat(last_attempt_raw)
+            last_attempt = datetime.fromisoformat(str(last_attempt_raw))
             if last_attempt.tzinfo is None:
                 last_attempt = last_attempt.replace(tzinfo=ZoneInfo("America/Chicago"))
             else:
                 last_attempt = last_attempt.astimezone(ZoneInfo("America/Chicago"))
         except Exception:
             last_attempt = None
-            
+
+now_ct = datetime.now(ZoneInfo("America/Chicago"))
+
 app_refreshed_str = now_ct.strftime('%b %d, %Y %I:%M %p')
+
+pipeline_status_written_str = (
+    status_updated_dt.strftime('%b %d, %Y %I:%M %p')
+    if status_updated_dt else "N/A"
+)
 
 pipeline_last_run_str = (
     last_run.strftime('%b %d, %Y %I:%M %p')
@@ -714,8 +723,15 @@ pipeline_last_attempt_str = (
     if last_attempt else "N/A"
 )
 
+pipeline_status_written_ago = format_relative_time(status_updated_dt, now_ct)
 pipeline_last_run_ago = format_relative_time(last_run, now_ct)
 pipeline_last_attempt_ago = format_relative_time(last_attempt, now_ct)
+
+latest_checkin_str = (
+    checkins_updated.strftime('%b %d, %Y %I:%M %p')
+    if checkins_updated else "N/A"
+)
+latest_checkin_ago = format_relative_time(checkins_updated, now_ct)
 
 pipeline_run_status = pipeline_status.get("status", "unknown") if pipeline_status else "unknown"
 status_code_text = str(pipeline_run_status)
@@ -777,22 +793,24 @@ if pipeline_run_status == "completed":
     pipeline_status_label = "Pipeline Healthy"
     pipeline_status_color = "#059669"
     pipeline_status_bg = "rgba(5, 150, 105, 0.14)" if theme_base == "dark" else "#ecfdf5"
-    pipeline_result_text = f"Processed {uploaded_checkins_rows:,} new items"
+    pipeline_result_text = (
+        f"Uploaded {uploaded_checkins_rows:,} checkins and {uploaded_rejects_rows:,} rejects this run"
+    )
 elif pipeline_run_status == "skipped_no_source_changes":
     pipeline_status_label = "Pipeline Healthy"
     pipeline_status_color = "#059669"
     pipeline_status_bg = "rgba(5, 150, 105, 0.14)" if theme_base == "dark" else "#ecfdf5"
-    pipeline_result_text = "No new items (expected)"
+    pipeline_result_text = "No new source changes detected this run"
 elif str(pipeline_run_status).startswith("failed"):
     pipeline_status_label = "Pipeline Failed"
     pipeline_status_color = "#dc2626"
     pipeline_status_bg = "rgba(220, 38, 38, 0.14)" if theme_base == "dark" else "#fef2f2"
-    pipeline_result_text = "Error during run"
+    pipeline_result_text = "Latest run failed"
 elif pipeline_run_status == "started":
     pipeline_status_label = "Pipeline Running"
     pipeline_status_color = "#d97706"
     pipeline_status_bg = "rgba(217, 119, 6, 0.14)" if theme_base == "dark" else "#fffbeb"
-    pipeline_result_text = "In progress"
+    pipeline_result_text = "Run in progress"
 else:
     pipeline_status_label = "Pipeline Status Unknown"
     pipeline_status_color = "#94a3b8" if theme_base == "dark" else "#6b7280"
@@ -1347,13 +1365,17 @@ if selected_view == "Live Today":
         with st.expander(expander_label, expanded=pipeline_expanded):
             st.markdown("##### Pipeline Status")
     
+            st.markdown("##### Pipeline Status")
+
             st.markdown(
                 f"""
-    App Last Refreshed: {app_refreshed_str}  
-    Last Successful Run: {pipeline_last_run_str} ({pipeline_last_run_ago})  
-    Last Attempt: {pipeline_last_attempt_str} ({pipeline_last_attempt_ago})  
-    Result: {pipeline_result_text}  
-    Status Code: `{status_code_text}`
+App Last Refreshed: {app_refreshed_str}  
+Latest Checkin in DB: {latest_checkin_str} ({latest_checkin_ago})  
+Latest Status Row Written: {pipeline_status_written_str} ({pipeline_status_written_ago})  
+Last Pipeline Attempt: {pipeline_last_attempt_str} ({pipeline_last_attempt_ago})  
+Last Successful Upload Run: {pipeline_last_run_str} ({pipeline_last_run_ago})  
+Latest Result: {pipeline_result_text}  
+Status Code: `{status_code_text}`
                 """
             )
     
