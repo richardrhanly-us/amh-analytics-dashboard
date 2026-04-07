@@ -44,11 +44,13 @@ def _read_table(query):
     engine = get_engine()
 
     if engine is None:
+        st.error("DATABASE_URL is missing. App cannot connect to Neon.")
         return pd.DataFrame()
 
     try:
         return pd.read_sql(text(query), engine)
-    except Exception:
+    except Exception as e:
+        st.error(f"Database query failed: {e}")
         return pd.DataFrame()
 
 
@@ -254,32 +256,35 @@ def load_pipeline_status(path=STATUS_FILE, mtime=None, refresh_count=0):
     """
     df = _read_table(query)
 
-    if not df.empty:
-        row = df.iloc[0].to_dict()
+    if df.empty:
+        st.error("No rows returned from pipeline_status in Neon.")
+        return {}
 
-        for key in ["last_attempt", "last_run", "updated_at"]:
-            value = row.get(key)
-            if pd.notna(value):
-                if hasattr(value, "isoformat"):
-                    row[key] = value.isoformat()
-                else:
-                    row[key] = str(value)
+    row = df.iloc[0].to_dict()
+
+    for key in ["last_attempt", "last_run", "updated_at"]:
+        value = row.get(key)
+        if pd.notna(value):
+            if hasattr(value, "isoformat"):
+                row[key] = value.isoformat()
             else:
-                row[key] = None
+                row[key] = str(value)
+        else:
+            row[key] = None
 
-        destination_breakdown = row.get("destination_breakdown")
+    destination_breakdown = row.get("destination_breakdown")
 
-        if isinstance(destination_breakdown, str):
-            try:
-                row["destination_breakdown"] = json.loads(destination_breakdown)
-            except Exception:
-                row["destination_breakdown"] = {}
-        elif destination_breakdown is None or (
-            isinstance(destination_breakdown, float) and pd.isna(destination_breakdown)
-        ):
+    if isinstance(destination_breakdown, str):
+        try:
+            row["destination_breakdown"] = json.loads(destination_breakdown)
+        except Exception:
             row["destination_breakdown"] = {}
+    elif destination_breakdown is None or (
+        isinstance(destination_breakdown, float) and pd.isna(destination_breakdown)
+    ):
+        row["destination_breakdown"] = {}
 
-        return row
+    return row
 
     file_path = Path(path)
 
