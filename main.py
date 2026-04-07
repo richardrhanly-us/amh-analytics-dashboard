@@ -102,16 +102,21 @@ def upload(data: dict):
                         patron_id, destination,
                         raw_message, source_file
                     )
-                    VALUES (
+                    SELECT
                         :customer_id, :branch_id, :event_time,
                         :message_code, :barcode, :title,
                         :patron_id, :destination,
                         :raw_message, :source_file
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM acs_events
+                        WHERE event_time = :event_time
+                          AND message_code = :message_code
+                          AND coalesce(barcode, '') = coalesce(:barcode, '')
                     )
-                    ON CONFLICT (event_time, message_code, barcode) DO NOTHING
                 """), row)
 
-                inserted_acs += result.rowcount
+    inserted_acs += result.rowcount
 
         return {
             "status": "success",
