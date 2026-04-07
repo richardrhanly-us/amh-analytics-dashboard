@@ -2372,358 +2372,7 @@ if selected_view == "Reports":
     st.caption("Estimates staff time saved by Automated Materials Handler processing.")
 
 
-    
-
-    with st.expander("Staff Time Equivalent", expanded=False):
-        st.caption("Estimates staff time saved by comparing manual processing time against observed AMH processing time.")
-
-        MANUAL_RATE = 45
-
-        if len(df) > 0 and len(df_history_raw) > 0:
-            rate_df = df.copy()
-            rate_df["date"] = rate_df["datetime"].dt.date
-            rate_df["hour"] = rate_df["datetime"].dt.hour
-
-            daily_hourly = (
-                rate_df.groupby(["date", "hour"])
-                .size()
-                .reset_index(name="checkins")
-            )
-
-            avg_hourly = (
-                daily_hourly.groupby("hour")["checkins"]
-                .mean()
-                .reset_index(name="avg_items_per_hour")
-            )
-
-            if len(avg_hourly) > 0:
-                peak_row = avg_hourly.loc[avg_hourly["avg_items_per_hour"].idxmax()]
-                threshold = peak_row["avg_items_per_hour"] * 0.75
-                peak_hours = avg_hourly[avg_hourly["avg_items_per_hour"] >= threshold].copy()
-
-                AMH_RATE = (
-                    peak_hours["avg_items_per_hour"].mean()
-                    if len(peak_hours) > 0
-                    else peak_row["avg_items_per_hour"]
-                )
-            else:
-                AMH_RATE = 130.0
-
-            daily_counts = df["datetime"].dt.date.value_counts().sort_index()
-            staff_df = daily_counts.reset_index()
-            staff_df.columns = ["date", "checkins"]
-
-            staff_df["manual_hours"] = staff_df["checkins"] / MANUAL_RATE
-            staff_df["amh_hours"] = staff_df["checkins"] / AMH_RATE
-            staff_df["hours_saved"] = (staff_df["manual_hours"] - staff_df["amh_hours"]).clip(lower=0)
-
-            avg_daily_checkins = staff_df["checkins"].mean()
-            avg_daily_manual_hours = staff_df["manual_hours"].mean()
-            avg_daily_amh_hours = staff_df["amh_hours"].mean()
-            avg_saved = staff_df["hours_saved"].mean()
-            total_saved = staff_df["hours_saved"].sum()
-            peak_day = staff_df.loc[staff_df["hours_saved"].idxmax()]
-            labor_value_saved = total_saved * HOURLY_COST
-
-            try:
-                from report_export import build_director_report_pdf
-
-                director_pdf = build_director_report_pdf(
-                    start_date=start_date,
-                    end_date=end_date,
-                    df=df,
-                    rejects_df=rejects_df,
-                    overall_metrics=overall_metrics,
-                    top_issue=top_issue,
-                    attention_text=attention_text,
-                    avg_hours_saved=avg_saved,
-                    total_hours_saved=total_saved,
-                    peak_day_saved=float(peak_day["hours_saved"]),
-                    peak_day_saved_date=pd.to_datetime(peak_day["date"]).strftime("%b %d, %Y"),
-                    manual_rate=MANUAL_RATE,
-                    amh_rate=AMH_RATE,
-                    library_name="New Braunfels Public Library",
-                    branch_name="Main Branch",
-                    system_name="Tech Logic UltraSort",
-                    report_title="AMH Director Report",
-                    hourly_cost=HOURLY_COST,
-                    roi_mode=roi_mode,
-                    annual_cost=annual_operating_cost if roi_payload else None,
-                    yearly_savings_after_cost=net_roi_value if roi_payload and roi_mode == "Annualized Projection" else None,
-                    payback_months=payback_months if roi_payload and roi_mode == "Annualized Projection" else None,
-                    since_install_net_value=since_install_net_value if roi_payload else None,
-                    install_date=pd.to_datetime(INSTALL_DATE).strftime("%b %d, %Y") if roi_payload else None,
-                )
-
-                pdf_button_placeholder.download_button(
-                    label="Download Director PDF",
-                    data=director_pdf,
-                    file_name=f"amh_director_report_{pd.to_datetime(start_date).strftime('%Y%m%d')}_{pd.to_datetime(end_date).strftime('%Y%m%d')}.pdf",
-                    mime="application/pdf",
-                    key="director_pdf_download"
-                )
-            except Exception as e:
-                pdf_button_placeholder.warning(f"Director PDF export is temporarily unavailable: {e}")
-
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #059669;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-top: 8px;
-                    margin-bottom: 16px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Report Summary
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.4;">
-                        Using a manual processing rate of {MANUAL_RATE:.0f} items/hour and an observed AMH rate of
-                        {AMH_RATE:.1f} items/hour, the average daily staff time saved in the selected range was
-                        {avg_saved:,.2f} hours.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-            
-            k1, k2, k3 = st.columns(3)
-            
-            with k1:
-                render_kpi_card(
-                    "1. Avg Hours Saved",
-                    f"{avg_saved:,.2f}",
-                    "Per day Across selected date range",
-                    "#6b7280"
-                )
-            
-            with k2:
-                render_kpi_card(
-                    "2. Total Hours Saved",
-                    f"{total_saved:,.2f}",
-                    "Across selected date range",
-                    "#6b7280"
-                )
-            
-            with k3:
-                render_kpi_card(
-                    "3. Estimated Labor Value for selected date range",
-                    f"${labor_value_saved:,.0f}",
-                    "Staff time avoided value",
-                    "#6b7280"
-                )
-
-    if len(df) > 0 and len(df_history_raw) > 0:
-        with st.expander("How the Staff Time Equivalent KPIs are calculated", expanded=False):
-            st.info(f"""
-    ##### 1. Average Hours Saved
-    
-    Average Daily Check-ins
-    = Total check-ins / Total days
-    
-    Average Daily Check-ins
-    = {int(staff_df["checkins"].sum()):,} / {staff_df["date"].nunique():,}
-    
-    Average Daily Check-ins
-    = {avg_daily_checkins:,.1f} items/day
-    
-    Average Daily Manual Time
-    = Average Daily Check-ins / Manual processing rate
-    
-    Average Daily Manual Time
-    = {avg_daily_checkins:,.1f} / {MANUAL_RATE:.1f}
-    
-    Average Daily Manual Time
-    = {avg_daily_manual_hours:,.2f} staff hours/day
-    
-    Average Daily AMH Time
-    = Average Daily Check-ins / AMH processing rate
-    
-    Average Daily AMH Time
-    = {avg_daily_checkins:,.1f} / {AMH_RATE:,.1f}
-    
-    Average Daily AMH Time
-    = {avg_daily_amh_hours:,.2f} machine hours/day
-    
-    Average Hours Saved per Day
-    = Average Daily Manual Time - Average Daily AMH Time
-    
-    Average Hours Saved per Day
-    = {avg_daily_manual_hours:,.2f} - {avg_daily_amh_hours:,.2f}
-    
-    Average Hours Saved per Day
-    = {avg_saved:,.2f} staff hours/day
-    
-    ##### 2. Total Hours Saved
-    
-    Total Hours Saved
-    = Average Hours Saved per Day * Total days
-    
-    Total Hours Saved
-    = {avg_saved:,.2f} * {staff_df["date"].nunique():,}
-    
-    Total Hours Saved
-    = {total_saved:,.2f} hours
-    
-    ##### 3. Estimated Labor Value
-    
-    Estimated Labor Value
-    = Total Hours Saved * Hourly labor cost
-    
-    Estimated Labor Value
-    = {total_saved:,.2f} * ${HOURLY_COST:.2f}
-    
-    Estimated Labor Value
-    = ${labor_value_saved:,.0f}
-    """)
-    
-        with st.expander("Processing rates and supporting methodology", expanded=False):
-            st.info(f"""
-    ### How Staff Time Saved Is Calculated
-    
-    The calculation flow is:
-    
-    Average Daily Check-ins
-    -> Manual Processing Rate and AMH Processing Rate
-    -> Manual Processing Time and AMH Processing Time
-    -> Average Hours Saved per Day
-    -> Total Hours Saved
-    -> Estimated Labor Value
-    
-    #### Manual Processing Rate
-    
-    The manual processing rate is calculated using Westside circulation activity reports in TLC from four months:
-    
-    - March 2026
-    - June 2025
-    - August 2025
-    - September 2025
-    
-    Each monthly sheet was processed using the same method.
-    
-    ##### Step 1: Group transactions into hourly activity
-    
-    For each sheet, every check-in transaction timestamp was converted into:
-    
-    - a calendar date
-    - an hour of the day
-    
-    Transactions were then grouped by date and hour so that each day had an hourly check-in count.
-    
-    ##### Step 2: Find each day's peak operating threshold
-    
-    For each individual day in a monthly sheet:
-    
-    - the highest hourly check-in count for that day was identified
-    - a peak threshold was calculated as 75% of that day's maximum hourly count
-    
-    Peak threshold = Daily maximum hourly check-ins * 0.75
-    
-    Only hours meeting or exceeding that threshold were counted as peak manual operating hours for that day.
-    
-    ##### Step 3: Sum peak-hour counts within each month
-    
-    The results by month were:
-    
-    March 2026
-    - Peak manual check-ins = 2,343 items
-    - Peak manual hours = 51 hours
-    - Monthly manual rate = 2,343 / 51
-    - Monthly manual rate = 45.94 items/hour
-    
-    June 2025
-    - Peak manual check-ins = 2,000 items
-    - Peak manual hours = 45 hours
-    - Monthly manual rate = 2,000 / 45
-    - Monthly manual rate = 44.44 items/hour
-    
-    August 2025
-    - Peak manual check-ins = 3,058 items
-    - Peak manual hours = 60 hours
-    - Monthly manual rate = 3,058 / 60
-    - Monthly manual rate = 50.97 items/hour
-    
-    September 2025
-    - Peak manual check-ins = 2,627 items
-    - Peak manual hours = 57 hours
-    - Monthly manual rate = 2,627 / 57
-    - Monthly manual rate = 46.09 items/hour
-    
-    ##### Step 4: Combine all monthly peak-hour data
-    
-    Combined peak manual check-ins
-    = 2,343 + 2,000 + 3,058 + 2,627
-    = 10,028 items
-    
-    Combined peak manual hours
-    = 51 + 45 + 60 + 57
-    = 213 hours
-    
-    Manual processing rate
-    = Combined peak manual check-ins / Combined peak manual hours
-    = 10,028 / 213
-    = {MANUAL_RATE:.1f} items/hour
-    
-    #### AMH Processing Rate
-    
-    The AMH processing rate is calculated from AMH check-in history within the currently selected date range shown in the report.
-    
-    ##### Step 1: Group AMH activity into hourly throughput
-    
-    AMH check-ins are grouped by:
-    
-    - date
-    - hour
-    
-    This creates an hourly item count for each day in the selected range.
-    
-    ##### Step 2: Build the AMH hourly average profile
-    
-    Those daily hourly counts are then averaged by hour of day to estimate the machine's typical throughput at each hour.
-    
-    ##### Step 3: Identify peak machine operating hours
-    
-    From that hourly AMH profile:
-    
-    - the highest observed hourly average is identified
-    - a peak threshold is calculated at 75% of that maximum
-    
-    Highest observed AMH hourly average = {peak_row["avg_items_per_hour"]:,.1f} items/hour
-    
-    Peak AMH threshold
-    = {peak_row["avg_items_per_hour"]:,.1f} * 0.75
-    = {threshold:,.1f} items/hour
-    
-    Only AMH hours meeting or exceeding that threshold are used in the final AMH rate.
-    
-    ##### Step 4: Compute AMH processing rate
-    
-    AMH processing rate = {AMH_RATE:,.1f} items/hour
-    
-    #### Supporting Daily Inputs
-    
-    Average Daily Check-ins
-    = Total check-ins / Total days
-    = {int(staff_df["checkins"].sum()):,} / {staff_df["date"].nunique():,}
-    = {avg_daily_checkins:,.1f} items/day
-    
-    Daily Manual Time
-    = Average Daily Check-ins / Manual processing rate
-    = {avg_daily_checkins:,.1f} / {MANUAL_RATE:.1f}
-    = {avg_daily_manual_hours:,.2f} staff hours/day
-    
-    Daily AMH Time
-    = Average Daily Check-ins / AMH processing rate
-    = {avg_daily_checkins:,.1f} / {AMH_RATE:,.1f}
-    = {avg_daily_amh_hours:,.2f} machine hours/day
-    """)
-    else:
-        st.info("No labor data is available for the selected date range.")
-
-
-
-# =========================================================
+    # =========================================================
     # ROI CALCULATOR
     # =========================================================
     with st.expander("ROI Calculator", expanded=False):
@@ -3574,6 +3223,357 @@ if selected_view == "Reports":
                 st.info("No ROI data is available for the selected date range.")
             else:
                 st.info("Enter your assumptions above, then click Calculate ROI.")
+
+    with st.expander("Staff Time Equivalent", expanded=False):
+        st.caption("Estimates staff time saved by comparing manual processing time against observed AMH processing time.")
+
+        MANUAL_RATE = 45
+
+        if len(df) > 0 and len(df_history_raw) > 0:
+            rate_df = df.copy()
+            rate_df["date"] = rate_df["datetime"].dt.date
+            rate_df["hour"] = rate_df["datetime"].dt.hour
+
+            daily_hourly = (
+                rate_df.groupby(["date", "hour"])
+                .size()
+                .reset_index(name="checkins")
+            )
+
+            avg_hourly = (
+                daily_hourly.groupby("hour")["checkins"]
+                .mean()
+                .reset_index(name="avg_items_per_hour")
+            )
+
+            if len(avg_hourly) > 0:
+                peak_row = avg_hourly.loc[avg_hourly["avg_items_per_hour"].idxmax()]
+                threshold = peak_row["avg_items_per_hour"] * 0.75
+                peak_hours = avg_hourly[avg_hourly["avg_items_per_hour"] >= threshold].copy()
+
+                AMH_RATE = (
+                    peak_hours["avg_items_per_hour"].mean()
+                    if len(peak_hours) > 0
+                    else peak_row["avg_items_per_hour"]
+                )
+            else:
+                AMH_RATE = 130.0
+
+            daily_counts = df["datetime"].dt.date.value_counts().sort_index()
+            staff_df = daily_counts.reset_index()
+            staff_df.columns = ["date", "checkins"]
+
+            staff_df["manual_hours"] = staff_df["checkins"] / MANUAL_RATE
+            staff_df["amh_hours"] = staff_df["checkins"] / AMH_RATE
+            staff_df["hours_saved"] = (staff_df["manual_hours"] - staff_df["amh_hours"]).clip(lower=0)
+
+            avg_daily_checkins = staff_df["checkins"].mean()
+            avg_daily_manual_hours = staff_df["manual_hours"].mean()
+            avg_daily_amh_hours = staff_df["amh_hours"].mean()
+            avg_saved = staff_df["hours_saved"].mean()
+            total_saved = staff_df["hours_saved"].sum()
+            peak_day = staff_df.loc[staff_df["hours_saved"].idxmax()]
+            labor_value_saved = total_saved * HOURLY_COST
+
+            try:
+                from report_export import build_director_report_pdf
+
+                director_pdf = build_director_report_pdf(
+                    start_date=start_date,
+                    end_date=end_date,
+                    df=df,
+                    rejects_df=rejects_df,
+                    overall_metrics=overall_metrics,
+                    top_issue=top_issue,
+                    attention_text=attention_text,
+                    avg_hours_saved=avg_saved,
+                    total_hours_saved=total_saved,
+                    peak_day_saved=float(peak_day["hours_saved"]),
+                    peak_day_saved_date=pd.to_datetime(peak_day["date"]).strftime("%b %d, %Y"),
+                    manual_rate=MANUAL_RATE,
+                    amh_rate=AMH_RATE,
+                    library_name="New Braunfels Public Library",
+                    branch_name="Main Branch",
+                    system_name="Tech Logic UltraSort",
+                    report_title="AMH Director Report",
+                    hourly_cost=HOURLY_COST,
+                    roi_mode=roi_mode,
+                    annual_cost=annual_operating_cost if roi_payload else None,
+                    yearly_savings_after_cost=net_roi_value if roi_payload and roi_mode == "Annualized Projection" else None,
+                    payback_months=payback_months if roi_payload and roi_mode == "Annualized Projection" else None,
+                    since_install_net_value=since_install_net_value if roi_payload else None,
+                    install_date=pd.to_datetime(INSTALL_DATE).strftime("%b %d, %Y") if roi_payload else None,
+                )
+
+                pdf_button_placeholder.download_button(
+                    label="Download Director PDF",
+                    data=director_pdf,
+                    file_name=f"amh_director_report_{pd.to_datetime(start_date).strftime('%Y%m%d')}_{pd.to_datetime(end_date).strftime('%Y%m%d')}.pdf",
+                    mime="application/pdf",
+                    key="director_pdf_download"
+                )
+            except Exception as e:
+                pdf_button_placeholder.warning(f"Director PDF export is temporarily unavailable: {e}")
+
+            st.markdown(
+                f"""
+                <div style="
+                    border-left: 4px solid #059669;
+                    background-color: #f9fafb;
+                    padding: 14px 16px;
+                    border-radius: 8px;
+                    margin-top: 8px;
+                    margin-bottom: 16px;
+                ">
+                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
+                        Report Summary
+                    </div>
+                    <div style="color: #4b5563; line-height: 1.4;">
+                        Using a manual processing rate of {MANUAL_RATE:.0f} items/hour and an observed AMH rate of
+                        {AMH_RATE:.1f} items/hour, the average daily staff time saved in the selected range was
+                        {avg_saved:,.2f} hours.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            
+            k1, k2, k3 = st.columns(3)
+            
+            with k1:
+                render_kpi_card(
+                    "1. Avg Hours Saved",
+                    f"{avg_saved:,.2f}",
+                    "Per day Across selected date range",
+                    "#6b7280"
+                )
+            
+            with k2:
+                render_kpi_card(
+                    "2. Total Hours Saved",
+                    f"{total_saved:,.2f}",
+                    "Across selected date range",
+                    "#6b7280"
+                )
+            
+            with k3:
+                render_kpi_card(
+                    "3. Estimated Labor Value for selected date range",
+                    f"${labor_value_saved:,.0f}",
+                    "Staff time avoided value",
+                    "#6b7280"
+                )
+
+    if len(df) > 0 and len(df_history_raw) > 0:
+        with st.expander("How the Staff Time Equivalent KPIs are calculated", expanded=False):
+            st.info(f"""
+    ##### 1. Average Hours Saved
+    
+    Average Daily Check-ins
+    = Total check-ins / Total days
+    
+    Average Daily Check-ins
+    = {int(staff_df["checkins"].sum()):,} / {staff_df["date"].nunique():,}
+    
+    Average Daily Check-ins
+    = {avg_daily_checkins:,.1f} items/day
+    
+    Average Daily Manual Time
+    = Average Daily Check-ins / Manual processing rate
+    
+    Average Daily Manual Time
+    = {avg_daily_checkins:,.1f} / {MANUAL_RATE:.1f}
+    
+    Average Daily Manual Time
+    = {avg_daily_manual_hours:,.2f} staff hours/day
+    
+    Average Daily AMH Time
+    = Average Daily Check-ins / AMH processing rate
+    
+    Average Daily AMH Time
+    = {avg_daily_checkins:,.1f} / {AMH_RATE:,.1f}
+    
+    Average Daily AMH Time
+    = {avg_daily_amh_hours:,.2f} machine hours/day
+    
+    Average Hours Saved per Day
+    = Average Daily Manual Time - Average Daily AMH Time
+    
+    Average Hours Saved per Day
+    = {avg_daily_manual_hours:,.2f} - {avg_daily_amh_hours:,.2f}
+    
+    Average Hours Saved per Day
+    = {avg_saved:,.2f} staff hours/day
+    
+    ##### 2. Total Hours Saved
+    
+    Total Hours Saved
+    = Average Hours Saved per Day * Total days
+    
+    Total Hours Saved
+    = {avg_saved:,.2f} * {staff_df["date"].nunique():,}
+    
+    Total Hours Saved
+    = {total_saved:,.2f} hours
+    
+    ##### 3. Estimated Labor Value
+    
+    Estimated Labor Value
+    = Total Hours Saved * Hourly labor cost
+    
+    Estimated Labor Value
+    = {total_saved:,.2f} * ${HOURLY_COST:.2f}
+    
+    Estimated Labor Value
+    = ${labor_value_saved:,.0f}
+    """)
+    
+        with st.expander("Processing rates and supporting methodology", expanded=False):
+            st.info(f"""
+    ### How Staff Time Saved Is Calculated
+    
+    The calculation flow is:
+    
+    Average Daily Check-ins
+    -> Manual Processing Rate and AMH Processing Rate
+    -> Manual Processing Time and AMH Processing Time
+    -> Average Hours Saved per Day
+    -> Total Hours Saved
+    -> Estimated Labor Value
+    
+    #### Manual Processing Rate
+    
+    The manual processing rate is calculated using Westside circulation activity reports in TLC from four months:
+    
+    - March 2026
+    - June 2025
+    - August 2025
+    - September 2025
+    
+    Each monthly sheet was processed using the same method.
+    
+    ##### Step 1: Group transactions into hourly activity
+    
+    For each sheet, every check-in transaction timestamp was converted into:
+    
+    - a calendar date
+    - an hour of the day
+    
+    Transactions were then grouped by date and hour so that each day had an hourly check-in count.
+    
+    ##### Step 2: Find each day's peak operating threshold
+    
+    For each individual day in a monthly sheet:
+    
+    - the highest hourly check-in count for that day was identified
+    - a peak threshold was calculated as 75% of that day's maximum hourly count
+    
+    Peak threshold = Daily maximum hourly check-ins * 0.75
+    
+    Only hours meeting or exceeding that threshold were counted as peak manual operating hours for that day.
+    
+    ##### Step 3: Sum peak-hour counts within each month
+    
+    The results by month were:
+    
+    March 2026
+    - Peak manual check-ins = 2,343 items
+    - Peak manual hours = 51 hours
+    - Monthly manual rate = 2,343 / 51
+    - Monthly manual rate = 45.94 items/hour
+    
+    June 2025
+    - Peak manual check-ins = 2,000 items
+    - Peak manual hours = 45 hours
+    - Monthly manual rate = 2,000 / 45
+    - Monthly manual rate = 44.44 items/hour
+    
+    August 2025
+    - Peak manual check-ins = 3,058 items
+    - Peak manual hours = 60 hours
+    - Monthly manual rate = 3,058 / 60
+    - Monthly manual rate = 50.97 items/hour
+    
+    September 2025
+    - Peak manual check-ins = 2,627 items
+    - Peak manual hours = 57 hours
+    - Monthly manual rate = 2,627 / 57
+    - Monthly manual rate = 46.09 items/hour
+    
+    ##### Step 4: Combine all monthly peak-hour data
+    
+    Combined peak manual check-ins
+    = 2,343 + 2,000 + 3,058 + 2,627
+    = 10,028 items
+    
+    Combined peak manual hours
+    = 51 + 45 + 60 + 57
+    = 213 hours
+    
+    Manual processing rate
+    = Combined peak manual check-ins / Combined peak manual hours
+    = 10,028 / 213
+    = {MANUAL_RATE:.1f} items/hour
+    
+    #### AMH Processing Rate
+    
+    The AMH processing rate is calculated from AMH check-in history within the currently selected date range shown in the report.
+    
+    ##### Step 1: Group AMH activity into hourly throughput
+    
+    AMH check-ins are grouped by:
+    
+    - date
+    - hour
+    
+    This creates an hourly item count for each day in the selected range.
+    
+    ##### Step 2: Build the AMH hourly average profile
+    
+    Those daily hourly counts are then averaged by hour of day to estimate the machine's typical throughput at each hour.
+    
+    ##### Step 3: Identify peak machine operating hours
+    
+    From that hourly AMH profile:
+    
+    - the highest observed hourly average is identified
+    - a peak threshold is calculated at 75% of that maximum
+    
+    Highest observed AMH hourly average = {peak_row["avg_items_per_hour"]:,.1f} items/hour
+    
+    Peak AMH threshold
+    = {peak_row["avg_items_per_hour"]:,.1f} * 0.75
+    = {threshold:,.1f} items/hour
+    
+    Only AMH hours meeting or exceeding that threshold are used in the final AMH rate.
+    
+    ##### Step 4: Compute AMH processing rate
+    
+    AMH processing rate = {AMH_RATE:,.1f} items/hour
+    
+    #### Supporting Daily Inputs
+    
+    Average Daily Check-ins
+    = Total check-ins / Total days
+    = {int(staff_df["checkins"].sum()):,} / {staff_df["date"].nunique():,}
+    = {avg_daily_checkins:,.1f} items/day
+    
+    Daily Manual Time
+    = Average Daily Check-ins / Manual processing rate
+    = {avg_daily_checkins:,.1f} / {MANUAL_RATE:.1f}
+    = {avg_daily_manual_hours:,.2f} staff hours/day
+    
+    Daily AMH Time
+    = Average Daily Check-ins / AMH processing rate
+    = {avg_daily_checkins:,.1f} / {AMH_RATE:,.1f}
+    = {avg_daily_amh_hours:,.2f} machine hours/day
+    """)
+    else:
+        st.info("No labor data is available for the selected date range.")
+
+
+
+
     
     # -----------------------------
     # Volume & Capacity
