@@ -3361,27 +3361,57 @@ if selected_view == "Reports":
                     "#6b7280"
                 )
 
-            st.info(f"""### How Staff Time Saved Is Calculated
+if len(staff_df) > 0:
+    with st.expander("How the Staff Time Equivalent KPIs are calculated", expanded=False):
+        st.info(f"""
+##### Average Hours Saved
 
-The following formulas are used to get to the values you see for Avg Hours Saved, Total Hours Saved, and Estimated Labor Value:
-- Define Manual Processing Rate & AMH Processing Rate 
-- Avg Hours Saved = Avg Manual Time - Avg AMH Time
+Average Hours Saved = Avg Manual Time − Avg AMH Time  
+
+Average Hours Saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.2f} hours/day  
+
+**Average Daily Staff Hours Saved = {avg_saved:,.2f} staff hours/day**
+
+##### Total Hours Saved
+
+Total Hours Saved = Avg Hours Saved × number of days in selected range
+
+Total Hours Saved = {avg_saved:,.2f} × {staff_df["date"].nunique():,}
+
+**Total Hours Saved = {total_saved:,.2f} hours**
+
+##### Estimated Labor Value
+
+Estimated Labor Value = Total Hours Saved × Hourly labor cost  
+
+Estimated Labor Value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hour  
+
+**Estimated Labor Value = ${labor_value_saved:,.0f}**
+""")
+
+    with st.expander("Processing rates and supporting methodology", expanded=False):
+        st.info(f"""
+### How Staff Time Saved Is Calculated
+
+The following formulas are used to calculate Staff Time Equivalent metrics:
+
+- Define Manual Processing Rate and AMH Processing Rate
+- Avg Hours Saved = Avg Manual Time − Avg AMH Time
 - Total Hours Saved = Avg Hours Saved × number of days in selected range
-- Estimated Labor Value for selected date range = Total hours saved × Hourly labor cost
-- The formulas above are built on a sequence of dependent calculations. Each value is derived from the previous one:
+- Estimated Labor Value = Total Hours Saved × Hourly labor cost
+
+The calculation flow is:
 
 Average Daily Check-ins  
-→ Manual Processing Rate & AMH Processing Rate  
-→ Manual Processing Time & AMH Processing Time  
-→ Average Time Saved per Day (difference between manual and AMH time)  
-→ Total Time Saved (daily savings × number of days)  
+→ Manual Processing Rate and AMH Processing Rate  
+→ Manual Processing Time and AMH Processing Time  
+→ Average Time Saved per Day  
+→ Total Time Saved  
 → Estimated Labor Value
 
 #### Manual Processing Rate
 
-The manual processing rate is the estimated staff check-in throughput used for the Staff Time Saved, Labor Efficiency, and Staff Time Equivalent calculations.
-
-The manual processing rate is calculated using Westside circulation activity reports from four months:
+The manual processing rate is calculated using Westside circulation activity reports in TLC from four months:
 
 - March 2026
 - June 2025
@@ -3411,8 +3441,6 @@ For each individual day in a monthly sheet:
 Peak threshold = Daily maximum hourly check-ins × 0.75
 
 Only hours meeting or exceeding that threshold were counted as peak manual operating hours for that day.
-
-This was done so the manual benchmark would represent staff performance during strong working periods, rather than averaging in slower hours.
 
 ##### Step 3: Sum peak-hour counts within each month
 
@@ -3446,8 +3474,6 @@ September 2025
 
 ##### Step 4: Combine all monthly peak-hour data
 
-After each monthly sheet was processed, all peak-hour totals were combined into one weighted overall rate.
-
 Combined peak manual check-ins  
 = 2,343 + 2,000 + 3,058 + 2,627  
 = 10,028 items
@@ -3461,13 +3487,9 @@ Manual processing rate
 = 10,028 ÷ 213  
 = {MANUAL_RATE:.1f} items/hour
 
-This means the manual rate is based on 10,028 observed check-ins performed during 213 peak manual operating hours across four separate Westside monthly reports.
-
 #### AMH Processing Rate
 
-The AMH processing rate is the machine throughput benchmark used to estimate how long the sorter would take to process the same workload.
-
-This rate is calculated from AMH check-in history within the currently selected date range shown in the report.
+The AMH processing rate is calculated from AMH check-in history within the currently selected date range shown in the report.
 
 ##### Step 1: Group AMH activity into hourly throughput
 
@@ -3482,11 +3504,9 @@ This creates an hourly item count for each day in the selected range.
 
 Those daily hourly counts are then averaged by hour of day to estimate the machine’s typical throughput at each hour.
 
-This produces an average hourly AMH throughput profile across the selected date range.
-
 ##### Step 3: Identify peak machine operating hours
 
-From that AMH hourly average profile:
+From that hourly AMH profile:
 
 - the highest observed hourly average is identified
 - a peak threshold is calculated at 75% of that maximum
@@ -3498,42 +3518,13 @@ Peak AMH threshold = {threshold:,.1f} items/hour
 
 Only AMH hours meeting or exceeding that threshold are used in the final AMH rate.
 
-This keeps the machine benchmark focused on strong operating periods, using the same peak-hours logic applied to the manual benchmark.
-
 ##### Step 4: Compute AMH processing rate
-
-The AMH rate is the average throughput across all AMH peak hours in the selected dataset.
 
 AMH processing rate = {AMH_RATE:,.1f} items/hour
 
-#### How these two rates are used
+#### Supporting Daily Inputs
 
-Once both throughput benchmarks are established:
-
-Manual time per day  
-= Average daily check-ins ÷ Manual processing rate
-
-Manual time per day  
-= {avg_daily_checkins:,.1f} ÷ {MANUAL_RATE:.1f}  
-= {avg_daily_manual_hours:,.2f} staff hours/day
-
-AMH time per day  
-= Average daily check-ins ÷ AMH processing rate
-
-AMH time per day  
-= {avg_daily_checkins:,.1f} ÷ {AMH_RATE:,.1f}  
-= {avg_daily_amh_hours:,.2f} machine hours/day
-
-Average staff time saved per day  
-= Manual time per day − AMH time per day
-
-Average staff time saved per day  
-= {avg_daily_manual_hours:,.2f} − {avg_daily_amh_hours:,.2f}  
-= {avg_saved:,.2f} staff hours/day
-
-#### Average daily check-ins
-
-This is the average number of items checked in per day over the selected date range.
+##### Average Daily Check-ins
 
 Total check-ins = {int(staff_df["checkins"].sum()):,} items
 
@@ -3545,63 +3536,24 @@ Average daily check-ins = {int(staff_df["checkins"].sum()):,} ÷ {staff_df["date
 
 **Average daily check-ins = {avg_daily_checkins:,.1f} items/day**
 
-\\*The manual check-in rate of {MANUAL_RATE:.0f} is based on circulation report data observed at the Westside branch during peak hours.*
+##### Daily Manual Time
 
-##### AMH Processing Time
+Manual time per day = Average daily check-ins ÷ Manual processing rate
 
-#### AMH Processing Time
+Manual time per day = {avg_daily_checkins:,.1f} ÷ {MANUAL_RATE:.1f}
 
-Current AMH rate = Average AMH throughput during peak operating hours  
+**Manual time per day = {avg_daily_manual_hours:,.2f} staff hours/day**
 
-Peak AMH hours are defined as the hours performing at or above 75% of the AMH’s highest observed hourly average.
+##### Daily AMH Time
 
-Highest observed hourly average = {peak_row["avg_items_per_hour"]:,.1f} items/hour  
+AMH time per day = Average daily check-ins ÷ AMH processing rate
 
-Peak-hour threshold = {peak_row["avg_items_per_hour"]:,.1f} × 0.75  
+AMH time per day = {avg_daily_checkins:,.1f} ÷ {AMH_RATE:,.1f}
 
-**Peak-hour threshold = {threshold:,.1f} items/hour**
-
-Average throughput across peak hours = **{AMH_RATE:,.1f} items/hour**
-
-AMH time = Average daily check-ins ÷ Current AMH rate  
-
-AMH time = {avg_daily_checkins:,.1f} items/day ÷ {AMH_RATE:,.1f} items/hour  
-
-**AMH time = {avg_daily_amh_hours:,.2f} machine hours/day**
-
-
-Current AMH rate = {AMH_RATE:.1f} items/hour  
-
-AMH time = {avg_daily_checkins:,.1f} items/day ÷ {AMH_RATE:.1f} items/hour  
-
-**AMH time = {avg_daily_amh_hours:,.2f} machine hours/day**
-
-##### Average Hours saved
-
-Average Hours saved Time saved = Avg Manual time − Avg AMH time  
-
-Average Hours saved = {avg_daily_manual_hours:,.2f} hours/day − {avg_daily_amh_hours:,.2f} hours/day  
-
-**Average Daily Staff Hours saved = {avg_saved:,.2f} staff hours/day**
-
-##### Total Hours Saved
-
-Total Hours Saved = Avg Hours Saved × number of days in selected range
-
-Total Hours Saved = {avg_saved:,.2f} × {staff_df["date"].nunique():,}
-
-**Total Hours Saved = {total_saved:,.2f} hours**
-
-##### Estimated Labor Value
-
-Estimated labor value = Total hours saved × Hourly labor cost  
-
-Estimated labor value = {total_saved:,.2f} staff hours × ${HOURLY_COST:.2f}/hour  
-
-**Estimated labor value = ${labor_value_saved:,.0f}**
+**AMH time per day = {avg_daily_amh_hours:,.2f} machine hours/day**
 """)
-        else:
-            st.info("No labor data is available for the selected date range.")
+else:
+    st.info("No labor data is available for the selected date range.")
 
     # -----------------------------
     # Volume & Capacity
