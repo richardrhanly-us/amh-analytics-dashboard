@@ -28,8 +28,27 @@ def upload(data: dict):
 
         inserted_checkins = 0
         inserted_rejects = 0
+        inserted_acs = 0
 
         with engine.begin() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS acs_events (
+                    id BIGSERIAL PRIMARY KEY,
+                    customer_id INTEGER,
+                    branch_id INTEGER,
+                    event_time TIMESTAMP,
+                    message_code TEXT,
+                    barcode TEXT,
+                    title TEXT,
+                    patron_id TEXT,
+                    destination TEXT,
+                    raw_message TEXT,
+                    source_file TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (event_time, message_code, barcode)
+                )
+            """))
+
             for row in checkins:
                 result = conn.execute(text("""
                     INSERT INTO checkins (
@@ -75,12 +94,33 @@ def upload(data: dict):
 
                 inserted_rejects += result.rowcount
 
+            for row in acs:
+                result = conn.execute(text("""
+                    INSERT INTO acs_events (
+                        customer_id, branch_id, event_time,
+                        message_code, barcode, title,
+                        patron_id, destination,
+                        raw_message, source_file
+                    )
+                    VALUES (
+                        :customer_id, :branch_id, :event_time,
+                        :message_code, :barcode, :title,
+                        :patron_id, :destination,
+                        :raw_message, :source_file
+                    )
+                    ON CONFLICT (event_time, message_code, barcode) DO NOTHING
+                """), row)
+
+                inserted_acs += result.rowcount
+
         return {
             "status": "success",
             "checkins_received": len(checkins),
             "rejects_received": len(rejects),
+            "acs_received": len(acs),
             "checkins_inserted": inserted_checkins,
-            "rejects_inserted": inserted_rejects
+            "rejects_inserted": inserted_rejects,
+            "acs_inserted": inserted_acs
         }
 
     except Exception as e:
