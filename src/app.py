@@ -3310,18 +3310,18 @@ Average Daily Check-ins
 → Total Time Saved (daily savings × number of days)  
 → Estimated Labor Value
 
-##### Average daily check-ins  
+#### Average daily check-ins
+
 This is the average number of items checked in per day over the selected date range.
 
-For **{start_date.strftime('%b %d, %Y')} to {end_date.strftime('%b %d, %Y')}**, the average daily check-in volume is **{avg_daily_checkins:,.1f} items/day**.
+Total check-ins = {total_checkins:,} items  
+Total days in range = {days_in_range:,} days  
 
-##### Manual Processing Time
+Average daily check-ins = Total check-ins ÷ Total days  
 
-Manual rate = {MANUAL_RATE:.0f} items/hour*  
+Average daily check-ins = {total_checkins:,} ÷ {days_in_range:,}  
 
-Manual time = {avg_daily_checkins:,.1f} items/day ÷ {MANUAL_RATE:.0f} items/hour  
-
-**Manual time = {avg_daily_manual_hours:,.2f} staff hours/day**
+**Average daily check-ins = {avg_daily_checkins:,.1f} items/day**
 
 \\*The manual check-in rate of {MANUAL_RATE:.0f} is based on circulation report data observed at the Westside branch during peak hours, where staff are working at their fastest steady pace.*
 
