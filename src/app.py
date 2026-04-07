@@ -3364,19 +3364,170 @@ if selected_view == "Reports":
             st.info(f"""### How Staff Time Saved Is Calculated
 
 The following formulas are used to get to the values you see for Avg Hours Saved, Total Hours Saved, and Estimated Labor Value:
-
+- Define Manual Processing Rate & AMH Processing Rate 
 - Avg Hours Saved = Avg Manual Time - Avg AMH Time
 - Total Hours Saved = Avg Hours Saved × number of days in selected range
 - Estimated Labor Value for selected date range = Total hours saved × Hourly labor cost
 - The formulas above are built on a sequence of dependent calculations. Each value is derived from the previous one:
 
 Average Daily Check-ins  
+→ Manual Processing Rate & AMH Processing Rate  
 → Manual Processing Time & AMH Processing Time  
 → Average Time Saved per Day (difference between manual and AMH time)  
 → Total Time Saved (daily savings × number of days)  
 → Estimated Labor Value
 
-#### Average daily check-ins
+#### Manual Processing Rate
+
+The manual processing rate is the estimated staff check-in throughput used for the Staff Time Saved, Labor Efficiency, and Staff Time Equivalent calculations.
+
+This rate was not estimated from a generic benchmark. It was built from actual Westside circulation activity reports collected from four separate months:
+
+- March 2026
+- June 2025
+- August 2025
+- September 2025
+
+Each monthly sheet was processed using the same method.
+
+##### Step 1: Group transactions into hourly activity
+
+For each sheet, every check-in transaction timestamp was converted into:
+
+- a calendar date
+- an hour of the day
+
+Transactions were then grouped by date and hour so that each day had an hourly check-in count.
+
+##### Step 2: Find each day’s peak operating threshold
+
+For each individual day in a monthly sheet:
+
+- the highest hourly check-in count for that day was identified
+- a peak threshold was calculated as 75% of that day's maximum hourly count
+
+Peak threshold = Daily maximum hourly check-ins × 0.75
+
+Only hours meeting or exceeding that threshold were counted as peak manual operating hours for that day.
+
+This was done so the manual benchmark would represent staff performance during strong working periods, rather than averaging in slower hours.
+
+##### Step 3: Sum peak-hour counts within each month
+
+After identifying the peak hours for each day, the peak-hour check-ins and peak-hour counts were summed for the full month.
+
+The results by month were:
+
+March 2026  
+- Peak manual check-ins = 2,343 items  
+- Peak manual hours = 51 hours  
+- Monthly manual rate = 2,343 ÷ 51  
+- Monthly manual rate = 45.94 items/hour
+
+June 2025  
+- Peak manual check-ins = 2,000 items  
+- Peak manual hours = 45 hours  
+- Monthly manual rate = 2,000 ÷ 45  
+- Monthly manual rate = 44.44 items/hour
+
+August 2025  
+- Peak manual check-ins = 3,058 items  
+- Peak manual hours = 60 hours  
+- Monthly manual rate = 3,058 ÷ 60  
+- Monthly manual rate = 50.97 items/hour
+
+September 2025  
+- Peak manual check-ins = 2,627 items  
+- Peak manual hours = 57 hours  
+- Monthly manual rate = 2,627 ÷ 57  
+- Monthly manual rate = 46.09 items/hour
+
+##### Step 4: Combine all monthly peak-hour data
+
+After each monthly sheet was processed, all peak-hour totals were combined into one weighted overall rate.
+
+Combined peak manual check-ins  
+= 2,343 + 2,000 + 3,058 + 2,627  
+= 10,028 items
+
+Combined peak manual hours  
+= 51 + 45 + 60 + 57  
+= 213 hours
+
+Manual processing rate  
+= Combined peak manual check-ins ÷ Combined peak manual hours  
+= 10,028 ÷ 213  
+= {MANUAL_RATE:.1f} items/hour
+
+This means the manual rate is based on 10,028 observed check-ins performed during 213 peak manual operating hours across four separate Westside monthly reports.
+
+#### AMH Processing Rate
+
+The AMH processing rate is the machine throughput benchmark used to estimate how long the sorter would take to process the same workload.
+
+This rate is calculated from AMH check-in history within the currently selected date range shown in the report.
+
+##### Step 1: Group AMH activity into hourly throughput
+
+AMH check-ins are grouped by:
+
+- date
+- hour
+
+This creates an hourly item count for each day in the selected range.
+
+##### Step 2: Build the AMH hourly average profile
+
+Those daily hourly counts are then averaged by hour of day to estimate the machine’s typical throughput at each hour.
+
+This produces an average hourly AMH throughput profile across the selected date range.
+
+##### Step 3: Identify peak machine operating hours
+
+From that AMH hourly average profile:
+
+- the highest observed hourly average is identified
+- a peak threshold is calculated at 75% of that maximum
+
+Highest observed AMH hourly average = {peak_row["avg_items_per_hour"]:,.1f} items/hour
+
+Peak AMH threshold = {peak_row["avg_items_per_hour"]:,.1f} × 0.75  
+Peak AMH threshold = {threshold:,.1f} items/hour
+
+Only AMH hours meeting or exceeding that threshold are used in the final AMH rate.
+
+This keeps the machine benchmark focused on strong operating periods, using the same peak-hours logic applied to the manual benchmark.
+
+##### Step 4: Compute AMH processing rate
+
+The AMH rate is the average throughput across all AMH peak hours in the selected dataset.
+
+AMH processing rate = {AMH_RATE:,.1f} items/hour
+
+#### How these two rates are used
+
+Once both throughput benchmarks are established:
+
+Manual time per day  
+= Average daily check-ins ÷ Manual processing rate
+
+Manual time per day  
+= {avg_daily_checkins:,.1f} ÷ {MANUAL_RATE:.1f}  
+= {avg_daily_manual_hours:,.2f} staff hours/day
+
+AMH time per day  
+= Average daily check-ins ÷ AMH processing rate
+
+AMH time per day  
+= {avg_daily_checkins:,.1f} ÷ {AMH_RATE:,.1f}  
+= {avg_daily_amh_hours:,.2f} machine hours/day
+
+Average staff time saved per day  
+= Manual time per day − AMH time per day
+
+Average staff time saved per day  
+= {avg_daily_manual_hours:,.2f} − {avg_daily_amh_hours:,.2f}  
+= {avg_saved:,.2f} staff hours/day
 
 #### Average daily check-ins
 
