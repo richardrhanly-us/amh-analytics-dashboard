@@ -1354,7 +1354,7 @@ if selected_view == "Live Today":
 
         if st.button("Refresh Live Data"):
             st.cache_data.clear()
-            st.success("Live data cache cleared. Reloading latest available files...")
+            st.session_state["last_refresh_count"] = refresh_count
             st.rerun()
     
     with col2:
