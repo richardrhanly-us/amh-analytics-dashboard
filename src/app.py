@@ -3297,7 +3297,7 @@ if selected_view == "Reports":
 
             st.info(f"""### How Staff Time Saved Is Calculated
 
-To get to the values you see for Avg Hours Saved, Total Hours Saved, Estimated Labor Value we use these formulas:
+The following formulas are used to get to the values you see for Avg Hours Saved, Total Hours Saved, and Estimated Labor Value:
 
 - Avg Hours Saved = Avg Manual Time - Avg AMH Time
 - Total Hours Saved = Avg Hours Saved × number of days in selected range
@@ -3326,6 +3326,27 @@ Average daily check-ins = {int(staff_df["checkins"].sum()):,} ÷ {days_in_range:
 \\*The manual check-in rate of {MANUAL_RATE:.0f} is based on circulation report data observed at the Westside branch during peak hours, where staff are working at their fastest steady pace.*
 
 ##### AMH Processing Time
+
+#### AMH Processing Time
+
+Current AMH rate = Average AMH throughput during peak operating hours  
+
+Peak AMH hours are defined as the hours performing at or above 75% of the AMH’s highest observed hourly average.
+
+Highest observed hourly average = {peak_row["avg_items_per_hour"]:,.1f} items/hour  
+
+Peak-hour threshold = {peak_row["avg_items_per_hour"]:,.1f} × 0.75  
+
+**Peak-hour threshold = {threshold:,.1f} items/hour**
+
+Average throughput across peak hours = **{AMH_RATE:,.1f} items/hour**
+
+AMH time = Average daily check-ins ÷ Current AMH rate  
+
+AMH time = {avg_daily_checkins:,.1f} items/day ÷ {AMH_RATE:,.1f} items/hour  
+
+**AMH time = {avg_daily_amh_hours:,.2f} machine hours/day**
+
 
 Current AMH rate = {AMH_RATE:.1f} items/hour  
 
