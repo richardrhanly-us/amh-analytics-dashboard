@@ -3434,7 +3434,7 @@ Estimated Labor Value
 The following formulas are used to calculate Staff Time Equivalent metrics:
 
 - Define Manual Processing Rate and AMH Processing Rate
-- Avg Hours Saved = Avg Manual Time − Avg AMH Time
+- Avg Hours Saved = Avg Manual Time - Avg AMH Time
 - Total Hours Saved = Avg Hours Saved × number of days in selected range
 - Estimated Labor Value = Total Hours Saved × Hourly labor cost
 
