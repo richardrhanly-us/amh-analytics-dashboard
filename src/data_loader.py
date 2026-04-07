@@ -188,7 +188,7 @@ def _load_rejects_from_csv(path):
         return pd.DataFrame()
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_checkins_history_df(mtime=None, refresh_count=0):
     df = _load_checkins_history_from_db()
 
@@ -198,7 +198,7 @@ def load_checkins_history_df(mtime=None, refresh_count=0):
     return _load_checkins_from_csv(CHECKINS_HISTORY_FILE)
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def load_checkins_df(path=CHECKINS_FILE, mtime=None, refresh_count=0):
     df = _load_checkins_live_from_db()
 
@@ -207,8 +207,7 @@ def load_checkins_df(path=CHECKINS_FILE, mtime=None, refresh_count=0):
 
     return _load_checkins_from_csv(path)
 
-
-@st.cache_data(show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def load_rejects_df(path=REJECTS_FILE, mtime=None, refresh_count=0):
     df = _load_rejects_live_from_db()
 
@@ -218,7 +217,7 @@ def load_rejects_df(path=REJECTS_FILE, mtime=None, refresh_count=0):
     return _load_rejects_from_csv(path)
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_rejects_history_df(path=REJECTS_HISTORY_FILE, mtime=None, refresh_count=0):
     df = _load_rejects_history_from_db()
 
@@ -228,7 +227,7 @@ def load_rejects_history_df(path=REJECTS_HISTORY_FILE, mtime=None, refresh_count
     return _load_rejects_from_csv(path)
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def load_pipeline_status(path=STATUS_FILE, mtime=None, refresh_count=0):
     query = """
         SELECT
