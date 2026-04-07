@@ -3363,7 +3363,7 @@ if selected_view == "Reports":
 
 if len(staff_df) > 0:
     with st.expander("How the Staff Time Equivalent KPIs are calculated", expanded=False):
-    st.info(f"""
+        st.info(f"""
 ##### Average Hours Saved
 
 Average Daily Check-ins
@@ -3375,8 +3375,6 @@ Average Daily Check-ins
 Average Daily Check-ins
 = {avg_daily_checkins:,.1f} items/day
 
----
-
 Average Daily Manual Time
 = Average Daily Check-ins / Manual processing rate
 
@@ -3386,8 +3384,6 @@ Average Daily Manual Time
 Average Daily Manual Time
 = {avg_daily_manual_hours:,.2f} staff hours/day
 
----
-
 Average Daily AMH Time
 = Average Daily Check-ins / AMH processing rate
 
@@ -3396,8 +3392,6 @@ Average Daily AMH Time
 
 Average Daily AMH Time
 = {avg_daily_amh_hours:,.2f} machine hours/day
-
----
 
 Average Hours Saved per Day
 = Average Daily Manual Time - Average Daily AMH Time
@@ -3431,21 +3425,18 @@ Estimated Labor Value
 = ${labor_value_saved:,.0f}
 """)
 
-The following formulas are used to calculate Staff Time Equivalent metrics:
-
-- Define Manual Processing Rate and AMH Processing Rate
-- Avg Hours Saved = Avg Manual Time - Avg AMH Time
-- Total Hours Saved = Avg Hours Saved × number of days in selected range
-- Estimated Labor Value = Total Hours Saved × Hourly labor cost
+    with st.expander("Processing rates and supporting methodology", expanded=False):
+        st.info(f"""
+### How Staff Time Saved Is Calculated
 
 The calculation flow is:
 
-Average Daily Check-ins  
-→ Manual Processing Rate and AMH Processing Rate  
-→ Manual Processing Time and AMH Processing Time  
-→ Average Time Saved per Day  
-→ Total Time Saved  
-→ Estimated Labor Value
+Average Daily Check-ins
+-> Manual Processing Rate and AMH Processing Rate
+-> Manual Processing Time and AMH Processing Time
+-> Average Hours Saved per Day
+-> Total Hours Saved
+-> Estimated Labor Value
 
 #### Manual Processing Rate
 
@@ -3455,8 +3446,6 @@ The manual processing rate is calculated using Westside circulation activity rep
 - June 2025
 - August 2025
 - September 2025
-
-These reports contain timestamped check-in activity, which is used to measure hourly throughput and identify peak operating periods.
 
 Each monthly sheet was processed using the same method.
 
@@ -3469,60 +3458,58 @@ For each sheet, every check-in transaction timestamp was converted into:
 
 Transactions were then grouped by date and hour so that each day had an hourly check-in count.
 
-##### Step 2: Find each day’s peak operating threshold
+##### Step 2: Find each day's peak operating threshold
 
 For each individual day in a monthly sheet:
 
 - the highest hourly check-in count for that day was identified
 - a peak threshold was calculated as 75% of that day's maximum hourly count
 
-Peak threshold = Daily maximum hourly check-ins × 0.75
+Peak threshold = Daily maximum hourly check-ins * 0.75
 
 Only hours meeting or exceeding that threshold were counted as peak manual operating hours for that day.
 
 ##### Step 3: Sum peak-hour counts within each month
 
-After identifying the peak hours for each day, the peak-hour check-ins and peak-hour counts were summed for the full month.
-
 The results by month were:
 
-March 2026  
-- Peak manual check-ins = 2,343 items  
-- Peak manual hours = 51 hours  
-- Monthly manual rate = 2,343 ÷ 51  
+March 2026
+- Peak manual check-ins = 2,343 items
+- Peak manual hours = 51 hours
+- Monthly manual rate = 2,343 / 51
 - Monthly manual rate = 45.94 items/hour
 
-June 2025  
-- Peak manual check-ins = 2,000 items  
-- Peak manual hours = 45 hours  
-- Monthly manual rate = 2,000 ÷ 45  
+June 2025
+- Peak manual check-ins = 2,000 items
+- Peak manual hours = 45 hours
+- Monthly manual rate = 2,000 / 45
 - Monthly manual rate = 44.44 items/hour
 
-August 2025  
-- Peak manual check-ins = 3,058 items  
-- Peak manual hours = 60 hours  
-- Monthly manual rate = 3,058 ÷ 60  
+August 2025
+- Peak manual check-ins = 3,058 items
+- Peak manual hours = 60 hours
+- Monthly manual rate = 3,058 / 60
 - Monthly manual rate = 50.97 items/hour
 
-September 2025  
-- Peak manual check-ins = 2,627 items  
-- Peak manual hours = 57 hours  
-- Monthly manual rate = 2,627 ÷ 57  
+September 2025
+- Peak manual check-ins = 2,627 items
+- Peak manual hours = 57 hours
+- Monthly manual rate = 2,627 / 57
 - Monthly manual rate = 46.09 items/hour
 
 ##### Step 4: Combine all monthly peak-hour data
 
-Combined peak manual check-ins  
-= 2,343 + 2,000 + 3,058 + 2,627  
+Combined peak manual check-ins
+= 2,343 + 2,000 + 3,058 + 2,627
 = 10,028 items
 
-Combined peak manual hours  
-= 51 + 45 + 60 + 57  
+Combined peak manual hours
+= 51 + 45 + 60 + 57
 = 213 hours
 
-Manual processing rate  
-= Combined peak manual check-ins ÷ Combined peak manual hours  
-= 10,028 ÷ 213  
+Manual processing rate
+= Combined peak manual check-ins / Combined peak manual hours
+= 10,028 / 213
 = {MANUAL_RATE:.1f} items/hour
 
 #### AMH Processing Rate
@@ -3540,7 +3527,7 @@ This creates an hourly item count for each day in the selected range.
 
 ##### Step 2: Build the AMH hourly average profile
 
-Those daily hourly counts are then averaged by hour of day to estimate the machine’s typical throughput at each hour.
+Those daily hourly counts are then averaged by hour of day to estimate the machine's typical throughput at each hour.
 
 ##### Step 3: Identify peak machine operating hours
 
@@ -3551,8 +3538,9 @@ From that hourly AMH profile:
 
 Highest observed AMH hourly average = {peak_row["avg_items_per_hour"]:,.1f} items/hour
 
-Peak AMH threshold = {peak_row["avg_items_per_hour"]:,.1f} × 0.75  
-Peak AMH threshold = {threshold:,.1f} items/hour
+Peak AMH threshold
+= {peak_row["avg_items_per_hour"]:,.1f} * 0.75
+= {threshold:,.1f} items/hour
 
 Only AMH hours meeting or exceeding that threshold are used in the final AMH rate.
 
@@ -3562,33 +3550,20 @@ AMH processing rate = {AMH_RATE:,.1f} items/hour
 
 #### Supporting Daily Inputs
 
-##### Average Daily Check-ins
+Average Daily Check-ins
+= Total check-ins / Total days
+= {int(staff_df["checkins"].sum()):,} / {staff_df["date"].nunique():,}
+= {avg_daily_checkins:,.1f} items/day
 
-Total check-ins = {int(staff_df["checkins"].sum()):,} items
+Daily Manual Time
+= Average Daily Check-ins / Manual processing rate
+= {avg_daily_checkins:,.1f} / {MANUAL_RATE:.1f}
+= {avg_daily_manual_hours:,.2f} staff hours/day
 
-Total days in range = {staff_df["date"].nunique():,} days  
-
-Average daily check-ins = Total check-ins ÷ Total days  
-
-Average daily check-ins = {int(staff_df["checkins"].sum()):,} ÷ {staff_df["date"].nunique():,}
-
-**Average daily check-ins = {avg_daily_checkins:,.1f} items/day**
-
-##### Daily Manual Time
-
-Manual time per day = Average daily check-ins ÷ Manual processing rate
-
-Manual time per day = {avg_daily_checkins:,.1f} ÷ {MANUAL_RATE:.1f}
-
-**Manual time per day = {avg_daily_manual_hours:,.2f} staff hours/day**
-
-##### Daily AMH Time
-
-AMH time per day = Average daily check-ins ÷ AMH processing rate
-
-AMH time per day = {avg_daily_checkins:,.1f} ÷ {AMH_RATE:,.1f}
-
-**AMH time per day = {avg_daily_amh_hours:,.2f} machine hours/day**
+Daily AMH Time
+= Average Daily Check-ins / AMH processing rate
+= {avg_daily_checkins:,.1f} / {AMH_RATE:,.1f}
+= {avg_daily_amh_hours:,.2f} machine hours/day
 """)
 else:
     st.info("No labor data is available for the selected date range.")
