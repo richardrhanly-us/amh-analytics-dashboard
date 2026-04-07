@@ -3309,8 +3309,8 @@ The formulas above are built on a sequence of dependent calculations. Each value
 
 Average Daily Check-ins  
 → Manual Processing Time & AMH Processing Time  
-→ Average Time Saved (per day)  
-→ Total Time Saved (over the selected period)  
+→ Average Time Saved per Day (difference between manual and AMH time)  
+→ Total Time Saved (daily savings × number of days)  
 → Estimated Labor Value
 
 ##### Average daily check-ins  
