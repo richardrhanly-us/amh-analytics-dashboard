@@ -3289,7 +3289,7 @@ if selected_view == "Reports":
             
             with k3:
                 render_kpi_card(
-                    "Estimated Labor Value",
+                    "Estimated Labor Value for selected date range",
                     f"${labor_value_saved:,.0f}",
                     "Staff time avoided value",
                     "#6b7280"
@@ -3303,10 +3303,15 @@ Avg Hours Saved = Avg Manual Time - Avg AMH Time
 
 Total Hours Saved = Avg Hours Saved × number of days in selected range
 
-Estimated Labor Value = Total hours saved × Hourly labor cost
+Estimated Labor Value for selected date range = Total hours saved × Hourly labor cost
 
-The formulas above are built on these defined variables, that each depend on the preceding varaiable's defintion for calculation:
-Average daily checkins -> Manual and AMH Time -> Average Hours saved -> Total Hours Saved -> Estimated Labor Value
+The formulas above are built on a sequence of dependent calculations. Each value is derived from the previous one:
+
+Average Daily Check-ins  
+→ Manual Processing Time & AMH Processing Time  
+→ Average Time Saved (per day)  
+→ Total Time Saved (over the selected period)  
+→ Estimated Labor Value
 
 ##### Average daily check-ins  
 This is the average number of items checked in per day over the selected date range.
