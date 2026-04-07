@@ -821,21 +821,31 @@ if pipeline_run_status == "completed":
     pipeline_result_text = (
         f"Uploaded {uploaded_checkins_rows:,} checkins and {uploaded_rejects_rows:,} rejects this run"
     )
+
+elif pipeline_run_status == "completed_no_new_rows":
+    pipeline_status_label = "Pipeline Healthy"
+    pipeline_status_color = "#059669"
+    pipeline_status_bg = "rgba(5, 150, 105, 0.14)" if theme_base == "dark" else "#ecfdf5"
+    pipeline_result_text = "Run completed, but no new rows were uploaded"
+
 elif pipeline_run_status == "skipped_no_source_changes":
     pipeline_status_label = "Pipeline Healthy"
     pipeline_status_color = "#059669"
     pipeline_status_bg = "rgba(5, 150, 105, 0.14)" if theme_base == "dark" else "#ecfdf5"
     pipeline_result_text = "No new source changes detected this run"
+
 elif str(pipeline_run_status).startswith("failed"):
     pipeline_status_label = "Pipeline Failed"
     pipeline_status_color = "#dc2626"
     pipeline_status_bg = "rgba(220, 38, 38, 0.14)" if theme_base == "dark" else "#fef2f2"
     pipeline_result_text = "Latest run failed"
+
 elif pipeline_run_status == "started":
     pipeline_status_label = "Pipeline Running"
     pipeline_status_color = "#d97706"
     pipeline_status_bg = "rgba(217, 119, 6, 0.14)" if theme_base == "dark" else "#fffbeb"
     pipeline_result_text = "Run in progress"
+
 else:
     pipeline_status_label = "Pipeline Status Unknown"
     pipeline_status_color = "#94a3b8" if theme_base == "dark" else "#6b7280"
