@@ -1726,7 +1726,7 @@ Status Code: `{status_code_text}`
             y=alt.Y("checkins:Q", title="Checkins"),
             tooltip=["hour_label", "checkins"]
         )
-        .properties(height=320)
+        .properties(height=250)
     )
 
     render_chart(checkins_hour_chart)
