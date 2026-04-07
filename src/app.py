@@ -3299,13 +3299,10 @@ if selected_view == "Reports":
 
 To get to the values you see for Avg Hours Saved, Total Hours Saved, Estimated Labor Value we use these formulas:
 
-Avg Hours Saved = Avg Manual Time - Avg AMH Time
-
-Total Hours Saved = Avg Hours Saved × number of days in selected range
-
-Estimated Labor Value for selected date range = Total hours saved × Hourly labor cost
-
-The formulas above are built on a sequence of dependent calculations. Each value is derived from the previous one:
+- Avg Hours Saved = Avg Manual Time - Avg AMH Time
+- Total Hours Saved = Avg Hours Saved × number of days in selected range
+- Estimated Labor Value for selected date range = Total hours saved × Hourly labor cost
+- The formulas above are built on a sequence of dependent calculations. Each value is derived from the previous one:
 
 Average Daily Check-ins  
 → Manual Processing Time & AMH Processing Time  
