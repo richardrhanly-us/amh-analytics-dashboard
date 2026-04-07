@@ -24,6 +24,7 @@ def upload(data: dict):
     try:
         checkins = data.get("checkins", [])
         rejects = data.get("rejects", [])
+        acs = data.get("acs", [])
 
         inserted_checkins = 0
         inserted_rejects = 0
