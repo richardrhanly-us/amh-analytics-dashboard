@@ -2929,6 +2929,37 @@ if selected_view == "Reports":
     
                     st.markdown(f"""
     ### How ROI is calculated
+
+The following formulas are used to calculate the ROI metrics shown above:
+
+Observed Net Value = Observed Labor Value − Observed Operating Cost  
+Annual Labor Value = Observed Labor Value × (12 ÷ Equivalent months)  
+Current Annual Run Rate = Annual Labor Value − Annual Cost  
+Break-even Years = Upfront Cost ÷ Current Annual Run Rate  
+
+Since-Install Value = Annual Labor Value × Years Since Install  
+Since-Install Net = Since-Install Value − Since-Install Total Cost  
+Since-Install ROI = Since-Install Net ÷ Since-Install Total Cost × 100  
+
+The formulas above are built on a sequence of dependent calculations. Each value is derived from the previous one:
+
+Observed Labor Value  
+→ Observed Operating Cost  
+→ Observed Net Value  
+
+Observed Labor Value  
+→ Annual Labor Value  
+→ Annual Cost  
+→ Current Annual Run Rate  
+→ Break-even Status  
+
+Annual Labor Value  
+→ Years Since Install  
+→ Since-Install Value  
+→ Since-Install Operating Cost  
+→ Since-Install Total Cost  
+→ Since-Install Net  
+→ Since-Install ROI  
     
     #### 1. Selected date range
     This ROI calculation uses data from the selected reporting window.
