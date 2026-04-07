@@ -2492,6 +2492,7 @@ if selected_view == "Reports":
             labor_value_saved = roi_payload["labor_value_saved"]
             observed_operating_cost = roi_payload["observed_operating_cost"]
             observed_net_operating_value = roi_payload["observed_net_operating_value"]
+            observed_hours_saved = labor_value_saved / HOURLY_COST if HOURLY_COST > 0 else 0
 
             months_in_range = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1) / 30.44
             years_in_range = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1) / 365.25
@@ -2948,15 +2949,15 @@ if selected_view == "Reports":
 
     *Refer to How Staff Time Saved Is Calculated in Labor & Efficiency for further explanation on how Total hours saved and Hourly labor cost are calculated.* 
 
-    Total hours saved = **{total_saved:,.2f} hours**
+    Total hours saved = **{observed_hours_saved:,.2f} hours**
     
     Hourly labor cost = **${HOURLY_COST:.2f}/hour**
     
     This is the estimated labor value created during the selected range.
     
-    Observed labor value = Total hours saved × Hourly labor cost  
+    Observed labor value = Total hours saved × Hourly labor cost
     
-    Observed labor value = {total_saved:,.2f} hours × ${HOURLY_COST:.2f}/hour  
+    Observed labor value = {observed_hours_saved:,.2f} hours × ${HOURLY_COST:.2f}/hour
     
     **Observed labor value = ${labor_value_saved:,.0f}**
 
