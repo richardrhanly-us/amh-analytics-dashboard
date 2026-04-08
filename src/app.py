@@ -216,11 +216,14 @@ def normalize_internal_destination(destination, raw_message="", message_code="")
     if not destination and not raw_message:
         return None
 
-    # exclude known external transit destinations
+    # exclude external transit destinations
     if "WESTSIDE" in combined or "LIBRARY EXPRESS" in combined:
         return None
 
-    # internal categories
+    # exclude problem-item style routing failures from internal routing
+    if "NO AGENCY DESTINATION" in combined or destination == "":
+        return None
+
     if "ILL" in combined or "INTERLIBRARY" in combined:
         return "ILL"
 
@@ -233,13 +236,9 @@ def normalize_internal_destination(destination, raw_message="", message_code="")
     if "REPAIR" in combined or "MENDING" in combined or "MEND" in combined:
         return "Repair / Mending"
 
-    if "PROBLEM" in combined:
-        return "Problem Items"
-
     if "STAFF" in combined or "REVIEW" in combined:
         return "Staff Review"
 
-    # optional fallback from ACS message behavior
     if message_code in {"09", "10", "11", "12", "13", "14", "15", "16", "17", "18"}:
         return None
 
@@ -287,6 +286,24 @@ def get_internal_count(summary_df, category_name):
     if len(match) == 0:
         return 0
     return int(match.iloc[0])
+
+def get_problem_items_count(source_df):
+    if source_df is None or len(source_df) == 0:
+        return 0
+
+    if "destination" not in source_df.columns:
+        return 0
+
+    destination_series = source_df["destination"].fillna("").astype(str).str.strip().str.upper()
+
+    problem_mask = (
+        destination_series.eq("")
+        | destination_series.eq("NO AGENCY DESTINATION")
+        | destination_series.str.contains("NO AGENCY DESTINATION", na=False)
+    )
+
+    return int(problem_mask.sum())
+
 
 def format_hour(hour):
     if hour is None:
@@ -1368,7 +1385,7 @@ today_ill = get_internal_count(internal_summary_today, "ILL")
 today_holds = today_estimated_holds
 
 today_repair = get_internal_count(internal_summary_today, "Repair / Mending")
-today_problem_items = int(problem_items) if problem_items is not None else 0
+today_problem_items = get_problem_items_count(today_df)
 today_staff_review = get_internal_count(internal_summary_today, "Staff Review")
 
 today_total_internal = (
@@ -1861,7 +1878,7 @@ Status Code: `{status_code_text}`
         render_kpi_card(
             "Problem Items",
             f"{today_problem_items:,}",
-            f"{(today_problem_items / internal_pct_base) * 100:.1f}% of checkins today",
+            f"{(today_problem_items / internal_pct_base) * 100:.1f}% missing destination routing",
             "#6b7280",
             value_font_size="1.85rem",
             border_color="#34d399"
@@ -4956,7 +4973,7 @@ if selected_view == "Transits":
     destination_transit_summary_color = destination_driver_summary["color"]
 
     transit1, transit2, transit3, transit4, transit5 = st.columns(5)
-
+    
     with transit1:
         render_kpi_card(
             "Total Transit Items",
@@ -4964,7 +4981,7 @@ if selected_view == "Transits":
             f"{total_transit_pct:.2f}% of all checkins",
             "#6b7280"
         )
-
+    
     with transit2:
         render_kpi_card(
             "Transit to Westside",
@@ -4972,7 +4989,7 @@ if selected_view == "Transits":
             f"{westside_pct:.2f}% of all checkins",
             "#6b7280"
         )
-
+    
     with transit3:
         render_kpi_card(
             "Transit to Library Express",
@@ -4980,7 +4997,7 @@ if selected_view == "Transits":
             f"{library_express_pct:.2f}% of all checkins",
             "#6b7280"
         )
-
+    
     with transit4:
         render_kpi_card(
             "Routing Failures",
@@ -4988,7 +5005,7 @@ if selected_view == "Transits":
             "Missing destination routing",
             "#6b7280"
         )
-
+    
     with transit5:
         render_kpi_card(
             "Peak Avg Transit Day",
@@ -5310,8 +5327,8 @@ if selected_view == "Transits":
         else:
             st.info("No destination-level transit reject data available for the selected date range.")
 
-        st.subheader('"No Agency Destination" Deep Dive')
-        st.caption("Looks at items that failed routing to highlight system or configuration issues.")
+        st.subheader("Problem Items Deep Dive")
+        st.caption("Looks at items with missing destination routing to highlight system or configuration issues.")
         no_agency_df = base_df[
             base_df["destination_clean"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False)
         ].copy()
