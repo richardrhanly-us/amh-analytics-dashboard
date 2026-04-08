@@ -1361,29 +1361,29 @@ if "datetime" in today_rejects_df.columns:
 else:
     today_hourly_rejects = pd.Series(dtype=int)
 
-today_bin0_count = 0
-if "bin" in today_df.columns:
-    today_bin0_count = (
-        today_df["bin"].astype(str).str.contains("0", na=False).sum()
-    )
-
-today_estimated_holds = max(
-    today_bin0_count - today_rejects - today_library_express,
-    0
-)
 
 today_acs_df = acs_live_raw.copy()
+
+today_acs_df = acs_live_raw[
+    acs_live_raw["message_code"] == 101
+].copy()
 
 if len(today_acs_df) > 0 and "datetime" in today_acs_df.columns:
     today_acs_df["datetime"] = pd.to_datetime(today_acs_df["datetime"], errors="coerce")
     today_acs_df = today_acs_df[today_acs_df["datetime"].dt.date == today].copy()
 
+today_acs_df = today_acs_df.drop_duplicates(subset=["barcode", "datetime"])
+
+if "raw_message" in today_acs_df.columns:
+    today_acs_df["is_hold"] = today_acs_df["raw_message"].fillna("").astype(str).str.startswith("101YNY")
+else:
+    today_acs_df["is_hold"] = False
+
 internal_summary_today = build_internal_routing_summary(today_acs_df)
 today_collection_services = get_internal_count(internal_summary_today, "Collection Services")
 today_ill = get_internal_count(internal_summary_today, "ILL")
 
-# Holds are better estimated from sort/bin behavior than ACS keyword text
-today_holds = today_estimated_holds
+today_holds = int(today_acs_df["is_hold"].sum())
 
 today_repair = get_internal_count(internal_summary_today, "Repair / Mending")
 today_problem_items = get_problem_items_count(today_df)
@@ -1839,7 +1839,7 @@ Status Code: `{status_code_text}`
         render_kpi_card(
             "Holds",
             f"{today_holds:,}",
-            f"Estimated from hold/bin routing ({(today_holds / internal_pct_base) * 100:.1f}% of checkins)",
+            f"{(today_holds / internal_pct_base) * 100:.1f}% of checkins today",
             "#6b7280",
             value_font_size="2.0rem",
             border_color="#34d399"
