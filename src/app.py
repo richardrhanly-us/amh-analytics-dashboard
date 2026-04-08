@@ -1362,10 +1362,8 @@ else:
     today_hourly_rejects = pd.Series(dtype=int)
 
 
-today_acs_df = acs_live_raw.copy()
-
 today_acs_df = acs_live_raw[
-    acs_live_raw["message_code"] == 101
+    acs_live_raw["message_code"].astype(str).str.strip() == "101"
 ].copy()
 
 if len(today_acs_df) > 0 and "datetime" in today_acs_df.columns:
@@ -1375,7 +1373,12 @@ if len(today_acs_df) > 0 and "datetime" in today_acs_df.columns:
 today_acs_df = today_acs_df.drop_duplicates(subset=["barcode", "datetime"])
 
 if "raw_message" in today_acs_df.columns:
-    today_acs_df["is_hold"] = today_acs_df["raw_message"].fillna("").astype(str).str.startswith("101YNY")
+    today_acs_df["is_hold"] = (
+        today_acs_df["raw_message"]
+        .fillna("")
+        .astype(str)
+        .str.startswith("101YNY")
+    )
 else:
     today_acs_df["is_hold"] = False
 
