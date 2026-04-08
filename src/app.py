@@ -4503,58 +4503,8 @@ if selected_view == "Reports":
         else:
             st.info("No reject reason data available for the selected date range.")
 
-    with st.expander("Worst Days (Top 5 by Reject Rate)", expanded=False):
-        worst_table = pd.DataFrame({
-            "checkins": checkins_daily,
-            "rejects": rejects_daily
-        }).fillna(0)
-
-        worst_table = worst_table[worst_table["checkins"] > 0]
-
-        if len(worst_table) > 0:
-            worst_table["reject_rate"] = (worst_table["rejects"] / worst_table["checkins"]) * 100
-            worst_table.index = pd.to_datetime(worst_table.index)
-            worst_table["day_of_week"] = worst_table.index.day_name()
-            worst_table = worst_table.sort_values("reject_rate", ascending=False).head(5)
-
-            worst_day_row = worst_table.iloc[0]
-
-            st.markdown(
-                f"""
-                <div style="
-                    border-left: 4px solid #dc2626;
-                    background-color: #f9fafb;
-                    padding: 14px 16px;
-                    border-radius: 8px;
-                    margin-top: 8px;
-                    margin-bottom: 16px;
-                ">
-                    <div style="font-weight: 600; color: #1f2937; margin-bottom: 6px;">
-                        Report Summary
-                    </div>
-                    <div style="color: #4b5563; line-height: 1.4;">
-                        Worst day in the selected range: {worst_day_row['day_of_week']} with a reject rate of
-                        {worst_day_row['reject_rate']:.2f}%.
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            worst_table_display = worst_table.copy()
-            worst_table_display["reject_rate"] = worst_table_display["reject_rate"].round(2)
-            worst_table_display = worst_table_display[["day_of_week", "checkins", "rejects", "reject_rate"]]
-
-            st.dataframe(worst_table_display, use_container_width=True)
-            download_button(
-                worst_table_display,
-                "worst_days_top_5_reject_rate.csv",
-                key="worst_days_top_5_reject_rate_download"
-            )
-        else:
-            st.info("No worst-day data available for the selected date range.")
-
-
+    with st.expander("Top Issues", expanded=False):
+        
 
         st.markdown("### Top Issues Report")
     
