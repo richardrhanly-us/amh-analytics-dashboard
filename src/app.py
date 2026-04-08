@@ -35,7 +35,15 @@ if is_operating_hours(now_ct):
     )
 
 
-from data_loader import load_checkins_df, load_checkins_history_df, load_rejects_df, load_rejects_history_df, load_pipeline_status
+from data_loader import (
+    load_checkins_df,
+    load_checkins_history_df,
+    load_rejects_df,
+    load_rejects_history_df,
+    load_pipeline_status,
+    load_acs_df,
+    load_acs_history_df,
+)
 from metrics import get_date_filtered_df, get_today_metrics, get_overall_metrics, get_historical_reject_baseline
 from reject_logic import simplify_error
 from alerts import get_system_alerts
@@ -196,6 +204,89 @@ def get_file_updated_time(path):
         )
     return None
 
+
+
+def normalize_internal_destination(destination, raw_message="", message_code=""):
+    destination = "" if destination is None else str(destination).strip()
+    raw_message = "" if raw_message is None else str(raw_message)
+    message_code = "" if message_code is None else str(message_code).strip()
+
+    combined = f"{destination} {raw_message}".upper()
+
+    if not destination and not raw_message:
+        return None
+
+    # exclude known external transit destinations
+    if "WESTSIDE" in combined or "LIBRARY EXPRESS" in combined:
+        return None
+
+    # internal categories
+    if "ILL" in combined or "INTERLIBRARY" in combined:
+        return "ILL"
+
+    if "COLLECTION SERVICES" in combined or "COLLECTION" in combined or "CATALOG" in combined or "PROCESSING" in combined:
+        return "Collection Services"
+
+    if "HOLD" in combined or "HOLDS" in combined or "RESERVE" in combined:
+        return "Holds"
+
+    if "REPAIR" in combined or "MENDING" in combined or "MEND" in combined:
+        return "Repair / Mending"
+
+    if "PROBLEM" in combined:
+        return "Problem Items"
+
+    if "STAFF" in combined or "REVIEW" in combined:
+        return "Staff Review"
+
+    # optional fallback from ACS message behavior
+    if message_code in {"09", "10", "11", "12", "13", "14", "15", "16", "17", "18"}:
+        return None
+
+    return "Other Internal"
+
+
+def build_internal_routing_summary(acs_df):
+    if acs_df is None or len(acs_df) == 0:
+        return pd.DataFrame(columns=["internal_category", "count"])
+
+    work_df = acs_df.copy()
+
+    if "datetime" in work_df.columns:
+        work_df["datetime"] = pd.to_datetime(work_df["datetime"], errors="coerce")
+
+    work_df["internal_category"] = work_df.apply(
+        lambda row: normalize_internal_destination(
+            row.get("destination"),
+            row.get("raw_message"),
+            row.get("message_code"),
+        ),
+        axis=1
+    )
+
+    work_df = work_df[work_df["internal_category"].notna()].copy()
+
+    if len(work_df) == 0:
+        return pd.DataFrame(columns=["internal_category", "count"])
+
+    summary = (
+        work_df["internal_category"]
+        .value_counts()
+        .rename_axis("internal_category")
+        .reset_index(name="count")
+    )
+
+    return summary
+
+
+def get_internal_count(summary_df, category_name):
+    if summary_df is None or len(summary_df) == 0:
+        return 0
+
+    match = summary_df.loc[summary_df["internal_category"] == category_name, "count"]
+    if len(match) == 0:
+        return 0
+    return int(match.iloc[0])
 
 def format_hour(hour):
     if hour is None:
@@ -632,6 +723,9 @@ df_history_raw = load_checkins_history_df(mtime=status_mtime, refresh_count=refr
 
 rejects_live_raw = load_rejects_df(mtime=status_mtime, refresh_count=refresh_count)
 rejects_history_raw = load_rejects_history_df(mtime=status_mtime, refresh_count=refresh_count)
+
+acs_live_raw = load_acs_df(mtime=status_mtime, refresh_count=refresh_count)
+acs_history_raw = load_acs_history_df(mtime=status_mtime, refresh_count=refresh_count)
 
 # DEBUG
 #st.write("df_live_raw columns:", list(df_live_raw.columns))
@@ -1259,6 +1353,30 @@ today_estimated_holds = max(
     0
 )
 
+today_acs_df = acs_live_raw.copy()
+
+if len(today_acs_df) > 0 and "datetime" in today_acs_df.columns:
+    today_acs_df["datetime"] = pd.to_datetime(today_acs_df["datetime"], errors="coerce")
+    today_acs_df = today_acs_df[today_acs_df["datetime"].dt.date == today].copy()
+
+internal_summary_today = build_internal_routing_summary(today_acs_df)
+
+today_collection_services = get_internal_count(internal_summary_today, "Collection Services")
+today_ill = get_internal_count(internal_summary_today, "ILL")
+today_holds = get_internal_count(internal_summary_today, "Holds")
+today_repair = get_internal_count(internal_summary_today, "Repair / Mending")
+today_problem_items = get_internal_count(internal_summary_today, "Problem Items")
+today_staff_review = get_internal_count(internal_summary_today, "Staff Review")
+
+today_total_internal = (
+    today_collection_services
+    + today_ill
+    + today_holds
+    + today_repair
+    + today_problem_items
+    + today_staff_review
+)
+
 historical_baseline = get_historical_reject_baseline(df_history_raw, rejects_history_raw, today)
 
 historical_daily_avg_reject = historical_baseline.get("historical_daily_avg_reject")
@@ -1667,6 +1785,95 @@ Status Code: `{status_code_text}`
                 value_color=live_reject_value_color
             )
 
+
+        st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
+    
+        st.markdown(
+            """
+            <div style="
+                border: 2px solid #34d399;
+                border-radius: 14px;
+                padding: 12px 14px;
+                background: #34d399;
+                margin-bottom: 8px;
+            ">
+                <div style="
+                    font-size: 0.95rem;
+                    font-weight: 700;
+                    color: #ffffff;
+                    line-height: 1.2;
+                ">
+                    Internal Routing
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    
+        internal1, internal2, internal3, internal4, internal5, internal6 = st.columns(6)
+    
+        internal_pct_base = today_checkins if today_checkins > 0 else 1
+    
+        with internal1:
+            render_kpi_card(
+                "Collection Services",
+                f"{today_collection_services:,}",
+                f"{(today_collection_services / internal_pct_base) * 100:.1f}% of checkins today",
+                "#6b7280",
+                value_font_size="1.65rem",
+                border_color="#34d399"
+            )
+    
+        with internal2:
+            render_kpi_card(
+                "ILL",
+                f"{today_ill:,}",
+                f"{(today_ill / internal_pct_base) * 100:.1f}% of checkins today",
+                "#6b7280",
+                value_font_size="1.85rem",
+                border_color="#34d399"
+            )
+    
+        with internal3:
+            render_kpi_card(
+                "Holds",
+                f"{today_holds:,}",
+                f"{(today_holds / internal_pct_base) * 100:.1f}% of checkins today",
+                "#6b7280",
+                value_font_size="1.85rem",
+                border_color="#34d399"
+            )
+    
+        with internal4:
+            render_kpi_card(
+                "Repair / Mending",
+                f"{today_repair:,}",
+                f"{(today_repair / internal_pct_base) * 100:.1f}% of checkins today",
+                "#6b7280",
+                value_font_size="1.5rem",
+                border_color="#34d399"
+            )
+    
+        with internal5:
+            render_kpi_card(
+                "Problem Items",
+                f"{today_problem_items:,}",
+                f"{(today_problem_items / internal_pct_base) * 100:.1f}% of checkins today",
+                "#6b7280",
+                value_font_size="1.55rem",
+                border_color="#34d399"
+            )
+    
+        with internal6:
+            render_kpi_card(
+                "Staff Review",
+                f"{today_staff_review:,}",
+                f"{(today_staff_review / internal_pct_base) * 100:.1f}% of checkins today",
+                "#6b7280",
+                value_font_size="1.55rem",
+                border_color="#34d399"
+            )
+    
 
     if info_alerts:
         st.markdown(
