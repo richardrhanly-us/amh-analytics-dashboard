@@ -1371,11 +1371,13 @@ today_estimated_holds = max(
     today_bin0_count - today_rejects - today_library_express,
     0
 )
-today_acs_df = today_acs_df.drop_duplicates(subset=["barcode", "datetime"])
 
 today_acs_df = acs_live_raw[
     acs_live_raw["message_code"] == 101
 ].copy()
+
+# 🔧 dedupe item events
+today_acs_df = today_acs_df.drop_duplicates(subset=["barcode", "datetime"])
 
 if len(today_acs_df) > 0 and "datetime" in today_acs_df.columns:
     today_acs_df["datetime"] = pd.to_datetime(today_acs_df["datetime"], errors="coerce")
