@@ -1368,7 +1368,7 @@ today_ill = get_internal_count(internal_summary_today, "ILL")
 today_holds = today_estimated_holds
 
 today_repair = get_internal_count(internal_summary_today, "Repair / Mending")
-today_problem_items = get_internal_count(internal_summary_today, "Problem Items")
+today_problem_items = int(problem_items) if problem_items is not None else 0
 today_staff_review = get_internal_count(internal_summary_today, "Staff Review")
 
 today_total_internal = (
@@ -1856,14 +1856,14 @@ Status Code: `{status_code_text}`
             value_font_size="1.5rem",
             border_color="#34d399"
         )
-
+        
     with internal5:
         render_kpi_card(
             "Problem Items",
             f"{today_problem_items:,}",
             f"{(today_problem_items / internal_pct_base) * 100:.1f}% of checkins today",
             "#6b7280",
-            value_font_size="1.55rem",
+            value_font_size="1.85rem",
             border_color="#34d399"
         )
 
