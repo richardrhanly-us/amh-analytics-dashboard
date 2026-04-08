@@ -1363,7 +1363,10 @@ internal_summary_today = build_internal_routing_summary(today_acs_df)
 
 today_collection_services = get_internal_count(internal_summary_today, "Collection Services")
 today_ill = get_internal_count(internal_summary_today, "ILL")
-today_holds = get_internal_count(internal_summary_today, "Holds")
+
+# Holds are better estimated from sort/bin behavior than ACS keyword text
+today_holds = today_estimated_holds
+
 today_repair = get_internal_count(internal_summary_today, "Repair / Mending")
 today_problem_items = get_internal_count(internal_summary_today, "Problem Items")
 today_staff_review = get_internal_count(internal_summary_today, "Staff Review")
@@ -1838,9 +1841,9 @@ Status Code: `{status_code_text}`
         render_kpi_card(
             "Holds",
             f"{today_holds:,}",
-            f"{(today_holds / internal_pct_base) * 100:.1f}% of checkins today",
+            f"Estimated from hold/bin routing ({(today_holds / internal_pct_base) * 100:.1f}% of checkins)",
             "#6b7280",
-            value_font_size="1.85rem",
+            value_font_size="2.0rem",
             border_color="#34d399"
         )
 
