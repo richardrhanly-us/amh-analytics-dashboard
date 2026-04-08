@@ -4972,7 +4972,7 @@ if selected_view == "Transits":
     destination_transit_summary_text = destination_driver_summary["text"]
     destination_transit_summary_color = destination_driver_summary["color"]
 
-    transit1, transit2, transit3, transit4, transit5 = st.columns(5)
+    transit1, transit2, transit3, transit4 = st.columns(4)
     
     with transit1:
         render_kpi_card(
@@ -4999,14 +4999,6 @@ if selected_view == "Transits":
         )
     
     with transit4:
-        render_kpi_card(
-            "Routing Failures",
-            f"{no_agency_dest_count:,}",
-            "Missing destination routing",
-            "#6b7280"
-        )
-    
-    with transit5:
         render_kpi_card(
             "Peak Avg Transit Day",
             peak_transit_day_label,
