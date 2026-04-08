@@ -1395,6 +1395,7 @@ today_repair = get_internal_count(internal_summary_today, "Repair / Mending")
 today_problem_items = get_problem_items_count(today_df)
 today_staff_review = get_internal_count(internal_summary_today, "Staff Review")
 
+
 today_total_internal = (
     today_collection_services
     + today_ill
