@@ -1830,69 +1830,69 @@ Status Code: `{status_code_text}`
         unsafe_allow_html=True
     )
 
-internal1, internal2, internal3, internal4, internal5, internal6 = st.columns(6)
-
-internal_pct_base = today_checkins if today_checkins > 0 else 1
-
-with internal1:
-    render_kpi_card(
-        "Holds",
-        f"{today_holds:,}",
-        f"Estimated from hold/bin routing ({(today_holds / internal_pct_base) * 100:.1f}% of checkins)",
-        "#6b7280",
-        value_font_size="2.0rem",
-        border_color="#34d399"
-    )
-
-with internal2:
-    render_kpi_card(
-        "Collection Services",
-        f"{today_collection_services:,}",
-        f"{(today_collection_services / internal_pct_base) * 100:.1f}% of checkins today",
-        "#6b7280",
-        value_font_size="1.65rem",
-        border_color="#34d399"
-    )
-
-with internal3:
-    render_kpi_card(
-        "Repair / Mending",
-        f"{today_repair:,}",
-        f"{(today_repair / internal_pct_base) * 100:.1f}% of checkins today",
-        "#6b7280",
-        value_font_size="1.5rem",
-        border_color="#34d399"
-    )
-
-with internal4:
-    render_kpi_card(
-        "Problem Items",
-        f"{today_problem_items:,}",
-        f"{(today_problem_items / internal_pct_base) * 100:.1f}% missing destination routing",
-        "#6b7280",
-        value_font_size="1.85rem",
-        border_color="#34d399"
-    )
-
-with internal5:
-    render_kpi_card(
-        "Staff Review",
-        f"{today_staff_review:,}",
-        f"{(today_staff_review / internal_pct_base) * 100:.1f}% of checkins today",
-        "#6b7280",
-        value_font_size="1.55rem",
-        border_color="#34d399"
-    )
-
-with internal6:
-    render_kpi_card(
-        "ILL",
-        f"{today_ill:,}",
-        f"{(today_ill / internal_pct_base) * 100:.1f}% of checkins today",
-        "#6b7280",
-        value_font_size="1.85rem",
-        border_color="#34d399"
-    )
+    internal1, internal2, internal3, internal4, internal5, internal6 = st.columns(6)
+    
+    internal_pct_base = today_checkins if today_checkins > 0 else 1
+    
+    with internal1:
+        render_kpi_card(
+            "Holds",
+            f"{today_holds:,}",
+            f"Estimated from hold/bin routing ({(today_holds / internal_pct_base) * 100:.1f}% of checkins)",
+            "#6b7280",
+            value_font_size="2.0rem",
+            border_color="#34d399"
+        )
+    
+    with internal2:
+        render_kpi_card(
+            "Collection Services",
+            f"{today_collection_services:,}",
+            f"{(today_collection_services / internal_pct_base) * 100:.1f}% of checkins today",
+            "#6b7280",
+            value_font_size="1.65rem",
+            border_color="#34d399"
+        )
+    
+    with internal3:
+        render_kpi_card(
+            "Repair / Mending",
+            f"{today_repair:,}",
+            f"{(today_repair / internal_pct_base) * 100:.1f}% of checkins today",
+            "#6b7280",
+            value_font_size="1.5rem",
+            border_color="#34d399"
+        )
+    
+    with internal4:
+        render_kpi_card(
+            "Problem Items",
+            f"{today_problem_items:,}",
+            f"{(today_problem_items / internal_pct_base) * 100:.1f}% missing destination routing",
+            "#6b7280",
+            value_font_size="1.85rem",
+            border_color="#34d399"
+        )
+    
+    with internal5:
+        render_kpi_card(
+            "Staff Review",
+            f"{today_staff_review:,}",
+            f"{(today_staff_review / internal_pct_base) * 100:.1f}% of checkins today",
+            "#6b7280",
+            value_font_size="1.55rem",
+            border_color="#34d399"
+        )
+    
+    with internal6:
+        render_kpi_card(
+            "ILL",
+            f"{today_ill:,}",
+            f"{(today_ill / internal_pct_base) * 100:.1f}% of checkins today",
+            "#6b7280",
+            value_font_size="1.85rem",
+            border_color="#34d399"
+        )
 
 
     if info_alerts:
