@@ -1362,39 +1362,35 @@ else:
     today_hourly_rejects = pd.Series(dtype=int)
 
 
-today_acs_df = acs_live_raw[
-    acs_live_raw["message_code"].astype(str).str.strip() == "101"
-].copy()
+today_acs_df = acs_live_raw.copy()
 
 if len(today_acs_df) > 0 and "datetime" in today_acs_df.columns:
     today_acs_df["datetime"] = pd.to_datetime(today_acs_df["datetime"], errors="coerce")
-    today_acs_df = today_acs_df[today_acs_df["datetime"].dt.date == today].copy()
+    today_acs_df = today_acs_df.dropna(subset=["datetime"]).copy()
 
-today_acs_df = today_acs_df.drop_duplicates(subset=["barcode", "datetime"])
+    today_acs_latest_date = today_acs_df["datetime"].max().date()
+    today_acs_df = today_acs_df[today_acs_df["datetime"].dt.date == today_acs_latest_date].copy()
 
 if "raw_message" in today_acs_df.columns:
-    today_acs_df["is_hold"] = (
-        today_acs_df["raw_message"]
-        .fillna("")
-        .astype(str)
-        .str.startswith("101YNY")
-    )
+    today_acs_df["raw_message"] = today_acs_df["raw_message"].fillna("").astype(str).str.strip()
+
+    # real ACS item responses live in raw_message, not message_code
+    today_acs_df = today_acs_df[
+        today_acs_df["raw_message"].str.startswith("101")
+    ].copy()
+
+if "barcode" in today_acs_df.columns and "datetime" in today_acs_df.columns:
+    today_acs_df = today_acs_df.drop_duplicates(subset=["barcode", "datetime"])
+
+if "raw_message" in today_acs_df.columns:
+    today_acs_df["is_hold"] = today_acs_df["raw_message"].str.startswith("101YNY")
 else:
     today_acs_df["is_hold"] = False
-
-st.write("ACS live rows", len(acs_live_raw))
-st.write("ACS message_code sample", acs_live_raw["message_code"].astype(str).value_counts().head(10))
-st.write("today_acs_df rows after filter", len(today_acs_df))
-
-if len(today_acs_df) > 0:
-    st.write("today_acs_df sample", today_acs_df[["datetime", "message_code", "barcode", "destination", "raw_message"]].head(10))
 
 internal_summary_today = build_internal_routing_summary(today_acs_df)
 today_collection_services = get_internal_count(internal_summary_today, "Collection Services")
 today_ill = get_internal_count(internal_summary_today, "ILL")
-
 today_holds = int(today_acs_df["is_hold"].sum())
-
 today_repair = get_internal_count(internal_summary_today, "Repair / Mending")
 today_problem_items = get_problem_items_count(today_df)
 today_staff_review = get_internal_count(internal_summary_today, "Staff Review")
