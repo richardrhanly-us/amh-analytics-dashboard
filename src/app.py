@@ -12,6 +12,7 @@ from textwrap import dedent
 
 from streamlit_autorefresh import st_autorefresh
 import pytz
+import re
 
 st.set_page_config(
     page_title="SortView",
@@ -223,8 +224,9 @@ def normalize_internal_destination(destination, raw_message="", message_code="")
     # exclude problem-item style routing failures from internal workflow
     if "NO AGENCY DESTINATION" in combined or destination == "":
         return None
-
-    if "ILL" in combined or "INTERLIBRARY" in combined:
+    
+    
+    if re.search(r"\bILL\b", combined) or "INTERLIBRARY" in combined:
         return "ILL"
 
     if "COLLECTION SERVICES" in combined or "COLLECTION" in combined or "CATALOG" in combined or "PROCESSING" in combined:
@@ -1377,6 +1379,23 @@ if len(today_acs_df) > 0 and "datetime" in today_acs_df.columns:
     today_acs_df = today_acs_df[today_acs_df["datetime"].dt.date == today].copy()
 
 internal_summary_today = build_internal_routing_summary(today_acs_df)
+ill_rows = today_acs_df[
+    today_acs_df.apply(
+        lambda row: normalize_internal_destination(
+            row.get("destination"),
+            row.get("raw_message"),
+            row.get("message_code"),
+        ) == "ILL",
+        axis=1
+    )
+]
+
+st.write(
+    "Destination Breakdown",
+    today_acs_df["destination"].value_counts().head(20)
+)
+
+st.write("ILL Debug Sample", ill_rows.head(20))
 
 today_collection_services = get_internal_count(internal_summary_today, "Collection Services")
 today_ill = get_internal_count(internal_summary_today, "ILL")
