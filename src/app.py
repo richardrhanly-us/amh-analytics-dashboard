@@ -1378,7 +1378,7 @@ if len(today_acs_df) > 0 and "datetime" in today_acs_df.columns:
     today_acs_df["datetime"] = pd.to_datetime(today_acs_df["datetime"], errors="coerce")
     today_acs_df = today_acs_df[today_acs_df["datetime"].dt.date == today].copy()
 
-
+internal_summary_today = build_internal_routing_summary(today_acs_df)
 today_collection_services = get_internal_count(internal_summary_today, "Collection Services")
 today_ill = get_internal_count(internal_summary_today, "ILL")
 
