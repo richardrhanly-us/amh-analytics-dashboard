@@ -229,6 +229,57 @@ def load_rejects_history_df(path=REJECTS_HISTORY_FILE, mtime=None, refresh_count
     return _load_rejects_from_csv(path)
 
 
+
+def _normalize_acs_df(df):
+    if df.empty:
+        return df
+
+    if "event_time" in df.columns:
+        df["datetime"] = pd.to_datetime(df["event_time"], errors="coerce")
+    elif "datetime" in df.columns:
+        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+
+    for col in ["message_code", "barcode", "title", "patron_id", "destination", "raw_message", "source_file"]:
+        if col not in df.columns:
+            df[col] = None
+
+    return df
+
+
+def _load_acs_history_from_db():
+    query = """
+        SELECT *
+        FROM acs_events
+        ORDER BY event_time
+    """
+    df = _read_table(query)
+    return _normalize_acs_df(df)
+
+
+def _load_acs_live_from_db():
+    query = """
+        SELECT *
+        FROM acs_events
+        WHERE event_time::date = (
+            SELECT max(event_time)::date
+            FROM acs_events
+        )
+        ORDER BY event_time
+    """
+    df = _read_table(query)
+    return _normalize_acs_df(df)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_acs_history_df(mtime=None, refresh_count=0):
+    return _load_acs_history_from_db()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_acs_df(mtime=None, refresh_count=0):
+    return _load_acs_live_from_db()
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def load_pipeline_status(path=STATUS_FILE, mtime=None, refresh_count=0):
     query = """
