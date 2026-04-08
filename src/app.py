@@ -220,7 +220,7 @@ def normalize_internal_destination(destination, raw_message="", message_code="")
     if "WESTSIDE" in combined or "LIBRARY EXPRESS" in combined:
         return None
 
-    # exclude problem-item style routing failures from internal routing
+    # exclude problem-item style routing failures from internal workflow
     if "NO AGENCY DESTINATION" in combined or destination == "":
         return None
 
@@ -1823,7 +1823,7 @@ Status Code: `{status_code_text}`
                 color: #ffffff;
                 line-height: 1.2;
             ">
-                Internal Routing
+                Internal Workflow
             </div>
         </div>
         """,
