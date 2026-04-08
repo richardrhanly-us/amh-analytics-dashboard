@@ -1382,6 +1382,13 @@ if "raw_message" in today_acs_df.columns:
 else:
     today_acs_df["is_hold"] = False
 
+st.write("ACS live rows", len(acs_live_raw))
+st.write("ACS message_code sample", acs_live_raw["message_code"].astype(str).value_counts().head(10))
+st.write("today_acs_df rows after filter", len(today_acs_df))
+
+if len(today_acs_df) > 0:
+    st.write("today_acs_df sample", today_acs_df[["datetime", "message_code", "barcode", "destination", "raw_message"]].head(10))
+
 internal_summary_today = build_internal_routing_summary(today_acs_df)
 today_collection_services = get_internal_count(internal_summary_today, "Collection Services")
 today_ill = get_internal_count(internal_summary_today, "ILL")
