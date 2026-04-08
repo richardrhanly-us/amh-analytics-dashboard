@@ -1699,10 +1699,10 @@ Status Code: `{status_code_text}`
         st.markdown(
             """
             <div style="
-                border: 2px solid #34d399;
+                border: 2px solid #14b8a6;
                 border-radius: 14px;
                 padding: 12px 14px;
-                background: #34d399;
+                background: linear-gradient(90deg, #14b8a6, #0ea5e9);
                 margin-bottom: 8px;
             ">
                 <div style="
