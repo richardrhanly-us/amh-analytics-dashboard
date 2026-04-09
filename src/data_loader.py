@@ -24,13 +24,18 @@ def get_database_url():
 
     return db_url
 
-
 @st.cache_resource
 def get_engine():
     db_url = get_database_url()
     if not db_url:
         return None
-    return create_engine(db_url)
+
+    return create_engine(
+        db_url,
+        pool_pre_ping=True,
+        pool_recycle=300,
+        connect_args={"sslmode": "require"},
+    )
 
 
 def get_file_mtime(path):
