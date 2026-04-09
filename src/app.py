@@ -1380,7 +1380,7 @@ if "raw_message" in today_acs_df.columns:
     ].copy()
 
 if "barcode" in today_acs_df.columns and "datetime" in today_acs_df.columns:
-    today_acs_df = today_acs_df.drop_duplicates(subset=["barcode", "datetime"])
+    today_acs_df = today_acs_df.drop_duplicates(subset=["barcode"])
 
 if "raw_message" in today_acs_df.columns:
     today_acs_df["is_hold"] = today_acs_df["raw_message"].str.startswith("101YNY")
