@@ -1553,16 +1553,18 @@ with st.expander("ACS Internal Routing Debug", expanded=False):
         st.dataframe(collection_debug[debug_cols], use_container_width=True)
 
     st.write("Top destination values in today_acs_df:")
+    
     if "destination" in today_acs_df.columns:
-        st.dataframe(
+        dest_counts = (
             today_acs_df["destination"]
             .fillna("(blank)")
             .astype(str)
             .value_counts()
-            .reset_index()
-            .rename(columns={"index": "destination", "destination": "count"}),
-            use_container_width=True
+            .rename_axis("destination")
+            .reset_index(name="count")
         )
+    
+        st.dataframe(dest_counts, use_container_width=True)
 
     st.write("Top raw_message snippets:")
     raw_preview = today_acs_df.copy()
