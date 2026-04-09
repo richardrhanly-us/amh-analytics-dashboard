@@ -2412,7 +2412,7 @@ if selected_view == "Overview":
     overview_ill_library_express = overview_acs_summary["ill_library_express"]
 
     st.markdown("### Internal Workflow")
-    internal_overview_col1, internal_overview_col2 = st.columns(2)
+    internal_overview_col1, internal_overview_col2, internal_overview_col3, internal_overview_col4 = st.columns(4)
 
     with internal_overview_col1:
         render_kpi_card(
@@ -2423,7 +2423,7 @@ if selected_view == "Overview":
             value_font_size="2.0rem",
             border_color="#34d399"
         )
-
+    
     with internal_overview_col2:
         render_kpi_card(
             "ILL",
@@ -2431,6 +2431,26 @@ if selected_view == "Overview":
             f"Main {overview_ill_main:,} • WS {overview_ill_westside:,} • LE {overview_ill_library_express:,}",
             "#6b7280",
             value_font_size="2.0rem",
+            border_color="#34d399"
+        )
+    
+    with internal_overview_col3:
+        render_kpi_card(
+            "Programming",
+            f"{overview_acs_summary['programming_total']:,}",
+            f"{date_range_text}",
+            "#6b7280",
+            value_font_size="2.0rem",
+            border_color="#34d399"
+        )
+    
+    with internal_overview_col4:
+        render_kpi_card(
+            "Collection Services",
+            f"{overview_acs_summary['collection_services_total']:,}",
+            f"{date_range_text}",
+            "#6b7280",
+            value_font_size="1.9rem",
             border_color="#34d399"
         )
 
