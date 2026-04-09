@@ -1398,6 +1398,71 @@ today_estimated_holds = max(
 
 internal_summary_today = build_internal_routing_summary(today_acs_df)
 
+
+with st.expander("ACS Internal Routing Debug", expanded=False):
+    st.write("today_acs_df rows:", len(today_acs_df))
+
+    debug_cols = ["datetime", "barcode", "destination", "message_code", "raw_message"]
+    debug_cols = [c for c in debug_cols if c in today_acs_df.columns]
+
+    st.write("Internal summary:")
+    st.dataframe(internal_summary_today, use_container_width=True)
+
+    st.write("Rows containing ILL / INTERLIBRARY:")
+    ill_debug = today_acs_df[
+        today_acs_df["raw_message"].fillna("").astype(str).str.contains(r"ILL|INTERLIBRARY", case=False, na=False)
+        | today_acs_df["destination"].fillna("").astype(str).str.contains(r"ILL|INTERLIBRARY", case=False, na=False)
+    ].copy()
+    st.write("ILL row count:", len(ill_debug))
+    if len(ill_debug) > 0:
+        st.dataframe(ill_debug[debug_cols], use_container_width=True)
+
+    st.write("Rows containing REPAIR / MENDING / MEND:")
+    repair_debug = today_acs_df[
+        today_acs_df["raw_message"].fillna("").astype(str).str.contains(r"REPAIR|MENDING|MEND", case=False, na=False)
+        | today_acs_df["destination"].fillna("").astype(str).str.contains(r"REPAIR|MENDING|MEND", case=False, na=False)
+    ].copy()
+    st.write("Repair row count:", len(repair_debug))
+    if len(repair_debug) > 0:
+        st.dataframe(repair_debug[debug_cols], use_container_width=True)
+
+    st.write("Rows containing STAFF / REVIEW:")
+    staff_debug = today_acs_df[
+        today_acs_df["raw_message"].fillna("").astype(str).str.contains(r"STAFF|REVIEW", case=False, na=False)
+        | today_acs_df["destination"].fillna("").astype(str).str.contains(r"STAFF|REVIEW", case=False, na=False)
+    ].copy()
+    st.write("Staff Review row count:", len(staff_debug))
+    if len(staff_debug) > 0:
+        st.dataframe(staff_debug[debug_cols], use_container_width=True)
+
+    st.write("Rows containing COLLECTION / CATALOG / PROCESSING:")
+    collection_debug = today_acs_df[
+        today_acs_df["raw_message"].fillna("").astype(str).str.contains(r"COLLECTION|CATALOG|PROCESSING", case=False, na=False)
+        | today_acs_df["destination"].fillna("").astype(str).str.contains(r"COLLECTION|CATALOG|PROCESSING", case=False, na=False)
+    ].copy()
+    st.write("Collection Services row count:", len(collection_debug))
+    if len(collection_debug) > 0:
+        st.dataframe(collection_debug[debug_cols], use_container_width=True)
+
+    st.write("Top destination values in today_acs_df:")
+    if "destination" in today_acs_df.columns:
+        st.dataframe(
+            today_acs_df["destination"]
+            .fillna("(blank)")
+            .astype(str)
+            .value_counts()
+            .reset_index()
+            .rename(columns={"index": "destination", "destination": "count"}),
+            use_container_width=True
+        )
+
+    st.write("Top raw_message snippets:")
+    raw_preview = today_acs_df.copy()
+    raw_preview["raw_preview"] = raw_preview["raw_message"].fillna("").astype(str).str[:160]
+    preview_cols = [c for c in ["datetime", "barcode", "destination", "message_code", "raw_preview"] if c in raw_preview.columns]
+    st.dataframe(raw_preview[preview_cols].head(50), use_container_width=True)
+
+
 today_collection_services = get_internal_count(internal_summary_today, "Collection Services")
 today_ill = get_internal_count(internal_summary_today, "ILL")
 today_repair = get_internal_count(internal_summary_today, "Repair / Mending")
