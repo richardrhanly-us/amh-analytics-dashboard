@@ -328,81 +328,120 @@ def build_acs_item_summary(acs_df):
         return {
             "holds_total": 0,
             "ill_total": 0,
+            "programming_total": 0,
+            "collection_services_total": 0,
             "ill_main": 0,
             "ill_westside": 0,
             "ill_library_express": 0,
             "items_df": pd.DataFrame(),
+            "holds_df": pd.DataFrame(),
+            "ill_df": pd.DataFrame(),
+            "programming_df": pd.DataFrame(),
+            "collection_services_df": pd.DataFrame(),
         }
 
     df = acs_df.copy()
-
-    # normalize
     df["raw_message"] = df["raw_message"].fillna("").astype(str)
     df["message_code"] = df["message_code"].astype(str).str.strip()
 
     if "datetime" in df.columns:
         df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
 
-    # -----------------------------
-    # STEP 1: GET HOLD ITEM EVENTS
-    # -----------------------------
     items = df[df["raw_message"].str.startswith("101", na=False)].copy()
 
     if len(items) == 0:
         return {
             "holds_total": 0,
             "ill_total": 0,
+            "programming_total": 0,
+            "collection_services_total": 0,
             "ill_main": 0,
             "ill_westside": 0,
             "ill_library_express": 0,
             "items_df": pd.DataFrame(),
+            "holds_df": pd.DataFrame(),
+            "ill_df": pd.DataFrame(),
+            "programming_df": pd.DataFrame(),
+            "collection_services_df": pd.DataFrame(),
         }
 
-    # latest per barcode
     items = items.sort_values("datetime")
     items = items.drop_duplicates(subset=["barcode"], keep="last")
 
-    # HOLD = 101YNY
     items["is_hold"] = items["raw_message"].str.startswith("101YNY", na=False)
 
-    # -----------------------------
-    # STEP 2: GET PTILL FROM 64 ROWS
-    # -----------------------------
     patrons = df[df["message_code"] == "64"].copy()
 
-    patrons["patron_type"] = patrons["raw_message"].str.extract(r"\|PT([^|]*)", expand=False)
+    if len(patrons) > 0:
+        patrons = patrons.sort_values("datetime")
+        patrons = patrons.drop_duplicates(subset=["patron_id"], keep="last")
+        patrons["patron_name"] = patrons["raw_message"].str.extract(r"\|AE([^|]*)", expand=False).fillna("").astype(str).str.strip()
+        patrons["patron_type"] = patrons["raw_message"].str.extract(r"\|PT([^|]*)", expand=False).fillna("").astype(str).str.strip()
+    else:
+        patrons = pd.DataFrame(columns=["patron_id", "patron_name", "patron_type"])
 
-    patrons["is_ill"] = patrons["patron_type"].fillna("").str.upper().eq("ILL")
-
-    patrons = patrons.sort_values("datetime")
-    patrons = patrons.drop_duplicates(subset=["patron_id"], keep="last")
-
-    # -----------------------------
-    # STEP 3: MERGE
-    # -----------------------------
     items = items.merge(
-        patrons[["patron_id", "is_ill"]],
+        patrons[["patron_id", "patron_name", "patron_type"]],
         on="patron_id",
         how="left"
     )
 
-    items["is_ill"] = items["is_ill"].fillna(False)
+    items["patron_name"] = items["patron_name"].fillna("").astype(str).str.strip()
+    items["patron_type"] = items["patron_type"].fillna("").astype(str).str.strip()
 
-    # -----------------------------
-    # FINAL COUNTS
-    # -----------------------------
+    collection_services_names = {
+        "(AH) TS(AH)-CATALOGING",
+        "(AH) TS(AH)-JNF COLLECTION",
+        "(KV) TS(KV)-CATALOGING",
+        "(GR) CS(GR)-CATALOGING",
+        "(FV) TS(FV)-CATALOGING",
+    }
+
+    programming_names = {
+        "COURTNEY (ST)MEISSNER",
+        "MADELINE (ST)NEZAT",
+        "SERVICES TS-ADULT SERVICES",
+    }
+
+    items["patron_name_upper"] = items["patron_name"].str.upper()
+    items["destination_upper"] = items["destination"].fillna("").astype(str).str.upper()
+
+    items["is_ill"] = (
+        items["patron_type"].str.upper().eq("ILL")
+        | items["destination_upper"].str.contains(r"\bILL\b|INTERLIBRARY", regex=True, na=False)
+    )
+
+    items["is_collection_services"] = items["patron_name_upper"].isin(collection_services_names)
+    items["is_programming"] = items["patron_name_upper"].isin(programming_names)
+
     holds_df = items[items["is_hold"]].copy()
     ill_df = holds_df[holds_df["is_ill"]].copy()
+    programming_df = holds_df[holds_df["is_programming"]].copy()
+    collection_services_df = holds_df[holds_df["is_collection_services"]].copy()
 
-    dest = ill_df["destination"].fillna("").astype(str)
+    internal_mask = (
+        holds_df["is_ill"]
+        | holds_df["is_programming"]
+        | holds_df["is_collection_services"]
+    )
+
+    public_holds_df = holds_df[~internal_mask].copy()
+
+    ill_dest = ill_df["destination"].fillna("").astype(str)
 
     return {
-        "holds_total": int(len(holds_df)),
+        "holds_total": int(len(public_holds_df)),
         "ill_total": int(len(ill_df)),
-        "ill_main": int((~dest.str.contains("WESTSIDE|LIBRARY EXPRESS", case=False)).sum()),
-        "ill_westside": int(dest.str.contains("WESTSIDE", case=False).sum()),
-        "ill_library_express": int(dest.str.contains("LIBRARY EXPRESS", case=False).sum()),
+        "programming_total": int(len(programming_df)),
+        "collection_services_total": int(len(collection_services_df)),
+        "ill_main": int((~ill_dest.str.contains("WESTSIDE|LIBRARY EXPRESS", case=False, na=False)).sum()),
+        "ill_westside": int(ill_dest.str.contains("WESTSIDE", case=False, na=False).sum()),
+        "ill_library_express": int(ill_dest.str.contains("LIBRARY EXPRESS", case=False, na=False).sum()),
         "items_df": items,
+        "holds_df": public_holds_df,
+        "ill_df": ill_df,
+        "programming_df": programming_df,
+        "collection_services_df": collection_services_df,
     }
 
 
@@ -1578,11 +1617,6 @@ with st.expander("ACS Internal Routing Debug", expanded=False):
     st.dataframe(raw_preview[preview_cols].head(50), use_container_width=True)
 
 
-today_collection_services = get_internal_count(internal_summary_today, "Collection Services")
-today_repair = get_internal_count(internal_summary_today, "Repair / Mending")
-today_problem_items = get_problem_items_count(today_df)
-today_staff_review = get_internal_count(internal_summary_today, "Staff Review")
-
 acs_summary_today = build_acs_item_summary(acs_live_raw)
 
 today_holds = acs_summary_today["holds_total"]
@@ -1592,7 +1626,13 @@ today_ill_main = acs_summary_today["ill_main"]
 today_ill_westside = acs_summary_today["ill_westside"]
 today_ill_library_express = acs_summary_today["ill_library_express"]
 
-today_ill_items_df = acs_summary_today["items_df"]
+today_programming = acs_summary_today["programming_total"]
+today_collection_services = acs_summary_today["collection_services_total"]
+
+today_ill_items_df = acs_summary_today["ill_df"]
+today_programming_df = acs_summary_today["programming_df"]
+today_collection_services_df = acs_summary_today["collection_services_df"]
+today_public_holds_df = acs_summary_today["holds_df"]
 
 # audit values only - do not use these in the live card yet
 today_holds_from_internal_summary = get_internal_count(internal_summary_today, "Holds")
@@ -2041,7 +2081,7 @@ Status Code: `{status_code_text}`
         unsafe_allow_html=True
     )
 
-    internal1, internal2, internal3, internal4, internal5, internal6 = st.columns(6)
+    internal1, internal2, internal3, internal4 = st.columns(4)
     
     internal_pct_base = today_checkins if today_checkins > 0 else 1
     
@@ -2049,7 +2089,7 @@ Status Code: `{status_code_text}`
         render_kpi_card(
             "Holds",
             f"{today_holds:,}",
-            f"Estimated from hold/bin routing ({(today_holds / internal_pct_base) * 100:.1f}% of checkins)",
+            f"Public holds after internal workflow subtraction ({(today_holds / internal_pct_base) * 100:.1f}% of checkins)",
             "#6b7280",
             value_font_size="2.0rem",
             border_color="#34d399"
@@ -2057,51 +2097,31 @@ Status Code: `{status_code_text}`
     
     with internal2:
         render_kpi_card(
-            "Collection Services",
-            f"{today_collection_services:,}",
-            f"{(today_collection_services / internal_pct_base) * 100:.1f}% of checkins today",
-            "#6b7280",
-            value_font_size="1.65rem",
-            border_color="#34d399"
-        )
-    
-    with internal3:
-        render_kpi_card(
-            "Repair / Mending",
-            f"{today_repair:,}",
-            f"{(today_repair / internal_pct_base) * 100:.1f}% of checkins today",
-            "#6b7280",
-            value_font_size="1.5rem",
-            border_color="#34d399"
-        )
-    
-    with internal4:
-        render_kpi_card(
-            "Problem Items",
-            f"{today_problem_items:,}",
-            f"{(today_problem_items / internal_pct_base) * 100:.1f}% missing destination routing",
-            "#6b7280",
-            value_font_size="1.85rem",
-            border_color="#34d399"
-        )
-    
-    with internal5:
-        render_kpi_card(
-            "Staff Review",
-            f"{today_staff_review:,}",
-            f"{(today_staff_review / internal_pct_base) * 100:.1f}% of checkins today",
-            "#6b7280",
-            value_font_size="1.55rem",
-            border_color="#34d399"
-        )
-    
-    with internal6:
-        render_kpi_card(
             "ILL",
             f"{today_ill:,}",
             f"Main {today_ill_main:,} • WS {today_ill_westside:,} • LE {today_ill_library_express:,}",
             "#6b7280",
             value_font_size="1.85rem",
+            border_color="#34d399"
+        )
+    
+    with internal3:
+        render_kpi_card(
+            "Programming",
+            f"{today_programming:,}",
+            f"{(today_programming / internal_pct_base) * 100:.1f}% of checkins today",
+            "#6b7280",
+            value_font_size="1.85rem",
+            border_color="#34d399"
+        )
+    
+    with internal4:
+        render_kpi_card(
+            "Collection Services",
+            f"{today_collection_services:,}",
+            f"{(today_collection_services / internal_pct_base) * 100:.1f}% of checkins today",
+            "#6b7280",
+            value_font_size="1.7rem",
             border_color="#34d399"
         )
         
@@ -2118,30 +2138,47 @@ Status Code: `{status_code_text}`
         st.write("Library Express today:", today_library_express)
         st.write("Internal summary:")
         st.dataframe(internal_summary_today, use_container_width=True)
-        with st.expander("ILL audit", expanded=False):
-            st.write("ILL total:", today_ill)
-            st.write("ILL Main:", today_ill_main)
-            st.write("ILL Westside:", today_ill_westside)
-            st.write("ILL Library Express:", today_ill_library_express)
-        
-            if len(today_ill_items_df) > 0:
-                ill_debug_cols = [
-                    c for c in [
-                        "datetime",
-                        "barcode",
-                        "patron_id",
-                        "patron_name_64",
-                        "destination",
-                        "raw_message",
-                    ]
-                    if c in today_ill_items_df.columns
-                ]
-                st.dataframe(
-                    today_ill_items_df[ill_debug_cols].sort_values("datetime", ascending=False),
-                    use_container_width=True
-                )
-            else:
-                st.info("No ILL items detected today.")
+
+    with st.expander("Internal workflow audit", expanded=False):
+        st.write("Public Holds:", today_holds)
+        st.write("ILL:", today_ill)
+        st.write("Programming:", today_programming)
+        st.write("Collection Services:", today_collection_services)
+    
+        st.write("Public holds debug:")
+        if len(today_public_holds_df) > 0:
+            st.dataframe(
+                today_public_holds_df[["datetime", "barcode", "patron_id", "patron_name", "destination", "raw_message"]]
+                .sort_values("datetime", ascending=False),
+                use_container_width=True
+            )
+    
+        st.write("ILL debug:")
+        if len(today_ill_items_df) > 0:
+            st.dataframe(
+                today_ill_items_df[["datetime", "barcode", "patron_id", "patron_name", "destination", "raw_message"]]
+                .sort_values("datetime", ascending=False),
+                use_container_width=True
+            )
+    
+        st.write("Programming debug:")
+        if len(today_programming_df) > 0:
+            st.dataframe(
+                today_programming_df[["datetime", "barcode", "patron_id", "patron_name", "destination", "raw_message"]]
+                .sort_values("datetime", ascending=False),
+                use_container_width=True
+            )
+    
+        st.write("Collection Services debug:")
+        if len(today_collection_services_df) > 0:
+            st.dataframe(
+                today_collection_services_df[["datetime", "barcode", "patron_id", "patron_name", "destination", "raw_message"]]
+                .sort_values("datetime", ascending=False),
+                use_container_width=True
+            )
+
+
+    
     if info_alerts:
         st.markdown(
             f"""
