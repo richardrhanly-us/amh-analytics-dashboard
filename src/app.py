@@ -1594,9 +1594,6 @@ today_ill_library_express = acs_summary_today["ill_library_express"]
 
 today_ill_items_df = acs_summary_today["items_df"]
 
-# stable live KPI for now
-today_holds = today_estimated_holds
-
 # audit values only - do not use these in the live card yet
 today_holds_from_internal_summary = get_internal_count(internal_summary_today, "Holds")
 today_other_internal = get_internal_count(internal_summary_today, "Other Internal")
@@ -2109,7 +2106,7 @@ Status Code: `{status_code_text}`
         )
         
     with st.expander("Internal workflow audit", expanded=False):
-        st.write("Estimated holds (live card):", today_estimated_holds)
+        st.write("ACS holds (live card):", today_holds)
         st.write("ACS classified holds:", today_holds_from_internal_summary)
         st.write("Collection Services:", today_collection_services)
         st.write("Repair / Mending:", today_repair)
