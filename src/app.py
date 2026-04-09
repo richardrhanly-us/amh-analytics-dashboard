@@ -3639,22 +3639,22 @@ if selected_view == "Reports":
                     )
     
                     st.markdown(f"""
-    The following formulas are used to calculate the ROI metrics shown above:
+    **The following formulas are used to calculate the ROI metrics shown above:**
     
-    Observed labor value = Observed hours saved × Hourly labor cost  
-    Observed operating cost = Observed monthly cost + Observed yearly cost  
-    Observed net value = Observed labor value − Observed operating cost  
+    -Observed labor value = Observed hours saved × Hourly labor cost  
+    -Observed operating cost = Observed monthly cost + Observed yearly cost  
+    -Observed net value = Observed labor value − Observed operating cost  
     
-    Annual labor value = Observed labor value × (12 ÷ Equivalent months)  
-    Annual cost = Yearly cost + (Monthly cost × 12)  
-    Current annual run rate = Annual labor value − Annual cost  
-    Break-even years = Upfront cost ÷ Current annual run rate  
+    -Annual labor value = Observed labor value × (12 ÷ Equivalent months)  
+    -Annual cost = Yearly cost + (Monthly cost × 12)  
+    -Current annual run rate = Annual labor value − Annual cost  
+    -Break-even years = Upfront cost ÷ Current annual run rate  
     
-    Since-install value = Annual labor value × Years since install  
-    Since-install operating cost = Annual operating cost × Years since install  
-    Since-install total cost = Upfront cost + Since-install operating cost  
-    Since-install net = Since-install value − Since-install total cost  
-    Since-install ROI = Since-install net ÷ Since-install total cost × 100  
+    -Since-install value = Annual labor value × Years since install  
+    -Since-install operating cost = Annual operating cost × Years since install  
+    -Since-install total cost = Upfront cost + Since-install operating cost  
+    -Since-install net = Since-install value − Since-install total cost  
+    -Since-install ROI = Since-install net ÷ Since-install total cost × 100  
     
     The formulas above are built on a sequence of dependent calculations. Each value is derived from the values before it:
     
