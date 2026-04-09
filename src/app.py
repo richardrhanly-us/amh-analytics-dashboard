@@ -2373,6 +2373,50 @@ if selected_view == "Overview":
     st.subheader("Summary")
     st.caption("Get a historical summary by choosing a date range.")
 
+    # ---------------------------------
+    # Internal Workflow Summary
+    # ---------------------------------
+    overview_acs_df = acs_history_raw.copy()
+
+    if len(overview_acs_df) > 0 and "datetime" in overview_acs_df.columns:
+        overview_acs_df["datetime"] = pd.to_datetime(overview_acs_df["datetime"], errors="coerce")
+        overview_acs_df = overview_acs_df.dropna(subset=["datetime"]).copy()
+        overview_acs_df = overview_acs_df[
+            (overview_acs_df["datetime"].dt.date >= start_date) &
+            (overview_acs_df["datetime"].dt.date <= end_date)
+        ].copy()
+
+    overview_acs_summary = build_acs_item_summary(overview_acs_df)
+
+    overview_holds = overview_acs_summary["holds_total"]
+    overview_ill = overview_acs_summary["ill_total"]
+    overview_ill_main = overview_acs_summary["ill_main"]
+    overview_ill_westside = overview_acs_summary["ill_westside"]
+    overview_ill_library_express = overview_acs_summary["ill_library_express"]
+
+    st.markdown("### Internal Workflow")
+    internal_overview_col1, internal_overview_col2 = st.columns(2)
+
+    with internal_overview_col1:
+        render_kpi_card(
+            "Holds",
+            f"{overview_holds:,}",
+            f"{date_range_text}",
+            "#6b7280",
+            value_font_size="2.0rem",
+            border_color="#34d399"
+        )
+
+    with internal_overview_col2:
+        render_kpi_card(
+            "ILL",
+            f"{overview_ill:,}",
+            f"Main {overview_ill_main:,} • WS {overview_ill_westside:,} • LE {overview_ill_library_express:,}",
+            "#6b7280",
+            value_font_size="2.0rem",
+            border_color="#34d399"
+        )
+    
     westside_transit_count = westside_count
     westside_transit_pct = westside_pct
 
