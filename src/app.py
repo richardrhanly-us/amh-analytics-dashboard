@@ -2118,18 +2118,6 @@ Status Code: `{status_code_text}`
             border_color="#34d399"
         )
         
-    with st.expander("Internal workflow audit", expanded=False):
-        st.write("ACS holds (live card):", today_holds)
-        st.write("Collection Services:", today_collection_services)
-        st.write("Repair / Mending:", today_repair)
-        st.write("Staff Review:", today_staff_review)
-        st.write("ILL:", today_ill)
-        st.write("Other Internal:", today_other_internal)
-        st.write("Bin 0 count:", today_bin0_count)
-        st.write("Rejects today:", today_rejects)
-        st.write("Library Express today:", today_library_express)
-        st.write("Internal summary:")
-        st.dataframe(internal_summary_today, use_container_width=True)
 
     with st.expander("Internal workflow audit", expanded=False):
         st.write("Public Holds:", today_holds)
