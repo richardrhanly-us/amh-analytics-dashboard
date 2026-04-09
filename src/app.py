@@ -406,16 +406,33 @@ def build_acs_item_summary(acs_df):
         "SERVICES TS-ADULT SERVICES",
     }
 
-    items["patron_name_upper"] = items["patron_name"].str.upper()
+    items["patron_name_upper"] = items["patron_name"].fillna("").astype(str).str.upper()
+    items["raw_upper"] = items["raw_message"].fillna("").astype(str).str.upper()
     items["destination_upper"] = items["destination"].fillna("").astype(str).str.upper()
-
+    
     items["is_ill"] = (
         items["patron_type"].str.upper().eq("ILL")
         | items["destination_upper"].str.contains(r"\bILL\b|INTERLIBRARY", regex=True, na=False)
     )
-
-    items["is_collection_services"] = items["patron_name_upper"].isin(collection_services_names)
-    items["is_programming"] = items["patron_name_upper"].isin(programming_names)
+    
+    items["is_collection_services"] = (
+        items["patron_name_upper"].isin(collection_services_names)
+        | items["raw_upper"].str.contains(r"\|DA\(AH\) TS\(AH\)-CATALOGING\|", na=False)
+        | items["raw_upper"].str.contains(r"\|DA\(AH\) TS\(AH\)-JNF COLLECTION\|", na=False)
+        | items["raw_upper"].str.contains(r"\|DA\(KV\) TS\(KV\)-CATALOGING\|", na=False)
+        | items["raw_upper"].str.contains(r"\|DA\(GR\) CS\(GR\)-CATALOGING\|", na=False)
+        | items["raw_upper"].str.contains(r"\|DA\(FV\) TS\(FV\)-CATALOGING\|", na=False)
+        | items["raw_upper"].str.contains(r"\|DA\(EG\) CS\(EG\)-CATALOGING\|", na=False)
+        | items["raw_upper"].str.contains(r"\|DA\(EG\) CS\(EG\)-DUPLICATES\|", na=False)
+        | items["raw_upper"].str.contains(r"\|DA\(JO\) CS\(JO\)-COLDVE\|", na=False)
+    )
+    
+    items["is_programming"] = (
+        items["patron_name_upper"].isin(programming_names)
+        | items["raw_upper"].str.contains(r"\|DACOURTNEY \(ST\)MEISSNER\|", na=False)
+        | items["raw_upper"].str.contains(r"\|DAMADELINE \(ST\)NEZAT\|", na=False)
+        | items["raw_upper"].str.contains(r"\|DASERVICES TS-ADULT SERVICES\|", na=False)
+    )
 
     holds_df = items[items["is_hold"]].copy()
     ill_df = holds_df[holds_df["is_ill"]].copy()
