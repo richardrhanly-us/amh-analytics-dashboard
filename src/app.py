@@ -1412,6 +1412,23 @@ if "raw_message" in today_acs_df.columns:
 else:
     today_acs_df["is_hold"] = False
 
+
+hold_only_df = today_acs_df[today_acs_df["is_hold"]].copy()
+
+st.write("hold rows after filter", len(hold_only_df))
+
+if "barcode" in hold_only_df.columns:
+    st.write(
+        "unique hold barcodes",
+        int(hold_only_df["barcode"].astype(str).nunique())
+    )
+
+st.write(
+    hold_only_df[["datetime", "barcode", "destination", "raw_message"]]
+    .sort_values("datetime", ascending=False)
+    .head(30)
+)
+
 internal_summary_today = build_internal_routing_summary(today_acs_df)
 today_collection_services = get_internal_count(internal_summary_today, "Collection Services")
 today_ill = get_internal_count(internal_summary_today, "ILL")
