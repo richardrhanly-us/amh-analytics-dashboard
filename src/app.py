@@ -4057,10 +4057,10 @@ if selected_view == "Reports":
             st.info(f"""
     ##### 1. Average Hours Saved
     
-    Average Daily Check-ins
+    - Average Daily Check-ins
     = Total check-ins / Total days
     
-    Average Daily Check-ins
+    - Average Daily Check-ins
     = {int(staff_df["checkins"].sum()):,} / {staff_df["date"].nunique():,}
     
     Average Daily Check-ins
