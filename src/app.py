@@ -4063,45 +4063,45 @@ if selected_view == "Reports":
     - Average Daily Check-ins
     = {int(staff_df["checkins"].sum()):,} / {staff_df["date"].nunique():,}
     
-    Average Daily Check-ins
+    - Average Daily Check-ins
     = {avg_daily_checkins:,.1f} items/day
     
-    Average Daily Manual Time
+    - Average Daily Manual Time
     = Average Daily Check-ins / Manual processing rate
     
-    Average Daily Manual Time
+    - Average Daily Manual Time
     = {avg_daily_checkins:,.1f} / {MANUAL_RATE:.1f}
     
-    Average Daily Manual Time
+    - Average Daily Manual Time
     = {avg_daily_manual_hours:,.2f} staff hours/day
     
-    Average Daily AMH Time
+    - Average Daily AMH Time
     = Average Daily Check-ins / AMH processing rate
     
-    Average Daily AMH Time
+    - Average Daily AMH Time
     = {avg_daily_checkins:,.1f} / {AMH_RATE:,.1f}
     
-    Average Daily AMH Time
+    - Average Daily AMH Time
     = {avg_daily_amh_hours:,.2f} machine hours/day
     
-    Average Hours Saved per Day
+    - Average Hours Saved per Day
     = Average Daily Manual Time - Average Daily AMH Time
     
-    Average Hours Saved per Day
+    - Average Hours Saved per Day
     = {avg_daily_manual_hours:,.2f} - {avg_daily_amh_hours:,.2f}
     
-    Average Hours Saved per Day
+    - Average Hours Saved per Day
     = {avg_saved:,.2f} staff hours/day
     
     ##### 2. Total Hours Saved
     
-    Total Hours Saved
+    - Total Hours Saved
     = Average Hours Saved per Day * Total days
     
-    Total Hours Saved
+    - Total Hours Saved
     = {avg_saved:,.2f} * {staff_df["date"].nunique():,}
     
-    Total Hours Saved
+    - Total Hours Saved
     = {total_saved:,.2f} hours
     
     ##### 3. Estimated Labor Value
