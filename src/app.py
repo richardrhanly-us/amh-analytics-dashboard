@@ -1396,14 +1396,20 @@ today_estimated_holds = max(
     0
 )
 
-
 internal_summary_today = build_internal_routing_summary(today_acs_df)
+
 today_collection_services = get_internal_count(internal_summary_today, "Collection Services")
 today_ill = get_internal_count(internal_summary_today, "ILL")
-today_holds = today_estimated_holds
 today_repair = get_internal_count(internal_summary_today, "Repair / Mending")
 today_problem_items = get_problem_items_count(today_df)
 today_staff_review = get_internal_count(internal_summary_today, "Staff Review")
+
+# stable live KPI for now
+today_holds = today_estimated_holds
+
+# audit values only - do not use these in the live card yet
+today_holds_from_internal_summary = get_internal_count(internal_summary_today, "Holds")
+today_other_internal = get_internal_count(internal_summary_today, "Other Internal")
 
 
 today_total_internal = (
@@ -1856,7 +1862,7 @@ Status Code: `{status_code_text}`
         render_kpi_card(
             "Holds",
             f"{today_holds:,}",
-            f"{(today_holds / internal_pct_base) * 100:.1f}% of checkins today",
+            f"Estimated from hold/bin routing ({(today_holds / internal_pct_base) * 100:.1f}% of checkins)",
             "#6b7280",
             value_font_size="2.0rem",
             border_color="#34d399"
@@ -1911,7 +1917,19 @@ Status Code: `{status_code_text}`
             value_font_size="1.85rem",
             border_color="#34d399"
         )
-
+    with st.expander("Internal workflow audit", expanded=False):
+        st.write("Estimated holds (live card):", today_estimated_holds)
+        st.write("ACS classified holds:", today_holds_from_internal_summary)
+        st.write("Collection Services:", today_collection_services)
+        st.write("Repair / Mending:", today_repair)
+        st.write("Staff Review:", today_staff_review)
+        st.write("ILL:", today_ill)
+        st.write("Other Internal:", today_other_internal)
+        st.write("Bin 0 count:", today_bin0_count)
+        st.write("Rejects today:", today_rejects)
+        st.write("Library Express today:", today_library_express)
+        st.write("Internal summary:")
+        st.dataframe(internal_summary_today, use_container_width=True)
 
     if info_alerts:
         st.markdown(
