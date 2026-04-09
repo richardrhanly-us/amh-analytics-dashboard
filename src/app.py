@@ -2416,7 +2416,38 @@ if selected_view == "Overview":
             value_font_size="2.0rem",
             border_color="#34d399"
         )
-    
+
+    with st.expander("ILL Debug (Overview)", expanded=False):
+
+        ill_items_df = overview_acs_summary["items_df"]
+
+        if len(ill_items_df) > 0:
+            ill_debug_df = ill_items_df[
+                (ill_items_df["is_hold"]) & (ill_items_df["is_ill"])
+            ].copy()
+
+            st.write("ILL item count:", len(ill_debug_df))
+
+            debug_cols = [
+                c for c in [
+                    "datetime",
+                    "barcode",
+                    "patron_id",
+                    "destination",
+                    "raw_message",
+                ]
+                if c in ill_debug_df.columns
+            ]
+
+            st.dataframe(
+                ill_debug_df
+                .sort_values("datetime", ascending=False),
+                use_container_width=True
+            )
+        else:
+            st.info("No ACS items available for this range.")
+
+
     westside_transit_count = westside_count
     westside_transit_pct = westside_pct
 
