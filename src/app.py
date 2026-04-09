@@ -1385,11 +1385,22 @@ if "barcode" in today_acs_df.columns and "datetime" in today_acs_df.columns:
     today_acs_df = today_acs_df.drop_duplicates(subset=["barcode"], keep="last")
 
 
+today_bin0_count = 0
+if "bin" in today_df.columns:
+    today_bin0_count = (
+        today_df["bin"].astype(str).str.contains("0", na=False).sum()
+    )
+
+today_estimated_holds = max(
+    today_bin0_count - today_rejects - today_library_express,
+    0
+)
+
 
 internal_summary_today = build_internal_routing_summary(today_acs_df)
 today_collection_services = get_internal_count(internal_summary_today, "Collection Services")
 today_ill = get_internal_count(internal_summary_today, "ILL")
-today_holds = get_internal_count(internal_summary_today, "Holds")
+today_holds = today_estimated_holds
 today_repair = get_internal_count(internal_summary_today, "Repair / Mending")
 today_problem_items = get_problem_items_count(today_df)
 today_staff_review = get_internal_count(internal_summary_today, "Staff Review")
