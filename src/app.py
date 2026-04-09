@@ -1634,18 +1634,11 @@ today_programming_df = acs_summary_today["programming_df"]
 today_collection_services_df = acs_summary_today["collection_services_df"]
 today_public_holds_df = acs_summary_today["holds_df"]
 
-# audit values only - do not use these in the live card yet
-today_holds_from_internal_summary = get_internal_count(internal_summary_today, "Holds")
-today_other_internal = get_internal_count(internal_summary_today, "Other Internal")
-
 
 today_total_internal = (
     today_collection_services
+    + today_programming
     + today_ill
-    + today_holds
-    + today_repair
-    + today_problem_items
-    + today_staff_review
 )
 
 historical_baseline = get_historical_reject_baseline(df_history_raw, rejects_history_raw, today)
