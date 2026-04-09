@@ -289,6 +289,114 @@ def get_internal_count(summary_df, category_name):
         return 0
     return int(match.iloc[0])
 
+def build_ill_patron_lookup(acs_df):
+    if acs_df is None or len(acs_df) == 0:
+        return pd.DataFrame(columns=["patron_id", "patron_name_64", "is_ill_patron"])
+
+    work_df = acs_df.copy()
+
+    if "datetime" in work_df.columns:
+        work_df["datetime"] = pd.to_datetime(work_df["datetime"], errors="coerce")
+
+    if "raw_message" in work_df.columns:
+        work_df["raw_message"] = work_df["raw_message"].fillna("").astype(str)
+
+    if "patron_id" not in work_df.columns:
+        return pd.DataFrame(columns=["patron_id", "patron_name_64", "is_ill_patron"])
+
+    patron_df = work_df[
+        work_df["message_code"].astype(str).str.strip() == "64"
+    ].copy()
+
+    if len(patron_df) == 0:
+        return pd.DataFrame(columns=["patron_id", "patron_name_64", "is_ill_patron"])
+
+    patron_df = patron_df[patron_df["patron_id"].notna()].copy()
+
+    patron_df["patron_name_64"] = patron_df["raw_message"].str.extract(r"\|AE([^|]*)", expand=False)
+    patron_df["patron_type_64"] = patron_df["raw_message"].str.extract(r"\|PT([^|]*)", expand=False)
+
+    patron_df["is_ill_patron"] = patron_df["patron_type_64"].fillna("").astype(str).str.upper().eq("ILL")
+
+    if "datetime" in patron_df.columns:
+        patron_df = patron_df.sort_values("datetime")
+
+    patron_df = patron_df.drop_duplicates(subset=["patron_id"], keep="last")
+
+    return patron_df[["patron_id", "patron_name_64", "is_ill_patron"]]
+
+
+def build_ill_items_summary(acs_df):
+    if acs_df is None or len(acs_df) == 0:
+        return {
+            "ill_total": 0,
+            "ill_main": 0,
+            "ill_westside": 0,
+            "ill_library_express": 0,
+            "ill_items_df": pd.DataFrame(),
+        }
+
+    work_df = acs_df.copy()
+
+    if "datetime" in work_df.columns:
+        work_df["datetime"] = pd.to_datetime(work_df["datetime"], errors="coerce")
+
+    if "raw_message" in work_df.columns:
+        work_df["raw_message"] = work_df["raw_message"].fillna("").astype(str).str.strip()
+
+    # item events only
+    item_df = work_df[
+        work_df["raw_message"].str.startswith("101", na=False)
+    ].copy()
+
+    if len(item_df) == 0:
+        return {
+            "ill_total": 0,
+            "ill_main": 0,
+            "ill_westside": 0,
+            "ill_library_express": 0,
+            "ill_items_df": pd.DataFrame(),
+        }
+
+    # keep latest item event per barcode
+    if "barcode" in item_df.columns and "datetime" in item_df.columns:
+        item_df = item_df.sort_values("datetime")
+        item_df = item_df.drop_duplicates(subset=["barcode"], keep="last")
+
+    item_df["is_hold"] = item_df["raw_message"].str.startswith("101YNY", na=False)
+
+    patron_lookup = build_ill_patron_lookup(work_df)
+
+    item_df = item_df.merge(
+        patron_lookup,
+        on="patron_id",
+        how="left"
+    )
+
+    item_df["is_ill_patron"] = item_df["is_ill_patron"].fillna(False)
+
+    ill_items_df = item_df[
+        item_df["is_hold"] & item_df["is_ill_patron"]
+    ].copy()
+
+    if "destination" not in ill_items_df.columns:
+        ill_items_df["destination"] = ""
+
+    dest = ill_items_df["destination"].fillna("").astype(str)
+
+    ill_westside = int(dest.str.contains("WESTSIDE", case=False, na=False).sum())
+    ill_library_express = int(dest.str.contains("LIBRARY EXPRESS", case=False, na=False).sum())
+    ill_main = int((~dest.str.contains("WESTSIDE|LIBRARY EXPRESS", case=False, na=False)).sum())
+
+    return {
+        "ill_total": int(len(ill_items_df)),
+        "ill_main": ill_main,
+        "ill_westside": ill_westside,
+        "ill_library_express": ill_library_express,
+        "ill_items_df": ill_items_df,
+    }
+
+
 def get_problem_items_count(source_df):
     if source_df is None or len(source_df) == 0:
         return 0
@@ -1464,10 +1572,16 @@ with st.expander("ACS Internal Routing Debug", expanded=False):
 
 
 today_collection_services = get_internal_count(internal_summary_today, "Collection Services")
-today_ill = get_internal_count(internal_summary_today, "ILL")
 today_repair = get_internal_count(internal_summary_today, "Repair / Mending")
 today_problem_items = get_problem_items_count(today_df)
 today_staff_review = get_internal_count(internal_summary_today, "Staff Review")
+
+ill_summary_today = build_ill_items_summary(acs_live_raw)
+today_ill = ill_summary_today["ill_total"]
+today_ill_main = ill_summary_today["ill_main"]
+today_ill_westside = ill_summary_today["ill_westside"]
+today_ill_library_express = ill_summary_today["ill_library_express"]
+today_ill_items_df = ill_summary_today["ill_items_df"]
 
 # stable live KPI for now
 today_holds = today_estimated_holds
@@ -1977,11 +2091,12 @@ Status Code: `{status_code_text}`
         render_kpi_card(
             "ILL",
             f"{today_ill:,}",
-            f"{(today_ill / internal_pct_base) * 100:.1f}% of checkins today",
+            f"Main {today_ill_main:,} • WS {today_ill_westside:,} • LE {today_ill_library_express:,}",
             "#6b7280",
             value_font_size="1.85rem",
             border_color="#34d399"
         )
+        
     with st.expander("Internal workflow audit", expanded=False):
         st.write("Estimated holds (live card):", today_estimated_holds)
         st.write("ACS classified holds:", today_holds_from_internal_summary)
@@ -1995,7 +2110,30 @@ Status Code: `{status_code_text}`
         st.write("Library Express today:", today_library_express)
         st.write("Internal summary:")
         st.dataframe(internal_summary_today, use_container_width=True)
-
+        with st.expander("ILL audit", expanded=False):
+            st.write("ILL total:", today_ill)
+            st.write("ILL Main:", today_ill_main)
+            st.write("ILL Westside:", today_ill_westside)
+            st.write("ILL Library Express:", today_ill_library_express)
+        
+            if len(today_ill_items_df) > 0:
+                ill_debug_cols = [
+                    c for c in [
+                        "datetime",
+                        "barcode",
+                        "patron_id",
+                        "patron_name_64",
+                        "destination",
+                        "raw_message",
+                    ]
+                    if c in today_ill_items_df.columns
+                ]
+                st.dataframe(
+                    today_ill_items_df[ill_debug_cols].sort_values("datetime", ascending=False),
+                    use_container_width=True
+                )
+            else:
+                st.info("No ILL items detected today.")
     if info_alerts:
         st.markdown(
             f"""
