@@ -2454,6 +2454,100 @@ if selected_view == "Overview":
             border_color="#34d399"
         )
 
+
+    with st.expander("Internal Workflow Debug (Overview)", expanded=False):
+        overview_programming_df = overview_acs_summary["programming_df"].copy()
+        overview_collection_services_df = overview_acs_summary["collection_services_df"].copy()
+    
+        st.markdown("##### Programming breakdown")
+        if len(overview_programming_df) > 0:
+            programming_breakdown = (
+                overview_programming_df["patron_name"]
+                .fillna("(blank)")
+                .astype(str)
+                .value_counts()
+                .rename_axis("staff_name")
+                .reset_index(name="count")
+            )
+            st.dataframe(programming_breakdown, use_container_width=True)
+    
+            programming_debug_cols = [
+                c for c in [
+                    "datetime",
+                    "barcode",
+                    "patron_id",
+                    "patron_name",
+                    "destination",
+                    "raw_message",
+                ]
+                if c in overview_programming_df.columns
+            ]
+            st.dataframe(
+                overview_programming_df[programming_debug_cols]
+                .sort_values("datetime", ascending=False),
+                use_container_width=True
+            )
+        else:
+            st.info("No Programming items found for this range.")
+    
+        st.markdown("##### Collection Services breakdown")
+        if len(overview_collection_services_df) > 0:
+            collection_breakdown = (
+                overview_collection_services_df["patron_name"]
+                .fillna("(blank)")
+                .astype(str)
+                .value_counts()
+                .rename_axis("staff_name")
+                .reset_index(name="count")
+            )
+            st.dataframe(collection_breakdown, use_container_width=True)
+    
+            collection_debug_cols = [
+                c for c in [
+                    "datetime",
+                    "barcode",
+                    "patron_id",
+                    "patron_name",
+                    "destination",
+                    "raw_message",
+                ]
+                if c in overview_collection_services_df.columns
+            ]
+            st.dataframe(
+                overview_collection_services_df[collection_debug_cols]
+                .sort_values("datetime", ascending=False),
+                use_container_width=True
+            )
+        else:
+            st.info("No Collection Services items found for this range.")
+
+
+
+
+    st.markdown("##### Programming breakdown")
+    if len(overview_programming_df) > 0:
+        programming_breakdown = (
+            overview_programming_df["patron_name"]
+            .fillna("(blank)")
+            .astype(str)
+            .value_counts()
+            .rename_axis("staff_name")
+            .reset_index(name="count")
+        )
+        st.dataframe(programming_breakdown, use_container_width=True)
+    
+    st.markdown("##### Collection Services breakdown")
+    if len(overview_collection_services_df) > 0:
+        collection_breakdown = (
+            overview_collection_services_df["patron_name"]
+            .fillna("(blank)")
+            .astype(str)
+            .value_counts()
+            .rename_axis("staff_name")
+            .reset_index(name="count")
+        )
+        st.dataframe(collection_breakdown, use_container_width=True)
+    
     with st.expander("ILL Debug (Overview)", expanded=False):
 
         ill_items_df = overview_acs_summary["items_df"]
