@@ -4106,13 +4106,13 @@ if selected_view == "Reports":
     
     ##### 3. Estimated Labor Value
     
-    Estimated Labor Value
+    - Estimated Labor Value
     = Total Hours Saved * Hourly labor cost
     
-    Estimated Labor Value
+    - Estimated Labor Value
     = {total_saved:,.2f} * ${HOURLY_COST:.2f}
     
-    Estimated Labor Value
+    - Estimated Labor Value
     = ${labor_value_saved:,.0f}
     """)
     
