@@ -1379,8 +1379,13 @@ if "raw_message" in today_acs_df.columns:
         today_acs_df["raw_message"].str.startswith("101")
     ].copy()
 
+# identify holds FIRST
+today_acs_df["is_hold"] = today_acs_df["raw_message"].str.startswith("101YNY")
+
 if "barcode" in today_acs_df.columns and "datetime" in today_acs_df.columns:
-    today_acs_df = today_acs_df.drop_duplicates(subset=["barcode"])
+    # keep most recent event per barcode
+    today_acs_df = today_acs_df.sort_values("datetime")
+    today_acs_df = today_acs_df.drop_duplicates(subset=["barcode"], keep="last")
 
 
 
