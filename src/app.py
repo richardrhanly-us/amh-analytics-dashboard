@@ -232,8 +232,6 @@ def normalize_internal_destination(destination, raw_message="", message_code="")
     if "COLLECTION SERVICES" in combined or "COLLECTION" in combined or "CATALOG" in combined or "PROCESSING" in combined:
         return "Collection Services"
 
-    if "HOLD" in combined or "HOLDS" in combined or "RESERVE" in combined:
-        return "Holds"
 
     if "REPAIR" in combined or "MENDING" in combined or "MEND" in combined:
         return "Repair / Mending"
@@ -325,75 +323,86 @@ def build_ill_patron_lookup(acs_df):
 
     return patron_df[["patron_id", "patron_name_64", "is_ill_patron"]]
 
-
-def build_ill_items_summary(acs_df):
+def build_acs_item_summary(acs_df):
     if acs_df is None or len(acs_df) == 0:
         return {
+            "holds_total": 0,
             "ill_total": 0,
             "ill_main": 0,
             "ill_westside": 0,
             "ill_library_express": 0,
-            "ill_items_df": pd.DataFrame(),
+            "items_df": pd.DataFrame(),
         }
 
-    work_df = acs_df.copy()
+    df = acs_df.copy()
 
-    if "datetime" in work_df.columns:
-        work_df["datetime"] = pd.to_datetime(work_df["datetime"], errors="coerce")
+    # normalize
+    df["raw_message"] = df["raw_message"].fillna("").astype(str)
+    df["message_code"] = df["message_code"].astype(str).str.strip()
 
-    if "raw_message" in work_df.columns:
-        work_df["raw_message"] = work_df["raw_message"].fillna("").astype(str).str.strip()
+    if "datetime" in df.columns:
+        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
 
-    # item events only
-    item_df = work_df[
-        work_df["raw_message"].str.startswith("101", na=False)
-    ].copy()
+    # -----------------------------
+    # STEP 1: GET HOLD ITEM EVENTS
+    # -----------------------------
+    items = df[df["raw_message"].str.startswith("101", na=False)].copy()
 
-    if len(item_df) == 0:
+    if len(items) == 0:
         return {
+            "holds_total": 0,
             "ill_total": 0,
             "ill_main": 0,
             "ill_westside": 0,
             "ill_library_express": 0,
-            "ill_items_df": pd.DataFrame(),
+            "items_df": pd.DataFrame(),
         }
 
-    # keep latest item event per barcode
-    if "barcode" in item_df.columns and "datetime" in item_df.columns:
-        item_df = item_df.sort_values("datetime")
-        item_df = item_df.drop_duplicates(subset=["barcode"], keep="last")
+    # latest per barcode
+    items = items.sort_values("datetime")
+    items = items.drop_duplicates(subset=["barcode"], keep="last")
 
-    item_df["is_hold"] = item_df["raw_message"].str.startswith("101YNY", na=False)
+    # HOLD = 101YNY
+    items["is_hold"] = items["raw_message"].str.startswith("101YNY", na=False)
 
-    patron_lookup = build_ill_patron_lookup(work_df)
+    # -----------------------------
+    # STEP 2: GET PTILL FROM 64 ROWS
+    # -----------------------------
+    patrons = df[df["message_code"] == "64"].copy()
 
-    item_df = item_df.merge(
-        patron_lookup,
+    patrons["patron_type"] = patrons["raw_message"].str.extract(r"\|PT([^|]*)", expand=False)
+
+    patrons["is_ill"] = patrons["patron_type"].fillna("").str.upper().eq("ILL")
+
+    patrons = patrons.sort_values("datetime")
+    patrons = patrons.drop_duplicates(subset=["patron_id"], keep="last")
+
+    # -----------------------------
+    # STEP 3: MERGE
+    # -----------------------------
+    items = items.merge(
+        patrons[["patron_id", "is_ill"]],
         on="patron_id",
         how="left"
     )
 
-    item_df["is_ill_patron"] = item_df["is_ill_patron"].fillna(False)
+    items["is_ill"] = items["is_ill"].fillna(False)
 
-    ill_items_df = item_df[
-        item_df["is_hold"] & item_df["is_ill_patron"]
-    ].copy()
+    # -----------------------------
+    # FINAL COUNTS
+    # -----------------------------
+    holds_df = items[items["is_hold"]].copy()
+    ill_df = holds_df[holds_df["is_ill"]].copy()
 
-    if "destination" not in ill_items_df.columns:
-        ill_items_df["destination"] = ""
-
-    dest = ill_items_df["destination"].fillna("").astype(str)
-
-    ill_westside = int(dest.str.contains("WESTSIDE", case=False, na=False).sum())
-    ill_library_express = int(dest.str.contains("LIBRARY EXPRESS", case=False, na=False).sum())
-    ill_main = int((~dest.str.contains("WESTSIDE|LIBRARY EXPRESS", case=False, na=False)).sum())
+    dest = ill_df["destination"].fillna("").astype(str)
 
     return {
-        "ill_total": int(len(ill_items_df)),
-        "ill_main": ill_main,
-        "ill_westside": ill_westside,
-        "ill_library_express": ill_library_express,
-        "ill_items_df": ill_items_df,
+        "holds_total": int(len(holds_df)),
+        "ill_total": int(len(ill_df)),
+        "ill_main": int((~dest.str.contains("WESTSIDE|LIBRARY EXPRESS", case=False)).sum()),
+        "ill_westside": int(dest.str.contains("WESTSIDE", case=False).sum()),
+        "ill_library_express": int(dest.str.contains("LIBRARY EXPRESS", case=False).sum()),
+        "items_df": items,
     }
 
 
@@ -1499,10 +1508,6 @@ if "bin" in today_df.columns:
         today_df["bin"].astype(str).str.contains("0", na=False).sum()
     )
 
-today_estimated_holds = max(
-    today_bin0_count - today_rejects - today_library_express,
-    0
-)
 
 internal_summary_today = build_internal_routing_summary(today_acs_df)
 
@@ -1578,12 +1583,16 @@ today_repair = get_internal_count(internal_summary_today, "Repair / Mending")
 today_problem_items = get_problem_items_count(today_df)
 today_staff_review = get_internal_count(internal_summary_today, "Staff Review")
 
-ill_summary_today = build_ill_items_summary(acs_live_raw)
-today_ill = ill_summary_today["ill_total"]
-today_ill_main = ill_summary_today["ill_main"]
-today_ill_westside = ill_summary_today["ill_westside"]
-today_ill_library_express = ill_summary_today["ill_library_express"]
-today_ill_items_df = ill_summary_today["ill_items_df"]
+acs_summary_today = build_acs_item_summary(acs_live_raw)
+
+today_holds = acs_summary_today["holds_total"]
+
+today_ill = acs_summary_today["ill_total"]
+today_ill_main = acs_summary_today["ill_main"]
+today_ill_westside = acs_summary_today["ill_westside"]
+today_ill_library_express = acs_summary_today["ill_library_express"]
+
+today_ill_items_df = acs_summary_today["items_df"]
 
 # stable live KPI for now
 today_holds = today_estimated_holds
