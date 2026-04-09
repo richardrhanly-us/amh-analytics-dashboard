@@ -1382,6 +1382,31 @@ if "raw_message" in today_acs_df.columns:
 if "barcode" in today_acs_df.columns and "datetime" in today_acs_df.columns:
     today_acs_df = today_acs_df.drop_duplicates(subset=["barcode"])
 
+st.write("today_acs_df rows before dedupe", len(today_acs_df))
+
+if "barcode" in today_acs_df.columns:
+    st.write("blank barcode rows", int(today_acs_df["barcode"].isna().sum()))
+    st.write(
+        "unique barcodes before dedupe",
+        int(today_acs_df["barcode"].astype(str).nunique())
+    )
+
+hold_only_df = today_acs_df[today_acs_df["is_hold"]].copy()
+
+st.write("hold rows after filter", len(hold_only_df))
+
+if "barcode" in hold_only_df.columns:
+    st.write(
+        "unique hold barcodes",
+        int(hold_only_df["barcode"].astype(str).nunique())
+    )
+
+st.write(
+    hold_only_df[["datetime", "barcode", "destination", "raw_message"]]
+    .sort_values("datetime", ascending=False)
+    .head(30)
+)
+
 if "raw_message" in today_acs_df.columns:
     today_acs_df["is_hold"] = today_acs_df["raw_message"].str.startswith("101YNY")
 else:
