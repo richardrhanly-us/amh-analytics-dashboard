@@ -1384,13 +1384,6 @@ if "barcode" in today_acs_df.columns and "datetime" in today_acs_df.columns:
     today_acs_df = today_acs_df.sort_values("datetime")
     today_acs_df = today_acs_df.drop_duplicates(subset=["barcode"], keep="last")
 
-if "raw_message" in today_acs_df.columns:
-    today_acs_df["is_hold"] = (
-        today_acs_df["raw_message"].str.startswith("101YNY")
-        & today_acs_df["raw_message"].str.contains(r"\|(CT|CY)", regex=True, na=False)
-    )
-else:
-    today_acs_df["is_hold"] = False
 
 st.write("today_acs_df rows after ACS item filter", len(today_acs_df))
 
@@ -1401,7 +1394,6 @@ if "barcode" in today_acs_df.columns:
         int(today_acs_df["barcode"].astype(str).nunique())
     )
 
-hold_only_df = today_acs_df[today_acs_df["is_hold"]].copy()
 
 st.write("hold rows after filter", len(hold_only_df))
 
@@ -1420,7 +1412,7 @@ st.write(
 internal_summary_today = build_internal_routing_summary(today_acs_df)
 today_collection_services = get_internal_count(internal_summary_today, "Collection Services")
 today_ill = get_internal_count(internal_summary_today, "ILL")
-today_holds = int(today_acs_df["is_hold"].sum())
+today_holds = get_internal_count(internal_summary_today, "Holds")
 today_repair = get_internal_count(internal_summary_today, "Repair / Mending")
 today_problem_items = get_problem_items_count(today_df)
 today_staff_review = get_internal_count(internal_summary_today, "Staff Review")
