@@ -1379,19 +1379,20 @@ if "raw_message" in today_acs_df.columns:
         today_acs_df["raw_message"].str.startswith("101")
     ].copy()
 
-# tighter hold detection:
-# require 101YNY AND a hold-related field such as CT (pickup/transit location)
-# or CY (linked hold/patron field seen on hold rows)
-today_acs_df["is_hold"] = (
-    today_acs_df["raw_message"].str.startswith("101YNY")
-    & today_acs_df["raw_message"].str.contains(r"\|(CT|CY)", regex=True, na=False)
-)
-
 if "barcode" in today_acs_df.columns and "datetime" in today_acs_df.columns:
     # keep most recent event per barcode
     today_acs_df = today_acs_df.sort_values("datetime")
     today_acs_df = today_acs_df.drop_duplicates(subset=["barcode"], keep="last")
 
+if "raw_message" in today_acs_df.columns:
+    today_acs_df["is_hold"] = (
+        today_acs_df["raw_message"].str.startswith("101YNY")
+        & today_acs_df["raw_message"].str.contains(r"\|(CT|CY)", regex=True, na=False)
+    )
+else:
+    today_acs_df["is_hold"] = False
+
+st.write("today_acs_df rows after ACS item filter", len(today_acs_df))
 
 if "barcode" in today_acs_df.columns:
     st.write("blank barcode rows", int(today_acs_df["barcode"].isna().sum()))
@@ -1399,22 +1400,6 @@ if "barcode" in today_acs_df.columns:
         "unique barcodes after dedupe",
         int(today_acs_df["barcode"].astype(str).nunique())
     )
-
-hold_only_df = today_acs_df[today_acs_df["is_hold"]].copy()
-
-st.write("hold rows after filter", len(hold_only_df))
-
-if "barcode" in hold_only_df.columns:
-    st.write(
-        "unique hold barcodes",
-        int(hold_only_df["barcode"].astype(str).nunique())
-    )
-
-st.write(
-    hold_only_df[["datetime", "barcode", "destination", "raw_message"]]
-    .sort_values("datetime", ascending=False)
-    .head(30)
-)
 
 hold_only_df = today_acs_df[today_acs_df["is_hold"]].copy()
 
