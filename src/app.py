@@ -2120,7 +2120,6 @@ Status Code: `{status_code_text}`
         
     with st.expander("Internal workflow audit", expanded=False):
         st.write("ACS holds (live card):", today_holds)
-        st.write("ACS classified holds:", today_holds_from_internal_summary)
         st.write("Collection Services:", today_collection_services)
         st.write("Repair / Mending:", today_repair)
         st.write("Staff Review:", today_staff_review)
