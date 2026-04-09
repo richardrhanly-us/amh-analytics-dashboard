@@ -396,6 +396,8 @@ def build_acs_item_summary(acs_df):
         "(GR) CS(GR)-CATALOGING",
         "(FV) TS(FV)-CATALOGING",
         "(EG) CS(EG)-CATALOGING",
+        "(EG) CS(EG)-DUPLICATES",
+        "(JO) CS(JO)-COLDEV", 
     }
 
     programming_names = {
