@@ -23,8 +23,8 @@ st.set_page_config(
 APP_TZ = ZoneInfo("America/Chicago")
 
 def is_operating_hours(now_ct: datetime) -> bool:
-    # 7:00 AM through 8:59 PM
-    return 7 <= now_ct.hour < 21
+    # 6:00 AM through 8:59 PM
+    return 6 <= now_ct.hour < 21
 
 now_ct = datetime.now(APP_TZ)
 
