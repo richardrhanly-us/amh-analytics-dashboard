@@ -3072,7 +3072,7 @@ if selected_view == "Reports":
                 "Upfront cost ($)",
                 min_value=0.0,
                 max_value=10000000.0,
-                value=st.session_state.get("roi_upfront_cost", 200000.0),
+                value=st.session_state.get("roi_upfront_cost", 118003.92.0),
                 step=100.0,
                 format="%.2f",
                 key="roi_upfront_cost",
