@@ -3060,7 +3060,7 @@ if selected_view == "Reports":
                 "Hourly labor rate ($/hour)",
                 min_value=0.0,
                 max_value=1000.0,
-                value=st.session_state.get("roi_hourly_cost", 18.0),
+                value=st.session_state.get("roi_hourly_cost", 17.56),
                 step=0.5,
                 format="%.2f",
                 key="roi_hourly_cost",
@@ -3072,7 +3072,7 @@ if selected_view == "Reports":
                 "Upfront cost ($)",
                 min_value=0.0,
                 max_value=10000000.0,
-                value=st.session_state.get("roi_upfront_cost", 250000.0),
+                value=st.session_state.get("roi_upfront_cost", 200000.0),
                 step=100.0,
                 format="%.2f",
                 key="roi_upfront_cost",
@@ -3096,7 +3096,7 @@ if selected_view == "Reports":
                 "Yearly cost ($/year)",
                 min_value=0.0,
                 max_value=1000000.0,
-                value=st.session_state.get("roi_yearly_cost", 8500.0),
+                value=st.session_state.get("roi_yearly_cost", 8400.0),
                 step=50.0,
                 format="%.2f",
                 key="roi_yearly_cost",
@@ -3117,7 +3117,7 @@ if selected_view == "Reports":
         with roi_mode_col2:
             INSTALL_DATE = st.date_input(
                 "Installed on",
-                value=st.session_state.get("roi_install_date", pd.to_datetime("2019-05-01").date()),
+                value=st.session_state.get("roi_install_date", pd.to_datetime("2020-11-20").date()),
                 key="roi_install_date",
                 help="Used to estimate ROI since the AMH was put into service."
             )
