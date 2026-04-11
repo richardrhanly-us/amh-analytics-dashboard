@@ -4012,7 +4012,7 @@ Since-install ROI = ${since_install_net_value:,.0f} ÷ ${since_install_total_cos
             st.info(f"""
     ##### 1. Average Hours Saved
     
-    - Average Daily Check-ins
+    ###### Average Daily Check-ins
     = Total check-ins / Total days
     
     - Average Daily Check-ins
@@ -4021,7 +4021,7 @@ Since-install ROI = ${since_install_net_value:,.0f} ÷ ${since_install_total_cos
     - Average Daily Check-ins
     = {avg_daily_checkins:,.1f} items/day
     
-    - Average Daily Manual Time
+    ###### Average Daily Manual Time
     = Average Daily Check-ins / Manual processing rate
     
     - Average Daily Manual Time
@@ -4030,7 +4030,7 @@ Since-install ROI = ${since_install_net_value:,.0f} ÷ ${since_install_total_cos
     - Average Daily Manual Time
     = {avg_daily_manual_hours:,.2f} staff hours/day
     
-    - Average Daily AMH Time
+    ###### Average Daily AMH Time
     = Average Daily Check-ins / AMH processing rate
     
     - Average Daily AMH Time
@@ -4039,7 +4039,7 @@ Since-install ROI = ${since_install_net_value:,.0f} ÷ ${since_install_total_cos
     - Average Daily AMH Time
     = {avg_daily_amh_hours:,.2f} machine hours/day
     
-    - Average Hours Saved per Day
+    ###### Average Hours Saved per Day
     = Average Daily Manual Time - Average Daily AMH Time
     
     - Average Hours Saved per Day
