@@ -2054,7 +2054,7 @@ Status Code: `{status_code_text}`
     
     with internal3:
         render_kpi_card(
-            "Programming",
+            "Branch Servives",
             f"{today_programming:,}",
             f"{(today_programming / internal_pct_base) * 100:.1f}% of checkins today",
             "#6b7280",
@@ -4045,8 +4045,8 @@ Since-install ROI = ${since_install_net_value:,.0f} ÷ ${since_install_total_cos
     - Average Hours Saved per Day
     = {avg_daily_manual_hours:,.2f} - {avg_daily_amh_hours:,.2f}
     
-    - Average Hours Saved per Day
-    = {avg_saved:,.2f} staff hours/day
+    - **Average Hours Saved per Day
+    = {avg_saved:,.2f} staff hours/day**
     
     ##### 2. Total Hours Saved
     
