@@ -15,6 +15,7 @@ from views.live_today_view import render_live_today
 from views.overview_view import render_overview
 from views.reports_view import render_reports
 from views.transits_view import render_transits
+from services.settings_service import load_app_settings
 
 from data_loader import (
     load_checkins_df,
@@ -44,51 +45,28 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 APP_TZ = ZoneInfo("America/Chicago")
+
 SETTINGS_FILE = Path(__file__).parent / "branch_settings.json"
 
-def load_branch_settings():
-    with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+app_settings = load_app_settings(SETTINGS_FILE)
 
-branch_settings = load_branch_settings()
+LIBRARY_SETTINGS = app_settings["LIBRARY_SETTINGS"]
+TRANSIT_SETTINGS = app_settings["TRANSIT_SETTINGS"]
+INTERNAL_ROUTING = app_settings["INTERNAL_ROUTING"]
 
-LIBRARY_SETTINGS = branch_settings.get("library", {})
-TRANSIT_SETTINGS = branch_settings.get("transit", {})
-INTERNAL_ROUTING = branch_settings.get("internal_routing", {})
+LIBRARY_NAME = app_settings["LIBRARY_NAME"]
+BRANCH_NAME = app_settings["BRANCH_NAME"]
+SYSTEM_NAME = app_settings["SYSTEM_NAME"]
 
-LIBRARY_NAME = LIBRARY_SETTINGS.get("library_name", "New Braunfels Public Library")
-BRANCH_NAME = LIBRARY_SETTINGS.get("branch_name", "Main Branch")
-SYSTEM_NAME = LIBRARY_SETTINGS.get("system_name", "Tech Logic UltraSort")
+TRANSIT_HOME_LABEL = app_settings["TRANSIT_HOME_LABEL"]
+TRANSIT_DESTINATIONS = app_settings["TRANSIT_DESTINATIONS"]
+ENABLED_TRANSIT_DESTINATIONS = app_settings["ENABLED_TRANSIT_DESTINATIONS"]
+TRANSIT_LABELS = app_settings["TRANSIT_LABELS"]
 
-TRANSIT_HOME_LABEL = TRANSIT_SETTINGS.get("home_branch_label", "Main")
-TRANSIT_DESTINATIONS = TRANSIT_SETTINGS.get("destinations", [])
-
-ENABLED_TRANSIT_DESTINATIONS = [
-    d for d in TRANSIT_DESTINATIONS
-    if bool(d.get("enabled", True)) and str(d.get("label", "")).strip()
-]
-
-TRANSIT_LABELS = [str(d.get("label", "")).strip() for d in ENABLED_TRANSIT_DESTINATIONS]
-
-BRANCH_SERVICES_NAMES = {
-    str(x).strip().upper()
-    for x in INTERNAL_ROUTING.get("branch_services_names", [])
-}
-
-COLLECTION_SERVICES_NAMES = {
-    str(x).strip().upper()
-    for x in INTERNAL_ROUTING.get("collection_services_names", [])
-}
-
-BRANCH_SERVICES_DA_PATTERNS = [
-    str(x).strip().upper()
-    for x in INTERNAL_ROUTING.get("branch_services_da_patterns", [])
-]
-
-COLLECTION_SERVICES_DA_PATTERNS = [
-    str(x).strip().upper()
-    for x in INTERNAL_ROUTING.get("collection_services_da_patterns", [])
-]
+BRANCH_SERVICES_NAMES = app_settings["BRANCH_SERVICES_NAMES"]
+COLLECTION_SERVICES_NAMES = app_settings["COLLECTION_SERVICES_NAMES"]
+BRANCH_SERVICES_DA_PATTERNS = app_settings["BRANCH_SERVICES_DA_PATTERNS"]
+COLLECTION_SERVICES_DA_PATTERNS = app_settings["COLLECTION_SERVICES_DA_PATTERNS"]
 
 def is_operating_hours(now_ct: datetime) -> bool:
     return 6 <= now_ct.hour < 21
