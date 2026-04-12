@@ -6,7 +6,7 @@
   },
   "security": {
     "admin_enabled": true,
-    "admin_password": ""
+    "admin_password": "78666"
   },
   "transit": {
     "labels": {
