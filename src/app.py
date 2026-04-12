@@ -58,6 +58,7 @@ COLLECTION_SERVICES_DA_PATTERNS = [
     for x in INTERNAL_ROUTING.get("collection_services_da_patterns", [])
 ]
 
+st.write("DEBUG SETTINGS:", branch_settings)
 
 def is_operating_hours(now_ct: datetime) -> bool:
     # 6:00 AM through 8:59 PM
