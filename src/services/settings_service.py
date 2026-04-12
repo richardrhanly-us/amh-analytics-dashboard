@@ -150,7 +150,10 @@ def load_runtime_settings(
                 org_slug=org_slug,
                 branch_slug=branch_slug,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            fallback = load_app_settings_from_file(settings_file)
+            fallback["source"] = "file_fallback"
+            fallback["settings_error"] = f"{type(e).__name__}: {e}"
+            return fallback
 
     return load_app_settings_from_file(settings_file)
