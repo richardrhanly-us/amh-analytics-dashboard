@@ -972,14 +972,20 @@ max_date = df_history_raw["datetime"].max().date()
 
 
 
-st.caption("Hanly Analytics")
-st.markdown('<div class="sortview-title">SORTVIEW</div>', unsafe_allow_html=True)
-st.markdown(
-    f"<div style='color:#6b7280; font-size:0.95rem; margin-bottom:10px;'>"
-    f"{LIBRARY_NAME} • {BRANCH_NAME} • {SYSTEM_NAME}"
-    f"</div>",
-    unsafe_allow_html=True
-)
+header_left, header_right = st.columns([12, 1])
+
+with header_left:
+    st.caption("Hanly Analytics")
+    st.markdown('<div class="sortview-title">SORTVIEW</div>', unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='color:#6b7280; font-size:0.95rem; margin-bottom:10px;'>"
+        f"{LIBRARY_NAME} • {BRANCH_NAME} • {SYSTEM_NAME}"
+        f"</div>",
+        unsafe_allow_html=True
+    )
+
+with header_right:
+    st.page_link("pages/1_Admin_Settings.py", label="⚙️", help="Admin Settings")
 
 pipeline_status_label = "Unknown"
 pipeline_status_color = "#6b7280"
