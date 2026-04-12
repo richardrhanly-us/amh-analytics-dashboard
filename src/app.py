@@ -8,11 +8,8 @@ from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import altair as alt
-from textwrap import dedent
 
 from streamlit_autorefresh import st_autorefresh
-import pytz
-import re
 import json
 
 st.set_page_config(
@@ -41,10 +38,8 @@ def load_branch_settings():
 branch_settings = load_branch_settings()
 
 LIBRARY_SETTINGS = branch_settings.get("library", {})
-SECURITY_SETTINGS = branch_settings.get("security", {})
 TRANSIT_SETTINGS = branch_settings.get("transit", {})
 INTERNAL_ROUTING = branch_settings.get("internal_routing", {})
-ACCOUNT_SETTINGS = branch_settings.get("account_settings", {})
 
 LIBRARY_NAME = LIBRARY_SETTINGS.get("library_name", "New Braunfels Public Library")
 BRANCH_NAME = LIBRARY_SETTINGS.get("branch_name", "Main Branch")
@@ -60,10 +55,6 @@ ENABLED_TRANSIT_DESTINATIONS = [
 ]
 
 TRANSIT_LABELS = [str(d.get("label", "")).strip() for d in ENABLED_TRANSIT_DESTINATIONS]
-TRANSIT_LABEL_MAP = {
-    str(d.get("label", "")).strip().upper(): str(d.get("label", "")).strip()
-    for d in ENABLED_TRANSIT_DESTINATIONS
-}
 
 BRANCH_SERVICES_NAMES = {
     str(x).strip().upper()
@@ -1080,13 +1071,6 @@ if len(df) > 0:
         worst_rate = daily_combined["reject_rate"].max()
         worst_day_label = pd.to_datetime(worst_day).strftime("%a, %b %d")
 
-if len(rejects_df) > 0:
-    top_issue = rejects_df["error_simple"].value_counts().idxmax()
-else:
-    top_issue = "N/A"
-
-peak_failure_window_text = "N/A"
-peak_failure_window_subtitle = ""
 
 if len(rejects_df) > 0:
     top_issue = rejects_df["error_simple"].value_counts().idxmax()
@@ -1290,17 +1274,8 @@ if "barcode" in today_acs_df.columns and "datetime" in today_acs_df.columns:
     today_acs_df = today_acs_df.drop_duplicates(subset=["barcode"], keep="last")
 
 
-today_bin0_count = 0
-if "bin" in today_df.columns:
-    today_bin0_count = (
-        today_df["bin"].astype(str).str.contains("0", na=False).sum()
-    )
 
-
-internal_summary_today = build_internal_routing_summary(today_acs_df)
-
-
-acs_summary_today = build_acs_item_summary(acs_live_raw)
+acs_summary_today = build_acs_item_summary(today_acs_df)
 
 today_holds = acs_summary_today["holds_total"]
 
@@ -1316,12 +1291,6 @@ today_programming_df = acs_summary_today["programming_df"]
 today_collection_services_df = acs_summary_today["collection_services_df"]
 today_public_holds_df = acs_summary_today["holds_df"]
 
-
-today_total_internal = (
-    today_collection_services
-    + today_programming
-    + today_ill
-)
 
 historical_baseline = get_historical_reject_baseline(df_history_raw, rejects_history_raw, today)
 
@@ -1855,15 +1824,6 @@ Status Code: `{status_code_text}`
             </div>
             """,
             unsafe_allow_html=True
-        )
-
-    if len(today_hourly_checkins) > 0:
-        peak_hours_df = today_hourly_checkins.sort_values(ascending=False).head(3).reset_index()
-        peak_hours_df.columns = ["hour", "checkins"]
-        peak_hours_df["hour_label"] = peak_hours_df["hour"].apply(format_hour_plain)
-
-        peak_hours_text = "<br>".join(
-            [f"{row['hour_label']} — {int(row['checkins']):,} items" for _, row in peak_hours_df.iterrows()]
         )
 
     if show_live_alert:
