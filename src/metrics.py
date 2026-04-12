@@ -2,17 +2,20 @@ import pandas as pd
 
 
 def get_date_filtered_df(df, start_date, end_date):
-    return df[
-        (df["datetime"].dt.date >= start_date) &
-        (df["datetime"].dt.date <= end_date)
+    if df is None or not isinstance(df, pd.DataFrame) or "datetime" not in df.columns:
+        return pd.DataFrame()
+
+    work_df = df.copy()
+    work_df["datetime"] = pd.to_datetime(work_df["datetime"], errors="coerce")
+    work_df = work_df[work_df["datetime"].notna()].copy()
+
+    return work_df[
+        (work_df["datetime"].dt.date >= start_date)
+        & (work_df["datetime"].dt.date <= end_date)
     ].copy()
 
 
-
 def get_today_metrics(df, rejects_df, today):
-    import pandas as pd
-
-    # safe empty fallbacks
     empty_today_df = pd.DataFrame()
     empty_today_rejects_df = pd.DataFrame()
 
@@ -44,7 +47,9 @@ def get_today_metrics(df, rejects_df, today):
     if len(rejects_df) > 0:
         try:
             if getattr(rejects_df["datetime"].dt, "tz", None) is not None:
-                today_rejects_df = rejects_df[rejects_df["datetime"].dt.tz_localize(None).dt.date == today].copy()
+                today_rejects_df = rejects_df[
+                    rejects_df["datetime"].dt.tz_localize(None).dt.date == today
+                ].copy()
             else:
                 today_rejects_df = rejects_df[rejects_df["datetime"].dt.date == today].copy()
         except Exception:
@@ -53,7 +58,7 @@ def get_today_metrics(df, rejects_df, today):
         today_rejects_df = pd.DataFrame(columns=rejects_df.columns if len(rejects_df.columns) > 0 else [])
 
     if "destination" in today_df.columns:
-        today_dest_upper = today_df["destination"].astype(str).str.upper()
+        today_dest_upper = today_df["destination"].fillna("").astype(str).str.upper()
         today_westside = int(today_dest_upper.str.contains("WESTSIDE", na=False).sum())
         today_library_express = int(today_dest_upper.str.contains("LIBRARY EXPRESS", na=False).sum())
     else:
@@ -96,8 +101,15 @@ def get_today_metrics(df, rejects_df, today):
         "current_speed": current_speed,
     }
 
+
 def get_overall_metrics(df, rejects_df):
-    if len(df) > 0:
+    if df is None or not isinstance(df, pd.DataFrame):
+        df = pd.DataFrame()
+
+    if rejects_df is None or not isinstance(rejects_df, pd.DataFrame):
+        rejects_df = pd.DataFrame()
+
+    if len(df) > 0 and "datetime" in df.columns:
         peak_hour_counts = df["datetime"].dt.hour.value_counts().sort_index()
         peak_hour = int(peak_hour_counts.idxmax())
         peak_hour_count = int(peak_hour_counts.max())
@@ -110,11 +122,18 @@ def get_overall_metrics(df, rejects_df):
     reject_count = len(rejects_df)
     reject_pct = (reject_count / len(df) * 100) if len(df) > 0 else 0
 
-    westside_count = df["destination"].astype(str).str.upper().str.contains("WESTSIDE", na=False).sum() if len(df) > 0 else 0
-    westside_pct = (westside_count / len(df) * 100) if len(df) > 0 else 0
+    if len(df) > 0 and "destination" in df.columns:
+        dest_upper = df["destination"].fillna("").astype(str).str.upper()
+        westside_count = dest_upper.str.contains("WESTSIDE", na=False).sum()
+        westside_pct = (westside_count / len(df) * 100) if len(df) > 0 else 0
 
-    library_express_count = df["destination"].astype(str).str.upper().str.contains("LIBRARY EXPRESS", na=False).sum() if len(df) > 0 else 0
-    library_express_pct = (library_express_count / len(df) * 100) if len(df) > 0 else 0
+        library_express_count = dest_upper.str.contains("LIBRARY EXPRESS", na=False).sum()
+        library_express_pct = (library_express_count / len(df) * 100) if len(df) > 0 else 0
+    else:
+        westside_count = 0
+        westside_pct = 0
+        library_express_count = 0
+        library_express_pct = 0
 
     return {
         "peak_hour": peak_hour,
@@ -130,13 +149,22 @@ def get_overall_metrics(df, rejects_df):
 
 
 def get_historical_reject_baseline(df, rejects_df, today):
+    if df is None or not isinstance(df, pd.DataFrame) or "datetime" not in df.columns:
+        return {
+            "historical_daily_avg_reject": 0,
+            "historical_combined": pd.DataFrame(),
+        }
+
+    if rejects_df is None or not isinstance(rejects_df, pd.DataFrame) or "datetime" not in rejects_df.columns:
+        rejects_df = pd.DataFrame(columns=["datetime"])
+
     historical_df = df[df["datetime"].dt.date < today].copy()
     historical_rejects_df = rejects_df[rejects_df["datetime"].dt.date < today].copy()
 
     if len(historical_df) == 0:
         return {
             "historical_daily_avg_reject": 0,
-            "live_reject_deviation": 0,
+            "historical_combined": pd.DataFrame(),
         }
 
     historical_checkins_daily = historical_df["datetime"].dt.date.value_counts().sort_index()
@@ -144,7 +172,7 @@ def get_historical_reject_baseline(df, rejects_df, today):
 
     historical_combined = pd.DataFrame({
         "checkins": historical_checkins_daily,
-        "rejects": historical_rejects_daily
+        "rejects": historical_rejects_daily,
     }).fillna(0)
 
     historical_combined = historical_combined[historical_combined["checkins"] > 0]
@@ -152,7 +180,7 @@ def get_historical_reject_baseline(df, rejects_df, today):
     if len(historical_combined) == 0:
         return {
             "historical_daily_avg_reject": 0,
-            "live_reject_deviation": 0,
+            "historical_combined": pd.DataFrame(),
         }
 
     historical_combined["reject_rate"] = (
@@ -162,4 +190,90 @@ def get_historical_reject_baseline(df, rejects_df, today):
     return {
         "historical_daily_avg_reject": historical_combined["reject_rate"].mean(),
         "historical_combined": historical_combined,
+    }
+
+
+def build_roi_payload(df, start_date, end_date, hourly_cost=18.0, upfront_cost=200000.0, monthly_cost=0.0, yearly_cost=8000.0):
+    if df is None or not isinstance(df, pd.DataFrame) or len(df) == 0 or "datetime" not in df.columns:
+        return None
+
+    manual_rate = 45
+
+    rate_df = df.copy()
+    rate_df["date"] = rate_df["datetime"].dt.date
+    rate_df["hour"] = rate_df["datetime"].dt.hour
+
+    daily_hourly = (
+        rate_df.groupby(["date", "hour"])
+        .size()
+        .reset_index(name="checkins")
+    )
+
+    avg_hourly = (
+        daily_hourly.groupby("hour")["checkins"]
+        .mean()
+        .reset_index(name="avg_items_per_hour")
+    )
+
+    if len(avg_hourly) > 0:
+        peak_row = avg_hourly.loc[avg_hourly["avg_items_per_hour"].idxmax()]
+        threshold = peak_row["avg_items_per_hour"] * 0.75
+        peak_hours = avg_hourly[avg_hourly["avg_items_per_hour"] >= threshold].copy()
+
+        amh_rate = (
+            peak_hours["avg_items_per_hour"].mean()
+            if len(peak_hours) > 0
+            else peak_row["avg_items_per_hour"]
+        )
+    else:
+        amh_rate = 130.0
+
+    daily_counts = df["datetime"].dt.date.value_counts().sort_index()
+    staff_df = daily_counts.reset_index()
+    staff_df.columns = ["date", "checkins"]
+
+    staff_df["manual_hours"] = staff_df["checkins"] / manual_rate
+    staff_df["amh_hours"] = staff_df["checkins"] / amh_rate
+    staff_df["hours_saved"] = (staff_df["manual_hours"] - staff_df["amh_hours"]).clip(lower=0)
+
+    total_saved_hours = staff_df["hours_saved"].sum()
+    labor_value_saved = total_saved_hours * hourly_cost
+
+    days_in_range = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1)
+    months_in_range = days_in_range / 30.44
+    years_in_range = days_in_range / 365.25
+
+    observed_operating_cost = (monthly_cost * months_in_range) + (yearly_cost * years_in_range)
+    observed_total_cost = upfront_cost + observed_operating_cost
+    observed_net_value = labor_value_saved - observed_total_cost
+
+    annual_labor_value = labor_value_saved * (12 / months_in_range) if months_in_range > 0 else 0
+    annual_operating_cost = (monthly_cost * 12) + yearly_cost
+    annual_net_value = annual_labor_value - annual_operating_cost
+
+    payback_months = None
+    if annual_net_value > 0:
+        payback_months = (upfront_cost / annual_net_value) * 12
+
+    annual_roi_pct = (annual_net_value / annual_operating_cost) * 100 if annual_operating_cost > 0 else None
+    observed_roi_pct = (observed_net_value / observed_total_cost) * 100 if observed_total_cost > 0 else None
+
+    return {
+        "manual_rate": manual_rate,
+        "amh_rate": amh_rate,
+        "total_saved_hours": total_saved_hours,
+        "labor_value_saved": labor_value_saved,
+        "annual_labor_value": annual_labor_value,
+        "annual_operating_cost": annual_operating_cost,
+        "annual_net_value": annual_net_value,
+        "annual_roi_pct": annual_roi_pct,
+        "observed_operating_cost": observed_operating_cost,
+        "observed_total_cost": observed_total_cost,
+        "observed_net_value": observed_net_value,
+        "observed_roi_pct": observed_roi_pct,
+        "payback_months": payback_months,
+        "hourly_cost": hourly_cost,
+        "upfront_cost": upfront_cost,
+        "monthly_cost": monthly_cost,
+        "yearly_cost": yearly_cost,
     }
