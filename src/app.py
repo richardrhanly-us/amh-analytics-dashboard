@@ -57,6 +57,8 @@ app_settings = load_runtime_settings(
     prefer_database=True,
 )
 
+st.caption(f"Settings source: {app_settings.get('source', 'unknown')}")
+
 LIBRARY_SETTINGS = app_settings["LIBRARY_SETTINGS"]
 TRANSIT_SETTINGS = app_settings["TRANSIT_SETTINGS"]
 INTERNAL_ROUTING = app_settings["INTERNAL_ROUTING"]
