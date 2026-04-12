@@ -1,0 +1,66 @@
+from pathlib import Path
+import json
+
+
+def load_branch_settings(settings_file: Path) -> dict:
+    with open(settings_file, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_app_settings(settings_file: Path) -> dict:
+    branch_settings = load_branch_settings(settings_file)
+
+    library_settings = branch_settings.get("library", {})
+    transit_settings = branch_settings.get("transit", {})
+    internal_routing = branch_settings.get("internal_routing", {})
+
+    transit_home_label = transit_settings.get("home_branch_label", "Main")
+    transit_destinations = transit_settings.get("destinations", [])
+
+    enabled_transit_destinations = [
+        d for d in transit_destinations
+        if bool(d.get("enabled", True)) and str(d.get("label", "")).strip()
+    ]
+
+    transit_labels = [
+        str(d.get("label", "")).strip()
+        for d in enabled_transit_destinations
+    ]
+
+    branch_services_names = {
+        str(x).strip().upper()
+        for x in internal_routing.get("branch_services_names", [])
+    }
+
+    collection_services_names = {
+        str(x).strip().upper()
+        for x in internal_routing.get("collection_services_names", [])
+    }
+
+    branch_services_da_patterns = [
+        str(x).strip().upper()
+        for x in internal_routing.get("branch_services_da_patterns", [])
+    ]
+
+    collection_services_da_patterns = [
+        str(x).strip().upper()
+        for x in internal_routing.get("collection_services_da_patterns", [])
+    ]
+
+    return {
+        "branch_settings": branch_settings,
+        "LIBRARY_SETTINGS": library_settings,
+        "TRANSIT_SETTINGS": transit_settings,
+        "INTERNAL_ROUTING": internal_routing,
+        "LIBRARY_NAME": library_settings.get("library_name", "New Braunfels Public Library"),
+        "BRANCH_NAME": library_settings.get("branch_name", "Main Branch"),
+        "SYSTEM_NAME": library_settings.get("system_name", "Tech Logic UltraSort"),
+        "TRANSIT_HOME_LABEL": transit_home_label,
+        "TRANSIT_DESTINATIONS": transit_destinations,
+        "ENABLED_TRANSIT_DESTINATIONS": enabled_transit_destinations,
+        "TRANSIT_LABELS": transit_labels,
+        "BRANCH_SERVICES_NAMES": branch_services_names,
+        "COLLECTION_SERVICES_NAMES": collection_services_names,
+        "BRANCH_SERVICES_DA_PATTERNS": branch_services_da_patterns,
+        "COLLECTION_SERVICES_DA_PATTERNS": collection_services_da_patterns,
+    }
