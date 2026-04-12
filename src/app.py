@@ -17,6 +17,7 @@ from views.reports_view import render_reports
 from views.transits_view import render_transits
 from services.settings_service import load_app_settings
 from services.filters_service import resolve_date_filters
+from services.app_ui_service import apply_page_chrome, render_app_header
 
 from data_loader import (
     load_checkins_df,
@@ -81,40 +82,7 @@ if is_operating_hours(now_ct):
         key="sortview_auto_refresh"
     )
 
-st.markdown("""
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&display=swap" rel="stylesheet">
-
-<style>
-.sortview-title {
-    font-family: 'Orbitron', sans-serif;
-    font-size: 52px;
-    font-weight: 800;
-    letter-spacing: 3px;
-    background: linear-gradient(90deg, #60a5fa, #a78bfa, #34d399);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    text-shadow:
-        0 0 6px rgba(96, 165, 250, 0.4),
-        0 0 12px rgba(167, 139, 250, 0.25);
-    margin-bottom: -4px;
-}
-
-div.stDownloadButton > button {
-    background: linear-gradient(135deg, #2563eb, #1d4ed8);
-    color: white;
-    border-radius: 10px;
-    padding: 0.7em 1.4em;
-    font-weight: 600;
-    border: none;
-    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
-}
-
-div.stDownloadButton > button:hover {
-    background: linear-gradient(135deg, #1d4ed8, #1e3a8a);
-    transform: translateY(-1px);
-}
-</style>
-""", unsafe_allow_html=True)
+apply_page_chrome()
 
 if "last_refresh_count" not in st.session_state:
     st.session_state["last_refresh_count"] = refresh_count
@@ -145,21 +113,11 @@ acs_history_raw = load_acs_history_df(mtime=status_mtime, refresh_count=refresh_
 min_date = df_history_raw["datetime"].min().date()
 max_date = df_history_raw["datetime"].max().date()
 
-header_left, header_right = st.columns([12, 1])
-
-with header_left:
-    st.caption("Hanly Analytics")
-    st.markdown('<div class="sortview-title">SORTVIEW</div>', unsafe_allow_html=True)
-    st.markdown(
-        f"<div style='color:#6b7280; font-size:0.95rem; margin-bottom:10px;'>"
-        f"{LIBRARY_NAME} • {BRANCH_NAME} • {SYSTEM_NAME}"
-        f"</div>",
-        unsafe_allow_html=True
-    )
-
-with header_right:
-    if st.button("⚙️", help="Admin Settings"):
-        st.switch_page("pages/1_admin_settings.py")
+render_app_header(
+    library_name=LIBRARY_NAME,
+    branch_name=BRANCH_NAME,
+    system_name=SYSTEM_NAME,
+)
 
 selected_view = st.segmented_control(
     "Section",
