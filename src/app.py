@@ -114,6 +114,7 @@ from alerts import get_system_alerts
 from transit_logic import (
     normalize_transit_destination,
     get_transit_summary,
+    get_transit_time_summary,
     get_peak_transit_day_summary,
     get_transit_weekday_comparison,
     get_destination_weekday_mix,
