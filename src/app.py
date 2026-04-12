@@ -2489,31 +2489,6 @@ if selected_view == "Overview":
             st.info("No Collection Services items found for this range.")
 
 
-
-
-    st.markdown("##### Programming breakdown")
-    if len(overview_programming_df) > 0:
-        programming_breakdown = (
-            overview_programming_df["patron_name"]
-            .fillna("(blank)")
-            .astype(str)
-            .value_counts()
-            .rename_axis("staff_name")
-            .reset_index(name="count")
-        )
-        st.dataframe(programming_breakdown, use_container_width=True)
-    
-    st.markdown("##### Collection Services breakdown")
-    if len(overview_collection_services_df) > 0:
-        collection_breakdown = (
-            overview_collection_services_df["patron_name"]
-            .fillna("(blank)")
-            .astype(str)
-            .value_counts()
-            .rename_axis("staff_name")
-            .reset_index(name="count")
-        )
-        st.dataframe(collection_breakdown, use_container_width=True)
     
     with st.expander("ILL Debug (Overview)", expanded=False):
 
