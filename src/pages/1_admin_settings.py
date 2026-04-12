@@ -24,11 +24,19 @@ DEFAULT_SETTINGS = {
         "admin_password": ""
     },
     "transit": {
-        "labels": {
-            "main": "Main",
-            "westside": "Westside",
-            "library_express": "Library Express"
-        }
+        "home_branch_label": "Main",
+        "destinations": [
+            {
+                "key": "westside",
+                "label": "Westside",
+                "enabled": True
+            },
+            {
+                "key": "library_express",
+                "label": "Library Express",
+                "enabled": True
+            }
+        ]
     },
     "internal_routing": {
         "branch_services_names": [],
@@ -176,30 +184,69 @@ with st.form("admin_settings_form"):
         )
 
     st.divider()
-
+    
     st.subheader("Transit")
 
-    transit_labels = transit_settings.get("labels", {})
+    home_branch_label = st.text_input(
+        "Home branch label",
+        value=transit_settings.get("home_branch_label", "Main"),
+        help="This is the label used for the main/home branch."
+    )
 
-    transit_col1, transit_col2, transit_col3 = st.columns(3)
+    existing_destinations = transit_settings.get("destinations", [])
+    existing_count = len(existing_destinations) if len(existing_destinations) > 0 else 2
 
-    with transit_col1:
-        transit_main = st.text_input(
-            "Main label",
-            value=transit_labels.get("main", "Main")
-        )
+    destination_count = st.number_input(
+        "Number of transit destinations",
+        min_value=0,
+        max_value=20,
+        value=existing_count,
+        step=1,
+        help="How many non-home transit destinations this library system uses."
+    )
 
-    with transit_col2:
-        transit_westside = st.text_input(
-            "Westside label",
-            value=transit_labels.get("westside", "Westside")
-        )
+    transit_destinations_form = []
 
-    with transit_col3:
-        transit_library_express = st.text_input(
-            "Library Express label",
-            value=transit_labels.get("library_express", "Library Express")
-        )
+    for i in range(int(destination_count)):
+        if i < len(existing_destinations):
+            existing_destination = existing_destinations[i]
+        else:
+            existing_destination = {
+                "key": f"branch_{i+1}",
+                "label": f"Branch {i+1}",
+                "enabled": True
+            }
+
+        st.markdown(f"##### Transit Destination {i + 1}")
+        dest_col1, dest_col2, dest_col3 = st.columns([2, 3, 1])
+
+        with dest_col1:
+            destination_key = st.text_input(
+                f"Key {i + 1}",
+                value=str(existing_destination.get("key", f"branch_{i+1}")),
+                help="Lowercase key with underscores, like westside or north_branch.",
+                key=f"transit_key_{i}"
+            )
+
+        with dest_col2:
+            destination_label = st.text_input(
+                f"Label {i + 1}",
+                value=str(existing_destination.get("label", f"Branch {i+1}")),
+                key=f"transit_label_{i}"
+            )
+
+        with dest_col3:
+            destination_enabled = st.checkbox(
+                f"Enabled {i + 1}",
+                value=bool(existing_destination.get("enabled", True)),
+                key=f"transit_enabled_{i}"
+            )
+
+        transit_destinations_form.append({
+            "key": destination_key.strip().lower().replace(" ", "_"),
+            "label": destination_label.strip(),
+            "enabled": bool(destination_enabled)
+        })
 
     st.divider()
 
@@ -281,11 +328,11 @@ with st.form("admin_settings_form"):
                 "admin_password": admin_password
             },
             "transit": {
-                "labels": {
-                    "main": transit_main.strip(),
-                    "westside": transit_westside.strip(),
-                    "library_express": transit_library_express.strip()
-                }
+                "home_branch_label": home_branch_label.strip(),
+                "destinations": [
+                    d for d in transit_destinations_form
+                    if d["key"] and d["label"]
+                ]
             },
             "internal_routing": {
                 "branch_services_names": lines_to_list(branch_services_names_text),
