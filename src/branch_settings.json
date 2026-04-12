@@ -9,11 +9,19 @@
     "admin_password": "78666"
   },
   "transit": {
-    "labels": {
-      "main": "Main",
-      "westside": "Westside",
-      "library_express": "Library Express"
-    }
+    "home_branch_label": "Main",
+    "destinations": [
+      {
+        "key": "westside",
+        "label": "Westside",
+        "enabled": true
+      },
+      {
+        "key": "library_express",
+        "label": "Library Express",
+        "enabled": true
+      }
+    ]
   },
   "internal_routing": {
     "branch_services_names": [
