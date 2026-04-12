@@ -191,13 +191,6 @@ def render_reports(
             observed_operating_cost = roi_payload.get("observed_operating_cost", 0.0)
             observed_net_operating_value = roi_payload.get("observed_net_operating_value", 0.0)
             
-            break_even_value = "Not Reached"
-            break_even_subtitle = "Current annual run rate does not recover upfront cost"
-            break_even_color = "#dc2626"
-            
-            if payback_months is not None:
-                payback_years = payback_months / 12
-                years_after_payback = installed_years - payback_years
             
                 if years_after_payback >= 0:
                     break_even_value = "Paid Off"
@@ -234,6 +227,15 @@ def render_reports(
             today_ts = pd.Timestamp.today().normalize()
             installed_days = max((today_ts - install_date_ts).days, 1)
             installed_years = installed_days / 365.25
+
+            break_even_value = "Not Reached"
+            break_even_subtitle = "Current annual run rate does not recover upfront cost"
+            break_even_color = "#dc2626"
+            
+            if payback_months is not None:
+                payback_years = payback_months / 12
+                years_after_payback = installed_years - payback_years
+            
     
             since_install_labor_value = annual_labor_value * installed_years
             since_install_operating_cost = annual_operating_cost * installed_years
