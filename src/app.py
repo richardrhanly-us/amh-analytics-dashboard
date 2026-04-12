@@ -983,9 +983,9 @@ with header_left:
         f"</div>",
         unsafe_allow_html=True
     )
-
 with header_right:
-    st.page_link("pages/1_Admin_settings.py", label="⚙️", help="Admin Settings")
+    if st.button("⚙️", help="Admin Settings"):
+        st.switch_page("pages/1_admin_settings.py")
 
 pipeline_status_label = "Unknown"
 pipeline_status_color = "#6b7280"
