@@ -1091,6 +1091,8 @@ if selected_view == "Overview":
         attention_title=attention_title,
         attention_text=attention_text,
         attention_color=attention_color,
+        overview_transit_counts_map=overview_transit_counts_map,
+        overview_transit_pct_map=overview_transit_pct_map,
     )
 
 if selected_view == "Reports":
