@@ -1108,9 +1108,8 @@ if pipeline_run_status == "completed":
     pipeline_status_color = "#059669"
     pipeline_status_bg = "rgba(5, 150, 105, 0.14)" if theme_base == "dark" else "#ecfdf5"
     pipeline_result_text = (
-        f"Uploaded {uploaded_checkins_rows:,} checkins and {uploaded_rejects_rows:,} rejects this run"
+        f"Uploaded {uploaded_checkins_rows:,} new checkins and {uploaded_rejects_rows:,} new rejects this run"
     )
-
 elif pipeline_run_status == "completed_no_new_rows":
     pipeline_status_label = "Pipeline Healthy"
     pipeline_status_color = "#059669"
@@ -1433,12 +1432,7 @@ else:
     attention_text = " ".join(attention_items)
 
 live_now = datetime.now(ZoneInfo("America/Chicago"))
-
-if len(df_live_raw) > 0 and "datetime" in df_live_raw.columns:
-    latest_live_dt = df_live_raw["datetime"].max()
-    today = pd.to_datetime(latest_live_dt).date()
-else:
-    today = live_now.date()
+today = live_now.date()
 
 start_hour = 7
 end_hour = 20
@@ -1450,6 +1444,9 @@ else:
     live_hour_range = list(range(start_hour, min(current_hour, end_hour) + 1))
     
 today_metrics = get_today_metrics(df_live_raw, rejects_live_raw, today)
+
+if len(today_metrics["today_df"]) == 0:
+    st.info("No checkins have been ingested yet for today. Live dashboard is showing the current day only.")
 
 # fix current throughput: use most recent active hour instead of only the exact wall-clock hour
 current_speed = 0
@@ -1752,13 +1749,12 @@ Status Code: `{status_code_text}`
             with s1:
                 st.markdown(
                     f"""
-    Parsed Checkins: {checkins_rows:,}  
-    Parsed Rejects: {rejects_rows:,}  
-    Uploaded Checkins: {uploaded_checkins_rows:,}  
-    Uploaded Rejects: {uploaded_rejects_rows:,}
+            New Checkins This Run: {checkins_rows:,}  
+            New Rejects This Run: {rejects_rows:,}  
+            Uploaded Checkins This Run: {uploaded_checkins_rows:,}  
+            Uploaded Rejects This Run: {uploaded_rejects_rows:,}
                     """
                 )
-    
             with s2:
                 st.markdown(
                     f"""
