@@ -50,7 +50,20 @@ LIBRARY_NAME = LIBRARY_SETTINGS.get("library_name", "New Braunfels Public Librar
 BRANCH_NAME = LIBRARY_SETTINGS.get("branch_name", "Main Branch")
 SYSTEM_NAME = LIBRARY_SETTINGS.get("system_name", "Tech Logic UltraSort")
 
-TRANSIT_LABELS = TRANSIT_SETTINGS.get("labels", {})
+
+TRANSIT_HOME_LABEL = TRANSIT_SETTINGS.get("home_branch_label", "Main")
+TRANSIT_DESTINATIONS = TRANSIT_SETTINGS.get("destinations", [])
+
+ENABLED_TRANSIT_DESTINATIONS = [
+    d for d in TRANSIT_DESTINATIONS
+    if bool(d.get("enabled", True)) and str(d.get("label", "")).strip()
+]
+
+TRANSIT_LABELS = [str(d.get("label", "")).strip() for d in ENABLED_TRANSIT_DESTINATIONS]
+TRANSIT_LABEL_MAP = {
+    str(d.get("label", "")).strip().upper(): str(d.get("label", "")).strip()
+    for d in ENABLED_TRANSIT_DESTINATIONS
+}
 
 BRANCH_SERVICES_NAMES = {
     str(x).strip().upper()
@@ -1325,22 +1338,32 @@ rejects_df["date"] = rejects_df["datetime"].dt.date
 rejects_df["day_of_week"] = rejects_df["datetime"].dt.day_name()
 
 df["destination_clean"] = df["destination"].astype(str).str.strip()
-df["transit_destination"] = df["destination"].apply(normalize_transit_destination)
+df["destination_upper"] = df["destination_clean"].str.upper()
+
+df["transit_destination"] = None
+
+for transit_label in TRANSIT_LABELS:
+    label_upper = transit_label.upper()
+    match_mask = df["destination_upper"] == label_upper
+    df.loc[match_mask, "transit_destination"] = transit_label
 
 df["destination_report"] = df["destination_clean"].copy()
-df.loc[df["destination_report"] == "1", "destination_report"] = "Main"
-df.loc[df["transit_destination"] == "Westside", "destination_report"] = "Westside"
-df.loc[df["transit_destination"] == "Library Express", "destination_report"] = "Library Express"
+df.loc[df["destination_report"] == "1", "destination_report"] = TRANSIT_HOME_LABEL
+
+for transit_label in TRANSIT_LABELS:
+    label_upper = transit_label.upper()
+    match_mask = df["destination_upper"] == label_upper
+    df.loc[match_mask, "destination_report"] = transit_label
 
 df["destination_clean"] = df["destination_report"]
 
-valid_transit_destinations = [
-    "Westside",
-    "Library Express",
-]
+valid_transit_destinations = TRANSIT_LABELS.copy()
+
 transit_df = df[
     df["transit_destination"].isin(valid_transit_destinations)
 ].copy()
+
+
 transit_summary = get_transit_summary(df)
 
 peak_transit_day = get_peak_transit_day_summary(transit_df, weekday_order)
@@ -1544,26 +1567,37 @@ today_reject_rate = today_metrics["today_reject_rate"]
 
 historical_checkins_df = df_history_raw[df_history_raw["datetime"].dt.date < today].copy()
 
+historical_transit_pct_map = {}
+
 if len(historical_checkins_df) > 0:
     historical_checkins_df["destination_clean"] = historical_checkins_df["destination"].astype(str).str.strip()
-    historical_checkins_df["transit_destination"] = historical_checkins_df["destination"].apply(normalize_transit_destination)
+    historical_checkins_df["destination_upper"] = historical_checkins_df["destination_clean"].str.upper()
+    historical_checkins_df["transit_destination"] = None
 
-    historical_westside_pct = (
-        (historical_checkins_df["transit_destination"] == "Westside").sum()
-        / len(historical_checkins_df)
-    ) * 100
+    for transit_label in TRANSIT_LABELS:
+        label_upper = transit_label.upper()
+        match_mask = historical_checkins_df["destination_upper"] == label_upper
+        historical_checkins_df.loc[match_mask, "transit_destination"] = transit_label
 
-    historical_library_express_pct = (
-        (historical_checkins_df["transit_destination"] == "Library Express").sum()
-        / len(historical_checkins_df)
-    ) * 100
+    for transit_label in TRANSIT_LABELS:
+        historical_transit_pct_map[transit_label] = (
+            (historical_checkins_df["transit_destination"] == transit_label).sum()
+            / len(historical_checkins_df)
+        ) * 100
 else:
-    historical_westside_pct = None
-    historical_library_express_pct = None
+    historical_transit_pct_map = {}
     
     
-today_westside_pct = (today_westside / today_checkins * 100) if today_checkins > 0 else 0
-today_library_express_pct = (today_library_express / today_checkins * 100) if today_checkins > 0 else 0
+today_transit_counts_map = {}
+
+for transit_label in TRANSIT_LABELS:
+    transit_count = int((today_df["destination"].astype(str).str.strip().str.upper() == transit_label.upper()).sum()) if len(today_df) > 0 else 0
+    today_transit_counts_map[transit_label] = transit_count
+
+today_transit_pct_map = {
+    transit_label: ((count / today_checkins) * 100 if today_checkins > 0 else 0)
+    for transit_label, count in today_transit_counts_map.items()
+}
 
 if "datetime" in today_df.columns:
     today_hourly_checkins = today_df["datetime"].dt.hour.value_counts().sort_index()
@@ -1709,15 +1743,17 @@ else:
     live_reject_subtitle_color = "#059669"
         
         
+default_alert_branch_1 = TRANSIT_LABELS[0] if len(TRANSIT_LABELS) > 0 else None
+default_alert_branch_2 = TRANSIT_LABELS[1] if len(TRANSIT_LABELS) > 1 else None
+
 alerts = get_system_alerts(
     pipeline_status=pipeline_status,
     show_live_alert=show_live_alert,
-    westside_pct=today_westside_pct,
-    library_express_pct=today_library_express_pct,
-    historical_westside_pct=historical_westside_pct,
-    historical_library_express_pct=historical_library_express_pct,
+    westside_pct=today_transit_pct_map.get(default_alert_branch_1, 0),
+    library_express_pct=today_transit_pct_map.get(default_alert_branch_2, 0),
+    historical_westside_pct=historical_transit_pct_map.get(default_alert_branch_1),
+    historical_library_express_pct=historical_transit_pct_map.get(default_alert_branch_2),
 )
-
 
 critical_alerts = []
 warning_alerts = []
@@ -1953,10 +1989,12 @@ Status Code: `{status_code_text}`
             unsafe_allow_html=True
         )
 
-        route1, route2, route3 = st.columns(3)
+        routing_card_count = 1 + len(TRANSIT_LABELS)
+        routing_cols = st.columns(routing_card_count if routing_card_count > 0 else 1)
 
-        with route1:
-            total_transit_pct = (today_total_transit / today_checkins * 100) if today_checkins > 0 else 0
+        total_transit_pct = (today_total_transit / today_checkins * 100) if today_checkins > 0 else 0
+
+        with routing_cols[0]:
             render_kpi_card(
                 "Total Transit",
                 f"{today_total_transit:,}",
@@ -1966,25 +2004,16 @@ Status Code: `{status_code_text}`
                 border_color="#34d399"
             )
 
-        with route2:
-            render_kpi_card(
-                "Westside",
-                f"{today_westside:,}",
-                f"{today_westside_pct:.1f}% of today",
-                "#6b7280",
-                value_font_size="2.2rem",
-                border_color="#34d399"
-            )
-
-        with route3:
-            render_kpi_card(
-                "Library Express",
-                f"{today_library_express:,}",
-                f"{today_library_express_pct:.1f}% of today",
-                "#6b7280",
-                value_font_size="1.6rem",
-                border_color="#34d399"
-            )
+        for idx, transit_label in enumerate(TRANSIT_LABELS, start=1):
+            with routing_cols[idx]:
+                render_kpi_card(
+                    transit_label,
+                    f"{today_transit_counts_map.get(transit_label, 0):,}",
+                    f"{today_transit_pct_map.get(transit_label, 0):.1f}% of today",
+                    "#6b7280",
+                    value_font_size="1.9rem",
+                    border_color="#34d399"
+                )
 
     # Rejects (moved to right, takes purple)
     with live_group3:
