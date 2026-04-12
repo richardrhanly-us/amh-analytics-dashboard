@@ -251,7 +251,6 @@ with st.form("admin_settings_form"):
     st.divider()
 
     st.subheader("Internal Routing")
-    st.caption("
     route_col1, route_col2 = st.columns(2)
 
     with route_col1:
