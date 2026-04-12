@@ -1274,8 +1274,14 @@ if "barcode" in today_acs_df.columns and "datetime" in today_acs_df.columns:
     today_acs_df = today_acs_df.drop_duplicates(subset=["barcode"], keep="last")
 
 
-
-acs_summary_today = build_acs_item_summary(today_acs_df)
+acs_summary_today = build_acs_item_summary(
+    today_acs_df,
+    transit_labels=TRANSIT_LABELS,
+    branch_services_names=BRANCH_SERVICES_NAMES,
+    collection_services_names=COLLECTION_SERVICES_NAMES,
+    branch_services_da_patterns=BRANCH_SERVICES_DA_PATTERNS,
+    collection_services_da_patterns=COLLECTION_SERVICES_DA_PATTERNS,
+)
 
 today_holds = acs_summary_today["holds_total"]
 
@@ -2039,7 +2045,14 @@ if selected_view == "Overview":
             (overview_acs_df["datetime"].dt.date <= end_date)
         ].copy()
 
-    overview_acs_summary = build_acs_item_summary(overview_acs_df)
+overview_acs_summary = build_acs_item_summary(
+    overview_acs_df,
+    transit_labels=TRANSIT_LABELS,
+    branch_services_names=BRANCH_SERVICES_NAMES,
+    collection_services_names=COLLECTION_SERVICES_NAMES,
+    branch_services_da_patterns=BRANCH_SERVICES_DA_PATTERNS,
+    collection_services_da_patterns=COLLECTION_SERVICES_DA_PATTERNS,
+)
 
     overview_holds = overview_acs_summary["holds_total"]
     overview_ill = overview_acs_summary["ill_total"]
