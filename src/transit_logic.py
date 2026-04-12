@@ -1,3 +1,4 @@
+import re
 import pandas as pd
 
 
@@ -18,6 +19,89 @@ def normalize_transit_destination(value):
         return "Library Express"
 
     return text
+
+
+def normalize_internal_destination(destination, raw_message="", message_code=""):
+    destination = "" if destination is None else str(destination).strip()
+    raw_message = "" if raw_message is None else str(raw_message)
+    message_code = "" if message_code is None else str(message_code).strip()
+
+    combined = f"{destination} {raw_message}".upper()
+
+    if not destination and not raw_message:
+        return None
+
+    if "WESTSIDE" in combined or "LIBRARY EXPRESS" in combined:
+        return None
+
+    if "NO AGENCY DESTINATION" in combined or destination == "":
+        return None
+
+    if re.search(r"\bILL\b", combined) or "INTERLIBRARY" in combined:
+        return "ILL"
+
+    if (
+        "COLLECTION SERVICES" in combined
+        or "COLLECTION" in combined
+        or "CATALOG" in combined
+        or "PROCESSING" in combined
+    ):
+        return "Collection Services"
+
+    if "REPAIR" in combined or "MENDING" in combined or "MEND" in combined:
+        return "Repair / Mending"
+
+    if "STAFF" in combined or "REVIEW" in combined:
+        return "Staff Review"
+
+    if message_code in {"09", "10", "11", "12", "13", "14", "15", "16", "17", "18"}:
+        return None
+
+    return "Other Internal"
+
+
+def build_internal_routing_summary(acs_df):
+    if acs_df is None or len(acs_df) == 0:
+        return pd.DataFrame(columns=["internal_category", "count"])
+
+    work_df = acs_df.copy()
+
+    if "datetime" in work_df.columns:
+        work_df["datetime"] = pd.to_datetime(work_df["datetime"], errors="coerce")
+
+    work_df["internal_category"] = work_df.apply(
+        lambda row: normalize_internal_destination(
+            row.get("destination"),
+            row.get("raw_message"),
+            row.get("message_code"),
+        ),
+        axis=1,
+    )
+
+    work_df = work_df[work_df["internal_category"].notna()].copy()
+
+    if len(work_df) == 0:
+        return pd.DataFrame(columns=["internal_category", "count"])
+
+    summary = (
+        work_df["internal_category"]
+        .value_counts()
+        .rename_axis("internal_category")
+        .reset_index(name="count")
+    )
+
+    return summary
+
+
+def get_internal_count(summary_df, category_name):
+    if summary_df is None or len(summary_df) == 0:
+        return 0
+
+    match = summary_df.loc[summary_df["internal_category"] == category_name, "count"]
+    if len(match) == 0:
+        return 0
+
+    return int(match.iloc[0])
 
 
 def get_transit_summary(df):
@@ -43,10 +127,10 @@ def compute_transit_times(df):
     if "barcode" not in df.columns or len(df) == 0:
         return pd.DataFrame()
 
-    df = df.sort_values("datetime")
+    work_df = df.sort_values("datetime").copy()
     results = []
 
-    grouped = df.groupby("barcode")
+    grouped = work_df.groupby("barcode")
 
     for _, group in grouped:
         group = group.sort_values("datetime")
@@ -62,7 +146,7 @@ def compute_transit_times(df):
                 if 0 < delta_minutes < 1440:
                     results.append({
                         "destination": current_dest,
-                        "transit_time_min": delta_minutes
+                        "transit_time_min": delta_minutes,
                     })
 
             last_time = current_time
@@ -136,8 +220,12 @@ def get_transit_weekday_comparison(df, rejects_df, weekday_order):
     daily_ops["day_of_week"] = pd.to_datetime(daily_ops["date"]).dt.day_name()
     daily_ops["reject_rate"] = (daily_ops["rejects"] / daily_ops["checkins"]) * 100
 
-    transit_daily_counts = df[df["transit_destination"].isin(["Westside", "Library Express"])] \
-        .groupby("date").size().reset_index(name="transit_count")
+    transit_daily_counts = (
+        df[df["transit_destination"].isin(["Westside", "Library Express"])]
+        .groupby("date")
+        .size()
+        .reset_index(name="transit_count")
+    )
 
     if len(transit_daily_counts) == 0:
         return pd.DataFrame()
@@ -156,7 +244,7 @@ def get_transit_weekday_comparison(df, rejects_df, weekday_order):
 
     return pd.DataFrame({
         "Avg Transit Items / Day": transit_weekday_avg,
-        "Avg Reject Rate %": reject_weekday_avg
+        "Avg Reject Rate %": reject_weekday_avg,
     }).dropna(how="all")
 
 
@@ -210,7 +298,7 @@ def get_destination_reject_summary(df, rejects_df, transit_summary, valid_transi
     rejects_with_destination = rejects_df.merge(
         barcode_map,
         on="barcode",
-        how="left"
+        how="left",
     )
 
     transit_rejects = rejects_with_destination[
@@ -243,14 +331,14 @@ def get_destination_reject_summary(df, rejects_df, transit_summary, valid_transi
         .drop_duplicates(subset=["transit_destination"])
         .rename(columns={
             "transit_destination": "destination",
-            "error_simple": "top_reject_reason"
+            "error_simple": "top_reject_reason",
         })
     )
 
     destination_reject_summary = summary.merge(
         destination_reject_counts,
         on="destination",
-        how="left"
+        how="left",
     )
 
     destination_reject_summary["reject_count"] = destination_reject_summary["reject_count"].fillna(0).astype(int)
@@ -261,7 +349,7 @@ def get_destination_reject_summary(df, rejects_df, transit_summary, valid_transi
     destination_reject_summary = destination_reject_summary.merge(
         destination_top_issue_count[["destination", "top_reject_reason", "reason_count"]],
         on="destination",
-        how="left"
+        how="left",
     )
 
     destination_reject_summary["top_reject_reason"] = destination_reject_summary["top_reject_reason"].fillna("None")
@@ -270,7 +358,7 @@ def get_destination_reject_summary(df, rejects_df, transit_summary, valid_transi
     destination_reject_summary["top_reason_pct_of_destination_rejects"] = destination_reject_summary.apply(
         lambda row: round((row["reason_count"] / row["reject_count"]) * 100, 1)
         if row["reject_count"] > 0 else 0.0,
-        axis=1
+        axis=1,
     )
 
     return destination_reject_summary
