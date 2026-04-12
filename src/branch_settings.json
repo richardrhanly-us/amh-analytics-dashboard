@@ -1,0 +1,44 @@
+{
+  "library_name": "New Braunfels Public Library",
+  "branch_name": "Main Branch",
+  "system_name": "Tech Logic UltraSort",
+
+  "transit_labels": {
+    "main": "Main",
+    "westside": "Westside",
+    "library_express": "Library Express"
+  },
+
+  "internal_routing": {
+    "branch_services_names": [
+      "COURTNEY (ST)MEISSNER",
+      "MADELINE (ST)NEZAT",
+      "SERVICES TS-ADULT SERVICES"
+    ],
+    "collection_services_names": [
+      "(AH) TS(AH)-CATALOGING",
+      "(AH) TS(AH)-JNF COLLECTION",
+      "(KV) TS(KV)-CATALOGING",
+      "(GR) CS(GR)-CATALOGING",
+      "(FV) TS(FV)-CATALOGING",
+      "(EG) CS(EG)-CATALOGING",
+      "(EG) CS(EG)-DUPLICATES",
+      "(JO) CS(JO)-COLDEV"
+    ],
+    "collection_services_da_patterns": [
+      "DA(AH) TS(AH)-CATALOGING",
+      "DA(AH) TS(AH)-JNF COLLECTION",
+      "DA(KV) TS(KV)-CATALOGING",
+      "DA(GR) CS(GR)-CATALOGING",
+      "DA(FV) TS(FV)-CATALOGING",
+      "DA(EG) CS(EG)-CATALOGING",
+      "DA(EG) CS(EG)-DUPLICATES",
+      "DA(JO) CS(JO)-COLDEV"
+    ],
+    "branch_services_da_patterns": [
+      "DACOURTNEY (ST)MEISSNER",
+      "DAMADELINE (ST)NEZAT",
+      "DASERVICES TS-ADULT SERVICES"
+    ]
+  }
+}
