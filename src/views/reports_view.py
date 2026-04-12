@@ -429,7 +429,7 @@ def render_reports(
                         ),
                         "#10b981"
                     )
-                    
+                    payback_years_display = f"{payback_months / 12:,.1f} years" if payback_months is not None else "Not available"
                     render_explainer_card(
                         f"3. Break-even Status — {break_even_value}",
                         (
@@ -440,7 +440,7 @@ def render_reports(
                             f"<br>• Years since install: <b>{installed_years:,.1f}</b>"
                             f"<br><br>Math:"
                             f"<br>• Break-even years = upfront cost ÷ annual run rate"
-                            f"<br>• Break-even point ≈ <b>{payback_months/12:,.1f} years</b>"
+                            f"<br>• Break-even point ≈ <b>{payback_years_display}</b>"
                             f"<br><br>Status:"
                             f"<br>• <b>{break_even_value}</b>"
                             f"<br>• {break_even_subtitle}"
