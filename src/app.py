@@ -2462,7 +2462,9 @@ if selected_view == "Overview":
         render_kpi_card(
             "ILL",
             f"{overview_ill:,}",
-            f"Main {overview_ill_main:,} • WS {overview_ill_westside:,} • LE {overview_ill_library_express:,}",
+            f"{TRANSIT_HOME_LABEL} {overview_ill_main:,} • "
+            f"{TRANSIT_LABELS[0] if len(TRANSIT_LABELS) > 0 else 'Branch 1'} {overview_ill_westside:,} • "
+            f"{TRANSIT_LABELS[1] if len(TRANSIT_LABELS) > 1 else 'Branch 2'} {overview_ill_library_express:,}",
             "#6b7280",
             value_font_size="2.0rem",
             border_color="#34d399"
