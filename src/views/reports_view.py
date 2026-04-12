@@ -181,17 +181,32 @@ def render_reports(
             )
     
         if roi_payload:
-            roi_pct = roi_payload["roi_pct"]
-            net_roi_value = roi_payload["net_roi_value"]
-            total_roi_cost = roi_payload["total_roi_cost"]
-            payback_months = roi_payload["payback_months"]
-            since_install_roi_pct = roi_payload["since_install_roi_pct"]
-            since_install_net_value = roi_payload["since_install_net_value"]
-            annual_labor_value = roi_payload["annual_labor_value"]
-            annual_operating_cost = roi_payload["annual_operating_cost"]
-            labor_value_saved = roi_payload["labor_value_saved"]
-            observed_operating_cost = roi_payload["observed_operating_cost"]
-            observed_net_operating_value = roi_payload["observed_net_operating_value"]
+            net_roi_value = roi_payload.get("net_roi_value", 0.0)
+            payback_months = roi_payload.get("payback_months")
+            since_install_roi_pct = roi_payload.get("since_install_roi_pct")
+            since_install_net_value = roi_payload.get("since_install_net_value", 0.0)
+            annual_labor_value = roi_payload.get("annual_labor_value", 0.0)
+            annual_operating_cost = roi_payload.get("annual_operating_cost", 0.0)
+            labor_value_saved = roi_payload.get("labor_value_saved", 0.0)
+            observed_operating_cost = roi_payload.get("observed_operating_cost", 0.0)
+            observed_net_operating_value = roi_payload.get("observed_net_operating_value", 0.0)
+        
+            roi_mode_value = roi_payload.get(
+                "roi_mode",
+                st.session_state.get("roi_mode", "Observed (Selected Range)")
+            )
+        
+            total_roi_cost = roi_payload.get("total_roi_cost")
+            if total_roi_cost is None:
+                if roi_mode_value == "Annualized Projection":
+                    total_roi_cost = annual_operating_cost
+                else:
+                    total_roi_cost = observed_operating_cost
+        
+            roi_pct = roi_payload.get("roi_pct")
+            if roi_pct is None:
+                roi_pct = (net_roi_value / total_roi_cost) * 100 if total_roi_cost and total_roi_cost > 0 else None
+        
             observed_hours_saved = labor_value_saved / HOURLY_COST if HOURLY_COST > 0 else 0
     
             months_in_range = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1) / 30.44
