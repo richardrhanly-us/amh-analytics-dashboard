@@ -28,7 +28,11 @@ SETTINGS_FILE = Path(__file__).parent / "branch_settings.json"
 def load_branch_settings():
     with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
-
+        
+def save_branch_settings(settings):
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
+        
 branch_settings = load_branch_settings()
 
 LIBRARY_NAME = branch_settings.get("library_name", "New Braunfels Public Library")
@@ -1173,7 +1177,7 @@ else:
 
 selected_view = st.segmented_control(
     "Section",
-    options=["Live Today", "Transits", "Reports", "Overview"],
+    options=["Live Today", "Transits", "Reports", "Overview", "Settings"],
     default="Live Today",
     label_visibility="collapsed"
 )
@@ -5826,3 +5830,113 @@ if selected_view == "Transits":
             )
         else:
             st.info("No destination diagnostics available for the selected date range.")
+
+
+if selected_view == "Settings":
+    st.subheader("Settings")
+    st.caption("Edit branch-specific labels and internal routing rules used by the dashboard.")
+
+    current_settings = load_branch_settings()
+
+    library_name = st.text_input(
+        "Library name",
+        value=current_settings.get("library_name", "")
+    )
+
+    branch_name = st.text_input(
+        "Branch name",
+        value=current_settings.get("branch_name", "")
+    )
+
+    system_name = st.text_input(
+        "System name",
+        value=current_settings.get("system_name", "")
+    )
+
+    st.markdown("### Transit Labels")
+
+    transit_labels = current_settings.get("transit_labels", {})
+
+    transit_main = st.text_input(
+        "Main label",
+        value=transit_labels.get("main", "Main")
+    )
+
+    transit_westside = st.text_input(
+        "Westside label",
+        value=transit_labels.get("westside", "Westside")
+    )
+
+    transit_library_express = st.text_input(
+        "Library Express label",
+        value=transit_labels.get("library_express", "Library Express")
+    )
+
+    st.markdown("### Internal Routing")
+
+    internal_routing = current_settings.get("internal_routing", {})
+
+    branch_services_names_text = st.text_area(
+        "Branch Services Names (one per line)",
+        value="\n".join(internal_routing.get("branch_services_names", [])),
+        height=140
+    )
+
+    collection_services_names_text = st.text_area(
+        "Collection Services Names (one per line)",
+        value="\n".join(internal_routing.get("collection_services_names", [])),
+        height=180
+    )
+
+    branch_services_da_patterns_text = st.text_area(
+        "Branch Services DA Patterns (one per line)",
+        value="\n".join(internal_routing.get("branch_services_da_patterns", [])),
+        height=140
+    )
+
+    collection_services_da_patterns_text = st.text_area(
+        "Collection Services DA Patterns (one per line)",
+        value="\n".join(internal_routing.get("collection_services_da_patterns", [])),
+        height=180
+    )
+
+    if st.button("Save Settings", type="primary"):
+        updated_settings = {
+            "library_name": library_name.strip(),
+            "branch_name": branch_name.strip(),
+            "system_name": system_name.strip(),
+            "transit_labels": {
+                "main": transit_main.strip(),
+                "westside": transit_westside.strip(),
+                "library_express": transit_library_express.strip(),
+            },
+            "internal_routing": {
+                "branch_services_names": [
+                    line.strip()
+                    for line in branch_services_names_text.splitlines()
+                    if line.strip()
+                ],
+                "collection_services_names": [
+                    line.strip()
+                    for line in collection_services_names_text.splitlines()
+                    if line.strip()
+                ],
+                "branch_services_da_patterns": [
+                    line.strip()
+                    for line in branch_services_da_patterns_text.splitlines()
+                    if line.strip()
+                ],
+                "collection_services_da_patterns": [
+                    line.strip()
+                    for line in collection_services_da_patterns_text.splitlines()
+                    if line.strip()
+                ],
+            }
+        }
+
+        save_branch_settings(updated_settings)
+        st.success("Settings saved.")
+        st.rerun()
+
+    with st.expander("Current JSON Preview", expanded=False):
+        st.json(current_settings)
