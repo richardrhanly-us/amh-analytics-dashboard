@@ -2528,11 +2528,6 @@ if selected_view == "Overview":
             st.info("No ACS items available for this range.")
 
 
-    westside_transit_count = westside_count
-    westside_transit_pct = westside_pct
-
-    library_express_transit_count = library_express_count
-    library_express_transit_pct = library_express_pct
 
     if len(rejects_df) > 0:
         top_issue = rejects_df["error_simple"].value_counts().idxmax()
@@ -2593,8 +2588,6 @@ if selected_view == "Overview":
 
     days_in_range = df["datetime"].dt.date.nunique() if len(df) > 0 else 0
 
-    avg_daily_westside = (westside_count / days_in_range) if days_in_range > 0 else 0
-    avg_daily_library_express = (library_express_count / days_in_range) if days_in_range > 0 else 0
     avg_daily_rejects = (reject_count / days_in_range) if days_in_range > 0 else 0
     
     peak_avg_hour_value = "N/A"
