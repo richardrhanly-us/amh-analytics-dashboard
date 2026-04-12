@@ -13,6 +13,7 @@ from textwrap import dedent
 from streamlit_autorefresh import st_autorefresh
 import pytz
 import re
+import json
 
 st.set_page_config(
     page_title="SortView",
@@ -21,6 +22,42 @@ st.set_page_config(
 )
 
 APP_TZ = ZoneInfo("America/Chicago")
+
+SETTINGS_FILE = Path(__file__).parent / "branch_settings.json"
+
+def load_branch_settings():
+    with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+branch_settings = load_branch_settings()
+
+LIBRARY_NAME = branch_settings.get("library_name", "New Braunfels Public Library")
+BRANCH_NAME = branch_settings.get("branch_name", "Main Branch")
+SYSTEM_NAME = branch_settings.get("system_name", "Tech Logic UltraSort")
+
+TRANSIT_LABELS = branch_settings.get("transit_labels", {})
+INTERNAL_ROUTING = branch_settings.get("internal_routing", {})
+
+BRANCH_SERVICES_NAMES = {
+    str(x).strip().upper()
+    for x in INTERNAL_ROUTING.get("branch_services_names", [])
+}
+
+COLLECTION_SERVICES_NAMES = {
+    str(x).strip().upper()
+    for x in INTERNAL_ROUTING.get("collection_services_names", [])
+}
+
+BRANCH_SERVICES_DA_PATTERNS = [
+    str(x).strip().upper()
+    for x in INTERNAL_ROUTING.get("branch_services_da_patterns", [])
+]
+
+COLLECTION_SERVICES_DA_PATTERNS = [
+    str(x).strip().upper()
+    for x in INTERNAL_ROUTING.get("collection_services_da_patterns", [])
+]
+
 
 def is_operating_hours(now_ct: datetime) -> bool:
     # 6:00 AM through 8:59 PM
@@ -389,22 +426,7 @@ def build_acs_item_summary(acs_df):
     items["patron_name"] = items["patron_name"].fillna("").astype(str).str.strip()
     items["patron_type"] = items["patron_type"].fillna("").astype(str).str.strip()
 
-    collection_services_names = {
-        "(AH) TS(AH)-CATALOGING",
-        "(AH) TS(AH)-JNF COLLECTION",
-        "(KV) TS(KV)-CATALOGING",
-        "(GR) CS(GR)-CATALOGING",
-        "(FV) TS(FV)-CATALOGING",
-        "(EG) CS(EG)-CATALOGING",
-        "(EG) CS(EG)-DUPLICATES",
-        "(JO) CS(JO)-COLDEV", 
-    }
 
-    programming_names = {
-        "COURTNEY (ST)MEISSNER",
-        "MADELINE (ST)NEZAT",
-        "SERVICES TS-ADULT SERVICES",
-    }
 
     items["patron_name_upper"] = items["patron_name"].fillna("").astype(str).str.upper()
     items["raw_upper"] = items["raw_message"].fillna("").astype(str).str.upper()
@@ -415,24 +437,23 @@ def build_acs_item_summary(acs_df):
         | items["destination_upper"].str.contains(r"\bILL\b|INTERLIBRARY", regex=True, na=False)
     )
     
-    items["is_collection_services"] = (
-        items["patron_name_upper"].isin(collection_services_names)
-        | items["raw_upper"].str.contains(r"\|DA\(AH\) TS\(AH\)-CATALOGING\|", na=False)
-        | items["raw_upper"].str.contains(r"\|DA\(AH\) TS\(AH\)-JNF COLLECTION\|", na=False)
-        | items["raw_upper"].str.contains(r"\|DA\(KV\) TS\(KV\)-CATALOGING\|", na=False)
-        | items["raw_upper"].str.contains(r"\|DA\(GR\) CS\(GR\)-CATALOGING\|", na=False)
-        | items["raw_upper"].str.contains(r"\|DA\(FV\) TS\(FV\)-CATALOGING\|", na=False)
-        | items["raw_upper"].str.contains(r"\|DA\(EG\) CS\(EG\)-CATALOGING\|", na=False)
-        | items["raw_upper"].str.contains(r"\|DA\(EG\) CS\(EG\)-DUPLICATES\|", na=False)
-        | items["raw_upper"].str.contains(r"\|DA\(JO\) CS\(JO\)-COLDVE\|", na=False)
-    )
+    items["is_collection_services"] = items["patron_name_upper"].isin(COLLECTION_SERVICES_NAMES)
     
-    items["is_programming"] = (
-        items["patron_name_upper"].isin(programming_names)
-        | items["raw_upper"].str.contains(r"\|DACOURTNEY \(ST\)MEISSNER\|", na=False)
-        | items["raw_upper"].str.contains(r"\|DAMADELINE \(ST\)NEZAT\|", na=False)
-        | items["raw_upper"].str.contains(r"\|DASERVICES TS-ADULT SERVICES\|", na=False)
-    )
+    for pattern in COLLECTION_SERVICES_DA_PATTERNS:
+        escaped_pattern = re.escape(f"|{pattern}|")
+        items["is_collection_services"] = (
+            items["is_collection_services"]
+            | items["raw_upper"].str.contains(escaped_pattern, na=False)
+        )
+    
+    items["is_programming"] = items["patron_name_upper"].isin(BRANCH_SERVICES_NAMES)
+    
+    for pattern in BRANCH_SERVICES_DA_PATTERNS:
+        escaped_pattern = re.escape(f"|{pattern}|")
+        items["is_programming"] = (
+            items["is_programming"]
+            | items["raw_upper"].str.contains(escaped_pattern, na=False)
+        )
 
     holds_df = items[items["is_hold"]].copy()
     ill_df = holds_df[holds_df["is_ill"]].copy()
@@ -949,9 +970,9 @@ max_date = df_history_raw["datetime"].max().date()
 st.caption("Hanly Analytics")
 st.markdown('<div class="sortview-title">SORTVIEW</div>', unsafe_allow_html=True)
 st.markdown(
-    "<div style='color:#6b7280; font-size:0.95rem; margin-bottom:10px;'>"
-    "New Braunfels Public Library • Main Branch • Tech Logic UltraSort"
-    "</div>",
+    f"<div style='color:#6b7280; font-size:0.95rem; margin-bottom:10px;'>"
+    f"{LIBRARY_NAME} • {BRANCH_NAME} • {SYSTEM_NAME}"
+    f"</div>",
     unsafe_allow_html=True
 )
 
@@ -2050,7 +2071,7 @@ Status Code: `{status_code_text}`
     
     with internal3:
         render_kpi_card(
-            "Branch Servives",
+            "Branch Services",
             f"{today_programming:,}",
             f"{(today_programming / internal_pct_base) * 100:.1f}% of checkins today",
             "#6b7280",
@@ -2404,10 +2425,6 @@ if selected_view == "Overview":
             border_color="#34d399"
         )
 
-
-    with st.expander("Internal Workflow Debug (Overview)", expanded=False):
-        overview_programming_df = overview_acs_summary["programming_df"].copy()
-        overview_collection_services_df = overview_acs_summary["collection_services_df"].copy()
     
         st.markdown("##### Programming breakdown")
         if len(overview_programming_df) > 0:
@@ -3931,9 +3948,9 @@ Since-install ROI = ${since_install_net_value:,.0f} ÷ ${since_install_total_cos
                     peak_day_saved_date=pd.to_datetime(peak_day["date"]).strftime("%b %d, %Y"),
                     manual_rate=MANUAL_RATE,
                     amh_rate=AMH_RATE,
-                    library_name="New Braunfels Public Library",
-                    branch_name="Main Branch",
-                    system_name="Tech Logic UltraSort",
+                    library_name=LIBRARY_NAME,
+                    branch_name=BRANCH_NAME,
+                    system_name=SYSTEM_NAME,
                     report_title="AMH Director Report",
                     hourly_cost=HOURLY_COST,
                     roi_mode=roi_mode,
