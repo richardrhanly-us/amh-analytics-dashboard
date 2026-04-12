@@ -2333,7 +2333,17 @@ if selected_view == "Overview":
     overview_labor_value_saved = 0.0
     
     MANUAL_RATE_OVERVIEW = 45
-    overview_roi_payload = build_roi_payload(df, df_history_raw, start_date, end_date)
+    
+    overview_roi_payload = build_roi_payload(
+        df,
+        start_date,
+        end_date,
+        hourly_cost=18.0,
+        upfront_cost=200000.0,
+        monthly_cost=0.0,
+        yearly_cost=8000.0,
+    )
+    
     HOURLY_COST_OVERVIEW = (
         overview_roi_payload["hourly_cost"]
         if overview_roi_payload and "hourly_cost" in overview_roi_payload
@@ -2594,7 +2604,15 @@ if selected_view == "Overview":
     
     with row4_col3:
         if st.session_state.get("roi_calculated", False):
-            overview_roi_payload = build_roi_payload(df, df_history_raw, start_date, end_date)
+            overview_roi_payload = build_roi_payload(
+                df,
+                start_date,
+                end_date,
+                hourly_cost=st.session_state.get("roi_hourly_cost", 18.0),
+                upfront_cost=st.session_state.get("roi_upfront_cost", 200000.0),
+                monthly_cost=st.session_state.get("roi_monthly_cost", 0.0),
+                yearly_cost=st.session_state.get("roi_yearly_cost", 8000.0),
+            )
 
             if overview_roi_payload:
                 if overview_roi_payload["roi_mode"] == "Annualized Projection":
@@ -2769,7 +2787,15 @@ if selected_view == "Reports":
         roi_payload = None
 
         if st.session_state.get("roi_calculated", False):
-            roi_payload = build_roi_payload(df, df_history_raw, start_date, end_date)
+            roi_payload = build_roi_payload(
+                df,
+                start_date,
+                end_date,
+                hourly_cost=st.session_state.get("roi_hourly_cost", 18.0),
+                upfront_cost=st.session_state.get("roi_upfront_cost", 200000.0),
+                monthly_cost=st.session_state.get("roi_monthly_cost", 0.0),
+                yearly_cost=st.session_state.get("roi_yearly_cost", 8000.0),
+            )
 
         if roi_payload:
             roi_pct = roi_payload["roi_pct"]
@@ -4682,7 +4708,15 @@ Since-install ROI = ${since_install_net_value:,.0f} ÷ ${since_install_total_cos
 
             annual_col1, annual_col2 = st.columns(2)
             
-            annual_roi_payload = build_roi_payload(df, df_history_raw, start_date, end_date)
+            annual_roi_payload = build_roi_payload(
+                df,
+                start_date,
+                end_date,
+                hourly_cost=st.session_state.get("roi_hourly_cost", 18.0),
+                upfront_cost=st.session_state.get("roi_upfront_cost", 200000.0),
+                monthly_cost=st.session_state.get("roi_monthly_cost", 0.0),
+                yearly_cost=st.session_state.get("roi_yearly_cost", 8000.0),
+            )
             
             with annual_col1:
                 annual_labor_value_text = "N/A"
