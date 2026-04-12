@@ -2133,7 +2133,7 @@ Status Code: `{status_code_text}`
         render_kpi_card(
             "ILL",
             f"{today_ill:,}",
-            format_ill_branch_subtitle(overview_ill_main, overview_ill_by_branch),
+            format_ill_branch_subtitle(today_ill_main, today_ill_by_branch),
             "#6b7280",
             value_font_size="1.85rem",
             border_color="#34d399"
@@ -2468,9 +2468,7 @@ if selected_view == "Overview":
         render_kpi_card(
             "ILL",
             f"{overview_ill:,}",
-            f"{TRANSIT_HOME_LABEL} {overview_ill_main:,} • "
-            f"{TRANSIT_LABELS[0] if len(TRANSIT_LABELS) > 0 else 'Branch 1'} {overview_ill_westside:,} • "
-            f"{TRANSIT_LABELS[1] if len(TRANSIT_LABELS) > 1 else 'Branch 2'} {overview_ill_library_express:,}",
+            format_ill_branch_subtitle(overview_ill_main, overview_ill_by_branch),
             "#6b7280",
             value_font_size="2.0rem",
             border_color="#34d399"
