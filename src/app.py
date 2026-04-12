@@ -4006,7 +4006,7 @@ Since-install ROI = ${since_install_net_value:,.0f} ÷ ${since_install_total_cos
     if len(df) > 0 and len(df_history_raw) > 0:
         with st.expander("How the Staff Time Equivalent KPIs are calculated", expanded=False):
             st.info(f"""
-    ##### 1. Average Hours Saved
+    ##### 1. Average Hours Saved {avg_saved:,.2f}
     
     ###### Average Daily Check-ins = Total check-ins / Total days
     
