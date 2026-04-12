@@ -985,7 +985,7 @@ with header_left:
     )
 
 with header_right:
-    st.page_link("pages/1_admin_Settings.py", label="⚙️", help="Admin Settings")
+    st.page_link("pages/1_admin_settings.py", label="⚙️", help="Admin Settings")
 
 pipeline_status_label = "Unknown"
 pipeline_status_color = "#6b7280"
