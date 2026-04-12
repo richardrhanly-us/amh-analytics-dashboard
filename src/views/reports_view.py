@@ -13,6 +13,17 @@ from ui_components import (
     format_hour_plain,
 )
 
+def fmt_money(value, decimals=0):
+    if value is None:
+        return "N/A"
+    return f"${value:,.{decimals}f}"
+
+
+def fmt_pct(value, decimals=1):
+    if value is None:
+        return "N/A"
+    return f"{value:,.{decimals}f}%"
+
 
 def render_reports(
     df,
@@ -284,7 +295,7 @@ def render_reports(
                 with roi2:
                     render_kpi_card(
                         "2. Twelve-month projection of savings at current rate",
-                        f"${net_roi_value:,.0f}",
+                        fmt_money(net_roi_value),
                         f"Based on last {days_in_range:,} days of activity",
                         "#6b7280",
                         value_color="#059669" if net_roi_value >= 0 else "#dc2626"
@@ -371,7 +382,7 @@ def render_reports(
             with install_roi3:
                 render_kpi_card(
                     "7. Since-Install Net",
-                    f"${since_install_net_value:,.0f}",
+                    fmt_money(since_install_net_value),
                     "Value minus total cost",
                     "#6b7280",
                     value_color="#059669" if since_install_net_value >= 0 else "#dc2626"
@@ -380,7 +391,7 @@ def render_reports(
             with install_roi4:
                 render_kpi_card(
                     "8. Since-Install ROI",
-                    f"{since_install_roi_pct:,.1f}%" if since_install_roi_pct is not None else "N/A",
+                    fmt_pct(since_install_roi_pct) if since_install_roi_pct is not None else "N/A",
                     "Estimated ROI since install",
                     "#6b7280",
                     value_color="#059669" if since_install_roi_pct is not None and since_install_roi_pct >= 0 else "#dc2626"
@@ -897,7 +908,7 @@ def render_reports(
     
     Since-install ROI = ${since_install_net_value:,.0f} ÷ ${since_install_total_cost:,.0f} × 100  
     
-    **Since-install ROI = {since_install_roi_pct:,.1f}%**
+    **Since-install ROI = {since_install_roi_display}**
     """)
     
         
