@@ -1,3 +1,4 @@
+# Author: Richard Hanly
 # app.py
 # Streamlit dashboard for AMH analytics
 # Displays item flow, routing, rejects, and transit diagnostics in a web interface
@@ -7,14 +8,39 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
-import altair as alt
-
 from streamlit_autorefresh import st_autorefresh
 import json
+
 from views.live_today_view import render_live_today
 from views.overview_view import render_overview
 from views.reports_view import render_reports
 from views.transits_view import render_transits
+
+from data_loader import (
+    load_checkins_df,
+    load_checkins_history_df,
+    load_rejects_df,
+    load_rejects_history_df,
+    load_pipeline_status,
+    load_acs_df,
+    load_acs_history_df,
+)
+
+from metrics import (
+    get_date_filtered_df,
+    get_today_metrics,
+    get_overall_metrics,
+    get_historical_reject_baseline,
+    build_acs_item_summary,
+)
+
+from reject_logic import simplify_error
+from alerts import get_system_alerts
+
+from ui_components import (
+    format_hour,
+    format_relative_time,
+)
 
 st.set_page_config(
     page_title="SortView",
@@ -49,7 +75,6 @@ LIBRARY_NAME = LIBRARY_SETTINGS.get("library_name", "New Braunfels Public Librar
 BRANCH_NAME = LIBRARY_SETTINGS.get("branch_name", "Main Branch")
 SYSTEM_NAME = LIBRARY_SETTINGS.get("system_name", "Tech Logic UltraSort")
 
-
 TRANSIT_HOME_LABEL = TRANSIT_SETTINGS.get("home_branch_label", "Main")
 TRANSIT_DESTINATIONS = TRANSIT_SETTINGS.get("destinations", [])
 
@@ -79,7 +104,6 @@ COLLECTION_SERVICES_DA_PATTERNS = [
     str(x).strip().upper()
     for x in INTERNAL_ROUTING.get("collection_services_da_patterns", [])
 ]
-        
 
 def is_operating_hours(now_ct: datetime) -> bool:
     # 6:00 AM through 8:59 PM
@@ -93,56 +117,6 @@ if is_operating_hours(now_ct):
         interval=10 * 60 * 1000,   # 10 minutes
         key="sortview_auto_refresh"
     )
-
-
-from data_loader import (
-    load_checkins_df,
-    load_checkins_history_df,
-    load_rejects_df,
-    load_rejects_history_df,
-    load_pipeline_status,
-    load_acs_df,
-    load_acs_history_df,
-)
-from metrics import (
-    get_date_filtered_df,
-    get_today_metrics,
-    get_overall_metrics,
-    get_historical_reject_baseline,
-    build_acs_item_summary,
-    build_roi_payload,
-)
-from reject_logic import simplify_error
-from alerts import get_system_alerts
-
-from transit_logic import (
-    normalize_transit_destination,
-    get_transit_summary,
-    get_transit_time_summary,
-    get_peak_transit_day_summary,
-    get_transit_weekday_comparison,
-    get_destination_weekday_mix,
-    get_destination_reject_summary,
-    get_transit_reject_insight,
-    get_destination_driver_summary,
-    build_internal_routing_summary,
-)
-
-from ui_components import (
-    render_kpi_card,
-    format_hour,
-    format_hour_plain,
-    format_relative_time,
-    download_button,
-    format_ill_branch_subtitle,
-    render_chart,
-    get_hour_range_df,
-    build_hourly_bar_chart,
-    build_category_bar_chart,
-    build_date_line_chart,
-    build_weekday_line_chart,
-    build_hourly_line_chart,
-)
 
 st.markdown("""
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&display=swap" rel="stylesheet">
