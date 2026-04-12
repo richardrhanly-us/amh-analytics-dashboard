@@ -13,6 +13,7 @@ from streamlit_autorefresh import st_autorefresh
 import json
 from views.live_today_view import render_live_today
 from views.overview_view import render_overview
+from views.reports_view import render_reports
 
 st.set_page_config(
     page_title="SortView",
@@ -1095,6 +1096,23 @@ if selected_view == "Overview":
         overview_transit_pct_map=overview_transit_pct_map,
     )
 
+
+if selected_view == "Reports":
+    render_reports(
+        df=df,
+        df_history_raw=df_history_raw,
+        df_live_raw=df_live_raw,
+        rejects_df=rejects_df,
+        start_date=start_date,
+        end_date=end_date,
+        today=today,
+        overall_metrics=overall_metrics,
+        top_issue=top_issue,
+        attention_text=attention_text,
+        LIBRARY_NAME=LIBRARY_NAME,
+        BRANCH_NAME=BRANCH_NAME,
+        SYSTEM_NAME=SYSTEM_NAME,
+    )
 
 
 if selected_view == "Transits":
