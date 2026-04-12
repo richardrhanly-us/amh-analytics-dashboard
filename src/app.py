@@ -270,7 +270,6 @@ def get_file_updated_time(path):
     return None
 
 
-
 def normalize_internal_destination(destination, raw_message="", message_code=""):
     destination = "" if destination is None else str(destination).strip()
     raw_message = "" if raw_message is None else str(raw_message)
@@ -395,8 +394,7 @@ def build_acs_item_summary(acs_df):
             "programming_total": 0,
             "collection_services_total": 0,
             "ill_main": 0,
-            "ill_westside": 0,
-            "ill_library_express": 0,
+            "ill_by_branch": {},
             "items_df": pd.DataFrame(),
             "holds_df": pd.DataFrame(),
             "ill_df": pd.DataFrame(),
@@ -420,8 +418,7 @@ def build_acs_item_summary(acs_df):
             "programming_total": 0,
             "collection_services_total": 0,
             "ill_main": 0,
-            "ill_westside": 0,
-            "ill_library_express": 0,
+            "ill_by_branch": {},
             "items_df": pd.DataFrame(),
             "holds_df": pd.DataFrame(),
             "ill_df": pd.DataFrame(),
@@ -494,24 +491,30 @@ def build_acs_item_summary(acs_df):
     )
 
     public_holds_df = holds_df[~internal_mask].copy()
+    
+    ill_dest_upper = ill_df["destination"].fillna("").astype(str).str.strip().str.upper()
 
-    ill_dest = ill_df["destination"].fillna("").astype(str)
+    ill_by_branch = {}
+    for transit_label in TRANSIT_LABELS:
+        ill_by_branch[transit_label] = int((ill_dest_upper == transit_label.upper()).sum())
+
+    ill_main_count = int(
+        (~ill_dest_upper.isin([label.upper() for label in TRANSIT_LABELS])).sum()
+    )
 
     return {
         "holds_total": int(len(public_holds_df)),
         "ill_total": int(len(ill_df)),
         "programming_total": int(len(programming_df)),
         "collection_services_total": int(len(collection_services_df)),
-        "ill_main": int((~ill_dest.str.contains("WESTSIDE|LIBRARY EXPRESS", case=False, na=False)).sum()),
-        "ill_westside": int(ill_dest.str.contains("WESTSIDE", case=False, na=False).sum()),
-        "ill_library_express": int(ill_dest.str.contains("LIBRARY EXPRESS", case=False, na=False).sum()),
+        "ill_main": ill_main_count,
+        "ill_by_branch": ill_by_branch,
         "items_df": items,
         "holds_df": public_holds_df,
         "ill_df": ill_df,
         "programming_df": programming_df,
         "collection_services_df": collection_services_df,
     }
-
 
 def get_problem_items_count(source_df):
     if source_df is None or len(source_df) == 0:
@@ -591,7 +594,14 @@ def download_button(df, filename, key=None):
             key=key or f"{filename}_download"
         )
     
- 
+def format_ill_branch_subtitle(main_count, ill_by_branch):
+    parts = [f"{TRANSIT_HOME_LABEL} {main_count:,}"]
+
+    for transit_label in TRANSIT_LABELS:
+        branch_count = int(ill_by_branch.get(transit_label, 0))
+        parts.append(f"{transit_label} {branch_count:,}")
+
+    return " • ".join(parts) 
 
 def render_chart(chart):
     theme_base = st.get_option("theme.base") or "light"
@@ -1661,8 +1671,7 @@ today_holds = acs_summary_today["holds_total"]
 
 today_ill = acs_summary_today["ill_total"]
 today_ill_main = acs_summary_today["ill_main"]
-today_ill_westside = acs_summary_today["ill_westside"]
-today_ill_library_express = acs_summary_today["ill_library_express"]
+today_ill_by_branch = acs_summary_today["ill_by_branch"]
 
 today_programming = acs_summary_today["programming_total"]
 today_collection_services = acs_summary_today["collection_services_total"]
@@ -2124,9 +2133,7 @@ Status Code: `{status_code_text}`
         render_kpi_card(
             "ILL",
             f"{today_ill:,}",
-            f"{TRANSIT_HOME_LABEL} {today_ill_main:,} • "
-            f"{TRANSIT_LABELS[0] if len(TRANSIT_LABELS) > 0 else 'Branch 1'} {today_ill_westside:,} • "
-            f"{TRANSIT_LABELS[1] if len(TRANSIT_LABELS) > 1 else 'Branch 2'} {today_ill_library_express:,}",
+            format_ill_branch_subtitle(overview_ill_main, overview_ill_by_branch),
             "#6b7280",
             value_font_size="1.85rem",
             border_color="#34d399"
@@ -2442,8 +2449,7 @@ if selected_view == "Overview":
     overview_holds = overview_acs_summary["holds_total"]
     overview_ill = overview_acs_summary["ill_total"]
     overview_ill_main = overview_acs_summary["ill_main"]
-    overview_ill_westside = overview_acs_summary["ill_westside"]
-    overview_ill_library_express = overview_acs_summary["ill_library_express"]
+    overview_ill_by_branch = overview_acs_summary["ill_by_branch"]
 
     st.markdown("### Internal Workflow")
     internal_overview_col1, internal_overview_col2, internal_overview_col3, internal_overview_col4 = st.columns(4)
