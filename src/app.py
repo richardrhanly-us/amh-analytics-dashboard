@@ -2124,7 +2124,9 @@ Status Code: `{status_code_text}`
         render_kpi_card(
             "ILL",
             f"{today_ill:,}",
-            f"Main {today_ill_main:,} • WS {today_ill_westside:,} • LE {today_ill_library_express:,}",
+            f"{TRANSIT_HOME_LABEL} {today_ill_main:,} • "
+            f"{TRANSIT_LABELS[0] if len(TRANSIT_LABELS) > 0 else 'Branch 1'} {today_ill_westside:,} • "
+            f"{TRANSIT_LABELS[1] if len(TRANSIT_LABELS) > 1 else 'Branch 2'} {today_ill_library_express:,}",
             "#6b7280",
             value_font_size="1.85rem",
             border_color="#34d399"
