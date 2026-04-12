@@ -1121,6 +1121,7 @@ if selected_view == "Transits":
         rejects_df=rejects_df,
         today_df=today_df,
         today_rejects_df=today_rejects_df,
+        df_history_raw=df_history_raw,
         today=today,
         start_date=start_date,
         end_date=end_date,
