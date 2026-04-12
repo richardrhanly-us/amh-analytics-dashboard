@@ -25,6 +25,10 @@ APP_TZ = ZoneInfo("America/Chicago")
 
 SETTINGS_FILE = Path(__file__).parent / "branch_settings.json"
 
+def load_branch_settings():
+    with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
 branch_settings = load_branch_settings()
 
 LIBRARY_SETTINGS = branch_settings.get("library", {})
@@ -58,11 +62,6 @@ COLLECTION_SERVICES_DA_PATTERNS = [
     str(x).strip().upper()
     for x in INTERNAL_ROUTING.get("collection_services_da_patterns", [])
 ]
-
-
-def load_branch_settings():
-    with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
         
 
 def is_operating_hours(now_ct: datetime) -> bool:
