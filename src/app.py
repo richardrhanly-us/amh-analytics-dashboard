@@ -15,7 +15,7 @@ from views.live_today_view import render_live_today
 from views.overview_view import render_overview
 from views.reports_view import render_reports
 from views.transits_view import render_transits
-from services.settings_service import load_app_settings
+from services.settings_service import load_runtime_settings
 from services.filters_service import resolve_date_filters
 from services.app_ui_service import apply_page_chrome, render_app_header
 
@@ -50,7 +50,12 @@ APP_TZ = ZoneInfo("America/Chicago")
 
 SETTINGS_FILE = Path(__file__).parent / "branch_settings.json"
 
-app_settings = load_app_settings(SETTINGS_FILE)
+app_settings = load_runtime_settings(
+    settings_file=SETTINGS_FILE,
+    org_slug="nbpl",
+    branch_slug="main",
+    prefer_database=True,
+)
 
 LIBRARY_SETTINGS = app_settings["LIBRARY_SETTINGS"]
 TRANSIT_SETTINGS = app_settings["TRANSIT_SETTINGS"]
