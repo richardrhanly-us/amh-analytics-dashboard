@@ -586,8 +586,10 @@ def render_overview(
                 yearly_cost=st.session_state.get("roi_yearly_cost", 8000.0),
             )
 
+            overview_roi_mode = st.session_state.get("roi_mode", "Observed (Selected Range)")
+            
             if overview_roi_payload:
-                if overview_roi_payload["roi_mode"] == "Annualized Projection":
+                if overview_roi_mode == "Annualized Projection":
                     render_kpi_card(
                         "Yearly Savings After Cost",
                         f'${overview_roi_payload["net_roi_value"]:,.0f}',
