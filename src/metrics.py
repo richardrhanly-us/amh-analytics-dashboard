@@ -194,19 +194,34 @@ def get_historical_reject_baseline(df, rejects_df, today):
         "historical_combined": historical_combined,
     }
 
-
-def build_roi_payload(df, start_date, end_date, hourly_cost=18.0, upfront_cost=200000.0, monthly_cost=0.0, yearly_cost=8000.0):
+def build_roi_payload(
+    df,
+    start_date,
+    end_date,
+    hourly_cost=18.0,
+    upfront_cost=200000.0,
+    monthly_cost=0.0,
+    yearly_cost=8000.0,
+    install_date=None,
+    include_upfront_in_since_install=True,
+):
     if df is None or not isinstance(df, pd.DataFrame) or len(df) == 0 or "datetime" not in df.columns:
+        return None
+
+    work_df = df.copy()
+    work_df["datetime"] = pd.to_datetime(work_df["datetime"], errors="coerce")
+    work_df = work_df[work_df["datetime"].notna()].copy()
+
+    if len(work_df) == 0:
         return None
 
     manual_rate = 45
 
-    rate_df = df.copy()
-    rate_df["date"] = rate_df["datetime"].dt.date
-    rate_df["hour"] = rate_df["datetime"].dt.hour
+    work_df["date"] = work_df["datetime"].dt.date
+    work_df["hour"] = work_df["datetime"].dt.hour
 
     daily_hourly = (
-        rate_df.groupby(["date", "hour"])
+        work_df.groupby(["date", "hour"])
         .size()
         .reset_index(name="checkins")
     )
@@ -230,7 +245,7 @@ def build_roi_payload(df, start_date, end_date, hourly_cost=18.0, upfront_cost=2
     else:
         amh_rate = 130.0
 
-    daily_counts = df["datetime"].dt.date.value_counts().sort_index()
+    daily_counts = work_df["datetime"].dt.date.value_counts().sort_index()
     staff_df = daily_counts.reset_index()
     staff_df.columns = ["date", "checkins"]
 
@@ -238,7 +253,7 @@ def build_roi_payload(df, start_date, end_date, hourly_cost=18.0, upfront_cost=2
     staff_df["amh_hours"] = staff_df["checkins"] / amh_rate
     staff_df["hours_saved"] = (staff_df["manual_hours"] - staff_df["amh_hours"]).clip(lower=0)
 
-    total_saved_hours = staff_df["hours_saved"].sum()
+    total_saved_hours = float(staff_df["hours_saved"].sum())
     labor_value_saved = total_saved_hours * hourly_cost
 
     days_in_range = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1)
@@ -247,42 +262,95 @@ def build_roi_payload(df, start_date, end_date, hourly_cost=18.0, upfront_cost=2
 
     observed_operating_cost = (monthly_cost * months_in_range) + (yearly_cost * years_in_range)
     observed_total_cost = upfront_cost + observed_operating_cost
-    observed_net_value = labor_value_saved - observed_total_cost
 
-    annual_labor_value = labor_value_saved * (12 / months_in_range) if months_in_range > 0 else 0
+    # Selected-range "observed net" should subtract recurring operating cost only
+    observed_net_operating_value = labor_value_saved - observed_operating_cost
+    observed_roi_pct = (
+        (observed_net_operating_value / observed_operating_cost) * 100
+        if observed_operating_cost > 0
+        else None
+    )
+
+    annual_labor_value = labor_value_saved * (12 / months_in_range) if months_in_range > 0 else 0.0
     annual_operating_cost = (monthly_cost * 12) + yearly_cost
     annual_net_value = annual_labor_value - annual_operating_cost
+    annual_roi_pct = (
+        (annual_net_value / annual_operating_cost) * 100
+        if annual_operating_cost > 0
+        else None
+    )
 
     payback_months = None
     if annual_net_value > 0:
         payback_months = (upfront_cost / annual_net_value) * 12
 
-    annual_roi_pct = (annual_net_value / annual_operating_cost) * 100 if annual_operating_cost > 0 else None
-    observed_roi_pct = (observed_net_value / observed_total_cost) * 100 if observed_total_cost > 0 else None
+    installed_years = None
+    since_install_labor_value = None
+    since_install_operating_cost = None
+    since_install_total_cost = None
+    since_install_net_value = None
+    since_install_roi_pct = None
+
+    if install_date is not None:
+        install_date_ts = pd.to_datetime(install_date)
+        today_ts = pd.Timestamp.today().normalize()
+        installed_days = max((today_ts - install_date_ts).days, 1)
+        installed_years = installed_days / 365.25
+
+        since_install_labor_value = annual_labor_value * installed_years
+        since_install_operating_cost = annual_operating_cost * installed_years
+
+        if include_upfront_in_since_install:
+            since_install_total_cost = upfront_cost + since_install_operating_cost
+        else:
+            since_install_total_cost = since_install_operating_cost
+
+        since_install_net_value = since_install_labor_value - since_install_total_cost
+        since_install_roi_pct = (
+            (since_install_net_value / since_install_total_cost) * 100
+            if since_install_total_cost and since_install_total_cost > 0
+            else None
+        )
 
     return {
         "manual_rate": manual_rate,
         "amh_rate": amh_rate,
         "total_saved_hours": total_saved_hours,
         "labor_value_saved": labor_value_saved,
-        "annual_labor_value": annual_labor_value,
-        "annual_operating_cost": annual_operating_cost,
-        "annual_net_value": annual_net_value,
-        "annual_roi_pct": annual_roi_pct,
-        "observed_operating_cost": observed_operating_cost,
-        "observed_total_cost": observed_total_cost,
-        "observed_net_value": observed_net_value,
-        "observed_roi_pct": observed_roi_pct,
-        "payback_months": payback_months,
         "hourly_cost": hourly_cost,
         "upfront_cost": upfront_cost,
         "monthly_cost": monthly_cost,
         "yearly_cost": yearly_cost,
+
+        "days_in_range": days_in_range,
+        "months_in_range": months_in_range,
+        "years_in_range": years_in_range,
+
+        "observed_operating_cost": observed_operating_cost,
+        "observed_total_cost": observed_total_cost,
+        "observed_net_operating_value": observed_net_operating_value,
+        "observed_net_value": observed_net_operating_value,
+        "observed_roi_pct": observed_roi_pct,
+
+        "annual_labor_value": annual_labor_value,
+        "annual_operating_cost": annual_operating_cost,
+        "annual_net_value": annual_net_value,
+        "annual_roi_pct": annual_roi_pct,
+
+        # backward-compatible names expected by reports/overview
+        "net_roi_value": annual_net_value,
+        "total_roi_cost": annual_operating_cost,
+        "roi_pct": annual_roi_pct,
+
+        "payback_months": payback_months,
+
+        "installed_years": installed_years,
+        "since_install_labor_value": since_install_labor_value,
+        "since_install_operating_cost": since_install_operating_cost,
+        "since_install_total_cost": since_install_total_cost,
+        "since_install_net_value": since_install_net_value,
+        "since_install_roi_pct": since_install_roi_pct,
     }
-
-
-import re
-import pandas as pd
 
 
 def build_acs_item_summary(
