@@ -1395,10 +1395,16 @@ destination_transit_summary_color = destination_driver_summary["color"]
 
 overall_metrics = get_overall_metrics(df, rejects_df)
 
-westside_count = overall_metrics["westside_count"]
-westside_pct = overall_metrics["westside_pct"]
-library_express_count = overall_metrics["library_express_count"]
-library_express_pct = overall_metrics["library_express_pct"]
+overview_transit_counts_map = {}
+overview_transit_pct_map = {}
+
+for transit_label in TRANSIT_LABELS:
+    transit_count = int((df["transit_destination"] == transit_label).sum()) if len(df) > 0 else 0
+    overview_transit_counts_map[transit_label] = transit_count
+    overview_transit_pct_map[transit_label] = (
+        (transit_count / len(df)) * 100 if len(df) > 0 else 0
+    )
+
 peak_hour = overall_metrics["peak_hour"]
 peak_hour_count = overall_metrics["peak_hour_count"]
 peak_hour_pct = overall_metrics["peak_hour_pct"]
@@ -1483,8 +1489,14 @@ elif top_issue == "Call Number / Config Error":
 if peak_failure_window_text != "N/A":
     attention_items.append(f"Failures peak at {peak_failure_window_text}. Check conditions during that hour.")
 
-if westside_pct >= 10:
-    attention_items.append("Westside transit share is high. Watch for routing or branch-related issues.")
+if len(TRANSIT_LABELS) > 0:
+    primary_transit_label = TRANSIT_LABELS[0]
+    primary_transit_pct = overview_transit_pct_map.get(primary_transit_label, 0)
+
+    if primary_transit_pct >= 10:
+        attention_items.append(
+            f"{primary_transit_label} transit share is high. Watch for routing or branch-related issues."
+        )
 
 if not attention_items:
     attention_title = "Recommended Attention"
@@ -2790,35 +2802,62 @@ if selected_view == "Overview":
                 "#6b7280"
             )
 
-    with row1_col2:
-        if overview_volume_mode == "Average per Day":
+
+    enabled_overview_labels = TRANSIT_LABELS[:2]
+
+    if len(enabled_overview_labels) > 0:
+        transit_label_1 = enabled_overview_labels[0]
+        avg_daily_transit_1 = (overview_transit_counts_map.get(transit_label_1, 0) / days_in_range) if days_in_range > 0 else 0
+
+        with row1_col2:
+            if overview_volume_mode == "Average per Day":
+                render_kpi_card(
+                    f"Avg {transit_label_1} Transits",
+                    f"{avg_daily_transit_1:,.1f}",
+                    "Per day",
+                    "#6b7280"
+                )
+            else:
+                render_kpi_card(
+                    f"Total {transit_label_1} Transits",
+                    f"{overview_transit_counts_map.get(transit_label_1, 0):,}",
+                    f"{overview_transit_pct_map.get(transit_label_1, 0):.2f}% of total items",
+                    "#6b7280"
+                )
+    else:
+        with row1_col2:
             render_kpi_card(
-                "Avg Westside Transits",
-                f"{avg_daily_westside:,.1f}",
-                "Per day",
-                "#6b7280"
-            )
-        else:
-            render_kpi_card(
-                "Total Westside Transits",
-                f"{westside_transit_count:,}",
-                f"{westside_transit_pct:.2f}% of total items",
+                "Transit Destination 1",
+                "N/A",
+                "No enabled transit destinations",
                 "#6b7280"
             )
 
-    with row1_col3:
-        if overview_volume_mode == "Average per Day":
+    if len(enabled_overview_labels) > 1:
+        transit_label_2 = enabled_overview_labels[1]
+        avg_daily_transit_2 = (overview_transit_counts_map.get(transit_label_2, 0) / days_in_range) if days_in_range > 0 else 0
+
+        with row1_col3:
+            if overview_volume_mode == "Average per Day":
+                render_kpi_card(
+                    f"Avg {transit_label_2} Transits",
+                    f"{avg_daily_transit_2:,.1f}",
+                    "Per day",
+                    "#6b7280"
+                )
+            else:
+                render_kpi_card(
+                    f"Total {transit_label_2} Transits",
+                    f"{overview_transit_counts_map.get(transit_label_2, 0):,}",
+                    f"{overview_transit_pct_map.get(transit_label_2, 0):.2f}% of total items",
+                    "#6b7280"
+                )
+    else:
+        with row1_col3:
             render_kpi_card(
-                "Avg Library Express Transits",
-                f"{avg_daily_library_express:,.1f}",
-                "Per day",
-                "#6b7280"
-            )
-        else:
-            render_kpi_card(
-                "Total Library Express Transits",
-                f"{library_express_transit_count:,}",
-                f"{library_express_transit_pct:.2f}% of total items",
+                "Transit Destination 2",
+                "N/A",
+                "No second enabled transit destination",
                 "#6b7280"
             )
 
