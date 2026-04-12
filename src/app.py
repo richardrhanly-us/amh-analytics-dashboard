@@ -27,12 +27,17 @@ SETTINGS_FILE = Path(__file__).parent / "branch_settings.json"
 
 branch_settings = load_branch_settings()
 
-LIBRARY_NAME = branch_settings.get("library_name", "New Braunfels Public Library")
-BRANCH_NAME = branch_settings.get("branch_name", "Main Branch")
-SYSTEM_NAME = branch_settings.get("system_name", "Tech Logic UltraSort")
-
-TRANSIT_LABELS = branch_settings.get("transit_labels", {})
+LIBRARY_SETTINGS = branch_settings.get("library", {})
+SECURITY_SETTINGS = branch_settings.get("security", {})
+TRANSIT_SETTINGS = branch_settings.get("transit", {})
 INTERNAL_ROUTING = branch_settings.get("internal_routing", {})
+ACCOUNT_SETTINGS = branch_settings.get("account_settings", {})
+
+LIBRARY_NAME = LIBRARY_SETTINGS.get("library_name", "New Braunfels Public Library")
+BRANCH_NAME = LIBRARY_SETTINGS.get("branch_name", "Main Branch")
+SYSTEM_NAME = LIBRARY_SETTINGS.get("system_name", "Tech Logic UltraSort")
+
+TRANSIT_LABELS = TRANSIT_SETTINGS.get("labels", {})
 
 BRANCH_SERVICES_NAMES = {
     str(x).strip().upper()
