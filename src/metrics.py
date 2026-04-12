@@ -1,5 +1,5 @@
+import re
 import pandas as pd
-
 
 def get_date_filtered_df(df, start_date, end_date):
     if df is None or not isinstance(df, pd.DataFrame) or "datetime" not in df.columns:
@@ -13,6 +13,8 @@ def get_date_filtered_df(df, start_date, end_date):
         (work_df["datetime"].dt.date >= start_date)
         & (work_df["datetime"].dt.date <= end_date)
     ].copy()
+
+
 
 
 def get_today_metrics(df, rejects_df, today):
@@ -276,4 +278,156 @@ def build_roi_payload(df, start_date, end_date, hourly_cost=18.0, upfront_cost=2
         "upfront_cost": upfront_cost,
         "monthly_cost": monthly_cost,
         "yearly_cost": yearly_cost,
+    }
+
+
+import re
+import pandas as pd
+
+
+def build_acs_item_summary(
+    acs_df,
+    transit_labels,
+    branch_services_names,
+    collection_services_names,
+    branch_services_da_patterns,
+    collection_services_da_patterns,
+):
+    if acs_df is None or len(acs_df) == 0:
+        return {
+            "holds_total": 0,
+            "ill_total": 0,
+            "programming_total": 0,
+            "collection_services_total": 0,
+            "ill_main": 0,
+            "ill_by_branch": {},
+            "items_df": pd.DataFrame(),
+            "holds_df": pd.DataFrame(),
+            "ill_df": pd.DataFrame(),
+            "programming_df": pd.DataFrame(),
+            "collection_services_df": pd.DataFrame(),
+        }
+
+    df = acs_df.copy()
+    df["raw_message"] = df["raw_message"].fillna("").astype(str)
+    df["message_code"] = df["message_code"].astype(str).str.strip()
+
+    if "datetime" in df.columns:
+        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+
+    items = df[df["raw_message"].str.startswith("101", na=False)].copy()
+
+    if len(items) == 0:
+        return {
+            "holds_total": 0,
+            "ill_total": 0,
+            "programming_total": 0,
+            "collection_services_total": 0,
+            "ill_main": 0,
+            "ill_by_branch": {},
+            "items_df": pd.DataFrame(),
+            "holds_df": pd.DataFrame(),
+            "ill_df": pd.DataFrame(),
+            "programming_df": pd.DataFrame(),
+            "collection_services_df": pd.DataFrame(),
+        }
+
+    items = items.sort_values("datetime")
+    items = items.drop_duplicates(subset=["barcode"], keep="last")
+
+    items["is_hold"] = items["raw_message"].str.startswith("101YNY", na=False)
+
+    patrons = df[df["message_code"] == "64"].copy()
+
+    if len(patrons) > 0:
+        patrons = patrons.sort_values("datetime")
+        patrons = patrons.drop_duplicates(subset=["patron_id"], keep="last")
+        patrons["patron_name"] = (
+            patrons["raw_message"]
+            .str.extract(r"\|AE([^|]*)", expand=False)
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+        patrons["patron_type"] = (
+            patrons["raw_message"]
+            .str.extract(r"\|PT([^|]*)", expand=False)
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+    else:
+        patrons = pd.DataFrame(columns=["patron_id", "patron_name", "patron_type"])
+
+    items = items.merge(
+        patrons[["patron_id", "patron_name", "patron_type"]],
+        on="patron_id",
+        how="left"
+    )
+
+    items["patron_name"] = items["patron_name"].fillna("").astype(str).str.strip()
+    items["patron_type"] = items["patron_type"].fillna("").astype(str).str.strip()
+
+    items["patron_name_upper"] = items["patron_name"].fillna("").astype(str).str.upper()
+    items["raw_upper"] = items["raw_message"].fillna("").astype(str).str.upper()
+    items["destination_upper"] = items["destination"].fillna("").astype(str).str.upper()
+
+    items["is_ill"] = (
+        items["patron_type"].str.upper().eq("ILL")
+        | items["destination_upper"].str.contains(r"\bILL\b|INTERLIBRARY", regex=True, na=False)
+    )
+
+    items["is_collection_services"] = items["patron_name_upper"].isin(collection_services_names)
+
+    for pattern in collection_services_da_patterns:
+        escaped_pattern = re.escape(f"|{pattern}|")
+        items["is_collection_services"] = (
+            items["is_collection_services"]
+            | items["raw_upper"].str.contains(escaped_pattern, na=False)
+        )
+
+    items["is_programming"] = items["patron_name_upper"].isin(branch_services_names)
+
+    for pattern in branch_services_da_patterns:
+        escaped_pattern = re.escape(f"|{pattern}|")
+        items["is_programming"] = (
+            items["is_programming"]
+            | items["raw_upper"].str.contains(escaped_pattern, na=False)
+        )
+
+    holds_df = items[items["is_hold"]].copy()
+    ill_df = holds_df[holds_df["is_ill"]].copy()
+    programming_df = holds_df[holds_df["is_programming"]].copy()
+    collection_services_df = holds_df[holds_df["is_collection_services"]].copy()
+
+    internal_mask = (
+        holds_df["is_ill"]
+        | holds_df["is_programming"]
+        | holds_df["is_collection_services"]
+    )
+
+    public_holds_df = holds_df[~internal_mask].copy()
+
+    ill_dest_upper = ill_df["destination"].fillna("").astype(str).str.strip().str.upper()
+
+    ill_by_branch = {}
+    for transit_label in transit_labels:
+        ill_by_branch[transit_label] = int((ill_dest_upper == transit_label.upper()).sum())
+
+    ill_main_count = int(
+        (~ill_dest_upper.isin([label.upper() for label in transit_labels])).sum()
+    )
+
+    return {
+        "holds_total": int(len(public_holds_df)),
+        "ill_total": int(len(ill_df)),
+        "programming_total": int(len(programming_df)),
+        "collection_services_total": int(len(collection_services_df)),
+        "ill_main": ill_main_count,
+        "ill_by_branch": ill_by_branch,
+        "items_df": items,
+        "holds_df": public_holds_df,
+        "ill_df": ill_df,
+        "programming_df": programming_df,
+        "collection_services_df": collection_services_df,
     }
