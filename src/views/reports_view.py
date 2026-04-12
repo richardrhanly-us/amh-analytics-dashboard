@@ -189,64 +189,54 @@ def render_reports(
                 upfront_cost=st.session_state.get("roi_upfront_cost", 200000.0),
                 monthly_cost=st.session_state.get("roi_monthly_cost", 0.0),
                 yearly_cost=st.session_state.get("roi_yearly_cost", 8000.0),
+                install_date=INSTALL_DATE,
+                include_upfront_in_since_install=INCLUDE_UPFRONT_IN_SINCE_INSTALL,
             )
-    
+                
         if roi_payload:
-            net_roi_value = roi_payload.get("net_roi_value", 0.0)
-            payback_months = roi_payload.get("payback_months")
-            since_install_roi_pct = roi_payload.get("since_install_roi_pct")
-            since_install_net_value = roi_payload.get("since_install_net_value", 0.0)
-            annual_labor_value = roi_payload.get("annual_labor_value", 0.0)
-            annual_operating_cost = roi_payload.get("annual_operating_cost", 0.0)
-            labor_value_saved = roi_payload.get("labor_value_saved", 0.0)
-            observed_operating_cost = roi_payload.get("observed_operating_cost", 0.0)
-            observed_net_operating_value = roi_payload.get("observed_net_operating_value", 0.0)
-            
+            net_roi_value = roi_payload["net_roi_value"]
+            total_roi_cost = roi_payload["total_roi_cost"]
+            roi_pct = roi_payload["roi_pct"]
+            payback_months = roi_payload["payback_months"]
         
-            roi_mode_value = roi_payload.get(
-                "roi_mode",
-                st.session_state.get("roi_mode", "Observed (Selected Range)")
-            )
+            annual_labor_value = roi_payload["annual_labor_value"]
+            annual_operating_cost = roi_payload["annual_operating_cost"]
         
-            total_roi_cost = roi_payload.get("total_roi_cost")
-            if total_roi_cost is None:
-                if roi_mode_value == "Annualized Projection":
-                    total_roi_cost = annual_operating_cost
-                else:
-                    total_roi_cost = observed_operating_cost
+            labor_value_saved = roi_payload["labor_value_saved"]
+            observed_operating_cost = roi_payload["observed_operating_cost"]
+            observed_net_operating_value = roi_payload["observed_net_operating_value"]
+            observed_hours_saved = roi_payload["total_saved_hours"]
         
-            roi_pct = roi_payload.get("roi_pct")
-            if roi_pct is None:
-                roi_pct = (net_roi_value / total_roi_cost) * 100 if total_roi_cost and total_roi_cost > 0 else None
+            days_in_range = roi_payload["days_in_range"]
+            months_in_range = roi_payload["months_in_range"]
+            years_in_range = roi_payload["years_in_range"]
         
-            observed_hours_saved = labor_value_saved / HOURLY_COST if HOURLY_COST > 0 else 0
-    
-            months_in_range = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1) / 30.44
-            years_in_range = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1) / 365.25
-            days_in_range = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1)
-    
-            install_date_ts = pd.to_datetime(INSTALL_DATE)
-            today_ts = pd.Timestamp.today().normalize()
-            installed_days = max((today_ts - install_date_ts).days, 1)
-            installed_years = installed_days / 365.25
-
+            installed_years = roi_payload["installed_years"]
+            since_install_labor_value = roi_payload["since_install_labor_value"]
+            since_install_operating_cost = roi_payload["since_install_operating_cost"]
+            since_install_total_cost = roi_payload["since_install_total_cost"]
+            since_install_net_value = roi_payload["since_install_net_value"]
+            since_install_roi_pct = roi_payload["since_install_roi_pct"]
+        
             break_even_value = "Not Reached"
             break_even_subtitle = "Current annual run rate does not recover upfront cost"
             break_even_color = "#dc2626"
-            
-            if payback_months is not None:
+        
+            if payback_months is not None and installed_years is not None:
                 payback_years = payback_months / 12
                 years_after_payback = installed_years - payback_years
-            
-    
-            since_install_labor_value = annual_labor_value * installed_years
-            since_install_operating_cost = annual_operating_cost * installed_years
-    
-            if INCLUDE_UPFRONT_IN_SINCE_INSTALL:
-                since_install_total_cost = UPFRONT_COST + since_install_operating_cost
-            else:
-                since_install_total_cost = since_install_operating_cost
-    
+        
+                if years_after_payback >= 0:
+                    break_even_value = "Paid Off"
+                    break_even_subtitle = f"Recovered cost ~{years_after_payback:,.1f} years ago"
+                    break_even_color = "#059669"
+                else:
+                    break_even_value = f"{abs(years_after_payback):,.1f} yrs"
+                    break_even_subtitle = "Estimated time remaining to recover upfront cost"
+                    break_even_color = "#d97706"
+        
+            since_install_roi_display = fmt_pct(since_install_roi_pct)
+        
             def render_explainer_card(title, body, border_color):
                 st.markdown(
                     f"""
