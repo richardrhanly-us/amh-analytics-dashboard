@@ -1,14 +1,20 @@
 {
-  "library_name": "New Braunfels Public Library",
-  "branch_name": "Main Branch",
-  "system_name": "Tech Logic UltraSort",
-
-  "transit_labels": {
-    "main": "Main",
-    "westside": "Westside",
-    "library_express": "Library Express"
+  "library": {
+    "library_name": "New Braunfels Public Library",
+    "branch_name": "Main Branch",
+    "system_name": "Tech Logic UltraSort"
   },
-
+  "security": {
+    "admin_enabled": true,
+    "admin_password": ""
+  },
+  "transit": {
+    "labels": {
+      "main": "Main",
+      "westside": "Westside",
+      "library_express": "Library Express"
+    }
+  },
   "internal_routing": {
     "branch_services_names": [
       "COURTNEY (ST)MEISSNER",
@@ -40,5 +46,12 @@
       "DAMADELINE (ST)NEZAT",
       "DASERVICES TS-ADULT SERVICES"
     ]
+  },
+  "account_settings": {
+    "organization_name": "",
+    "contact_name": "",
+    "contact_email": "",
+    "plan_name": "",
+    "notes": ""
   }
 }
