@@ -80,7 +80,7 @@ def render_live_today(
     today_rejects_df,
     today_hourly_checkins,
     live_hour_range,
-    show_admin_button = can_manage_settings(entitlement_context)
+    can_view_internal_workflow=True,
 ):
     col1, col2 = st.columns([4, 2])
 
