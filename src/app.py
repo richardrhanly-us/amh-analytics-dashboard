@@ -142,10 +142,9 @@ start_date, end_date = resolve_date_filters(
     max_date=max_date,
     local_today=local_today,
 )
-
 theme_base = st.get_option("theme.base") or "light"
-today = datetime.now(APP_TZ).date()
 now_ct = datetime.now(APP_TZ)
+today = now_ct.date()
 
 context = build_dashboard_context(
     df_live_raw=df_live_raw,
