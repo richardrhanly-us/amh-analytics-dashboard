@@ -158,7 +158,6 @@ reports_can_advanced = can_view_advanced_reports(entitlement_context)
 show_transits_tab = can_view_transits(entitlement_context)
 show_internal_workflow = can_view_internal_workflow(entitlement_context)
 
-show_admin_button = can_manage_settings(entitlement_context)
 
 with st.sidebar:
     st.caption(auth_user["email"])
