@@ -17,8 +17,6 @@ from services.user_admin_service import (
     list_recent_org_auth_events,
 )
 
-ALLOWED_MEMBERSHIP_ROLES = ["owner", "admin", "manager", "viewer"]
-
 st.set_page_config(
     page_title="Admin Users",
     page_icon="👥",
