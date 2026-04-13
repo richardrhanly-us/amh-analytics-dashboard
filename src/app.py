@@ -144,21 +144,14 @@ selected_branch_row = next(
 
 selected_customer_id = None
 if selected_membership is not None:
-    selected_customer_id = (
-        selected_membership.get("customer_id")
-        or selected_membership.get("organization_id")
-        or selected_membership.get("id")
-    )
+    selected_customer_id = selected_membership.get("customer_id")
 
 selected_branch_id = None
 if selected_branch_row is not None:
-    selected_branch_id = (
-        selected_branch_row.get("branch_id")
-        or selected_branch_row.get("id")
-    )
+    selected_branch_id = selected_branch_row.get("branch_id")
 
 if selected_customer_id is None or selected_branch_id is None:
-    st.error("Could not resolve tenant IDs for the selected organization and branch.")
+    st.error("Operational tenant mapping is missing for the selected organization or branch.")
     st.stop()
 
 
