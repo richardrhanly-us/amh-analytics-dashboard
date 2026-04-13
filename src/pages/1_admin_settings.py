@@ -15,6 +15,8 @@ st.set_page_config(
     layout="wide"
 )
 
+apply_page_chrome()
+
 SETTINGS_FILE = Path(__file__).resolve().parent.parent / "branch_settings.json"
 
 
@@ -92,6 +94,80 @@ def lines_to_list(text: str) -> list[str]:
 def mask_password(value: str) -> str:
     return "" if not value else "********"
 
+
+if "auth_user" not in st.session_state or st.session_state["auth_user"] is None:
+    st.error("Please log in from the main app first.")
+    st.stop()
+
+auth_user = st.session_state["auth_user"]
+user_memberships = get_user_memberships(auth_user["id"])
+
+if not user_memberships:
+    st.error("Your account does not have access to any organizations.")
+    st.stop()
+
+allowed_org_slugs = [m["organization_slug"] for m in user_memberships]
+
+if (
+    "selected_org_slug" not in st.session_state
+    or st.session_state["selected_org_slug"] not in allowed_org_slugs
+):
+    st.session_state["selected_org_slug"] = allowed_org_slugs[0]
+
+selected_org_slug = st.session_state["selected_org_slug"]
+
+org_options = {
+    m["organization_name"]: m["organization_slug"]
+    for m in user_memberships
+}
+
+branch_rows = get_org_branches(selected_org_slug)
+
+if not branch_rows:
+    st.error("No active branches were found for this organization.")
+    st.stop()
+
+allowed_branch_slugs = [b["branch_slug"] for b in branch_rows]
+
+if (
+    "selected_branch_slug" not in st.session_state
+    or st.session_state["selected_branch_slug"] not in allowed_branch_slugs
+):
+    primary_branch = next((b for b in branch_rows if b["is_primary"]), None)
+    st.session_state["selected_branch_slug"] = (
+        primary_branch["branch_slug"] if primary_branch else allowed_branch_slugs[0]
+    )
+
+selected_branch_slug = st.session_state["selected_branch_slug"]
+
+branch_options = {
+    b["branch_name"]: b["branch_slug"]
+    for b in branch_rows
+}
+
+entitlement_context = build_entitlement_context(
+    user_id=auth_user["id"],
+    org_slug=selected_org_slug,
+)
+
+show_admin_button = can_manage_settings(entitlement_context)
+
+if not show_admin_button:
+    st.error("You do not have permission to manage settings.")
+    st.stop()
+
+render_main_sidebar(
+    auth_user=auth_user,
+    entitlement_context=entitlement_context,
+    org_options=org_options,
+    selected_org_slug=selected_org_slug,
+    branch_options=branch_options,
+    selected_branch_slug=selected_branch_slug,
+    show_admin_button=show_admin_button,
+)
+
+selected_org_slug = st.session_state["selected_org_slug"]
+selected_branch_slug = st.session_state["selected_branch_slug"]
 
 if "admin_authenticated" not in st.session_state:
     st.session_state["admin_authenticated"] = False
