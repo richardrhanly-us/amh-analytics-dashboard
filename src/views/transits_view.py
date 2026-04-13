@@ -32,8 +32,11 @@ def render_transits(
     today,
     start_date,
     end_date,
+    can_view_transits=True,
 ):
-
+    if not can_view_transits:
+        st.info("Transit analytics are not available on this plan.")
+        return
     st.header("Transit Routing")
     st.caption("Tracks items routed to transit destinations such as Westside and Library Express.")
 
