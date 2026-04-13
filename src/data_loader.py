@@ -17,17 +17,17 @@ REJECTS_HISTORY_FILE = "data/processed/rejects_history.csv"
 ALLOW_FILE_FALLBACK = os.getenv("SORTVIEW_ALLOW_FILE_FALLBACK", "false").lower() == "true"
 
 # Adjust these only if your tenant columns use different names.
-CHECKINS_ORG_COLUMN = os.getenv("SORTVIEW_CHECKINS_ORG_COLUMN", "organization_slug")
-CHECKINS_BRANCH_COLUMN = os.getenv("SORTVIEW_CHECKINS_BRANCH_COLUMN", "branch_slug")
+CHECKINS_ORG_COLUMN = os.getenv("SORTVIEW_CHECKINS_ORG_COLUMN", "customer_id")
+CHECKINS_BRANCH_COLUMN = os.getenv("SORTVIEW_CHECKINS_BRANCH_COLUMN", "branch_id")
 
-REJECTS_ORG_COLUMN = os.getenv("SORTVIEW_REJECTS_ORG_COLUMN", "organization_slug")
-REJECTS_BRANCH_COLUMN = os.getenv("SORTVIEW_REJECTS_BRANCH_COLUMN", "branch_slug")
+REJECTS_ORG_COLUMN = os.getenv("SORTVIEW_REJECTS_ORG_COLUMN", "customer_id")
+REJECTS_BRANCH_COLUMN = os.getenv("SORTVIEW_REJECTS_BRANCH_COLUMN", "branch_id")
 
-ACS_ORG_COLUMN = os.getenv("SORTVIEW_ACS_ORG_COLUMN", "organization_slug")
-ACS_BRANCH_COLUMN = os.getenv("SORTVIEW_ACS_BRANCH_COLUMN", "branch_slug")
+ACS_ORG_COLUMN = os.getenv("SORTVIEW_ACS_ORG_COLUMN", "customer_id")
+ACS_BRANCH_COLUMN = os.getenv("SORTVIEW_ACS_BRANCH_COLUMN", "branch_id")
 
-PIPELINE_ORG_COLUMN = os.getenv("SORTVIEW_PIPELINE_ORG_COLUMN", "organization_slug")
-PIPELINE_BRANCH_COLUMN = os.getenv("SORTVIEW_PIPELINE_BRANCH_COLUMN", "branch_slug")
+PIPELINE_ORG_COLUMN = os.getenv("SORTVIEW_PIPELINE_ORG_COLUMN", "customer_id")
+PIPELINE_BRANCH_COLUMN = os.getenv("SORTVIEW_PIPELINE_BRANCH_COLUMN", "branch_id")
 
 
 def get_database_url():
