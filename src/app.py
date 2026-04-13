@@ -85,7 +85,7 @@ if not user_memberships:
     st.stop()
 
 allowed_org_slugs = [m["organization_slug"] for m in user_memberships]
-
+st.caption(f"Can manage settings: {can_manage_settings(entitlement_context)}")
 if (
     "selected_org_slug" not in st.session_state
     or st.session_state["selected_org_slug"] not in allowed_org_slugs
