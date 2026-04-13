@@ -9,3 +9,4 @@ pytz
 weasyprint
 fastapi
 uvicorn
+werkzeug
