@@ -121,7 +121,7 @@ with st.form("add_user_form"):
     full_name = st.text_input("Full name")
     email = st.text_input("Email")
     password = st.text_input("Temporary password", type="password")
-    role = st.selectbox("Role", ["owner", "admin", "staff", "viewer"])
+    role = st.selectbox("Role", ["owner", "admin", "manager", "viewer"])
     add_user_submitted = st.form_submit_button("Create or add user")
 
 if add_user_submitted:
@@ -146,7 +146,7 @@ if users:
             options=[u["user_id"] for u in users],
             format_func=lambda uid: f'{user_map[uid]["email"]} ({user_map[uid]["role"]})',
         )
-        new_role = st.selectbox("New role", ["owner", "admin", "staff", "viewer"])
+        new_role = st.selectbox("New role", ["owner", "admin", "manager", "viewer"])
         update_role_submitted = st.form_submit_button("Update role")
 
     if update_role_submitted:
