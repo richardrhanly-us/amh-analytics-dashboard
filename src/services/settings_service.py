@@ -37,11 +37,11 @@ def load_app_settings_from_file(settings_file: Path) -> dict:
     transit_home_label = transit_settings.get("home_branch_label", "Main")
     transit_destinations = transit_settings.get("destinations", [])
 
-    enabled_transit_destinations = [
+    enabled_transit_destinations = _dedupe_transit_destinations([
         d for d in transit_destinations
         if bool(d.get("enabled", True)) and str(d.get("label", "")).strip()
-    ]
-
+    ])
+    
     transit_labels = [
         str(d.get("label", "")).strip()
         for d in enabled_transit_destinations
@@ -97,11 +97,11 @@ def load_app_settings_from_db(org_slug: str, branch_slug: str | None = None) -> 
     transit_home_label = transit_settings.get("home_branch_label", "Main")
     transit_destinations = transit_settings.get("destinations", [])
 
-    enabled_transit_destinations = [
+    enabled_transit_destinations = _dedupe_transit_destinations([
         d for d in transit_destinations
         if bool(d.get("enabled", True)) and str(d.get("label", "")).strip()
-    ]
-
+    ])
+    
     transit_labels = [
         str(d.get("label", "")).strip()
         for d in enabled_transit_destinations
