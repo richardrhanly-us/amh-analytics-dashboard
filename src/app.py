@@ -8,7 +8,6 @@ from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from streamlit_autorefresh import st_autorefresh
-import os
 
 from views.live_today_view import render_live_today
 from views.overview_view import render_overview
@@ -68,30 +67,111 @@ if st.session_state["auth_user"] is None:
 
 SETTINGS_FILE = Path(__file__).parent / "branch_settings.json"
 
-APP_ORG_SLUG = os.getenv("APP_ORG_SLUG", "nbpl")
-APP_BRANCH_SLUG = os.getenv("APP_BRANCH_SLUG", "main")
-
 auth_user = st.session_state["auth_user"]
+user_memberships = get_user_memberships(auth_user["id"])
+
+if not user_memberships:
+    st.error("Your account does not have access to any organizations.")
+    with st.sidebar:
+        st.caption(auth_user["email"])
+        if st.button("Log out"):
+            st.session_state["auth_user"] = None
+            st.rerun()
+    st.stop()
+
+allowed_org_slugs = [m["organization_slug"] for m in user_memberships]
+
+if "selected_org_slug" not in st.session_state or st.session_state["selected_org_slug"] not in allowed_org_slugs:
+    st.session_state["selected_org_slug"] = allowed_org_slugs[0]
+
+selected_org_slug = st.session_state["selected_org_slug"]
+
+org_options = {
+    m["organization_name"]: m["organization_slug"]
+    for m in user_memberships
+}
+
+selected_org_name = next(
+    name for name, slug in org_options.items()
+    if slug == selected_org_slug
+)
+
+branch_rows = get_org_branches(selected_org_slug)
+
+if not branch_rows:
+    st.error("No active branches were found for this organization.")
+    with st.sidebar:
+        st.caption(auth_user["email"])
+        if st.button("Log out"):
+            st.session_state["auth_user"] = None
+            st.rerun()
+    st.stop()
+
+allowed_branch_slugs = [b["branch_slug"] for b in branch_rows]
+
+if "selected_branch_slug" not in st.session_state or st.session_state["selected_branch_slug"] not in allowed_branch_slugs:
+    primary_branch = next((b for b in branch_rows if b["is_primary"]), None)
+    st.session_state["selected_branch_slug"] = (
+        primary_branch["branch_slug"] if primary_branch else allowed_branch_slugs[0]
+    )
+
+selected_branch_slug = st.session_state["selected_branch_slug"]
+
+branch_options = {
+    b["branch_name"]: b["branch_slug"]
+    for b in branch_rows
+}
+
+selected_branch_name = next(
+    name for name, slug in branch_options.items()
+    if slug == selected_branch_slug
+)
 
 with st.sidebar:
     st.caption(auth_user["email"])
+
+    if len(org_options) > 1:
+        new_org_name = st.selectbox(
+            "Organization",
+            options=list(org_options.keys()),
+            index=list(org_options.values()).index(selected_org_slug),
+        )
+        new_org_slug = org_options[new_org_name]
+
+        if new_org_slug != st.session_state["selected_org_slug"]:
+            st.session_state["selected_org_slug"] = new_org_slug
+            st.session_state.pop("selected_branch_slug", None)
+            st.rerun()
+
+    if len(branch_options) > 1:
+        new_branch_name = st.selectbox(
+            "Branch",
+            options=list(branch_options.keys()),
+            index=list(branch_options.values()).index(selected_branch_slug),
+        )
+        new_branch_slug = branch_options[new_branch_name]
+
+        if new_branch_slug != st.session_state["selected_branch_slug"]:
+            st.session_state["selected_branch_slug"] = new_branch_slug
+            st.rerun()
+
     if st.button("Log out"):
         st.session_state["auth_user"] = None
+        st.session_state.pop("selected_org_slug", None)
+        st.session_state.pop("selected_branch_slug", None)
         st.rerun()
 
-if not user_can_access_org(auth_user["id"], APP_ORG_SLUG):
+selected_org_slug = st.session_state["selected_org_slug"]
+selected_branch_slug = st.session_state["selected_branch_slug"]
+
+if not user_can_access_org(auth_user["id"], selected_org_slug):
     st.error("You do not have access to this organization.")
-    if st.button("Log out"):
-        st.session_state["auth_user"] = None
-        st.rerun()
     st.stop()
-
-user_memberships = get_user_memberships(auth_user["id"])
 
 app_settings = load_runtime_settings(
     settings_file=SETTINGS_FILE,
-    org_slug=APP_ORG_SLUG,
-    branch_slug=APP_BRANCH_SLUG,
+    org_slug=selected_org_slug,
+    branch_slug=selected_branch_slug,
     prefer_database=True,
 )
 
