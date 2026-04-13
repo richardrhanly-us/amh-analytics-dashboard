@@ -48,10 +48,6 @@ from data_loader import (
 from dashboard_context import build_dashboard_context
 from services.readiness_service import get_branch_readiness
 
-
-st.write("auth_service file:", getattr(auth_service, "__file__", "missing"))
-st.write("has change_password:", hasattr(auth_service, "change_password"))
-
 st.set_page_config(
     page_title="SortView",
     page_icon="📚",
