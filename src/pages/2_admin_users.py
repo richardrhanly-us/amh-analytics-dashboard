@@ -3,9 +3,11 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from services.access_service import get_user_memberships
+from services.app_ui_service import apply_page_chrome
+from services.access_service import get_user_memberships, get_org_branches
 from services.entitlement_service import build_entitlement_context
 from services.permission_service import can_manage_settings
+from services.sidebar_service import render_main_sidebar
 from services.user_admin_service import (
     list_org_users,
     create_or_add_org_user,
@@ -19,6 +21,8 @@ st.set_page_config(
     page_icon="👥",
     layout="wide",
 )
+
+apply_page_chrome()
 
 if "auth_user" not in st.session_state or st.session_state["auth_user"] is None:
     st.error("Please log in from the main app first.")
@@ -41,32 +45,66 @@ if (
 
 selected_org_slug = st.session_state["selected_org_slug"]
 
-entitlement_context = build_entitlement_context(
-    user_id=auth_user["id"],
-    org_slug=selected_org_slug,
-)
-
-if not can_manage_settings(entitlement_context):
-    st.error("You do not have permission to manage users.")
-    st.stop()
-
 org_options = {
     m["organization_name"]: m["organization_slug"]
     for m in user_memberships
 }
 
+branch_rows = get_org_branches(selected_org_slug)
+
+if not branch_rows:
+    st.error("No active branches were found for this organization.")
+    st.stop()
+
+allowed_branch_slugs = [b["branch_slug"] for b in branch_rows]
+
+if (
+    "selected_branch_slug" not in st.session_state
+    or st.session_state["selected_branch_slug"] not in allowed_branch_slugs
+):
+    primary_branch = next((b for b in branch_rows if b["is_primary"]), None)
+    st.session_state["selected_branch_slug"] = (
+        primary_branch["branch_slug"] if primary_branch else allowed_branch_slugs[0]
+    )
+
+selected_branch_slug = st.session_state["selected_branch_slug"]
+
+branch_options = {
+    b["branch_name"]: b["branch_slug"]
+    for b in branch_rows
+}
+
+entitlement_context = build_entitlement_context(
+    user_id=auth_user["id"],
+    org_slug=selected_org_slug,
+)
+
+show_admin_button = can_manage_settings(entitlement_context)
+
+if not show_admin_button:
+    st.error("You do not have permission to manage users.")
+    st.stop()
+
+render_main_sidebar(
+    auth_user=auth_user,
+    entitlement_context=entitlement_context,
+    org_options=org_options,
+    selected_org_slug=selected_org_slug,
+    branch_options=branch_options,
+    selected_branch_slug=selected_branch_slug,
+    show_admin_button=show_admin_button,
+)
+
+selected_org_slug = st.session_state["selected_org_slug"]
+selected_branch_slug = st.session_state["selected_branch_slug"]
+
 st.title("Admin / Users")
 
-if len(org_options) > 1:
-    selected_org_name = st.selectbox(
-        "Organization",
-        options=list(org_options.keys()),
-        index=list(org_options.values()).index(selected_org_slug),
-    )
-    selected_org_slug = org_options[selected_org_name]
-    st.session_state["selected_org_slug"] = selected_org_slug
-else:
-    st.caption(f"Organization: {list(org_options.keys())[0]}")
+selected_org_name = next(
+    name for name, slug in org_options.items()
+    if slug == selected_org_slug
+)
+st.caption(f"Organization: {selected_org_name}")
 
 users = list_org_users(selected_org_slug)
 user_map = {u["user_id"]: u for u in users}
