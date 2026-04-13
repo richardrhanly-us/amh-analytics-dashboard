@@ -1405,7 +1405,7 @@ def render_reports(
     
             if len(hour_summary) > 0:
                 busiest_hour_row = hour_summary.loc[hour_summary["avg_checkins"].idxmax()]
-    
+            
                 st.markdown(
                     f"""
                     <div style="
@@ -1429,28 +1429,28 @@ def render_reports(
                     """,
                     unsafe_allow_html=True
                 )
-    
+            
                 peak_hour_chart = build_hourly_bar_chart(
                     hour_summary.rename(columns={"avg_checkins": "avg_items_per_hour"}),
                     "avg_items_per_hour",
                     "Avg Checkins Per Hour"
                 )
                 render_chart(peak_hour_chart)
-    
+            
                 peak_hour_display = hour_summary.rename(columns={
                     "hour_label": "Hour",
                     "count": "Total Checkins",
                     "avg_checkins": "Avg Checkins Per Day"
                 })[["Hour", "Total Checkins", "Avg Checkins Per Day"]]
-    
+            
                 peak_hour_display["Avg Checkins Per Day"] = peak_hour_display["Avg Checkins Per Day"].round(1)
-    
+            
                 st.dataframe(peak_hour_display, use_container_width=True)
                 gated_csv_download(
                     peak_hour_display,
                     "peak_hour_analysis.csv"
                 )
-                            else:
+            else:
                 st.info("No hourly data available for selected range.")
         else:
             st.info("No hourly data available for selected range.")
