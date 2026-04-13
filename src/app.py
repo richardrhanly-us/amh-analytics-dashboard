@@ -46,6 +46,7 @@ from data_loader import (
 )
 
 from dashboard_context import build_dashboard_context
+from services.readiness_service import get_branch_readiness
 
 st.set_page_config(
     page_title="SortView",
@@ -267,16 +268,23 @@ if schema_errors:
 
     st.stop()
 
-DATA_READY_ORGS = {"nbpl"}  # temporary safety guard until data is tenant-scoped
+readiness = get_branch_readiness(
+    org_slug=selected_org_slug,
+    branch_slug=selected_branch_slug,
+)
 
-if selected_org_slug not in DATA_READY_ORGS:
+if not readiness["is_ready"]:
     render_app_header(
         library_name=LIBRARY_NAME,
         branch_name=BRANCH_NAME,
         system_name=SYSTEM_NAME,
         show_admin_button=show_admin_button,
     )
-    st.info("Waiting for SortView Agent to start pipeline for this library.")
+    st.info(readiness["message"])
+
+    if show_admin_button:
+        st.caption(f"Readiness code: {readiness['code']}")
+
     st.stop()
 
 
