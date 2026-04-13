@@ -195,6 +195,8 @@ reports_can_advanced = can_view_advanced_reports(entitlement_context)
 show_transits_tab = can_view_transits(entitlement_context)
 show_internal_workflow = can_view_internal_workflow(entitlement_context)
 
+show_header_admin_button = False
+
 render_main_sidebar(
     auth_user=auth_user,
     entitlement_context=entitlement_context,
@@ -202,7 +204,7 @@ render_main_sidebar(
     selected_org_slug=selected_org_slug,
     branch_options=branch_options,
     selected_branch_slug=selected_branch_slug,
-    show_admin_button=show_admin_button,
+    show_admin_button=show_header_admin_button,
 )
 
 
@@ -240,7 +242,7 @@ if schema_errors:
         library_name=LIBRARY_NAME,
         branch_name=BRANCH_NAME,
         system_name=SYSTEM_NAME,
-        show_admin_button=show_admin_button,
+        show_admin_button=show_header_admin_button,
     )
     st.error("Tenant schema validation failed.")
 
@@ -259,7 +261,7 @@ if not readiness["is_ready"]:
         library_name=LIBRARY_NAME,
         branch_name=BRANCH_NAME,
         system_name=SYSTEM_NAME,
-        show_admin_button=show_admin_button,
+        show_admin_button=show_header_admin_button,
     )
     st.info(readiness["message"])
 
@@ -351,7 +353,7 @@ if len(df_history_raw) == 0 or "datetime" not in df_history_raw.columns:
         library_name=LIBRARY_NAME,
         branch_name=BRANCH_NAME,
         system_name=SYSTEM_NAME,
-        show_admin_button=show_admin_button,
+        show_admin_button=show_header_admin_button,
     )
     st.warning("No historical checkin data is available yet.")
     st.stop()
@@ -363,7 +365,7 @@ render_app_header(
     library_name=LIBRARY_NAME,
     branch_name=BRANCH_NAME,
     system_name=SYSTEM_NAME,
-    show_admin_button=show_admin_button,
+    show_admin_button=show_header_admin_button,
 )
 nav_options = ["Live Today", "Reports", "Overview"]
 
