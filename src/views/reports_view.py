@@ -39,11 +39,36 @@ def render_reports(
     LIBRARY_NAME,
     BRANCH_NAME,
     SYSTEM_NAME,
+    can_export=False,
 ):
     
+
     st.header("Reports")
     pdf_button_placeholder = st.empty()
     
+    export_notice_shown = False
+    
+    def gated_csv_download(df_export, filename, key=None):
+        nonlocal export_notice_shown
+        if can_export:
+            download_button(df_export, filename, key=key)
+        elif not export_notice_shown:
+            st.caption("Exports are not available on this plan.")
+            export_notice_shown = True
+    
+    def gated_pdf_download(pdf_bytes, file_name, key="director_pdf_download"):
+        nonlocal export_notice_shown
+        if can_export:
+            pdf_button_placeholder.download_button(
+                label="Download Director PDF",
+                data=pdf_bytes,
+                file_name=file_name,
+                mime="application/pdf",
+                key=key
+            )
+        elif not export_notice_shown:
+            pdf_button_placeholder.caption("Exports are not available on this plan.")
+            export_notice_shown = True    
     
     # =========================================================
     # LABOR & EFFICIENCY
@@ -990,11 +1015,9 @@ def render_reports(
                     install_date=pd.to_datetime(INSTALL_DATE).strftime("%b %d, %Y") if roi_payload else None,
                 )
     
-                pdf_button_placeholder.download_button(
-                    label="Download Director PDF",
-                    data=director_pdf,
-                    file_name=f"amh_director_report_{pd.to_datetime(start_date).strftime('%Y%m%d')}_{pd.to_datetime(end_date).strftime('%Y%m%d')}.pdf",
-                    mime="application/pdf",
+                gated_pdf_download(
+                    director_pdf,
+                    f"amh_director_report_{pd.to_datetime(start_date).strftime('%Y%m%d')}_{pd.to_datetime(end_date).strftime('%Y%m%d')}.pdf",
                     key="director_pdf_download"
                 )
             except Exception as e:
@@ -1343,7 +1366,7 @@ def render_reports(
                 dow_display["Avg Checkins Per Day"] = dow_display["Avg Checkins Per Day"].round(1)
     
                 st.dataframe(dow_display, use_container_width=True)
-                download_button(dow_display, "weekday_volume.csv")
+                gated_csv_download(dow_display, "weekday_volume.csv")
             else:
                 st.info("No weekday data available for selected range.")
         else:
@@ -1423,11 +1446,11 @@ def render_reports(
                 peak_hour_display["Avg Checkins Per Day"] = peak_hour_display["Avg Checkins Per Day"].round(1)
     
                 st.dataframe(peak_hour_display, use_container_width=True)
-                download_button(
+                gated_csv_download(
                     peak_hour_display,
                     "peak_hour_analysis.csv"
                 )
-            else:
+                            else:
                 st.info("No hourly data available for selected range.")
         else:
             st.info("No hourly data available for selected range.")
@@ -1499,7 +1522,7 @@ def render_reports(
             display_df["Avg Checkins Per Hour"] = display_df["Avg Checkins Per Hour"].round(1)
             
             st.dataframe(display_df, use_container_width=True)
-            download_button(display_df, "throughput_report.csv")
+            gated_csv_download(display_df, "throughput_report.csv")
     
             # ===== WEEKDAY SECTION =====
             st.subheader("Average Checkins per Day by Weekday")
@@ -1561,7 +1584,7 @@ def render_reports(
             weekday_display["Avg Checkins Per Day"] = weekday_display["Avg Checkins Per Day"].round(1)
     
             st.dataframe(weekday_display, use_container_width=True)
-            download_button(weekday_display, "throughput_by_weekday_report.csv")
+            gated_csv_download(weekday_display, "throughput_by_weekday_report.csv")
     
         else:
             st.info("No throughput data available for the selected date range.")
@@ -1640,7 +1663,7 @@ def render_reports(
                 columns={"hour_label": "hour"}
             )
             st.dataframe(display_df, use_container_width=True)
-            download_button(display_df, "today_vs_typical_hourly_pattern.csv")
+            gated_csv_download(display_df, "today_vs_typical_hourly_pattern.csv")
         else:
             st.info("Not enough data available to compare today versus the typical hourly pattern.")
     
@@ -1706,7 +1729,7 @@ def render_reports(
             render_chart(destination_chart)
     
             st.dataframe(destination_counts, use_container_width=True)
-            download_button(destination_counts, "destination_breakdown.csv")
+            gated_csv_download(destination_counts, "destination_breakdown.csv")
         else:
             st.info("No destination data available for the selected date range.")
     
@@ -1803,7 +1826,7 @@ def render_reports(
             })
     
             st.dataframe(bin_volume_display, use_container_width=True)
-            download_button(bin_volume_display, "bin_volume_report.csv")
+            gated_csv_download(bin_volume_display, "bin_volume_report.csv")
     
             hour_range = list(range(7, 21))
     
@@ -1889,7 +1912,7 @@ def render_reports(
                     hourly_bin_display[col] = hourly_bin_display[col].round(1)
     
                 st.dataframe(hourly_bin_display, use_container_width=True)
-                download_button(hourly_bin_display, "bin_volume_by_hour_report.csv")
+                gated_csv_download(hourly_bin_display, "bin_volume_by_hour_report.csv")
     
     # -----------------------------
     # Errors & Exceptions
@@ -1946,7 +1969,7 @@ def render_reports(
             render_chart(reject_chart)
     
             st.dataframe(reject_counts, use_container_width=True)
-            download_button(reject_counts, "reject_reasons.csv")
+            gated_csv_download(reject_counts, "reject_reasons.csv")
         else:
             st.info("No reject reason data available for the selected date range.")
     
@@ -2106,12 +2129,11 @@ def render_reports(
     
                 overflow_daily_display = overflow_daily.reset_index().rename(columns={"index": "date"})
                 st.dataframe(overflow_daily_display, use_container_width=True)
-                download_button(
+                gated_csv_download(
                     overflow_daily_display,
                     "exception_bin_rate_by_day_report.csv",
                     key="exception_bin_rate_by_day_report_download"
                 )
-    
             if len(exception_df) > 0:
                 st.subheader("Exception Bin Volume by Hour")
     
@@ -2197,7 +2219,7 @@ def render_reports(
                     )
     
                     st.dataframe(hourly_exception_display, use_container_width=True)
-                    download_button(
+                    gated_csv_download(
                         hourly_exception_display,
                         "exception_bin_volume_by_hour_report.csv",
                         key="exception_bin_volume_by_hour_report_download"
