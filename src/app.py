@@ -227,6 +227,17 @@ BRANCH_SERVICES_NAMES = app_settings["BRANCH_SERVICES_NAMES"]
 COLLECTION_SERVICES_NAMES = app_settings["COLLECTION_SERVICES_NAMES"]
 BRANCH_SERVICES_DA_PATTERNS = app_settings["BRANCH_SERVICES_DA_PATTERNS"]
 COLLECTION_SERVICES_DA_PATTERNS = app_settings["COLLECTION_SERVICES_DA_PATTERNS"]
+DATA_READY_ORGS = {"nbpl"}  # temporary safety guard until data is tenant-scoped
+
+if selected_org_slug not in DATA_READY_ORGS:
+    render_app_header(
+        library_name=LIBRARY_NAME,
+        branch_name=BRANCH_NAME,
+        system_name=SYSTEM_NAME,
+        show_admin_button=show_admin_button,
+    )
+    st.info("Waiting for SortView Agent to start pipeline for this library.")
+    st.stop()
 
 
 def is_operating_hours(now_ct: datetime) -> bool:
