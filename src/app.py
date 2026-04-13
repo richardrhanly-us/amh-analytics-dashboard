@@ -24,7 +24,11 @@ from services.access_service import (
 )
 
 from services.entitlement_service import build_entitlement_context
-from services.permission_service import can_manage_settings
+from services.permission_service import (
+    can_manage_settings,
+    can_export,
+    can_view_advanced_reports,
+)
 
 from data_loader import (
     load_checkins_df,
@@ -143,6 +147,10 @@ entitlement_context = build_entitlement_context(
     user_id=auth_user["id"],
     org_slug=selected_org_slug,
 )
+
+show_admin_button = can_manage_settings(entitlement_context)
+reports_can_export = can_export(entitlement_context)
+reports_can_advanced = can_view_advanced_reports(entitlement_context)
 
 show_admin_button = can_manage_settings(entitlement_context)
 
@@ -320,6 +328,9 @@ context = build_dashboard_context(
     system_name=SYSTEM_NAME,
     theme_base=theme_base,
 )
+
+context["reports_args"]["can_export"] = reports_can_export
+context["reports_args"]["can_advanced_reports"] = reports_can_advanced
 
 if context["no_today_data"]:
     st.info("No checkins have been ingested yet for today. Live dashboard is showing the current day only.")
