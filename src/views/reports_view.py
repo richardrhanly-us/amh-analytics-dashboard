@@ -40,6 +40,7 @@ def render_reports(
     BRANCH_NAME,
     SYSTEM_NAME,
     can_export=False,
+    can_advanced_reports=False,
 ):
     
 
