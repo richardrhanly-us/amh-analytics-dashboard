@@ -9,7 +9,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from database import get_engine
 
 MAX_FAILED_ATTEMPTS = 5
-LOCKOUT_MINUTES = 1
+LOCKOUT_MINUTES = 15
 
 
 def get_user_by_email(email: str) -> dict[str, Any] | None:
