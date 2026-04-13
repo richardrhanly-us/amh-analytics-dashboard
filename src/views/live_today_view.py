@@ -80,6 +80,7 @@ def render_live_today(
     today_rejects_df,
     today_hourly_checkins,
     live_hour_range,
+    show_admin_button = can_manage_settings(entitlement_context)
 ):
     col1, col2 = st.columns([4, 2])
 
@@ -365,83 +366,85 @@ Problem Items: {problem_items:,}
                 value_color=live_reject_value_color,
             )
 
-    st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
-
-    st.markdown(
-        """
-        <div style="
-            border: 2px solid #14b8a6;
-            border-radius: 14px;
-            padding: 12px 14px;
-            background: linear-gradient(90deg, #14b8a6, #0ea5e9);
-            margin-bottom: 8px;
-        ">
+    if can_view_internal_workflow:
+        st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
+    
+        st.markdown(
+            """
             <div style="
-                font-size: 0.95rem;
-                font-weight: 700;
-                color: #ffffff;
-                line-height: 1.2;
+                border: 2px solid #14b8a6;
+                border-radius: 14px;
+                padding: 12px 14px;
+                background: linear-gradient(90deg, #14b8a6, #0ea5e9);
+                margin-bottom: 8px;
             ">
-                Internal Workflow
+                <div style="
+                    font-size: 0.95rem;
+                    font-weight: 700;
+                    color: #ffffff;
+                    line-height: 1.2;
+                ">
+                    Internal Workflow
+                </div>
             </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    internal1, internal2, internal3, internal4 = st.columns(4)
-    internal_pct_base = today_checkins if today_checkins > 0 else 1
-
-    with internal1:
-        render_kpi_card(
-            "Holds",
-            f"{today_holds:,}",
-            f"Public holds after internal workflow subtraction ({(today_holds / internal_pct_base) * 100:.1f}% of checkins)",
-            "#6b7280",
-            value_font_size="2.0rem",
-            border_color="#34d399",
+            """,
+            unsafe_allow_html=True
         )
-
-    with internal2:
-        render_kpi_card(
-            "ILL",
-            f"{today_ill:,}",
-            format_ill_branch_subtitle(
-                today_ill_main,
-                today_ill_by_branch,
-                TRANSIT_HOME_LABEL,
-                TRANSIT_LABELS,
-            ),
-            "#6b7280",
-            value_font_size="1.85rem",
-            border_color="#34d399",
-        )
-
-    with internal3:
-        render_kpi_card(
-            "Branch Services",
-            f"{today_programming:,}",
-            f"{(today_programming / internal_pct_base) * 100:.1f}% of checkins today",
-            "#6b7280",
-            value_font_size="1.85rem",
-            border_color="#34d399",
-        )
-
-    with internal4:
-        render_kpi_card(
-            "Collection Services",
-            f"{today_collection_services:,}",
-            f"{(today_collection_services / internal_pct_base) * 100:.1f}% of checkins today",
-            "#6b7280",
-            value_font_size="1.7rem",
-            border_color="#34d399",
-        )
-
-    with st.expander("Internal workflow audit", expanded=False):
-        st.write("Public Holds:", today_holds)
-        st.write("ILL:", today_ill)
-        st.write("Programming:", today_programming)
-        st.write("Collection Services:", today_collection_services)
+    
+        internal1, internal2, internal3, internal4 = st.columns(4)
+    
+        internal_pct_base = today_checkins if today_checkins > 0 else 1
+    
+        with internal1:
+            render_kpi_card(
+                "Holds",
+                f"{today_holds:,}",
+                f"Public holds after internal workflow subtraction ({(today_holds / internal_pct_base) * 100:.1f}% of checkins)",
+                "#6b7280",
+                value_font_size="2.0rem",
+                border_color="#34d399"
+            )
+    
+        with internal2:
+            render_kpi_card(
+                "ILL",
+                f"{today_ill:,}",
+                format_ill_branch_subtitle(
+                    today_ill_main,
+                    today_ill_by_branch,
+                    TRANSIT_HOME_LABEL,
+                    TRANSIT_LABELS,
+                ),
+                "#6b7280",
+                value_font_size="1.85rem",
+                border_color="#34d399"
+            )
+    
+        with internal3:
+            render_kpi_card(
+                "Branch Services",
+                f"{today_programming:,}",
+                f"{(today_programming / internal_pct_base) * 100:.1f}% of checkins today",
+                "#6b7280",
+                value_font_size="1.85rem",
+                border_color="#34d399"
+            )
+    
+        with internal4:
+            render_kpi_card(
+                "Collection Services",
+                f"{today_collection_services:,}",
+                f"{(today_collection_services / internal_pct_base) * 100:.1f}% of checkins today",
+                "#6b7280",
+                value_font_size="1.7rem",
+                border_color="#34d399"
+            )
+    
+        with st.expander("Internal workflow audit", expanded=False):
+            st.write("Public Holds:", today_holds)
+            st.write("ILL:", today_ill)
+            st.write("Programming:", today_programming)
+            st.write("Collection Services:", today_collection_services)
 
         st.write("Public holds debug:")
         if len(today_public_holds_df) > 0:
