@@ -132,6 +132,35 @@ if (
 
 selected_branch_slug = st.session_state["selected_branch_slug"]
 
+selected_membership = next(
+    (m for m in user_memberships if m["organization_slug"] == selected_org_slug),
+    None,
+)
+
+selected_branch_row = next(
+    (b for b in branch_rows if b["branch_slug"] == selected_branch_slug),
+    None,
+)
+
+selected_customer_id = None
+if selected_membership is not None:
+    selected_customer_id = (
+        selected_membership.get("customer_id")
+        or selected_membership.get("organization_id")
+        or selected_membership.get("id")
+    )
+
+selected_branch_id = None
+if selected_branch_row is not None:
+    selected_branch_id = (
+        selected_branch_row.get("branch_id")
+        or selected_branch_row.get("id")
+    )
+
+if selected_customer_id is None or selected_branch_id is None:
+    st.error("Could not resolve tenant IDs for the selected organization and branch.")
+    st.stop()
+
 
 branch_options = {
     b["branch_name"]: b["branch_slug"]
@@ -281,56 +310,50 @@ if auto_refresh_triggered:
     st.session_state["last_refresh_count"] = refresh_count
 
 pipeline_status = load_pipeline_status(
-    org_slug=selected_org_slug,
-    branch_slug=selected_branch_slug,
+    org_slug=selected_customer_id,
+    branch_slug=selected_branch_id,
     mtime=None,
     refresh_count=refresh_count,
 )
 
-status_mtime = 0
-if pipeline_status:
-    status_updated_at = pipeline_status.get("updated_at")
-    if status_updated_at:
-        status_mtime = str(status_updated_at)
-
 df_live_raw = load_checkins_df(
-    org_slug=selected_org_slug,
-    branch_slug=selected_branch_slug,
+    org_slug=selected_customer_id,
+    branch_slug=selected_branch_id,
     mtime=status_mtime,
     refresh_count=refresh_count,
 )
 
 df_history_raw = load_checkins_history_df(
-    org_slug=selected_org_slug,
-    branch_slug=selected_branch_slug,
+    org_slug=selected_customer_id,
+    branch_slug=selected_branch_id,
     mtime=status_mtime,
     refresh_count=refresh_count,
 )
 
 rejects_live_raw = load_rejects_df(
-    org_slug=selected_org_slug,
-    branch_slug=selected_branch_slug,
+    org_slug=selected_customer_id,
+    branch_slug=selected_branch_id,
     mtime=status_mtime,
     refresh_count=refresh_count,
 )
 
 rejects_history_raw = load_rejects_history_df(
-    org_slug=selected_org_slug,
-    branch_slug=selected_branch_slug,
+    org_slug=selected_customer_id,
+    branch_slug=selected_branch_id,
     mtime=status_mtime,
     refresh_count=refresh_count,
 )
 
 acs_live_raw = load_acs_df(
-    org_slug=selected_org_slug,
-    branch_slug=selected_branch_slug,
+    org_slug=selected_customer_id,
+    branch_slug=selected_branch_id,
     mtime=status_mtime,
     refresh_count=refresh_count,
 )
 
 acs_history_raw = load_acs_history_df(
-    org_slug=selected_org_slug,
-    branch_slug=selected_branch_slug,
+    org_slug=selected_customer_id,
+    branch_slug=selected_branch_id,
     mtime=status_mtime,
     refresh_count=refresh_count,
 )
