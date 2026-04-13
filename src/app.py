@@ -22,7 +22,7 @@ from services.access_service import (
     user_can_access_org,
     get_org_branches,
 )
-from services.entitlement_service import build_entitlement_context, feature_enabled
+from services.entitlement_service import build_entitlement_context
 from data_loader import (
     load_checkins_df,
     load_checkins_history_df,
@@ -41,6 +41,8 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed"
 )
+
+apply_page_chrome()
 
 if "auth_user" not in st.session_state:
     st.session_state["auth_user"] = None
@@ -81,7 +83,10 @@ if not user_memberships:
 
 allowed_org_slugs = [m["organization_slug"] for m in user_memberships]
 
-if "selected_org_slug" not in st.session_state or st.session_state["selected_org_slug"] not in allowed_org_slugs:
+if (
+    "selected_org_slug" not in st.session_state
+    or st.session_state["selected_org_slug"] not in allowed_org_slugs
+):
     st.session_state["selected_org_slug"] = allowed_org_slugs[0]
 
 selected_org_slug = st.session_state["selected_org_slug"]
@@ -90,11 +95,6 @@ org_options = {
     m["organization_name"]: m["organization_slug"]
     for m in user_memberships
 }
-
-selected_org_name = next(
-    name for name, slug in org_options.items()
-    if slug == selected_org_slug
-)
 
 branch_rows = get_org_branches(selected_org_slug)
 
@@ -109,7 +109,10 @@ if not branch_rows:
 
 allowed_branch_slugs = [b["branch_slug"] for b in branch_rows]
 
-if "selected_branch_slug" not in st.session_state or st.session_state["selected_branch_slug"] not in allowed_branch_slugs:
+if (
+    "selected_branch_slug" not in st.session_state
+    or st.session_state["selected_branch_slug"] not in allowed_branch_slugs
+):
     primary_branch = next((b for b in branch_rows if b["is_primary"]), None)
     st.session_state["selected_branch_slug"] = (
         primary_branch["branch_slug"] if primary_branch else allowed_branch_slugs[0]
@@ -122,18 +125,35 @@ branch_options = {
     for b in branch_rows
 }
 
-selected_branch_name = next(
-    name for name, slug in branch_options.items()
-    if slug == selected_branch_slug
+if not user_can_access_org(auth_user["id"], selected_org_slug):
+    st.error("You do not have access to this organization.")
+    with st.sidebar:
+        st.caption(auth_user["email"])
+        if st.button("Log out"):
+            st.session_state["auth_user"] = None
+            st.session_state.pop("selected_org_slug", None)
+            st.session_state.pop("selected_branch_slug", None)
+            st.rerun()
+    st.stop()
+
+entitlement_context = build_entitlement_context(
+    user_id=auth_user["id"],
+    org_slug=selected_org_slug,
 )
 
 with st.sidebar:
     st.caption(auth_user["email"])
+    st.caption(f"Role: {entitlement_context.get('role', 'unknown')}")
+
+    subscription = entitlement_context.get("subscription")
+    if subscription:
+        st.caption(f"Plan: {subscription.get('plan_name', 'Unknown')}")
 
     if len(org_options) > 1:
+        new_org_names = list(org_options.keys())
         new_org_name = st.selectbox(
             "Organization",
-            options=list(org_options.keys()),
+            options=new_org_names,
             index=list(org_options.values()).index(selected_org_slug),
         )
         new_org_slug = org_options[new_org_name]
@@ -144,9 +164,10 @@ with st.sidebar:
             st.rerun()
 
     if len(branch_options) > 1:
+        new_branch_names = list(branch_options.keys())
         new_branch_name = st.selectbox(
             "Branch",
-            options=list(branch_options.keys()),
+            options=new_branch_names,
             index=list(branch_options.values()).index(selected_branch_slug),
         )
         new_branch_slug = branch_options[new_branch_name]
@@ -163,15 +184,6 @@ with st.sidebar:
 
 selected_org_slug = st.session_state["selected_org_slug"]
 selected_branch_slug = st.session_state["selected_branch_slug"]
-
-entitlement_context = build_entitlement_context(
-    user_id=auth_user["id"],
-    org_slug=selected_org_slug,
-)
-
-if not user_can_access_org(auth_user["id"], selected_org_slug):
-    st.error("You do not have access to this organization.")
-    st.stop()
 
 app_settings = load_runtime_settings(
     settings_file=SETTINGS_FILE,
@@ -198,8 +210,10 @@ COLLECTION_SERVICES_NAMES = app_settings["COLLECTION_SERVICES_NAMES"]
 BRANCH_SERVICES_DA_PATTERNS = app_settings["BRANCH_SERVICES_DA_PATTERNS"]
 COLLECTION_SERVICES_DA_PATTERNS = app_settings["COLLECTION_SERVICES_DA_PATTERNS"]
 
+
 def is_operating_hours(now_ct: datetime) -> bool:
     return 6 <= now_ct.hour < 21
+
 
 now_ct = datetime.now(APP_TZ)
 
@@ -209,8 +223,6 @@ if is_operating_hours(now_ct):
         interval=10 * 60 * 1000,
         key="sortview_auto_refresh"
     )
-
-apply_page_chrome()
 
 if "last_refresh_count" not in st.session_state:
     st.session_state["last_refresh_count"] = refresh_count
@@ -247,7 +259,6 @@ if len(df_history_raw) == 0 or "datetime" not in df_history_raw.columns:
     st.warning("No historical checkin data is available yet.")
     st.stop()
 
-
 min_date = df_history_raw["datetime"].min().date()
 max_date = df_history_raw["datetime"].max().date()
 
@@ -272,6 +283,7 @@ start_date, end_date = resolve_date_filters(
     max_date=max_date,
     local_today=local_today,
 )
+
 theme_base = st.get_option("theme.base") or "light"
 now_ct = datetime.now(APP_TZ)
 today = now_ct.date()
