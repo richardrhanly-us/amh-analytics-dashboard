@@ -310,11 +310,6 @@ if auto_refresh_triggered:
     st.session_state["last_refresh_count"] = refresh_count
 
 
-st.write("selected_org_slug:", selected_org_slug)
-st.write("selected_branch_slug:", selected_branch_slug)
-st.write("selected_customer_id:", selected_customer_id)
-st.write("selected_branch_id:", selected_branch_id)
-
 pipeline_status = load_pipeline_status(
     org_slug=selected_customer_id,
     branch_slug=selected_branch_id,
