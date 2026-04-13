@@ -144,6 +144,8 @@ entitlement_context = build_entitlement_context(
     org_slug=selected_org_slug,
 )
 
+show_admin_button = can_manage_settings(entitlement_context)
+
 with st.sidebar:
     st.caption(auth_user["email"])
     st.caption(f"Role: {entitlement_context.get('role', 'unknown')}")
@@ -254,11 +256,12 @@ acs_live_raw = load_acs_df(mtime=status_mtime, refresh_count=refresh_count)
 acs_history_raw = load_acs_history_df(mtime=status_mtime, refresh_count=refresh_count)
 
 if len(df_history_raw) == 0 or "datetime" not in df_history_raw.columns:
-    render_app_header(
-        library_name=LIBRARY_NAME,
-        branch_name=BRANCH_NAME,
-        system_name=SYSTEM_NAME,
-    )
+render_app_header(
+    library_name=LIBRARY_NAME,
+    branch_name=BRANCH_NAME,
+    system_name=SYSTEM_NAME,
+    show_admin_button=show_admin_button,
+)
     st.warning("No historical checkin data is available yet.")
     st.stop()
 
