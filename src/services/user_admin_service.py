@@ -7,6 +7,8 @@ from sqlalchemy import text
 from database import get_engine
 from services import auth_service
 
+ALLOWED_MEMBERSHIP_ROLES = ["owner", "admin", "manager", "viewer"]
+
 
 def _get_org_row(org_slug: str) -> dict[str, Any] | None:
     sql = text("""
