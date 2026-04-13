@@ -16,7 +16,7 @@ from views.transits_view import render_transits
 from services.settings_service import load_runtime_settings
 from services.filters_service import resolve_date_filters
 from services.app_ui_service import apply_page_chrome, render_app_header
-from services.auth_service import authenticate_user, change_password
+import services.auth_service as auth_service
 from services.access_service import (
     get_user_memberships,
     user_can_access_org,
@@ -48,6 +48,10 @@ from data_loader import (
 from dashboard_context import build_dashboard_context
 from services.readiness_service import get_branch_readiness
 
+
+st.write("auth_service file:", getattr(auth_service, "__file__", "missing"))
+st.write("has change_password:", hasattr(auth_service, "change_password"))
+
 st.set_page_config(
     page_title="SortView",
     page_icon="📚",
@@ -71,7 +75,7 @@ if st.session_state["auth_user"] is None:
         submitted = st.form_submit_button("Log In")
 
     if submitted:
-        result = authenticate_user(email=email, password=password)
+        result = auth_service.authenticate_user(email=email, password=password)
         if result["ok"]:
             st.session_state["auth_user"] = result["user"]
             st.rerun()
@@ -248,8 +252,7 @@ with st.sidebar:
             confirm_password = st.text_input("Confirm new password", type="password")
             change_password_submitted = st.form_submit_button("Update password")
 
-        if change_password_submitted:
-            result = change_password(
+            result = auth_service.change_password(
                 user_id=auth_user["id"],
                 current_password=current_password,
                 new_password=new_password,
