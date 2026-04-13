@@ -341,6 +341,7 @@ context = build_dashboard_context(
 context["reports_args"]["can_export"] = reports_can_export
 context["reports_args"]["can_advanced_reports"] = reports_can_advanced
 context["live_today_args"]["can_view_internal_workflow"] = show_internal_workflow
+context["live_today_args"]["can_view_transits"] = show_transits_tab
 context["overview_args"]["can_view_internal_workflow"] = show_internal_workflow
 context["transits_args"]["can_view_transits"] = show_transits_tab
 
