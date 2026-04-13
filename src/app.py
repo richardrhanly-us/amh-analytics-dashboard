@@ -164,6 +164,11 @@ with st.sidebar:
 selected_org_slug = st.session_state["selected_org_slug"]
 selected_branch_slug = st.session_state["selected_branch_slug"]
 
+entitlement_context = build_entitlement_context(
+    user_id=auth_user["id"],
+    org_slug=selected_org_slug,
+)
+
 if not user_can_access_org(auth_user["id"], selected_org_slug):
     st.error("You do not have access to this organization.")
     st.stop()
