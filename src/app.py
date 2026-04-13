@@ -316,6 +316,12 @@ pipeline_status = load_pipeline_status(
     refresh_count=refresh_count,
 )
 
+status_mtime = 0
+if pipeline_status:
+    status_updated_at = pipeline_status.get("updated_at")
+    if status_updated_at:
+        status_mtime = str(status_updated_at)
+
 df_live_raw = load_checkins_df(
     org_slug=selected_customer_id,
     branch_slug=selected_branch_id,
@@ -357,7 +363,6 @@ acs_history_raw = load_acs_history_df(
     mtime=status_mtime,
     refresh_count=refresh_count,
 )
-
 if len(df_history_raw) == 0 or "datetime" not in df_history_raw.columns:
     render_app_header(
         library_name=LIBRARY_NAME,
