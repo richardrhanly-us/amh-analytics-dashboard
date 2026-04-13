@@ -42,6 +42,7 @@ from data_loader import (
     load_pipeline_status,
     load_acs_df,
     load_acs_history_df,
+    validate_tenant_schema,
 )
 
 from dashboard_context import build_dashboard_context
@@ -131,6 +132,7 @@ if (
 
 selected_branch_slug = st.session_state["selected_branch_slug"]
 
+
 branch_options = {
     b["branch_name"]: b["branch_slug"]
     for b in branch_rows
@@ -209,7 +211,6 @@ app_settings = load_runtime_settings(
     branch_slug=selected_branch_slug,
     prefer_database=True,
 )
-
 LIBRARY_SETTINGS = app_settings["LIBRARY_SETTINGS"]
 TRANSIT_SETTINGS = app_settings["TRANSIT_SETTINGS"]
 INTERNAL_ROUTING = app_settings["INTERNAL_ROUTING"]
@@ -227,6 +228,23 @@ BRANCH_SERVICES_NAMES = app_settings["BRANCH_SERVICES_NAMES"]
 COLLECTION_SERVICES_NAMES = app_settings["COLLECTION_SERVICES_NAMES"]
 BRANCH_SERVICES_DA_PATTERNS = app_settings["BRANCH_SERVICES_DA_PATTERNS"]
 COLLECTION_SERVICES_DA_PATTERNS = app_settings["COLLECTION_SERVICES_DA_PATTERNS"]
+
+schema_errors = validate_tenant_schema()
+
+if schema_errors:
+    render_app_header(
+        library_name=LIBRARY_NAME,
+        branch_name=BRANCH_NAME,
+        system_name=SYSTEM_NAME,
+        show_admin_button=show_admin_button,
+    )
+    st.error("Tenant schema validation failed.")
+
+    for err in schema_errors:
+        st.write(f"Table `{err['table']}` is missing: {', '.join(err['missing'])}")
+
+    st.stop()
+
 DATA_READY_ORGS = {"nbpl"}  # temporary safety guard until data is tenant-scoped
 
 if selected_org_slug not in DATA_READY_ORGS:
