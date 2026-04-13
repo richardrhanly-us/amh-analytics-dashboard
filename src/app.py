@@ -10,6 +10,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from streamlit_autorefresh import st_autorefresh
 import json
+import os
 
 from views.live_today_view import render_live_today
 from views.overview_view import render_overview
@@ -50,10 +51,13 @@ APP_TZ = ZoneInfo("America/Chicago")
 
 SETTINGS_FILE = Path(__file__).parent / "branch_settings.json"
 
+APP_ORG_SLUG = os.getenv("APP_ORG_SLUG", "nbpl")
+APP_BRANCH_SLUG = os.getenv("APP_BRANCH_SLUG", "main")
+
 app_settings = load_runtime_settings(
     settings_file=SETTINGS_FILE,
-    org_slug="nbpl",
-    branch_slug="main",
+    org_slug=APP_ORG_SLUG,
+    branch_slug=APP_BRANCH_SLUG,
     prefer_database=True,
 )
 
