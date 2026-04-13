@@ -59,6 +59,11 @@ def can_access_branch_count(entitlement_context: dict, branch_count: int) -> boo
         return True
     return branch_count <= limit_value
 
+def can_view_transits(entitlement_context: dict) -> bool:
+    return feature_enabled(entitlement_context, "transits")
 
+
+def can_view_internal_workflow(entitlement_context: dict) -> bool:
+    return feature_enabled(entitlement_context, "internal_workflow")
 def get_history_days_limit(entitlement_context: dict):
     return feature_limit(entitlement_context, "history_days")
