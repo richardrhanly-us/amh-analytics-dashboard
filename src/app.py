@@ -22,7 +22,7 @@ from services.access_service import (
     user_can_access_org,
     get_org_branches,
 )
-
+from services.entitlement_service import build_entitlement_context, feature_enabled
 from data_loader import (
     load_checkins_df,
     load_checkins_history_df,
