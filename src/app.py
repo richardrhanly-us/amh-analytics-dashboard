@@ -85,7 +85,7 @@ if not user_memberships:
     st.stop()
 
 allowed_org_slugs = [m["organization_slug"] for m in user_memberships]
-st.caption(f"Can manage settings: {can_manage_settings(entitlement_context)}")
+
 if (
     "selected_org_slug" not in st.session_state
     or st.session_state["selected_org_slug"] not in allowed_org_slugs
@@ -272,6 +272,7 @@ render_app_header(
     library_name=LIBRARY_NAME,
     branch_name=BRANCH_NAME,
     system_name=SYSTEM_NAME,
+    show_admin_button=show_admin_button,
 )
 
 selected_view = st.segmented_control(
