@@ -9,12 +9,15 @@ from services.entitlement_service import build_entitlement_context
 from services.permission_service import can_manage_settings
 from services.sidebar_service import render_main_sidebar
 from services.user_admin_service import (
+    ALLOWED_MEMBERSHIP_ROLES,
     list_org_users,
     create_or_add_org_user,
     update_org_user_role,
     set_user_active,
     list_recent_org_auth_events,
 )
+
+ALLOWED_MEMBERSHIP_ROLES = ["owner", "admin", "manager", "viewer"]
 
 st.set_page_config(
     page_title="Admin Users",
@@ -121,7 +124,7 @@ with st.form("add_user_form"):
     full_name = st.text_input("Full name")
     email = st.text_input("Email")
     password = st.text_input("Temporary password", type="password")
-    role = st.selectbox("Role", ["owner", "admin", "manager", "viewer"])
+    role = st.selectbox("Role", ALLOWED_MEMBERSHIP_ROLES)
     add_user_submitted = st.form_submit_button("Create or add user")
 
 if add_user_submitted:
@@ -146,7 +149,7 @@ if users:
             options=[u["user_id"] for u in users],
             format_func=lambda uid: f'{user_map[uid]["email"]} ({user_map[uid]["role"]})',
         )
-        new_role = st.selectbox("New role", ["owner", "admin", "manager", "viewer"])
+        new_role = st.selectbox("New role", ALLOWED_MEMBERSHIP_ROLES)
         update_role_submitted = st.form_submit_button("Update role")
 
     if update_role_submitted:
