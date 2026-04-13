@@ -4,6 +4,24 @@ import json
 from services.tenant_service import get_effective_settings
 
 
+def _dedupe_transit_destinations(destinations: list[dict]) -> list[dict]:
+    seen = set()
+    deduped = []
+
+    for d in destinations:
+        label = str(d.get("label", "")).strip()
+        if not label:
+            continue
+
+        key = label.lower()
+        if key in seen:
+            continue
+
+        seen.add(key)
+        deduped.append(d)
+
+    return deduped
+
 def load_branch_settings(settings_file: Path) -> dict:
     with open(settings_file, "r", encoding="utf-8") as f:
         return json.load(f)
