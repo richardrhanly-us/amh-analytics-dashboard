@@ -319,16 +319,6 @@ Problem Items: {problem_items:,}
                         border_color="#34d399",
                     )
 
-        for idx, transit_label in enumerate(TRANSIT_LABELS, start=1):
-            with routing_cols[idx]:
-                render_kpi_card(
-                    transit_label,
-                    f"{today_transit_counts_map.get(transit_label, 0):,}",
-                    f"{today_transit_pct_map.get(transit_label, 0):.1f}% of today",
-                    "#6b7280",
-                    value_font_size="1.9rem",
-                    border_color="#34d399",
-                )
 
     with live_group3:
         st.markdown(
