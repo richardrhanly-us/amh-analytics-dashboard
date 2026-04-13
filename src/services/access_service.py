@@ -11,6 +11,7 @@ def get_org_branches(org_slug: str) -> list[dict]:
     sql = text("""
         SELECT
             b.id,
+            b.operational_branch_id AS branch_id,
             b.slug AS branch_slug,
             b.name AS branch_name,
             b.is_primary,
@@ -27,12 +28,13 @@ def get_org_branches(org_slug: str) -> list[dict]:
     with engine.connect() as conn:
         rows = conn.execute(sql, {"org_slug": org_slug}).mappings().all()
         return [dict(row) for row in rows]
-        
+
 
 def get_user_memberships(user_id: int) -> list[dict[str, Any]]:
     sql = text("""
         SELECT
             m.organization_id,
+            o.operational_customer_id AS customer_id,
             m.role,
             o.slug AS organization_slug,
             o.name AS organization_name
