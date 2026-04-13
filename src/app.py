@@ -152,10 +152,6 @@ selected_branch_id = None
 if selected_branch_row is not None:
     selected_branch_id = selected_branch_row.get("branch_id")
 
-if selected_customer_id is None or selected_branch_id is None:
-    st.error("Operational tenant mapping is missing for the selected organization or branch.")
-    st.stop()
-
 
 branch_options = {
     b["branch_name"]: b["branch_slug"]
@@ -270,6 +266,9 @@ if not readiness["is_ready"]:
 
     st.stop()
 
+if selected_customer_id is None or selected_branch_id is None:
+    st.error("Operational tenant mapping is missing for the selected organization or branch.")
+    st.stop()
 
 def is_operating_hours(now_ct: datetime) -> bool:
     return 6 <= now_ct.hour < 21
