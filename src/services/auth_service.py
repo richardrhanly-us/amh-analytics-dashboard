@@ -9,7 +9,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from database import get_engine
 
 MAX_FAILED_ATTEMPTS = 5
-LOCKOUT_MINUTES = 15
+LOCKOUT_MINUTES = 1
 
 
 def get_user_by_email(email: str) -> dict[str, Any] | None:
@@ -24,6 +24,7 @@ def get_user_by_email(email: str) -> dict[str, Any] | None:
             locked_until,
             last_login_at,
             last_failed_login_at,
+            last_password_changed_at,
             created_at
         FROM app_users
         WHERE lower(email) = lower(:email)
@@ -33,6 +34,31 @@ def get_user_by_email(email: str) -> dict[str, Any] | None:
     engine = get_engine()
     with engine.connect() as conn:
         row = conn.execute(sql, {"email": email.strip()}).mappings().first()
+        return dict(row) if row else None
+
+
+def get_user_by_id(user_id: int) -> dict[str, Any] | None:
+    sql = text("""
+        SELECT
+            id,
+            email,
+            full_name,
+            password_hash,
+            is_active,
+            failed_login_attempts,
+            locked_until,
+            last_login_at,
+            last_failed_login_at,
+            last_password_changed_at,
+            created_at
+        FROM app_users
+        WHERE id = :user_id
+        LIMIT 1
+    """)
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(sql, {"user_id": user_id}).mappings().first()
         return dict(row) if row else None
 
 
@@ -156,6 +182,86 @@ def authenticate_user(email: str, password: str) -> dict[str, Any]:
             "email": user["email"],
             "full_name": user["full_name"],
         },
+    }
+
+
+def change_password(
+    user_id: int,
+    current_password: str,
+    new_password: str,
+    confirm_password: str,
+) -> dict[str, Any]:
+    user = get_user_by_id(user_id)
+    if not user:
+        return {
+            "ok": False,
+            "code": "user_not_found",
+            "message": "User account could not be found.",
+        }
+
+    if not user.get("is_active"):
+        return {
+            "ok": False,
+            "code": "inactive",
+            "message": "This account is inactive.",
+        }
+
+    password_hash = user.get("password_hash")
+    if not password_hash or not check_password_hash(password_hash, current_password):
+        return {
+            "ok": False,
+            "code": "invalid_current_password",
+            "message": "Your current password is incorrect.",
+        }
+
+    new_password = new_password or ""
+    confirm_password = confirm_password or ""
+
+    if len(new_password) < 8:
+        return {
+            "ok": False,
+            "code": "password_too_short",
+            "message": "Your new password must be at least 8 characters long.",
+        }
+
+    if new_password != confirm_password:
+        return {
+            "ok": False,
+            "code": "password_mismatch",
+            "message": "New password and confirmation do not match.",
+        }
+
+    if check_password_hash(password_hash, new_password):
+        return {
+            "ok": False,
+            "code": "same_password",
+            "message": "Your new password must be different from your current password.",
+        }
+
+    sql = text("""
+        UPDATE app_users
+        SET
+            password_hash = :password_hash,
+            failed_login_attempts = 0,
+            locked_until = NULL,
+            last_password_changed_at = now()
+        WHERE id = :user_id
+    """)
+
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            sql,
+            {
+                "user_id": user_id,
+                "password_hash": generate_password_hash(new_password),
+            },
+        )
+
+    return {
+        "ok": True,
+        "code": "password_changed",
+        "message": "Your password was updated successfully.",
     }
 
 
