@@ -210,27 +210,6 @@ with st.sidebar:
             st.session_state.pop("selected_branch_slug", None)
             st.rerun()
 
-with st.sidebar:
-    st.caption(auth_user["email"])
-    st.caption(f"Role: {entitlement_context.get('role', 'unknown')}")
-
-    subscription = entitlement_context.get("subscription")
-    if subscription:
-        st.caption(f"Plan: {subscription.get('plan_name', 'Unknown')}")
-
-    if len(org_options) > 1:
-        new_org_names = list(org_options.keys())
-        new_org_name = st.selectbox(
-            "Organization",
-            options=new_org_names,
-            index=list(org_options.values()).index(selected_org_slug),
-        )
-        new_org_slug = org_options[new_org_name]
-
-        if new_org_slug != st.session_state["selected_org_slug"]:
-            st.session_state["selected_org_slug"] = new_org_slug
-            st.session_state.pop("selected_branch_slug", None)
-            st.rerun()
 
     if len(branch_options) > 1:
         new_branch_names = list(branch_options.keys())
