@@ -489,3 +489,63 @@ def load_pipeline_status(org_slug, branch_slug, path=STATUS_FILE, mtime=None, re
         row["destination_breakdown"] = {}
 
     return row
+
+def _table_has_columns(table_name, required_columns):
+    engine = get_engine()
+
+    if engine is None:
+        return False, ["DATABASE_URL missing"]
+
+    query = """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = :table_name
+    """
+    df = _read_table(query, params={"table_name": table_name})
+
+    if df.empty or "column_name" not in df.columns:
+        return False, [f"Could not inspect schema for table: {table_name}"]
+
+    existing = set(df["column_name"].tolist())
+    missing = [col for col in required_columns if col not in existing]
+    return len(missing) == 0, missing
+
+
+def validate_tenant_schema():
+    checks = []
+
+    checks.append((
+        "checkins_routed",
+        [CHECKINS_ORG_COLUMN, CHECKINS_BRANCH_COLUMN, "event_time"],
+    ))
+    checks.append((
+        "checkins_clean",
+        [CHECKINS_ORG_COLUMN, CHECKINS_BRANCH_COLUMN, "event_time"],
+    ))
+    checks.append((
+        "rejects_clean",
+        [REJECTS_ORG_COLUMN, REJECTS_BRANCH_COLUMN, "event_time"],
+    ))
+    checks.append((
+        "acs_events",
+        [ACS_ORG_COLUMN, ACS_BRANCH_COLUMN, "event_time"],
+    ))
+    checks.append((
+        "pipeline_status",
+        [PIPELINE_ORG_COLUMN, PIPELINE_BRANCH_COLUMN, "updated_at"],
+    ))
+
+    errors = []
+
+    for table_name, required_columns in checks:
+        ok, missing = _table_has_columns(table_name, required_columns)
+        if not ok:
+            errors.append({
+                "table": table_name,
+                "missing": missing,
+            })
+
+    return errors
+
+
