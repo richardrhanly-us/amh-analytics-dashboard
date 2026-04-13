@@ -7,6 +7,8 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from database import get_engine
 
+from datetime import datetime, timezone
+
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
 
@@ -77,9 +79,15 @@ def authenticate_user(email: str, password: str) -> dict[str, Any] | None:
     if not user.get("is_active"):
         return None
 
+    from datetime import datetime, timezone
+
     locked_until = user.get("locked_until")
     if locked_until is not None:
-        return None
+        if locked_until.tzinfo is None:
+            locked_until = locked_until.replace(tzinfo=timezone.utc)
+
+        if locked_until > datetime.now(timezone.utc):
+            return None
 
     password_hash = user.get("password_hash")
     if not password_hash:
@@ -96,7 +104,6 @@ def authenticate_user(email: str, password: str) -> dict[str, Any] | None:
         "email": user["email"],
         "full_name": user["full_name"],
     }
-
 
 def create_user(email: str, password: str, full_name: str = "") -> dict[str, Any]:
     normalized_email = email.strip().lower()
