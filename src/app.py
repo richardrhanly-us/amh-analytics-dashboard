@@ -170,6 +170,17 @@ if not user_can_access_org(auth_user["id"], selected_org_slug):
     with st.sidebar:
         st.caption(auth_user["email"])
         if st.button("Log out"):
+            auth_service.log_auth_event(
+                event_type="logout",
+                is_success=True,
+                user_id=auth_user["id"],
+                email=auth_user["email"],
+                message="User logged out.",
+                metadata={
+                    "selected_org_slug": st.session_state.get("selected_org_slug"),
+                    "selected_branch_slug": st.session_state.get("selected_branch_slug"),
+                },
+            )
             st.session_state["auth_user"] = None
             st.session_state.pop("selected_org_slug", None)
             st.session_state.pop("selected_branch_slug", None)
