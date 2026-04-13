@@ -4,12 +4,10 @@
 # Displays item flow, routing, rejects, and transit diagnostics in a web interface
 
 import streamlit as st
-import pandas as pd
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from streamlit_autorefresh import st_autorefresh
-import json
 import os
 
 from views.live_today_view import render_live_today
@@ -39,14 +37,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-st.markdown("""
-<style>
-    [data-testid="stSidebarNav"] {
-        display: none;
-    }
-</style>
-""", unsafe_allow_html=True)
-
 APP_TZ = ZoneInfo("America/Chicago")
 
 SETTINGS_FILE = Path(__file__).parent / "branch_settings.json"
@@ -60,9 +50,6 @@ app_settings = load_runtime_settings(
     branch_slug=APP_BRANCH_SLUG,
     prefer_database=True,
 )
-
-st.caption(f"Settings source: {app_settings.get('source', 'unknown')}")
-st.caption(f"Settings error: {app_settings.get('settings_error', 'none')}")
 
 LIBRARY_SETTINGS = app_settings["LIBRARY_SETTINGS"]
 TRANSIT_SETTINGS = app_settings["TRANSIT_SETTINGS"]
@@ -121,6 +108,15 @@ rejects_history_raw = load_rejects_history_df(mtime=status_mtime, refresh_count=
 
 acs_live_raw = load_acs_df(mtime=status_mtime, refresh_count=refresh_count)
 acs_history_raw = load_acs_history_df(mtime=status_mtime, refresh_count=refresh_count)
+
+if len(df_history_raw) == 0 or "datetime" not in df_history_raw.columns:
+    render_app_header(
+        library_name=LIBRARY_NAME,
+        branch_name=BRANCH_NAME,
+        system_name=SYSTEM_NAME,
+    )
+    st.warning("No historical checkin data is available yet.")
+    st.stop()
 
 min_date = df_history_raw["datetime"].min().date()
 max_date = df_history_raw["datetime"].max().date()
