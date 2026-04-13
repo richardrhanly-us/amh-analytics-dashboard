@@ -230,14 +230,15 @@ with st.sidebar:
             new_password = st.text_input("New password", type="password")
             confirm_password = st.text_input("Confirm new password", type="password")
             change_password_submitted = st.form_submit_button("Update password")
-
+    
+        if change_password_submitted:
             result = auth_service.change_password(
                 user_id=auth_user["id"],
                 current_password=current_password,
                 new_password=new_password,
                 confirm_password=confirm_password,
             )
-
+    
             if result["ok"]:
                 st.success(result["message"])
             else:
