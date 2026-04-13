@@ -12,6 +12,23 @@ STATUS_FILE = "data/processed/pipeline_status.json"
 CHECKINS_HISTORY_FILE = "data/processed/checkins_history.csv"
 REJECTS_HISTORY_FILE = "data/processed/rejects_history.csv"
 
+# Local-dev escape hatch only.
+# Leave this false in production.
+ALLOW_FILE_FALLBACK = os.getenv("SORTVIEW_ALLOW_FILE_FALLBACK", "false").lower() == "true"
+
+# Adjust these only if your tenant columns use different names.
+CHECKINS_ORG_COLUMN = os.getenv("SORTVIEW_CHECKINS_ORG_COLUMN", "organization_slug")
+CHECKINS_BRANCH_COLUMN = os.getenv("SORTVIEW_CHECKINS_BRANCH_COLUMN", "branch_slug")
+
+REJECTS_ORG_COLUMN = os.getenv("SORTVIEW_REJECTS_ORG_COLUMN", "organization_slug")
+REJECTS_BRANCH_COLUMN = os.getenv("SORTVIEW_REJECTS_BRANCH_COLUMN", "branch_slug")
+
+ACS_ORG_COLUMN = os.getenv("SORTVIEW_ACS_ORG_COLUMN", "organization_slug")
+ACS_BRANCH_COLUMN = os.getenv("SORTVIEW_ACS_BRANCH_COLUMN", "branch_slug")
+
+PIPELINE_ORG_COLUMN = os.getenv("SORTVIEW_PIPELINE_ORG_COLUMN", "organization_slug")
+PIPELINE_BRANCH_COLUMN = os.getenv("SORTVIEW_PIPELINE_BRANCH_COLUMN", "branch_slug")
+
 
 def get_database_url():
     db_url = os.getenv("DATABASE_URL")
@@ -23,6 +40,7 @@ def get_database_url():
             db_url = None
 
     return db_url
+
 
 @st.cache_resource
 def get_engine():
@@ -45,7 +63,23 @@ def get_file_mtime(path):
     return 0
 
 
-def _read_table(query):
+def _safe_identifier(name):
+    if not name:
+        raise ValueError("SQL identifier cannot be empty.")
+
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
+    if any(ch not in allowed for ch in name):
+        raise ValueError(f"Unsafe SQL identifier: {name}")
+
+    return name
+
+
+def _require_scope(org_slug, branch_slug):
+    if not org_slug or not branch_slug:
+        raise ValueError("Tenant scope is required: org_slug and branch_slug must be provided.")
+
+
+def _read_table(query, params=None):
     engine = get_engine()
 
     if engine is None:
@@ -53,7 +87,7 @@ def _read_table(query):
         return pd.DataFrame()
 
     try:
-        return pd.read_sql(text(query), engine)
+        return pd.read_sql(text(query), engine, params=params or {})
     except Exception as e:
         st.error(f"Database query failed: {e}")
         return pd.DataFrame()
@@ -97,76 +131,28 @@ def _normalize_rejects_df(df):
     return df
 
 
-def _load_checkins_history_from_db():
-    query = """
-        SELECT *
-        FROM checkins_routed
-        ORDER BY event_time
-    """
-    df = _read_table(query)
+def _normalize_acs_df(df):
+    if df.empty:
+        return df
 
-    if not df.empty:
-        return _normalize_checkins_df(df)
+    if "event_time" in df.columns:
+        df["datetime"] = pd.to_datetime(df["event_time"], errors="coerce")
+    elif "datetime" in df.columns:
+        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
 
-    fallback_query = """
-        SELECT *
-        FROM checkins_clean
-        ORDER BY event_time
-    """
-    df = _read_table(fallback_query)
-    return _normalize_checkins_df(df)
+    for col in [
+        "message_code",
+        "barcode",
+        "title",
+        "patron_id",
+        "destination",
+        "raw_message",
+        "source_file",
+    ]:
+        if col not in df.columns:
+            df[col] = None
 
-
-def _load_checkins_live_from_db():
-    query = """
-        SELECT *
-        FROM checkins_routed
-        WHERE event_time::date = (
-            SELECT max(event_time)::date
-            FROM checkins_routed
-        )
-        ORDER BY event_time
-    """
-    df = _read_table(query)
-
-    if not df.empty:
-        return _normalize_checkins_df(df)
-
-    fallback_query = """
-        SELECT *
-        FROM checkins_clean
-        WHERE event_time::date = (
-            SELECT max(event_time)::date
-            FROM checkins_clean
-        )
-        ORDER BY event_time
-    """
-    df = _read_table(fallback_query)
-    return _normalize_checkins_df(df)
-
-
-def _load_rejects_history_from_db():
-    query = """
-        SELECT *
-        FROM rejects_clean
-        ORDER BY event_time
-    """
-    df = _read_table(query)
-    return _normalize_rejects_df(df)
-
-
-def _load_rejects_live_from_db():
-    query = """
-        SELECT *
-        FROM rejects_clean
-        WHERE event_time::date = (
-            SELECT max(event_time)::date
-            FROM rejects_clean
-        )
-        ORDER BY event_time
-    """
-    df = _read_table(query)
-    return _normalize_rejects_df(df)
+    return df
 
 
 def _load_checkins_from_csv(path):
@@ -195,99 +181,245 @@ def _load_rejects_from_csv(path):
         return pd.DataFrame()
 
 
-@st.cache_data(ttl=600, show_spinner=False)
-def load_checkins_history_df(mtime=None, refresh_count=0):
-    df = _load_checkins_history_from_db()
+def _scoped_query(table_name, org_column, branch_column, live_only=False):
+    org_column = _safe_identifier(org_column)
+    branch_column = _safe_identifier(branch_column)
+    table_name = _safe_identifier(table_name)
 
-    if not df.empty:
-        return df
+    if live_only:
+        return f"""
+            SELECT *
+            FROM {table_name}
+            WHERE {org_column} = :org_slug
+              AND {branch_column} = :branch_slug
+              AND event_time::date = (
+                  SELECT max(event_time)::date
+                  FROM {table_name}
+                  WHERE {org_column} = :org_slug
+                    AND {branch_column} = :branch_slug
+              )
+            ORDER BY event_time
+        """
 
-    return _load_checkins_from_csv(CHECKINS_HISTORY_FILE)
-
-
-@st.cache_data(ttl=60, show_spinner=False)
-def load_checkins_df(path=CHECKINS_FILE, mtime=None, refresh_count=0):
-    df = _load_checkins_live_from_db()
-
-    if not df.empty:
-        return df
-
-    return _load_checkins_from_csv(path)
-
-@st.cache_data(ttl=60, show_spinner=False)
-def load_rejects_df(path=REJECTS_FILE, mtime=None, refresh_count=0):
-    df = _load_rejects_live_from_db()
-
-    if not df.empty:
-        return df
-
-    return _load_rejects_from_csv(path)
-
-
-@st.cache_data(ttl=600, show_spinner=False)
-def load_rejects_history_df(path=REJECTS_HISTORY_FILE, mtime=None, refresh_count=0):
-    df = _load_rejects_history_from_db()
-
-    if not df.empty:
-        return df
-
-    return _load_rejects_from_csv(path)
-
-
-
-def _normalize_acs_df(df):
-    if df.empty:
-        return df
-
-    if "event_time" in df.columns:
-        df["datetime"] = pd.to_datetime(df["event_time"], errors="coerce")
-    elif "datetime" in df.columns:
-        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
-
-    for col in ["message_code", "barcode", "title", "patron_id", "destination", "raw_message", "source_file"]:
-        if col not in df.columns:
-            df[col] = None
-
-    return df
-
-
-def _load_acs_history_from_db():
-    query = """
+    return f"""
         SELECT *
-        FROM acs_events
+        FROM {table_name}
+        WHERE {org_column} = :org_slug
+          AND {branch_column} = :branch_slug
         ORDER BY event_time
     """
-    df = _read_table(query)
+
+
+def _load_checkins_history_from_db(org_slug, branch_slug):
+    params = {"org_slug": org_slug, "branch_slug": branch_slug}
+
+    query = _scoped_query(
+        table_name="checkins_routed",
+        org_column=CHECKINS_ORG_COLUMN,
+        branch_column=CHECKINS_BRANCH_COLUMN,
+        live_only=False,
+    )
+    df = _read_table(query, params=params)
+
+    if not df.empty:
+        return _normalize_checkins_df(df)
+
+    fallback_query = _scoped_query(
+        table_name="checkins_clean",
+        org_column=CHECKINS_ORG_COLUMN,
+        branch_column=CHECKINS_BRANCH_COLUMN,
+        live_only=False,
+    )
+    df = _read_table(fallback_query, params=params)
+    return _normalize_checkins_df(df)
+
+
+def _load_checkins_live_from_db(org_slug, branch_slug):
+    params = {"org_slug": org_slug, "branch_slug": branch_slug}
+
+    query = _scoped_query(
+        table_name="checkins_routed",
+        org_column=CHECKINS_ORG_COLUMN,
+        branch_column=CHECKINS_BRANCH_COLUMN,
+        live_only=True,
+    )
+    df = _read_table(query, params=params)
+
+    if not df.empty:
+        return _normalize_checkins_df(df)
+
+    fallback_query = _scoped_query(
+        table_name="checkins_clean",
+        org_column=CHECKINS_ORG_COLUMN,
+        branch_column=CHECKINS_BRANCH_COLUMN,
+        live_only=True,
+    )
+    df = _read_table(fallback_query, params=params)
+    return _normalize_checkins_df(df)
+
+
+def _load_rejects_history_from_db(org_slug, branch_slug):
+    params = {"org_slug": org_slug, "branch_slug": branch_slug}
+
+    query = _scoped_query(
+        table_name="rejects_clean",
+        org_column=REJECTS_ORG_COLUMN,
+        branch_column=REJECTS_BRANCH_COLUMN,
+        live_only=False,
+    )
+    df = _read_table(query, params=params)
+    return _normalize_rejects_df(df)
+
+
+def _load_rejects_live_from_db(org_slug, branch_slug):
+    params = {"org_slug": org_slug, "branch_slug": branch_slug}
+
+    query = _scoped_query(
+        table_name="rejects_clean",
+        org_column=REJECTS_ORG_COLUMN,
+        branch_column=REJECTS_BRANCH_COLUMN,
+        live_only=True,
+    )
+    df = _read_table(query, params=params)
+    return _normalize_rejects_df(df)
+
+
+def _load_acs_history_from_db(org_slug, branch_slug):
+    params = {"org_slug": org_slug, "branch_slug": branch_slug}
+
+    query = _scoped_query(
+        table_name="acs_events",
+        org_column=ACS_ORG_COLUMN,
+        branch_column=ACS_BRANCH_COLUMN,
+        live_only=False,
+    )
+    df = _read_table(query, params=params)
     return _normalize_acs_df(df)
 
 
-def _load_acs_live_from_db():
-    query = """
-        SELECT *
-        FROM acs_events
-        WHERE event_time::date = (
-            SELECT max(event_time)::date
-            FROM acs_events
-        )
-        ORDER BY event_time
-    """
-    df = _read_table(query)
+def _load_acs_live_from_db(org_slug, branch_slug):
+    params = {"org_slug": org_slug, "branch_slug": branch_slug}
+
+    query = _scoped_query(
+        table_name="acs_events",
+        org_column=ACS_ORG_COLUMN,
+        branch_column=ACS_BRANCH_COLUMN,
+        live_only=True,
+    )
+    df = _read_table(query, params=params)
     return _normalize_acs_df(df)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def load_acs_history_df(mtime=None, refresh_count=0):
-    return _load_acs_history_from_db()
+def load_checkins_history_df(org_slug, branch_slug, mtime=None, refresh_count=0):
+    try:
+        _require_scope(org_slug, branch_slug)
+    except ValueError as e:
+        st.error(str(e))
+        return pd.DataFrame()
+
+    df = _load_checkins_history_from_db(org_slug, branch_slug)
+
+    if not df.empty:
+        return df
+
+    if ALLOW_FILE_FALLBACK:
+        return _load_checkins_from_csv(CHECKINS_HISTORY_FILE)
+
+    return pd.DataFrame()
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def load_acs_df(mtime=None, refresh_count=0):
-    return _load_acs_live_from_db()
+def load_checkins_df(org_slug, branch_slug, path=CHECKINS_FILE, mtime=None, refresh_count=0):
+    try:
+        _require_scope(org_slug, branch_slug)
+    except ValueError as e:
+        st.error(str(e))
+        return pd.DataFrame()
+
+    df = _load_checkins_live_from_db(org_slug, branch_slug)
+
+    if not df.empty:
+        return df
+
+    if ALLOW_FILE_FALLBACK:
+        return _load_checkins_from_csv(path)
+
+    return pd.DataFrame()
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def load_pipeline_status(path=STATUS_FILE, mtime=None, refresh_count=0):
-    query = """
+def load_rejects_df(org_slug, branch_slug, path=REJECTS_FILE, mtime=None, refresh_count=0):
+    try:
+        _require_scope(org_slug, branch_slug)
+    except ValueError as e:
+        st.error(str(e))
+        return pd.DataFrame()
+
+    df = _load_rejects_live_from_db(org_slug, branch_slug)
+
+    if not df.empty:
+        return df
+
+    if ALLOW_FILE_FALLBACK:
+        return _load_rejects_from_csv(path)
+
+    return pd.DataFrame()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_rejects_history_df(org_slug, branch_slug, path=REJECTS_HISTORY_FILE, mtime=None, refresh_count=0):
+    try:
+        _require_scope(org_slug, branch_slug)
+    except ValueError as e:
+        st.error(str(e))
+        return pd.DataFrame()
+
+    df = _load_rejects_history_from_db(org_slug, branch_slug)
+
+    if not df.empty:
+        return df
+
+    if ALLOW_FILE_FALLBACK:
+        return _load_rejects_from_csv(path)
+
+    return pd.DataFrame()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_acs_history_df(org_slug, branch_slug, mtime=None, refresh_count=0):
+    try:
+        _require_scope(org_slug, branch_slug)
+    except ValueError as e:
+        st.error(str(e))
+        return pd.DataFrame()
+
+    return _load_acs_history_from_db(org_slug, branch_slug)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_acs_df(org_slug, branch_slug, mtime=None, refresh_count=0):
+    try:
+        _require_scope(org_slug, branch_slug)
+    except ValueError as e:
+        st.error(str(e))
+        return pd.DataFrame()
+
+    return _load_acs_live_from_db(org_slug, branch_slug)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_pipeline_status(org_slug, branch_slug, path=STATUS_FILE, mtime=None, refresh_count=0):
+    try:
+        _require_scope(org_slug, branch_slug)
+    except ValueError as e:
+        st.error(str(e))
+        return {}
+
+    org_column = _safe_identifier(PIPELINE_ORG_COLUMN)
+    branch_column = _safe_identifier(PIPELINE_BRANCH_COLUMN)
+
+    query = f"""
         SELECT
             customer_id,
             branch_id,
@@ -307,13 +439,29 @@ def load_pipeline_status(path=STATUS_FILE, mtime=None, refresh_count=0):
             destination_breakdown,
             updated_at
         FROM pipeline_status
+        WHERE {org_column} = :org_slug
+          AND {branch_column} = :branch_slug
         ORDER BY updated_at DESC
         LIMIT 1
     """
-    df = _read_table(query)
+    df = _read_table(
+        query,
+        params={"org_slug": org_slug, "branch_slug": branch_slug},
+    )
 
     if df.empty:
-        st.error("No rows returned from pipeline_status in Neon.")
+        if ALLOW_FILE_FALLBACK:
+            file_path = Path(path)
+
+            if not file_path.exists():
+                return {}
+
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                return {}
+
         return {}
 
     row = df.iloc[0].to_dict()
@@ -341,14 +489,3 @@ def load_pipeline_status(path=STATUS_FILE, mtime=None, refresh_count=0):
         row["destination_breakdown"] = {}
 
     return row
-
-    file_path = Path(path)
-
-    if not file_path.exists():
-        return {}
-
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
