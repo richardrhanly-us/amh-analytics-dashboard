@@ -17,6 +17,8 @@ from views.transits_view import render_transits
 from services.settings_service import load_runtime_settings
 from services.filters_service import resolve_date_filters
 from services.app_ui_service import apply_page_chrome, render_app_header
+from services.auth_service import authenticate_user
+from services.access_service import get_user_memberships, user_can_access_org
 
 from data_loader import (
     load_checkins_df,
@@ -37,12 +39,50 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+if "auth_user" not in st.session_state:
+    st.session_state["auth_user"] = None
+
 APP_TZ = ZoneInfo("America/Chicago")
+
+if st.session_state["auth_user"] is None:
+    st.title("SortView Login")
+
+    with st.form("login_form"):
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Log In")
+
+    if submitted:
+        user = authenticate_user(email=email, password=password)
+        if user:
+            st.session_state["auth_user"] = user
+            st.rerun()
+        else:
+            st.error("Invalid email or password.")
+
+    st.stop()
 
 SETTINGS_FILE = Path(__file__).parent / "branch_settings.json"
 
 APP_ORG_SLUG = os.getenv("APP_ORG_SLUG", "nbpl")
 APP_BRANCH_SLUG = os.getenv("APP_BRANCH_SLUG", "main")
+
+auth_user = st.session_state["auth_user"]
+
+with st.sidebar:
+    st.caption(auth_user["email"])
+    if st.button("Log out"):
+        st.session_state["auth_user"] = None
+        st.rerun()
+
+if not user_can_access_org(auth_user["id"], APP_ORG_SLUG):
+    st.error("You do not have access to this organization.")
+    if st.button("Log out"):
+        st.session_state["auth_user"] = None
+        st.rerun()
+    st.stop()
+
+user_memberships = get_user_memberships(auth_user["id"])
 
 app_settings = load_runtime_settings(
     settings_file=SETTINGS_FILE,
@@ -117,6 +157,7 @@ if len(df_history_raw) == 0 or "datetime" not in df_history_raw.columns:
     )
     st.warning("No historical checkin data is available yet.")
     st.stop()
+
 
 min_date = df_history_raw["datetime"].min().date()
 max_date = df_history_raw["datetime"].max().date()
