@@ -71,12 +71,12 @@ if st.session_state["auth_user"] is None:
         submitted = st.form_submit_button("Log In")
 
     if submitted:
-        user = authenticate_user(email=email, password=password)
-        if user:
-            st.session_state["auth_user"] = user
+        result = authenticate_user(email=email, password=password)
+        if result["ok"]:
+            st.session_state["auth_user"] = result["user"]
             st.rerun()
         else:
-            st.error("Invalid email or password.")
+            st.error(result["message"])
 
     st.stop()
 
