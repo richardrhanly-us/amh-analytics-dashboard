@@ -46,7 +46,7 @@ def apply_page_chrome():
     """, unsafe_allow_html=True)
 
 
-def render_app_header(library_name, branch_name, system_name):
+def render_app_header(library_name, branch_name, system_name, show_admin_button=True):
     header_left, header_right = st.columns([12, 1])
 
     with header_left:
@@ -60,5 +60,6 @@ def render_app_header(library_name, branch_name, system_name):
         )
 
     with header_right:
-        if st.button("⚙️", help="Admin Settings"):
-            st.switch_page("pages/1_admin_settings.py")
+        if show_admin_button:
+            if st.button("⚙️", help="Admin Settings"):
+                st.switch_page("pages/1_admin_settings.py")
