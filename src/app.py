@@ -24,11 +24,15 @@ from services.access_service import (
 )
 
 from services.entitlement_service import build_entitlement_context
+
 from services.permission_service import (
     can_manage_settings,
     can_export,
     can_view_advanced_reports,
+    can_view_transits,
+    can_view_internal_workflow,
 )
+
 
 from data_loader import (
     load_checkins_df,
@@ -151,6 +155,8 @@ entitlement_context = build_entitlement_context(
 show_admin_button = can_manage_settings(entitlement_context)
 reports_can_export = can_export(entitlement_context)
 reports_can_advanced = can_view_advanced_reports(entitlement_context)
+show_transits_tab = can_view_transits(entitlement_context)
+show_internal_workflow = can_view_internal_workflow(entitlement_context)
 
 show_admin_button = can_manage_settings(entitlement_context)
 
@@ -282,10 +288,14 @@ render_app_header(
     system_name=SYSTEM_NAME,
     show_admin_button=show_admin_button,
 )
+nav_options = ["Live Today", "Reports", "Overview"]
+
+if show_transits_tab:
+    nav_options.insert(1, "Transits")
 
 selected_view = st.segmented_control(
     "Section",
-    options=["Live Today", "Transits", "Reports", "Overview"],
+    options=nav_options,
     default="Live Today",
     label_visibility="collapsed"
 )
@@ -331,6 +341,9 @@ context = build_dashboard_context(
 
 context["reports_args"]["can_export"] = reports_can_export
 context["reports_args"]["can_advanced_reports"] = reports_can_advanced
+context["live_today_args"]["can_view_internal_workflow"] = show_internal_workflow
+context["overview_args"]["can_view_internal_workflow"] = show_internal_workflow
+context["transits_args"]["can_view_transits"] = show_transits_tab
 
 if context["no_today_data"]:
     st.info("No checkins have been ingested yet for today. Live dashboard is showing the current day only.")
