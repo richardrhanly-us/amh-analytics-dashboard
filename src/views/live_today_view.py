@@ -80,6 +80,7 @@ def render_live_today(
     today_rejects_df,
     today_hourly_checkins,
     live_hour_range,
+    can_view_transits=True,
     can_view_internal_workflow=True,
 ):
     col1, col2 = st.columns([4, 2])
@@ -161,7 +162,11 @@ Problem Items: {problem_items:,}
             st.markdown("##### Destination Breakdown")
             st.caption(destination_breakdown_text)
 
-    live_group1, live_group2, live_group3 = st.columns(3)
+    if can_view_transits:
+        live_group1, live_group2, live_group3 = st.columns(3)
+    else:
+        live_group1, live_group3 = st.columns(2)
+        live_group2 = None
 
     with live_group1:
         st.markdown(
@@ -264,43 +269,55 @@ Problem Items: {problem_items:,}
                     border_color="#93c5fd",
                 )
 
-    with live_group2:
-        st.markdown(
-            """
-            <div style="
-                border: 2px solid #34d399;
-                border-radius: 14px;
-                padding: 12px 14px;
-                background: #34d399;
-                margin-bottom: 8px;
-            ">
+    if can_view_transits and live_group2 is not None:
+        with live_group2:
+            st.markdown(
+                """
                 <div style="
-                    font-size: 0.95rem;
-                    font-weight: 700;
-                    color: #ffffff;
-                    line-height: 1.2;
+                    border: 2px solid #34d399;
+                    border-radius: 14px;
+                    padding: 12px 14px;
+                    background: #34d399;
+                    margin-bottom: 8px;
                 ">
-                    Routing
+                    <div style="
+                        font-size: 0.95rem;
+                        font-weight: 700;
+                        color: #ffffff;
+                        line-height: 1.2;
+                    ">
+                        Routing
+                    </div>
                 </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        routing_card_count = 1 + len(TRANSIT_LABELS)
-        routing_cols = st.columns(routing_card_count if routing_card_count > 0 else 1)
-
-        total_transit_pct = (today_total_transit / today_checkins * 100) if today_checkins > 0 else 0
-
-        with routing_cols[0]:
-            render_kpi_card(
-                "Total Transit",
-                f"{today_total_transit:,}",
-                f"{total_transit_pct:.1f}% of today",
-                "#6b7280",
-                value_font_size="2.2rem",
-                border_color="#34d399",
+                """,
+                unsafe_allow_html=True,
             )
+    
+            routing_card_count = 1 + len(TRANSIT_LABELS)
+            routing_cols = st.columns(routing_card_count if routing_card_count > 0 else 1)
+    
+            total_transit_pct = (today_total_transit / today_checkins * 100) if today_checkins > 0 else 0
+    
+            with routing_cols[0]:
+                render_kpi_card(
+                    "Total Transit",
+                    f"{today_total_transit:,}",
+                    f"{total_transit_pct:.1f}% of today",
+                    "#6b7280",
+                    value_font_size="2.2rem",
+                    border_color="#34d399",
+                )
+    
+            for idx, transit_label in enumerate(TRANSIT_LABELS, start=1):
+                with routing_cols[idx]:
+                    render_kpi_card(
+                        transit_label,
+                        f"{today_transit_counts_map.get(transit_label, 0):,}",
+                        f"{today_transit_pct_map.get(transit_label, 0):.1f}% of today",
+                        "#6b7280",
+                        value_font_size="1.9rem",
+                        border_color="#34d399",
+                    )
 
         for idx, transit_label in enumerate(TRANSIT_LABELS, start=1):
             with routing_cols[idx]:
