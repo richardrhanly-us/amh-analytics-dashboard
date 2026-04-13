@@ -204,7 +204,7 @@ render_main_sidebar(
     selected_org_slug=selected_org_slug,
     branch_options=branch_options,
     selected_branch_slug=selected_branch_slug,
-    show_admin_button=show_header_admin_button,
+    show_admin_button=show_admin_button,
 )
 
 
