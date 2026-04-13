@@ -7,6 +7,28 @@ from sqlalchemy import text
 from database import get_engine
 
 
+def get_org_branches(org_slug: str) -> list[dict]:
+    sql = text("""
+        SELECT
+            b.id,
+            b.slug AS branch_slug,
+            b.name AS branch_name,
+            b.is_primary,
+            b.status
+        FROM branches b
+        JOIN organizations o
+          ON o.id = b.organization_id
+        WHERE o.slug = :org_slug
+          AND b.status = 'active'
+        ORDER BY b.is_primary DESC, b.name ASC
+    """)
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(sql, {"org_slug": org_slug}).mappings().all()
+        return [dict(row) for row in rows]
+        
+
 def get_user_memberships(user_id: int) -> list[dict[str, Any]]:
     sql = text("""
         SELECT
