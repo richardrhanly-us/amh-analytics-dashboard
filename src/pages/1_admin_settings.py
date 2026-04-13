@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 from pathlib import Path
 
@@ -12,7 +14,7 @@ from services.sidebar_service import render_main_sidebar
 st.set_page_config(
     page_title="Admin Settings",
     page_icon="⚙️",
-    layout="wide"
+    layout="wide",
 )
 
 apply_page_chrome()
@@ -24,11 +26,11 @@ DEFAULT_SETTINGS = {
     "library": {
         "library_name": "New Braunfels Public Library",
         "branch_name": "Main Branch",
-        "system_name": "Tech Logic UltraSort"
+        "system_name": "Tech Logic UltraSort",
     },
     "security": {
         "admin_enabled": True,
-        "admin_password": ""
+        "admin_password": "",
     },
     "transit": {
         "home_branch_label": "Main",
@@ -36,28 +38,28 @@ DEFAULT_SETTINGS = {
             {
                 "key": "westside",
                 "label": "Westside",
-                "enabled": True
+                "enabled": True,
             },
             {
                 "key": "library_express",
                 "label": "Library Express",
-                "enabled": True
-            }
-        ]
+                "enabled": True,
+            },
+        ],
     },
     "internal_routing": {
         "branch_services_names": [],
         "collection_services_names": [],
         "collection_services_da_patterns": [],
-        "branch_services_da_patterns": []
+        "branch_services_da_patterns": [],
     },
     "account_settings": {
         "organization_name": "",
         "contact_name": "",
         "contact_email": "",
         "plan_name": "",
-        "notes": ""
-    }
+        "notes": "",
+    },
 }
 
 
@@ -172,7 +174,6 @@ selected_branch_slug = st.session_state["selected_branch_slug"]
 if "admin_authenticated" not in st.session_state:
     st.session_state["admin_authenticated"] = False
 
-
 settings = load_settings()
 
 library_settings = settings.get("library", {})
@@ -184,11 +185,9 @@ account_settings = settings.get("account_settings", {})
 admin_enabled = bool(security_settings.get("admin_enabled", True))
 stored_password = str(security_settings.get("admin_password", ""))
 
-
 st.caption("SortView Admin")
 st.title("Admin Settings")
 st.caption("Manage branch configuration, routing rules, transit labels, and future account settings.")
-
 
 if admin_enabled and not st.session_state["admin_authenticated"]:
     st.info("Admin access required.")
@@ -209,7 +208,6 @@ if admin_enabled and not st.session_state["admin_authenticated"]:
 
     st.stop()
 
-
 top_col1, top_col2 = st.columns([1, 6])
 
 with top_col1:
@@ -220,7 +218,6 @@ with top_col1:
 with top_col2:
     st.success("Admin access granted." if admin_enabled else "Admin password protection is currently disabled.")
 
-
 with st.form("admin_settings_form"):
     st.subheader("Library")
 
@@ -229,19 +226,19 @@ with st.form("admin_settings_form"):
     with lib_col1:
         library_name = st.text_input(
             "Library name",
-            value=library_settings.get("library_name", "")
+            value=library_settings.get("library_name", ""),
         )
 
     with lib_col2:
         branch_name = st.text_input(
             "Branch name",
-            value=library_settings.get("branch_name", "")
+            value=library_settings.get("branch_name", ""),
         )
 
     with lib_col3:
         system_name = st.text_input(
             "System name",
-            value=library_settings.get("system_name", "")
+            value=library_settings.get("system_name", ""),
         )
 
     st.divider()
@@ -253,7 +250,7 @@ with st.form("admin_settings_form"):
     with sec_col1:
         admin_enabled_form = st.checkbox(
             "Require admin password",
-            value=admin_enabled
+            value=admin_enabled,
         )
 
     with sec_col2:
@@ -261,17 +258,17 @@ with st.form("admin_settings_form"):
             "Admin password",
             value=stored_password,
             type="password",
-            help="Leave blank only if you intentionally want no password set."
+            help="Leave blank only if you intentionally want no password set.",
         )
 
     st.divider()
-    
+
     st.subheader("Transit")
 
     home_branch_label = st.text_input(
         "Home branch label",
         value=transit_settings.get("home_branch_label", "Main"),
-        help="This is the label used for the main/home branch."
+        help="This is the label used for the main/home branch.",
     )
 
     existing_destinations = transit_settings.get("destinations", [])
@@ -283,7 +280,7 @@ with st.form("admin_settings_form"):
         max_value=20,
         value=existing_count,
         step=1,
-        help="How many non-home transit destinations this library system uses."
+        help="How many non-home transit destinations this library system uses.",
     )
 
     transit_destinations_form = []
@@ -295,7 +292,7 @@ with st.form("admin_settings_form"):
             existing_destination = {
                 "key": f"branch_{i+1}",
                 "label": f"Branch {i+1}",
-                "enabled": True
+                "enabled": True,
             }
 
         st.markdown(f"##### Transit Destination {i + 1}")
@@ -306,28 +303,30 @@ with st.form("admin_settings_form"):
                 f"Key {i + 1}",
                 value=str(existing_destination.get("key", f"branch_{i+1}")),
                 help="Lowercase key with underscores, like westside or north_branch.",
-                key=f"transit_key_{i}"
+                key=f"transit_key_{i}",
             )
 
         with dest_col2:
             destination_label = st.text_input(
                 f"Label {i + 1}",
                 value=str(existing_destination.get("label", f"Branch {i+1}")),
-                key=f"transit_label_{i}"
+                key=f"transit_label_{i}",
             )
 
         with dest_col3:
             destination_enabled = st.checkbox(
                 f"Enabled {i + 1}",
                 value=bool(existing_destination.get("enabled", True)),
-                key=f"transit_enabled_{i}"
+                key=f"transit_enabled_{i}",
             )
 
-        transit_destinations_form.append({
-            "key": destination_key.strip().lower().replace(" ", "_"),
-            "label": destination_label.strip(),
-            "enabled": bool(destination_enabled)
-        })
+        transit_destinations_form.append(
+            {
+                "key": destination_key.strip().lower().replace(" ", "_"),
+                "label": destination_label.strip(),
+                "enabled": bool(destination_enabled),
+            }
+        )
 
     st.divider()
 
@@ -338,26 +337,26 @@ with st.form("admin_settings_form"):
         branch_services_names_text = st.text_area(
             "Branch Services Names (one per line)",
             value="\n".join(internal_routing.get("branch_services_names", [])),
-            height=180
+            height=180,
         )
 
         branch_services_da_patterns_text = st.text_area(
             "Branch Services DA Patterns (one per line)",
             value="\n".join(internal_routing.get("branch_services_da_patterns", [])),
-            height=180
+            height=180,
         )
 
     with route_col2:
         collection_services_names_text = st.text_area(
             "Collection Services Names (one per line)",
             value="\n".join(internal_routing.get("collection_services_names", [])),
-            height=180
+            height=180,
         )
 
         collection_services_da_patterns_text = st.text_area(
             "Collection Services DA Patterns (one per line)",
             value="\n".join(internal_routing.get("collection_services_da_patterns", [])),
-            height=180
+            height=180,
         )
 
     st.divider()
@@ -369,29 +368,29 @@ with st.form("admin_settings_form"):
     with acct_col1:
         organization_name = st.text_input(
             "Organization name",
-            value=account_settings.get("organization_name", "")
+            value=account_settings.get("organization_name", ""),
         )
 
         contact_name = st.text_input(
             "Contact name",
-            value=account_settings.get("contact_name", "")
+            value=account_settings.get("contact_name", ""),
         )
 
         contact_email = st.text_input(
             "Contact email",
-            value=account_settings.get("contact_email", "")
+            value=account_settings.get("contact_email", ""),
         )
 
     with acct_col2:
         plan_name = st.text_input(
             "Plan name",
-            value=account_settings.get("plan_name", "")
+            value=account_settings.get("plan_name", ""),
         )
 
         notes = st.text_area(
             "Notes",
             value=account_settings.get("notes", ""),
-            height=140
+            height=140,
         )
 
     submitted = st.form_submit_button("Save Settings", type="primary")
@@ -401,38 +400,37 @@ with st.form("admin_settings_form"):
             "library": {
                 "library_name": library_name.strip(),
                 "branch_name": branch_name.strip(),
-                "system_name": system_name.strip()
+                "system_name": system_name.strip(),
             },
             "security": {
                 "admin_enabled": bool(admin_enabled_form),
-                "admin_password": admin_password
+                "admin_password": admin_password,
             },
             "transit": {
                 "home_branch_label": home_branch_label.strip(),
                 "destinations": [
                     d for d in transit_destinations_form
                     if d["key"] and d["label"]
-                ]
+                ],
             },
             "internal_routing": {
                 "branch_services_names": lines_to_list(branch_services_names_text),
                 "collection_services_names": lines_to_list(collection_services_names_text),
                 "collection_services_da_patterns": lines_to_list(collection_services_da_patterns_text),
-                "branch_services_da_patterns": lines_to_list(branch_services_da_patterns_text)
+                "branch_services_da_patterns": lines_to_list(branch_services_da_patterns_text),
             },
             "account_settings": {
                 "organization_name": organization_name.strip(),
                 "contact_name": contact_name.strip(),
                 "contact_email": contact_email.strip(),
                 "plan_name": plan_name.strip(),
-                "notes": notes.strip()
-            }
+                "notes": notes.strip(),
+            },
         }
 
         save_settings(updated_settings)
         st.success("Settings saved.")
         st.rerun()
-
 
 with st.expander("Current JSON Preview", expanded=False):
     preview_settings = load_settings()
