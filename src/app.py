@@ -58,6 +58,7 @@ app_settings = load_runtime_settings(
 )
 
 st.caption(f"Settings source: {app_settings.get('source', 'unknown')}")
+st.caption(f"Settings error: {app_settings.get('settings_error', 'none')}")
 
 LIBRARY_SETTINGS = app_settings["LIBRARY_SETTINGS"]
 TRANSIT_SETTINGS = app_settings["TRANSIT_SETTINGS"]
