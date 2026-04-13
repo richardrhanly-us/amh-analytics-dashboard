@@ -231,7 +231,15 @@ with st.sidebar:
             st.session_state["selected_branch_slug"] = new_branch_slug
             st.rerun()
 
+    if show_admin_button:
+        st.markdown("---")
+        st.caption("Admin")
+        st.page_link("app.py", label="Dashboard", icon="🏠")
+        st.page_link("pages/1_admin_settings.py", label="Admin settings", icon="⚙️")
+        st.page_link("pages/2_admin_users.py", label="Admin users", icon="👥")
+
     with st.expander("Change password"):
+        
         with st.form("change_password_form"):
             current_password = st.text_input("Current password", type="password")
             new_password = st.text_input("New password", type="password")
@@ -315,12 +323,9 @@ if not readiness["is_ready"]:
     st.info(readiness["message"])
 
     if show_admin_button:
-        st.markdown("---")
-        st.caption("Admin")
+        st.caption(f"Readiness code: {readiness['code']}")
 
-        st.page_link("app.py", label="Dashboard", icon="🏠")
-        st.page_link("pages/1_admin_settings.py", label="Admin settings", icon="⚙️")
-        st.page_link("pages/2_admin_users.py", label="Admin users", icon="👥")
+    st.stop()
 
 
 def is_operating_hours(now_ct: datetime) -> bool:
