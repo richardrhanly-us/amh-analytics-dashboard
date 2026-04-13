@@ -315,9 +315,12 @@ if not readiness["is_ready"]:
     st.info(readiness["message"])
 
     if show_admin_button:
-        st.caption(f"Readiness code: {readiness['code']}")
+        st.markdown("---")
+        st.caption("Admin")
 
-    st.stop()
+        st.page_link("app.py", label="Dashboard", icon="🏠")
+        st.page_link("pages/1_admin_settings.py", label="Admin settings", icon="⚙️")
+        st.page_link("pages/2_admin_users.py", label="Admin users", icon="👥")
 
 
 def is_operating_hours(now_ct: datetime) -> bool:
