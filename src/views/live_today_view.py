@@ -453,41 +453,6 @@ Problem Items: {problem_items:,}
             st.write("Programming:", today_programming)
             st.write("Collection Services:", today_collection_services)
 
-        st.write("Public holds debug:")
-        if len(today_public_holds_df) > 0:
-            st.dataframe(
-                today_public_holds_df[
-                    ["datetime", "barcode", "patron_id", "patron_name", "destination", "raw_message"]
-                ].sort_values("datetime", ascending=False),
-                use_container_width=True,
-            )
-
-        st.write("ILL debug:")
-        if len(today_ill_items_df) > 0:
-            st.dataframe(
-                today_ill_items_df[
-                    ["datetime", "barcode", "patron_id", "patron_name", "destination", "raw_message"]
-                ].sort_values("datetime", ascending=False),
-                use_container_width=True,
-            )
-
-        st.write("Programming debug:")
-        if len(today_programming_df) > 0:
-            st.dataframe(
-                today_programming_df[
-                    ["datetime", "barcode", "patron_id", "patron_name", "destination", "raw_message"]
-                ].sort_values("datetime", ascending=False),
-                use_container_width=True,
-            )
-
-        st.write("Collection Services debug:")
-        if len(today_collection_services_df) > 0:
-            st.dataframe(
-                today_collection_services_df[
-                    ["datetime", "barcode", "patron_id", "patron_name", "destination", "raw_message"]
-                ].sort_values("datetime", ascending=False),
-                use_container_width=True,
-            )
 
     if info_alerts:
         st.markdown(
