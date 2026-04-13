@@ -27,84 +27,61 @@ def render_overview(
     attention_color,
     overview_transit_counts_map,
     overview_transit_pct_map,
+    can_view_internal_workflow=True,
 ):
     st.subheader("Summary")
     st.caption("Get a historical summary by choosing a date range.")
 
-    # ---------------------------------
-    # Internal Workflow Summary
-    # ---------------------------------
-    overview_acs_df = acs_history_raw.copy()
-
-    if len(overview_acs_df) > 0 and "datetime" in overview_acs_df.columns:
-        overview_acs_df["datetime"] = pd.to_datetime(overview_acs_df["datetime"], errors="coerce")
-        overview_acs_df = overview_acs_df.dropna(subset=["datetime"]).copy()
-        overview_acs_df = overview_acs_df[
-            (overview_acs_df["datetime"].dt.date >= start_date)
-            & (overview_acs_df["datetime"].dt.date <= end_date)
-        ].copy()
-
-    overview_acs_summary = build_acs_item_summary(
-        overview_acs_df,
-        transit_labels=TRANSIT_LABELS,
-        branch_services_names=BRANCH_SERVICES_NAMES,
-        collection_services_names=COLLECTION_SERVICES_NAMES,
-        branch_services_da_patterns=BRANCH_SERVICES_DA_PATTERNS,
-        collection_services_da_patterns=COLLECTION_SERVICES_DA_PATTERNS,
-    )
-
-    overview_holds = overview_acs_summary["holds_total"]
-    overview_ill = overview_acs_summary["ill_total"]
-    overview_ill_main = overview_acs_summary["ill_main"]
-    overview_ill_by_branch = overview_acs_summary["ill_by_branch"]
-
-    st.markdown("### Internal Workflow")
-    internal_overview_col1, internal_overview_col2, internal_overview_col3, internal_overview_col4 = st.columns(4)
-
-    with internal_overview_col1:
-        render_kpi_card(
-            "Holds",
-            f"{overview_holds:,}",
-            f"{date_range_text}",
-            "#6b7280",
-            value_font_size="2.0rem",
-            border_color="#34d399",
+    if can_view_internal_workflow:
+        # ---------------------------------
+        # Internal Workflow Summary
+        # ---------------------------------
+        overview_acs_df = acs_history_raw.copy()
+    
+        if len(overview_acs_df) > 0 and "datetime" in overview_acs_df.columns:
+            overview_acs_df["datetime"] = pd.to_datetime(overview_acs_df["datetime"], errors="coerce")
+            overview_acs_df = overview_acs_df.dropna(subset=["datetime"]).copy()
+            overview_acs_df = overview_acs_df[
+                (overview_acs_df["datetime"].dt.date >= start_date) &
+                (overview_acs_df["datetime"].dt.date <= end_date)
+            ].copy()
+    
+        overview_acs_summary = build_acs_item_summary(
+            overview_acs_df,
+            transit_labels=TRANSIT_LABELS,
+            branch_services_names=BRANCH_SERVICES_NAMES,
+            collection_services_names=COLLECTION_SERVICES_NAMES,
+            branch_services_da_patterns=BRANCH_SERVICES_DA_PATTERNS,
+            collection_services_da_patterns=COLLECTION_SERVICES_DA_PATTERNS,
         )
-
-    with internal_overview_col2:
-        render_kpi_card(
-            "ILL",
-            f"{overview_ill:,}",
-            format_ill_branch_subtitle(
-                overview_ill_main,
-                overview_ill_by_branch,
-                TRANSIT_HOME_LABEL,
-                TRANSIT_LABELS,
-            ),
-            "#6b7280",
-            value_font_size="2.0rem",
-            border_color="#34d399",
-        )
-
-    with internal_overview_col3:
-        render_kpi_card(
-            "Programming",
-            f"{overview_acs_summary['programming_total']:,}",
-            f"{date_range_text}",
-            "#6b7280",
-            value_font_size="2.0rem",
-            border_color="#34d399",
-        )
-
-    with internal_overview_col4:
-        render_kpi_card(
-            "Collection Services",
-            f"{overview_acs_summary['collection_services_total']:,}",
-            f"{date_range_text}",
-            "#6b7280",
-            value_font_size="1.9rem",
-            border_color="#34d399",
-        )
+    
+        overview_holds = overview_acs_summary["holds_total"]
+        overview_ill = overview_acs_summary["ill_total"]
+        overview_ill_main = overview_acs_summary["ill_main"]
+        overview_ill_by_branch = overview_acs_summary["ill_by_branch"]
+    
+        st.markdown("### Internal Workflow")
+        internal_overview_col1, internal_overview_col2, internal_overview_col3, internal_overview_col4 = st.columns(4)
+    
+        with internal_overview_col1:
+            render_kpi_card(
+                "Holds",
+                f"{overview_holds:,}",
+                f"{date_range_text}",
+                "#6b7280",
+                value_font_size="2.0rem",
+                border_color="#34d399"
+            )
+    
+        with internal_overview_col2:
+            render_kpi_card(
+                "ILL",
+                f"{overview_ill:,}",
+                format_ill_branch_subtitle(overview_ill_main, overview_ill_by_branch),
+                "#6b7280",
+                value_font_size="1.85rem",
+                border_color="#34d399"
+            )
 
     with st.expander("ILL Debug (Overview)", expanded=False):
         ill_items_df = overview_acs_summary["items_df"]
