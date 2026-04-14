@@ -77,7 +77,12 @@ def render_overview(
             render_kpi_card(
                 "ILL",
                 f"{overview_ill:,}",
-                format_ill_branch_subtitle(overview_ill_main, overview_ill_by_branch),
+                format_ill_branch_subtitle(
+                    overview_ill_main,
+                    overview_ill_by_branch,
+                    TRANSIT_HOME_LABEL,
+                    TRANSIT_LABELS,
+                ),
                 "#6b7280",
                 value_font_size="1.85rem",
                 border_color="#34d399"
