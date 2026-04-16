@@ -378,10 +378,13 @@ def build_acs_item_summary(
 
     df = acs_df.copy()
     df["raw_message"] = df["raw_message"].fillna("").astype(str)
-    df["message_code"] = df["message_code"].astype(str).str.strip()
+    df["message_code"] = df["message_code"].fillna("").astype(str).str.strip()
 
     if "datetime" in df.columns:
         df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+
+    if "destination" not in df.columns:
+        df["destination"] = ""
 
     items = df[df["raw_message"].str.startswith("101", na=False)].copy()
 
@@ -400,7 +403,8 @@ def build_acs_item_summary(
             "collection_services_df": pd.DataFrame(),
         }
 
-    items = items.sort_values("datetime")
+    if "datetime" in items.columns:
+        items = items.sort_values("datetime")
     items = items.drop_duplicates(subset=["barcode"], keep="last")
 
     items["is_hold"] = items["raw_message"].str.startswith("101YNY", na=False)
@@ -408,7 +412,8 @@ def build_acs_item_summary(
     patrons = df[df["message_code"] == "64"].copy()
 
     if len(patrons) > 0:
-        patrons = patrons.sort_values("datetime")
+        if "datetime" in patrons.columns:
+            patrons = patrons.sort_values("datetime")
         patrons = patrons.drop_duplicates(subset=["patron_id"], keep="last")
         patrons["patron_name"] = (
             patrons["raw_message"]
@@ -436,9 +441,15 @@ def build_acs_item_summary(
     items["patron_name"] = items["patron_name"].fillna("").astype(str).str.strip()
     items["patron_type"] = items["patron_type"].fillna("").astype(str).str.strip()
 
-    items["patron_name_upper"] = items["patron_name"].fillna("").astype(str).str.upper().str.strip()
+    items["patron_name_upper"] = (
+        items["patron_name"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
     items["raw_upper"] = items["raw_message"].fillna("").astype(str).str.upper()
-    items["destination_upper"] = items["destination"].fillna("").astype(str).str.upper()
+    items["destination_upper"] = items["destination"].fillna("").astype(str).str.strip().str.upper()
 
     normalized_collection_services_names = {
         str(name).strip().upper()
@@ -481,15 +492,6 @@ def build_acs_item_summary(
     items["is_programming"] = items["patron_name_upper"].isin(normalized_branch_services_names)
 
     for pattern in normalized_branch_services_da_patterns:
-        escaped_pattern = re.escape(f"|{pattern}|")
-        items["is_programming"] = (
-            items["is_programming"]
-            | items["raw_upper"].str.contains(escaped_pattern, na=False)
-        )
-
-    items["is_programming"] = items["patron_name_upper"].isin(branch_services_names)
-
-    for pattern in branch_services_da_patterns:
         escaped_pattern = re.escape(f"|{pattern}|")
         items["is_programming"] = (
             items["is_programming"]
