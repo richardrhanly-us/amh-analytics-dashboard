@@ -59,6 +59,8 @@ def render_overview(
         overview_ill = overview_acs_summary["ill_total"]
         overview_ill_main = overview_acs_summary["ill_main"]
         overview_ill_by_branch = overview_acs_summary["ill_by_branch"]
+        overview_programming = overview_acs_summary["programming_total"]
+        overview_collection_services = overview_acs_summary["collection_services_total"]
     
         st.markdown("### Internal Workflow")
         internal_overview_col1, internal_overview_col2, internal_overview_col3, internal_overview_col4 = st.columns(4)
@@ -88,6 +90,26 @@ def render_overview(
                 border_color="#34d399"
             )
 
+        with internal_overview_col3:
+            render_kpi_card(
+                "Branch Services",
+                f"{overview_programming:,}",
+                f"{date_range_text}",
+                "#6b7280",
+                value_font_size="1.85rem",
+                border_color="#34d399"
+            )
+
+        with internal_overview_col4:
+            render_kpi_card(
+                "Collection Services",
+                f"{overview_collection_services:,}",
+                f"{date_range_text}",
+                "#6b7280",
+                value_font_size="1.85rem",
+                border_color="#34d399"
+            )
+            
     with st.expander("ILL Debug (Overview)", expanded=False):
         ill_items_df = overview_acs_summary["items_df"]
 
