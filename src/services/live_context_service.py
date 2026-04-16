@@ -131,11 +131,20 @@ def build_live_context(
 
     if "raw_message" in today_acs_df.columns:
         today_acs_df["raw_message"] = today_acs_df["raw_message"].fillna("").astype(str).str.strip()
-        today_acs_df = today_acs_df[today_acs_df["raw_message"].str.startswith("101")].copy()
 
-    if "barcode" in today_acs_df.columns and "datetime" in today_acs_df.columns:
-        today_acs_df = today_acs_df.sort_values("datetime")
-        today_acs_df = today_acs_df.drop_duplicates(subset=["barcode"], keep="last")
+    if (
+        "barcode" in today_acs_df.columns
+        and "datetime" in today_acs_df.columns
+        and "message_code" in today_acs_df.columns
+    ):
+        item_rows = today_acs_df[today_acs_df["message_code"].astype(str).str.strip() == "10"].copy()
+        non_item_rows = today_acs_df[today_acs_df["message_code"].astype(str).str.strip() != "10"].copy()
+
+        if len(item_rows) > 0:
+            item_rows = item_rows.sort_values("datetime")
+            item_rows = item_rows.drop_duplicates(subset=["barcode"], keep="last")
+
+        today_acs_df = pd.concat([item_rows, non_item_rows], ignore_index=True)
 
     acs_summary_today = build_acs_item_summary(
         today_acs_df,
