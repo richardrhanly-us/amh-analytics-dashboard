@@ -436,21 +436,54 @@ def build_acs_item_summary(
     items["patron_name"] = items["patron_name"].fillna("").astype(str).str.strip()
     items["patron_type"] = items["patron_type"].fillna("").astype(str).str.strip()
 
-    items["patron_name_upper"] = items["patron_name"].fillna("").astype(str).str.upper()
+    items["patron_name_upper"] = items["patron_name"].fillna("").astype(str).str.upper().str.strip()
     items["raw_upper"] = items["raw_message"].fillna("").astype(str).str.upper()
     items["destination_upper"] = items["destination"].fillna("").astype(str).str.upper()
+
+    normalized_collection_services_names = {
+        str(name).strip().upper()
+        for name in collection_services_names
+        if pd.notna(name) and str(name).strip() != ""
+    }
+
+    normalized_branch_services_names = {
+        str(name).strip().upper()
+        for name in branch_services_names
+        if pd.notna(name) and str(name).strip() != ""
+    }
+
+    normalized_collection_services_da_patterns = [
+        str(pattern).strip().upper()
+        for pattern in collection_services_da_patterns
+        if pd.notna(pattern) and str(pattern).strip() != ""
+    ]
+
+    normalized_branch_services_da_patterns = [
+        str(pattern).strip().upper()
+        for pattern in branch_services_da_patterns
+        if pd.notna(pattern) and str(pattern).strip() != ""
+    ]
 
     items["is_ill"] = (
         items["patron_type"].str.upper().eq("ILL")
         | items["destination_upper"].str.contains(r"\bILL\b|INTERLIBRARY", regex=True, na=False)
     )
 
-    items["is_collection_services"] = items["patron_name_upper"].isin(collection_services_names)
+    items["is_collection_services"] = items["patron_name_upper"].isin(normalized_collection_services_names)
 
-    for pattern in collection_services_da_patterns:
+    for pattern in normalized_collection_services_da_patterns:
         escaped_pattern = re.escape(f"|{pattern}|")
         items["is_collection_services"] = (
             items["is_collection_services"]
+            | items["raw_upper"].str.contains(escaped_pattern, na=False)
+        )
+
+    items["is_programming"] = items["patron_name_upper"].isin(normalized_branch_services_names)
+
+    for pattern in normalized_branch_services_da_patterns:
+        escaped_pattern = re.escape(f"|{pattern}|")
+        items["is_programming"] = (
+            items["is_programming"]
             | items["raw_upper"].str.contains(escaped_pattern, na=False)
         )
 
