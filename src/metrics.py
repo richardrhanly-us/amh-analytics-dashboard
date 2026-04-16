@@ -475,6 +475,17 @@ def build_acs_item_summary(
         if pd.notna(pattern) and str(pattern).strip() != ""
     ]
 
+
+
+    print("DEBUG normalized_collection_services_names =", normalized_collection_services_names)
+    print("DEBUG normalized_branch_services_names =", normalized_branch_services_names)
+
+    debug_diane = items[
+        items["patron_name_upper"].str.contains("DIANE|COLDEV", na=False)
+    ][["patron_name", "patron_name_upper", "is_hold", "raw_message"]].copy()
+
+    print("DEBUG diane_rows =", debug_diane.to_dict("records"))
+    
     items["is_ill"] = (
         items["patron_type"].str.upper().eq("ILL")
         | items["destination_upper"].str.contains(r"\bILL\b|INTERLIBRARY", regex=True, na=False)
