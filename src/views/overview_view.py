@@ -110,22 +110,40 @@ def render_overview(
                 border_color="#34d399"
             )
             
-    with st.expander("ILL Debug (Overview)", expanded=False):
-        ill_items_df = overview_acs_summary["items_df"]
+    with st.expander("Internal Workflow Debug (Overview)", expanded=False):
+        debug_items_df = overview_acs_summary["items_df"]
+        debug_holds_df = overview_acs_summary["holds_df"]
 
-        if len(ill_items_df) > 0:
-            ill_debug_df = ill_items_df[
-                (ill_items_df["is_hold"]) & (ill_items_df["is_ill"])
+        st.markdown("#### ILL Debug")
+
+        if len(debug_items_df) > 0:
+            ill_debug_df = debug_items_df[
+                (debug_items_df["is_hold"]) & (debug_items_df["is_ill"])
             ].copy()
 
             st.write("ILL item count:", len(ill_debug_df))
 
+            if len(ill_debug_df) > 0:
+                st.dataframe(
+                    ill_debug_df.sort_values("datetime", ascending=False),
+                    use_container_width=True,
+                )
+            else:
+                st.info("No ILL items found for this range.")
+        else:
+            st.info("No ACS items available for this range.")
+
+        st.markdown("#### Holds Debug")
+
+        if len(debug_holds_df) > 0:
+            st.write("Public holds count:", len(debug_holds_df))
+
             st.dataframe(
-                ill_debug_df.sort_values("datetime", ascending=False),
+                debug_holds_df.sort_values("datetime", ascending=False),
                 use_container_width=True,
             )
         else:
-            st.info("No ACS items available for this range.")
+            st.info("No public holds found for this range.")
 
     if len(rejects_df) > 0:
         top_issue = rejects_df["error_simple"].value_counts().idxmax()
