@@ -146,6 +146,11 @@ def build_live_context(
 
         today_acs_df = pd.concat([item_rows, non_item_rows], ignore_index=True)
 
+    print("DEBUG collection_services_names =", collection_services_names)
+    print("DEBUG branch_services_names =", branch_services_names)
+    print("DEBUG collection_services_da_patterns =", collection_services_da_patterns)
+    print("DEBUG branch_services_da_patterns =", branch_services_da_patterns)
+    
     acs_summary_today = build_acs_item_summary(
         today_acs_df,
         transit_labels=transit_labels,
