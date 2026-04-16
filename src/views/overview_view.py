@@ -111,35 +111,67 @@ def render_overview(
             )
             
     with st.expander("Internal Workflow Debug (Overview)", expanded=False):
-        debug_items_df = overview_acs_summary["items_df"]
-        debug_holds_df = overview_acs_summary["holds_df"]
-
+        debug_holds_df = overview_acs_summary["holds_df"].copy()
+        debug_ill_df = overview_acs_summary["ill_df"].copy()
+        debug_branch_df = overview_acs_summary["programming_df"].copy()
+        debug_collection_df = overview_acs_summary["collection_services_df"].copy()
+    
+        debug_columns = [
+            "datetime",
+            "title",
+            "barcode",
+            "patron_id",
+            "patron_name",
+            "patron_type",
+            "destination",
+            "raw_message",
+        ]
+    
+        def _available_debug_columns(debug_df):
+            return [col for col in debug_columns if col in debug_df.columns]
+    
         st.markdown("#### ILL Debug")
-
-        if len(debug_items_df) > 0:
-            ill_debug_df = debug_items_df[
-                (debug_items_df["is_hold"]) & (debug_items_df["is_ill"])
-            ].copy()
-
-            st.write("ILL item count:", len(ill_debug_df))
-
-            if len(ill_debug_df) > 0:
-                st.dataframe(
-                    ill_debug_df.sort_values("datetime", ascending=False),
-                    use_container_width=True,
-                )
-            else:
-                st.info("No ILL items found for this range.")
-        else:
-            st.info("No ACS items available for this range.")
-
-        st.markdown("#### Holds Debug")
-
-        if len(debug_holds_df) > 0:
-            st.write("Public holds count:", len(debug_holds_df))
-
+        st.write("ILL item count:", len(debug_ill_df))
+        if len(debug_ill_df) > 0:
             st.dataframe(
-                debug_holds_df.sort_values("datetime", ascending=False),
+                debug_ill_df[_available_debug_columns(debug_ill_df)]
+                .sort_values("datetime", ascending=False),
+                use_container_width=True,
+            )
+        else:
+            st.info("No ILL items found for this range.")
+    
+        st.divider()
+        st.markdown("#### Branch Services Debug")
+        st.write("Branch Services count:", len(debug_branch_df))
+        if len(debug_branch_df) > 0:
+            st.dataframe(
+                debug_branch_df[_available_debug_columns(debug_branch_df)]
+                .sort_values("datetime", ascending=False),
+                use_container_width=True,
+            )
+        else:
+            st.info("No Branch Services items found for this range.")
+    
+        st.divider()
+        st.markdown("#### Collection Services Debug")
+        st.write("Collection Services count:", len(debug_collection_df))
+        if len(debug_collection_df) > 0:
+            st.dataframe(
+                debug_collection_df[_available_debug_columns(debug_collection_df)]
+                .sort_values("datetime", ascending=False),
+                use_container_width=True,
+            )
+        else:
+            st.info("No Collection Services items found for this range.")
+    
+        st.divider()
+        st.markdown("#### Holds Debug")
+        st.write("Public holds count:", len(debug_holds_df))
+        if len(debug_holds_df) > 0:
+            st.dataframe(
+                debug_holds_df[_available_debug_columns(debug_holds_df)]
+                .sort_values("datetime", ascending=False),
                 use_container_width=True,
             )
         else:
