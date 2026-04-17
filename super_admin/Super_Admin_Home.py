@@ -19,7 +19,6 @@ st.set_page_config(
     layout="wide",
 )
 
-
 auth_user = require_super_admin()
 
 st.title("SortView Super Admin")
