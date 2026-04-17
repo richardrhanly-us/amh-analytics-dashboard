@@ -2,8 +2,8 @@ from services import auth_service
 from database import get_engine
 from sqlalchemy import text
 
-EMAIL = "sortviewsuper@yourdomain.com"
-PASSWORD = "ChangeThisRightNow123!"
+EMAIL = "sortviewsuper@gmail.com"
+PASSWORD = "RubberSoul1967*-m"
 FULL_NAME = "SortView Super Admin"
 
 existing = auth_service.get_user_by_email(EMAIL)
