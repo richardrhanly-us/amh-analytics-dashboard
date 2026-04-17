@@ -1,12 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 
 import pandas as pd
 import streamlit as st
-
-import json
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SRC_DIR = os.path.join(ROOT_DIR, "src")
@@ -18,7 +17,10 @@ if SRC_DIR not in sys.path:
 if SUPER_ADMIN_DIR not in sys.path:
     sys.path.insert(0, SUPER_ADMIN_DIR)
 
-from services.platform_admin_service import list_libraries_with_status
+from services.platform_admin_service import (
+    list_libraries_with_status,
+    set_library_active_status,
+)
 from super_auth import require_super_admin
 
 st.set_page_config(
@@ -38,7 +40,6 @@ if not rows:
     st.info("No libraries have been provisioned yet.")
     st.stop()
 
-import json
 
 def build_agent_config(row):
     api_base_url = st.secrets.get(
@@ -62,7 +63,8 @@ def build_agent_config(row):
         "processed_acs_file": r"data\processed\acs_clean.csv",
         "acs_history_file": r"data\processed\acs_history.csv",
     }
-    
+
+
 df = pd.DataFrame(rows)
 
 if "last_run" in df.columns:
@@ -144,4 +146,25 @@ with detail_col2:
         mime="application/json",
     )
 
-    st.code(json.dumps(agent_config, indent=2), language="json")
+    st.markdown("#### Library Controls")
+
+    is_active = str(selected_row.get("organization_status", "")).lower() == "active"
+
+    if is_active:
+        if st.button("Deactivate Library", type="secondary"):
+            set_library_active_status(
+                organization_id=int(selected_row["organization_id"]),
+                branch_id=int(selected_row["branch_id"]),
+                is_active=False,
+            )
+            st.success("Library deactivated.")
+            st.rerun()
+    else:
+        if st.button("Reactivate Library", type="primary"):
+            set_library_active_status(
+                organization_id=int(selected_row["organization_id"]),
+                branch_id=int(selected_row["branch_id"]),
+                is_active=True,
+            )
+            st.success("Library reactivated.")
+            st.rerun()
