@@ -124,8 +124,24 @@ st.dataframe(
 
 st.subheader("Selected Library Details")
 
-library_names = display_df["Library"].dropna().tolist()
+library_names = df["organization_name"].dropna().tolist()
 selected_library = st.selectbox("Choose a library", library_names)
 
-selected_row = display_df[display_df["Library"] == selected_library].iloc[0].to_dict()
-st.json(selected_row)
+selected_row = df[df["organization_name"] == selected_library].iloc[0].to_dict()
+agent_config = build_agent_config(selected_row)
+
+detail_col1, detail_col2 = st.columns([2, 1])
+
+with detail_col1:
+    st.json(selected_row)
+
+with detail_col2:
+    st.markdown("#### Agent Config")
+    st.download_button(
+        "Download agent_config.json",
+        data=json.dumps(agent_config, indent=2),
+        file_name=f"{selected_row['organization_slug']}_agent_config.json",
+        mime="application/json",
+    )
+
+    st.code(json.dumps(agent_config, indent=2), language="json")
