@@ -56,3 +56,36 @@ def list_libraries_with_status():
     with engine.connect() as conn:
         rows = conn.execute(sql).mappings().all()
         return [dict(row) for row in rows]
+
+
+def set_library_active_status(organization_id: int, branch_id: int, is_active: bool):
+    new_status = "active" if is_active else "inactive"
+
+    sql_update_org = text("""
+        update organizations
+        set status = :new_status
+        where id = :organization_id
+    """)
+
+    sql_update_branch = text("""
+        update branches
+        set status = :new_status
+        where id = :branch_id
+    """)
+
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            sql_update_org,
+            {
+                "organization_id": organization_id,
+                "new_status": new_status,
+            },
+        )
+        conn.execute(
+            sql_update_branch,
+            {
+                "branch_id": branch_id,
+                "new_status": new_status,
+            },
+        )
