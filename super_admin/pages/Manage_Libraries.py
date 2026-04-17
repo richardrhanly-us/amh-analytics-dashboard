@@ -6,6 +6,8 @@ import sys
 import pandas as pd
 import streamlit as st
 
+import json
+
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SRC_DIR = os.path.join(ROOT_DIR, "src")
 SUPER_ADMIN_DIR = os.path.join(ROOT_DIR, "super_admin")
@@ -36,6 +38,31 @@ if not rows:
     st.info("No libraries have been provisioned yet.")
     st.stop()
 
+import json
+
+def build_agent_config(row):
+    api_base_url = st.secrets.get(
+        "AGENT_API_BASE_URL",
+        "https://sortview-app-2p336.ondigitalocean.app",
+    )
+
+    return {
+        "database_url": "",
+        "customer_id": int(row["organization_id"]),
+        "branch_id": int(row["branch_id"]),
+        "raw_checkins_file": r"C:\TLCFinalDlls\Checkins.txt",
+        "raw_rejects_file": r"C:\TLCFinalDlls\Rejects.txt",
+        "processed_checkins_file": r"data\processed\checkins_clean.csv",
+        "processed_rejects_file": r"data\processed\rejects_clean.csv",
+        "checkins_history_file": r"data\processed\checkins_history.csv",
+        "rejects_history_file": r"data\processed\rejects_history.csv",
+        "status_file": r"data\processed\pipeline_status.json",
+        "api_url": api_base_url.rstrip("/"),
+        "raw_acs_file": r"C:\TLCFinalDlls\ACS Log.txt",
+        "processed_acs_file": r"data\processed\acs_clean.csv",
+        "acs_history_file": r"data\processed\acs_history.csv",
+    }
+    
 df = pd.DataFrame(rows)
 
 if "last_run" in df.columns:
