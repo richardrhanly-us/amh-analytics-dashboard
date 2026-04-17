@@ -80,10 +80,6 @@ if "auth_user" not in st.session_state or st.session_state["auth_user"] is None:
 
 auth_user = st.session_state["auth_user"]
 
-if not is_platform_admin(auth_user["id"]):
-    st.error("You do not have platform admin access.")
-    st.stop()
-
 st.title("Provision Library")
 st.caption("Create a new library tenant and generate its agent config.")
 
