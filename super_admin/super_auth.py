@@ -47,22 +47,22 @@ def require_super_admin():
             st.rerun()
 
         st.stop()
-    
-        with st.sidebar:
-                st.page_link(
-                    "Super_Admin_Home.py",
-                    label="Home",
-                    icon="🏠",
-                )
-                st.page_link(
-                    "pages/Provision_Library.py",
-                    label="Provision Library",
-                    icon="🏗️",
-                )
-        
+
+    with st.sidebar:
+        st.page_link(
+            "Super_Admin_Home.py",
+            label="Home",
+            icon="🏠",
+        )
+        st.page_link(
+            "pages/Provision_Library.py",
+            label="Provision Library",
+            icon="🏗️",
+        )
+
         st.divider()
         st.caption(f"Logged in as {auth_user['email']}")
-    
+
         if st.button("Log out"):
             st.session_state["auth_user"] = None
             st.rerun()
