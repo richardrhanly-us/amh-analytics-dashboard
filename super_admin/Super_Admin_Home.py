@@ -12,7 +12,7 @@ if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
 from services.app_ui_service import apply_page_chrome
-from services.platform_admin_service import is_platform_admin
+from super_auth import require_super_admin
 
 st.set_page_config(
     page_title="SortView Super Admin",
@@ -22,18 +22,9 @@ st.set_page_config(
 
 apply_page_chrome()
 
-if "auth_user" not in st.session_state or st.session_state["auth_user"] is None:
-    st.error("Please log in first.")
-    st.stop()
-
-auth_user = st.session_state["auth_user"]
-
-if not is_platform_admin(auth_user["id"]):
-    st.error("You do not have platform admin access.")
-    st.stop()
+auth_user = require_super_admin()
 
 st.title("SortView Super Admin")
 st.caption("Platform administration only.")
-
-st.success("Platform admin access confirmed.")
-st.write("Use the Provision Library page in the sidebar.")
+st.success(f"Platform admin access confirmed for {auth_user['email']}.")
+st.write("Use the pages in the sidebar.")
