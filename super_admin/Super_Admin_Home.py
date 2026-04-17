@@ -11,7 +11,6 @@ SRC_DIR = os.path.join(ROOT_DIR, "src")
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
-from services.app_ui_service import apply_page_chrome
 from super_auth import require_super_admin
 
 st.set_page_config(
@@ -20,7 +19,6 @@ st.set_page_config(
     layout="wide",
 )
 
-apply_page_chrome()
 
 auth_user = require_super_admin()
 
