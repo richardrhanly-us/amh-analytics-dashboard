@@ -4,7 +4,8 @@ import pandas as pd
 import streamlit as st
 
 from services.app_ui_service import apply_page_chrome
-from services.platform_admin_service import is_platform_admin, list_platform_libraries
+from services.platform_admin_service import is_platform_admin
+from services.tenant_service import get_organization_by_slug
 
 st.set_page_config(
     page_title="Super Admin",
@@ -26,25 +27,9 @@ if not is_platform_admin(auth_user["id"]):
 
 st.caption("SortView Platform")
 st.title("Super Admin")
-st.caption("Provision libraries and manage the platform.")
+st.caption("Platform-only administration pages.")
 
-library_rows = list_platform_libraries()
+st.success("Platform admin access confirmed.")
 
-top_col1, top_col2 = st.columns(2)
-
-with top_col1:
-    st.metric("Organizations", len({row["organization_id"] for row in library_rows}))
-
-with top_col2:
-    st.metric("Primary Branch Rows", len(library_rows))
-
-st.markdown("### Libraries")
-
-if len(library_rows) == 0:
-    st.info("No libraries found.")
-else:
-    df = pd.DataFrame(library_rows)
-    st.dataframe(df, use_container_width=True)
-
-st.markdown("### Next Steps")
-st.write("Use the Provision Library page to create a new tenant and generate its agent config.")
+st.markdown("### Available Actions")
+st.write("- Open Provision Library to create a new tenant and generate agent config.")
