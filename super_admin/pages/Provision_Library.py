@@ -1,21 +1,23 @@
 from __future__ import annotations
 
-import json
 import os
-import re
 import sys
 
 import streamlit as st
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SRC_DIR = os.path.join(ROOT_DIR, "src")
+SUPER_ADMIN_DIR = os.path.join(ROOT_DIR, "super_admin")
 
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
+if SUPER_ADMIN_DIR not in sys.path:
+    sys.path.insert(0, SUPER_ADMIN_DIR)
+
 from services.app_ui_service import apply_page_chrome
-from services.platform_admin_service import is_platform_admin
 from services.tenant_service import create_organization_with_primary_branch
+from super_auth import require_super_admin
 
 st.set_page_config(
     page_title="Provision Library",
@@ -24,6 +26,8 @@ st.set_page_config(
 )
 
 apply_page_chrome()
+
+auth_user = require_super_admin()
 
 DEFAULT_ORG_SETTINGS = {
     "library_name": "",
