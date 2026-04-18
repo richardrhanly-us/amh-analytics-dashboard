@@ -72,11 +72,36 @@ def get_branch_readiness(org_slug: str, branch_slug: str) -> dict:
     customer_id = row["customer_id"] if row["customer_id"] is not None else row["organization_id"]
     branch_id = row["branch_id"] if row["branch_id"] is not None else row["app_branch_id"]
 
-    onboarding_status = row["onboarding_status"] or "pending"
-    onboarding_message = row["onboarding_message"] or DEFAULT_MESSAGES.get(
-        onboarding_status,
-        "This branch is not ready yet.",
-    )
+    with engine.connect() as conn:
+        pipeline_row = conn.execute(
+            text("""
+                SELECT
+                    status,
+                    last_run,
+                    last_attempt
+                FROM pipeline_status
+                WHERE customer_id = :customer_id
+                  AND branch_id = :branch_id
+                LIMIT 1
+            """),
+            {
+                "customer_id": customer_id,
+                "branch_id": branch_id,
+            },
+        ).mappings().first()
+
+    onboarding_status = row["onboarding_status"]
+    onboarding_message = row["onboarding_message"]
+
+    if onboarding_status in (None, "", "pending", "mapping", "agent", "initial_sync") and pipeline_row is not None:
+        onboarding_status = "ready"
+        onboarding_message = "Ready"
+    else:
+        onboarding_status = onboarding_status or "pending"
+        onboarding_message = onboarding_message or DEFAULT_MESSAGES.get(
+            onboarding_status,
+            "This branch is not ready yet.",
+        )
 
     if onboarding_status != "ready":
         return {
