@@ -69,12 +69,8 @@ def get_branch_readiness(org_slug: str, branch_slug: str) -> dict:
             "message": "This branch is not active.",
         }
 
-    if row["customer_id"] is None or row["branch_id"] is None:
-        return {
-            "is_ready": False,
-            "code": "missing_operational_mapping",
-            "message": "Operational tenant mapping is missing for this branch.",
-        }
+    customer_id = row["customer_id"] if row["customer_id"] is not None else row["organization_id"]
+    branch_id = row["branch_id"] if row["branch_id"] is not None else row["app_branch_id"]
 
     onboarding_status = row["onboarding_status"] or "pending"
     onboarding_message = row["onboarding_message"] or DEFAULT_MESSAGES.get(
@@ -87,14 +83,14 @@ def get_branch_readiness(org_slug: str, branch_slug: str) -> dict:
             "is_ready": False,
             "code": onboarding_status,
             "message": onboarding_message,
-            "customer_id": row["customer_id"],
-            "branch_id": row["branch_id"],
+            "customer_id": customer_id,
+            "branch_id": branch_id,
         }
 
     return {
         "is_ready": True,
         "code": "ready",
         "message": onboarding_message,
-        "customer_id": row["customer_id"],
-        "branch_id": row["branch_id"],
+        "customer_id": customer_id,
+        "branch_id": branch_id,
     }
