@@ -490,8 +490,13 @@ def build_acs_item_summary(
         items["patron_type_upper"].eq("ILL")
         | items["destination_upper"].str.contains(r"\bILL\b|INTERLIBRARY", regex=True, na=False)
         | items["patron_name_upper"].str.contains(r"\bILL\b|INTERLIBRARY", regex=True, na=False)
-        | items["raw_upper"].str.contains(r"\bILL\b|INTERLIBRARY", regex=True, na=False)
+        | items["raw_upper"].str.contains(
+            r"\bILL\b|INTERLIBRARY|\|DAILL\b|\|AEILL\b|\|PTILL\b",
+            regex=True,
+            na=False,
+        )
     )
+    
     items["is_collection_services"] = items["patron_name_upper"].isin(normalized_collection_services_names)
 
     for pattern in normalized_collection_services_da_patterns:
