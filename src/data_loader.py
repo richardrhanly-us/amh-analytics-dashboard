@@ -192,12 +192,7 @@ def _scoped_query(table_name, org_column, branch_column, live_only=False):
             FROM {table_name}
             WHERE {org_column} = :org_slug
               AND {branch_column} = :branch_slug
-              AND event_time::date = (
-                  SELECT max(event_time)::date
-                  FROM {table_name}
-                  WHERE {org_column} = :org_slug
-                    AND {branch_column} = :branch_slug
-              )
+              AND event_time::date = CURRENT_DATE
             ORDER BY event_time
         """
 
