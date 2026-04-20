@@ -181,6 +181,13 @@ def _load_rejects_from_csv(path):
         return pd.DataFrame()
 
 
+LIVE_DASHBOARD_TIMEZONE = os.getenv("SORTVIEW_LIVE_TIMEZONE", "America/Chicago")
+
+
+def _today_filter_sql():
+    return f"(now() AT TIME ZONE '{LIVE_DASHBOARD_TIMEZONE}')::date"
+
+
 def _scoped_query(table_name, org_column, branch_column, live_only=False):
     org_column = _safe_identifier(org_column)
     branch_column = _safe_identifier(branch_column)
@@ -192,7 +199,7 @@ def _scoped_query(table_name, org_column, branch_column, live_only=False):
             FROM {table_name}
             WHERE {org_column} = :org_slug
               AND {branch_column} = :branch_slug
-              AND event_time::date = CURRENT_DATE
+              AND event_time::date = {_today_filter_sql()}
             ORDER BY event_time
         """
 
