@@ -53,12 +53,17 @@ def _require_scope(org_slug, branch_slug):
     if not org_slug or not branch_slug:
         raise ValueError("Tenant scope is required: org_slug and branch_slug must be provided.")
 
-
 def _read_table(query, params=None):
+    engine = get_engine()
+
+    if engine is None:
+        st.error("DATABASE_URL is missing. App cannot connect to Neon.")
+        return pd.DataFrame()
+
     try:
-        engine = get_engine()
         return pd.read_sql(text(query), engine, params=params or {})
-    except Exception:
+    except Exception as e:
+        st.error(f"Database query failed: {e}")
         return pd.DataFrame()
 
 
