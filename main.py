@@ -1,8 +1,10 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from sqlalchemy import create_engine, text
+from typing import Optional
 import os
 import traceback
 import json
+import re
 
 app = FastAPI()
 
@@ -14,23 +16,130 @@ if not DATABASE_URL:
 engine = create_engine(DATABASE_URL)
 
 
+def ensure_agent_token_schema(conn):
+    conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
+
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS agent_tokens (
+            id BIGSERIAL PRIMARY KEY,
+            token_hash TEXT NOT NULL UNIQUE,
+            customer_id INTEGER NOT NULL,
+            branch_id INTEGER NOT NULL,
+            description TEXT,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_used_at TIMESTAMP NULL
+        )
+    """))
+
+    conn.execute(text("""
+        CREATE INDEX IF NOT EXISTS agent_tokens_scope_idx
+        ON agent_tokens (customer_id, branch_id, is_active)
+    """))
+
+
+def get_bearer_token(authorization: Optional[str]) -> str:
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+
+    match = re.match(r"^Bearer\s+(.+)$", authorization.strip(), re.IGNORECASE)
+    if not match:
+        raise HTTPException(status_code=401, detail="Invalid Authorization header")
+
+    token = match.group(1).strip()
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+
+    return token
+
+
+def authenticate_agent(conn, authorization: Optional[str], customer_id: int, branch_id: int):
+    ensure_agent_token_schema(conn)
+
+    bearer_token = get_bearer_token(authorization)
+
+    token_row = conn.execute(
+        text("""
+            SELECT
+                id,
+                customer_id,
+                branch_id,
+                is_active,
+                description
+            FROM agent_tokens
+            WHERE token_hash = encode(digest(:token, 'sha256'), 'hex')
+            LIMIT 1
+        """),
+        {"token": bearer_token},
+    ).mappings().first()
+
+    if token_row is None:
+        raise HTTPException(status_code=401, detail="Invalid agent token")
+
+    if not token_row["is_active"]:
+        raise HTTPException(status_code=403, detail="Agent token is inactive")
+
+    if int(token_row["customer_id"]) != int(customer_id) or int(token_row["branch_id"]) != int(branch_id):
+        raise HTTPException(status_code=403, detail="Token scope does not match customer_id / branch_id")
+
+    conn.execute(
+        text("""
+            UPDATE agent_tokens
+            SET last_used_at = CURRENT_TIMESTAMP
+            WHERE id = :id
+        """),
+        {"id": token_row["id"]},
+    )
+
+    return token_row
+
+
 @app.get("/")
 def root():
     return {"status": "SortView API running"}
 
 
 @app.post("/upload")
-def upload(data: dict):
+def upload(data: dict, authorization: Optional[str] = Header(default=None)):
     try:
         checkins = data.get("checkins", [])
         rejects = data.get("rejects", [])
         acs = data.get("acs", [])
+
+        all_rows = []
+        all_rows.extend(checkins)
+        all_rows.extend(rejects)
+        all_rows.extend(acs)
+
+        if not all_rows:
+            raise HTTPException(status_code=400, detail="No upload rows provided")
+
+        first_customer_id = all_rows[0].get("customer_id")
+        first_branch_id = all_rows[0].get("branch_id")
+
+        if first_customer_id is None or first_branch_id is None:
+            raise HTTPException(status_code=400, detail="customer_id and branch_id are required on uploaded rows")
+
+        for row in all_rows:
+            if row.get("customer_id") != first_customer_id or row.get("branch_id") != first_branch_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="All uploaded rows must have the same customer_id and branch_id"
+                )
 
         inserted_checkins = 0
         inserted_rejects = 0
         inserted_acs = 0
 
         with engine.begin() as conn:
+            authenticate_agent(
+                conn=conn,
+                authorization=authorization,
+                customer_id=int(first_customer_id),
+                branch_id=int(first_branch_id),
+            )
+
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS acs_events (
                     id BIGSERIAL PRIMARY KEY,
@@ -151,6 +260,8 @@ def upload(data: dict):
             "acs_inserted": inserted_acs
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         print("UPLOAD ERROR:")
         traceback.print_exc()
@@ -158,7 +269,7 @@ def upload(data: dict):
 
 
 @app.post("/upload-pipeline-status")
-def upload_pipeline_status(data: dict):
+def upload_pipeline_status(data: dict, authorization: Optional[str] = Header(default=None)):
     try:
         customer_id = data.get("customer_id")
         branch_id = data.get("branch_id")
@@ -171,6 +282,13 @@ def upload_pipeline_status(data: dict):
             destination_breakdown = {}
 
         with engine.begin() as conn:
+            authenticate_agent(
+                conn=conn,
+                authorization=authorization,
+                customer_id=int(customer_id),
+                branch_id=int(branch_id),
+            )
+
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS pipeline_status (
                     customer_id INTEGER NOT NULL,
