@@ -296,18 +296,42 @@ def upload_pipeline_status(data: dict, authorization: Optional[str] = Header(def
                     status TEXT NULL,
                     checkins_rows INTEGER NULL,
                     rejects_rows INTEGER NULL,
+                    acs_rows INTEGER NULL,
                     uploaded_checkins_rows INTEGER NULL,
                     uploaded_rejects_rows INTEGER NULL,
+                    uploaded_acs_rows INTEGER NULL,
                     checkins_history_rows INTEGER NULL,
                     rejects_history_rows INTEGER NULL,
+                    acs_history_rows INTEGER NULL,
                     checkins_bad_datetime_rows INTEGER NULL,
                     rejects_bad_datetime_rows INTEGER NULL,
+                    acs_bad_datetime_rows INTEGER NULL,
                     transit_items INTEGER NULL,
                     problem_items INTEGER NULL,
                     destination_breakdown JSONB NULL,
                     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (customer_id, branch_id)
                 )
+            """))
+
+            conn.execute(text("""
+                ALTER TABLE pipeline_status
+                ADD COLUMN IF NOT EXISTS acs_rows INTEGER NULL
+            """))
+
+            conn.execute(text("""
+                ALTER TABLE pipeline_status
+                ADD COLUMN IF NOT EXISTS uploaded_acs_rows INTEGER NULL
+            """))
+
+            conn.execute(text("""
+                ALTER TABLE pipeline_status
+                ADD COLUMN IF NOT EXISTS acs_history_rows INTEGER NULL
+            """))
+
+            conn.execute(text("""
+                ALTER TABLE pipeline_status
+                ADD COLUMN IF NOT EXISTS acs_bad_datetime_rows INTEGER NULL
             """))
 
             conn.execute(text("""
@@ -319,12 +343,16 @@ def upload_pipeline_status(data: dict, authorization: Optional[str] = Header(def
                     status,
                     checkins_rows,
                     rejects_rows,
+                    acs_rows,
                     uploaded_checkins_rows,
                     uploaded_rejects_rows,
+                    uploaded_acs_rows,
                     checkins_history_rows,
                     rejects_history_rows,
+                    acs_history_rows,
                     checkins_bad_datetime_rows,
                     rejects_bad_datetime_rows,
+                    acs_bad_datetime_rows,
                     transit_items,
                     problem_items,
                     destination_breakdown,
@@ -338,12 +366,16 @@ def upload_pipeline_status(data: dict, authorization: Optional[str] = Header(def
                     :status,
                     :checkins_rows,
                     :rejects_rows,
+                    :acs_rows,
                     :uploaded_checkins_rows,
                     :uploaded_rejects_rows,
+                    :uploaded_acs_rows,
                     :checkins_history_rows,
                     :rejects_history_rows,
+                    :acs_history_rows,
                     :checkins_bad_datetime_rows,
                     :rejects_bad_datetime_rows,
+                    :acs_bad_datetime_rows,
                     :transit_items,
                     :problem_items,
                     CAST(:destination_breakdown AS JSONB),
@@ -356,12 +388,16 @@ def upload_pipeline_status(data: dict, authorization: Optional[str] = Header(def
                     status = EXCLUDED.status,
                     checkins_rows = EXCLUDED.checkins_rows,
                     rejects_rows = EXCLUDED.rejects_rows,
+                    acs_rows = EXCLUDED.acs_rows,
                     uploaded_checkins_rows = EXCLUDED.uploaded_checkins_rows,
                     uploaded_rejects_rows = EXCLUDED.uploaded_rejects_rows,
+                    uploaded_acs_rows = EXCLUDED.uploaded_acs_rows,
                     checkins_history_rows = EXCLUDED.checkins_history_rows,
                     rejects_history_rows = EXCLUDED.rejects_history_rows,
+                    acs_history_rows = EXCLUDED.acs_history_rows,
                     checkins_bad_datetime_rows = EXCLUDED.checkins_bad_datetime_rows,
                     rejects_bad_datetime_rows = EXCLUDED.rejects_bad_datetime_rows,
+                    acs_bad_datetime_rows = EXCLUDED.acs_bad_datetime_rows,
                     transit_items = EXCLUDED.transit_items,
                     problem_items = EXCLUDED.problem_items,
                     destination_breakdown = EXCLUDED.destination_breakdown,
@@ -374,12 +410,16 @@ def upload_pipeline_status(data: dict, authorization: Optional[str] = Header(def
                 "status": data.get("status"),
                 "checkins_rows": data.get("checkins_rows"),
                 "rejects_rows": data.get("rejects_rows"),
+                "acs_rows": data.get("acs_rows"),
                 "uploaded_checkins_rows": data.get("uploaded_checkins_rows"),
                 "uploaded_rejects_rows": data.get("uploaded_rejects_rows"),
+                "uploaded_acs_rows": data.get("uploaded_acs_rows"),
                 "checkins_history_rows": data.get("checkins_history_rows"),
                 "rejects_history_rows": data.get("rejects_history_rows"),
+                "acs_history_rows": data.get("acs_history_rows"),
                 "checkins_bad_datetime_rows": data.get("checkins_bad_datetime_rows"),
                 "rejects_bad_datetime_rows": data.get("rejects_bad_datetime_rows"),
+                "acs_bad_datetime_rows": data.get("acs_bad_datetime_rows"),
                 "transit_items": data.get("transit_items"),
                 "problem_items": data.get("problem_items"),
                 "destination_breakdown": json.dumps(destination_breakdown),
