@@ -7,13 +7,13 @@ def simplify_error(msg):
 
     msg = str(msg).lower()
 
-    if "no item found" in msg:
+    if "item not found" in msg or "no item found" in msg:
         return "Item Not Found"
 
     if "acs" in msg:
         return "ILS / ACS Failure"
 
-    if "multiple rfid" in msg:
+    if "multiple rfid" in msg or "multiple tags" in msg:
         return "RFID Collision"
 
     if "collection code" in msg:
