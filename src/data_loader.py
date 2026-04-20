@@ -4,7 +4,9 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
+
+from database import get_engine
 
 CHECKINS_FILE = "data/processed/checkins_clean.csv"
 REJECTS_FILE = "data/processed/rejects_clean.csv"
@@ -28,33 +30,6 @@ ACS_BRANCH_COLUMN = os.getenv("SORTVIEW_ACS_BRANCH_COLUMN", "branch_id")
 
 PIPELINE_ORG_COLUMN = os.getenv("SORTVIEW_PIPELINE_ORG_COLUMN", "customer_id")
 PIPELINE_BRANCH_COLUMN = os.getenv("SORTVIEW_PIPELINE_BRANCH_COLUMN", "branch_id")
-
-
-def get_database_url():
-    db_url = os.getenv("DATABASE_URL")
-
-    if not db_url:
-        try:
-            db_url = st.secrets.get("DATABASE_URL")
-        except Exception:
-            db_url = None
-
-    return db_url
-
-
-@st.cache_resource
-def get_engine():
-    db_url = get_database_url()
-    if not db_url:
-        return None
-
-    return create_engine(
-        db_url,
-        pool_pre_ping=True,
-        pool_recycle=300,
-        connect_args={"sslmode": "require"},
-    )
-
 
 def get_file_mtime(path):
     file_path = Path(path)
@@ -80,16 +55,10 @@ def _require_scope(org_slug, branch_slug):
 
 
 def _read_table(query, params=None):
-    engine = get_engine()
-
-    if engine is None:
-        st.error("DATABASE_URL is missing. App cannot connect to Neon.")
-        return pd.DataFrame()
-
     try:
+        engine = get_engine()
         return pd.read_sql(text(query), engine, params=params or {})
-    except Exception as e:
-        st.error(f"Database query failed: {e}")
+    except Exception:
         return pd.DataFrame()
 
 
