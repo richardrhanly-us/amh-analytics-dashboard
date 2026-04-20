@@ -17,8 +17,6 @@ engine = create_engine(DATABASE_URL)
 
 
 def ensure_agent_token_schema(conn):
-    conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
-
     conn.execute(text("""
         CREATE TABLE IF NOT EXISTS agent_tokens (
             id BIGSERIAL PRIMARY KEY,
