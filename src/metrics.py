@@ -450,6 +450,14 @@ def build_acs_item_summary(
     )
     items["raw_upper"] = items["raw_message"].fillna("").astype(str).str.upper()
     items["destination_upper"] = items["destination"].fillna("").astype(str).str.strip().str.upper()
+    
+    items["patron_type_upper"] = (
+        items["patron_type"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
 
     normalized_collection_services_names = {
         str(name).strip().upper()
@@ -477,20 +485,13 @@ def build_acs_item_summary(
 
 
 
-    print("DEBUG normalized_collection_services_names =", normalized_collection_services_names)
-    print("DEBUG normalized_branch_services_names =", normalized_branch_services_names)
-
-    debug_diane = items[
-        items["patron_name_upper"].str.contains("DIANE|COLDEV", na=False)
-    ][["patron_name", "patron_name_upper", "is_hold", "raw_message"]].copy()
-
-    print("DEBUG diane_rows =", debug_diane.to_dict("records"))
     
     items["is_ill"] = (
-        items["patron_type"].str.upper().eq("ILL")
+        items["patron_type_upper"].eq("ILL")
         | items["destination_upper"].str.contains(r"\bILL\b|INTERLIBRARY", regex=True, na=False)
+        | items["patron_name_upper"].str.contains(r"\bILL\b|INTERLIBRARY", regex=True, na=False)
+        | items["raw_upper"].str.contains(r"\bILL\b|INTERLIBRARY", regex=True, na=False)
     )
-
     items["is_collection_services"] = items["patron_name_upper"].isin(normalized_collection_services_names)
 
     for pattern in normalized_collection_services_da_patterns:
