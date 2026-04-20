@@ -1,5 +1,7 @@
 import json
 import os
+import logging
+
 from pathlib import Path
 
 import pandas as pd
@@ -13,6 +15,7 @@ REJECTS_FILE = "data/processed/rejects_clean.csv"
 STATUS_FILE = "data/processed/pipeline_status.json"
 CHECKINS_HISTORY_FILE = "data/processed/checkins_history.csv"
 REJECTS_HISTORY_FILE = "data/processed/rejects_history.csv"
+logger = logging.getLogger("sortview.data_loader")
 
 # Local-dev escape hatch only.
 # Leave this false in production.
@@ -53,17 +56,40 @@ def _require_scope(org_slug, branch_slug):
     if not org_slug or not branch_slug:
         raise ValueError("Tenant scope is required: org_slug and branch_slug must be provided.")
 
-def _read_table(query, params=None):
-    engine = get_engine()
+def _show_db_error_once(key, message):
+    state_key = f"_db_error_shown_{key}"
 
-    if engine is None:
-        st.error("DATABASE_URL is missing. App cannot connect to Neon.")
+    if state_key not in st.session_state:
+        st.session_state[state_key] = False
+
+    if not st.session_state[state_key]:
+        st.error(message)
+        st.session_state[state_key] = True
+
+
+def _read_table(query, params=None):
+    try:
+        engine = get_engine()
+    except Exception as e:
+        logger.exception("Database engine creation failed")
+        _show_db_error_once(
+            "engine_creation",
+            "Database connection failed. Check DATABASE_URL and Neon connectivity."
+        )
         return pd.DataFrame()
 
     try:
         return pd.read_sql(text(query), engine, params=params or {})
     except Exception as e:
-        st.error(f"Database query failed: {e}")
+        logger.exception(
+            "Database query failed | params=%s | query=%s",
+            params or {},
+            query,
+        )
+        _show_db_error_once(
+            "query_failed",
+            f"Database query failed while loading dashboard data: {e}"
+        )
         return pd.DataFrame()
 
 
