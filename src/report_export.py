@@ -3,6 +3,8 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 
+REPORT_BRAND_NAME = "SortView"
+DEFAULT_REPORT_TITLE = "AMH Director Report"
 
 def safe_int(value, default=0):
     try:
@@ -81,7 +83,8 @@ def build_director_report_data(
     library_name: str = "New Braunfels Public Library",
     branch_name: str = "Main Branch",
     system_name: str = "Tech Logic UltraSort",
-    report_title: str = "AMH Director Report - Cole Johnson",
+    report_title: str = DEFAULT_REPORT_TITLE,
+    report_brand_name: str = REPORT_BRAND_NAME,
 ) -> Dict[str, Any]:
     days_in_range = df["datetime"].dt.date.nunique() if len(df) > 0 and "datetime" in df.columns else 0
     total_checkins = len(df)
@@ -119,6 +122,7 @@ def build_director_report_data(
 
     report_data = {
         "report_title": report_title,
+        "report_brand_name": report_brand_name,
         "generated_at": datetime.now().strftime("%b %d, %Y %I:%M %p"),
         "library_name": library_name,
         "branch_name": branch_name,
@@ -475,7 +479,7 @@ def render_director_report_html(report_data: Dict[str, Any]) -> str:
     <body>
         <div class="page">
             <div class="header">
-                <div class="eyebrow">Hanly Analytics • SortView</div>
+                <div class="eyebrow">{report_data['report_brand_name']}</div>
                 <h1 class="title">{report_data['report_title']}</h1>
                 <p class="subtitle">
                     {report_data['library_name']} • {report_data['branch_name']} • {report_data['system_name']}
@@ -568,7 +572,7 @@ def render_director_report_html(report_data: Dict[str, Any]) -> str:
             </div>
 
             <div class="footer">
-                SortView Director Report
+                {report_data['report_brand_name']} Director Report
             </div>
         </div>
     </body>
@@ -614,7 +618,8 @@ def build_director_report_pdf(
     library_name: str = "New Braunfels Public Library",
     branch_name: str = "Main Branch",
     system_name: str = "Tech Logic UltraSort",
-    report_title: str = "AMH Director Report - Cole Johnson",
+    report_title: str = DEFAULT_REPORT_TITLE,
+    report_brand_name: str = REPORT_BRAND_NAME,
 ) -> bytes:
     report_data = build_director_report_data(
         start_date=start_date,
@@ -641,6 +646,7 @@ def build_director_report_pdf(
         branch_name=branch_name,
         system_name=system_name,
         report_title=report_title,
+        report_brand_name=report_brand_name,
     )
 
     html = render_director_report_html(report_data)
