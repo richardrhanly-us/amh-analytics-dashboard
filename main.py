@@ -13,7 +13,13 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL not set")
 
-engine = create_engine(DATABASE_URL)
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_recycle=300,
+    connect_args={"sslmode": "require"},
+    future=True,
+)
 
 
 def ensure_agent_token_schema(conn):
@@ -300,9 +306,6 @@ def upload_pipeline_status(data: dict, authorization: Optional[str] = Header(def
                     uploaded_checkins_rows INTEGER NULL,
                     uploaded_rejects_rows INTEGER NULL,
                     uploaded_acs_rows INTEGER NULL,
-                    checkins_history_rows INTEGER NULL,
-                    rejects_history_rows INTEGER NULL,
-                    acs_history_rows INTEGER NULL,
                     checkins_bad_datetime_rows INTEGER NULL,
                     rejects_bad_datetime_rows INTEGER NULL,
                     acs_bad_datetime_rows INTEGER NULL,
@@ -326,11 +329,6 @@ def upload_pipeline_status(data: dict, authorization: Optional[str] = Header(def
 
             conn.execute(text("""
                 ALTER TABLE pipeline_status
-                ADD COLUMN IF NOT EXISTS acs_history_rows INTEGER NULL
-            """))
-
-            conn.execute(text("""
-                ALTER TABLE pipeline_status
                 ADD COLUMN IF NOT EXISTS acs_bad_datetime_rows INTEGER NULL
             """))
 
@@ -347,9 +345,6 @@ def upload_pipeline_status(data: dict, authorization: Optional[str] = Header(def
                     uploaded_checkins_rows,
                     uploaded_rejects_rows,
                     uploaded_acs_rows,
-                    checkins_history_rows,
-                    rejects_history_rows,
-                    acs_history_rows,
                     checkins_bad_datetime_rows,
                     rejects_bad_datetime_rows,
                     acs_bad_datetime_rows,
@@ -370,9 +365,6 @@ def upload_pipeline_status(data: dict, authorization: Optional[str] = Header(def
                     :uploaded_checkins_rows,
                     :uploaded_rejects_rows,
                     :uploaded_acs_rows,
-                    :checkins_history_rows,
-                    :rejects_history_rows,
-                    :acs_history_rows,
                     :checkins_bad_datetime_rows,
                     :rejects_bad_datetime_rows,
                     :acs_bad_datetime_rows,
@@ -392,9 +384,6 @@ def upload_pipeline_status(data: dict, authorization: Optional[str] = Header(def
                     uploaded_checkins_rows = EXCLUDED.uploaded_checkins_rows,
                     uploaded_rejects_rows = EXCLUDED.uploaded_rejects_rows,
                     uploaded_acs_rows = EXCLUDED.uploaded_acs_rows,
-                    checkins_history_rows = EXCLUDED.checkins_history_rows,
-                    rejects_history_rows = EXCLUDED.rejects_history_rows,
-                    acs_history_rows = EXCLUDED.acs_history_rows,
                     checkins_bad_datetime_rows = EXCLUDED.checkins_bad_datetime_rows,
                     rejects_bad_datetime_rows = EXCLUDED.rejects_bad_datetime_rows,
                     acs_bad_datetime_rows = EXCLUDED.acs_bad_datetime_rows,
@@ -414,9 +403,6 @@ def upload_pipeline_status(data: dict, authorization: Optional[str] = Header(def
                 "uploaded_checkins_rows": data.get("uploaded_checkins_rows"),
                 "uploaded_rejects_rows": data.get("uploaded_rejects_rows"),
                 "uploaded_acs_rows": data.get("uploaded_acs_rows"),
-                "checkins_history_rows": data.get("checkins_history_rows"),
-                "rejects_history_rows": data.get("rejects_history_rows"),
-                "acs_history_rows": data.get("acs_history_rows"),
                 "checkins_bad_datetime_rows": data.get("checkins_bad_datetime_rows"),
                 "rejects_bad_datetime_rows": data.get("rejects_bad_datetime_rows"),
                 "acs_bad_datetime_rows": data.get("acs_bad_datetime_rows"),
