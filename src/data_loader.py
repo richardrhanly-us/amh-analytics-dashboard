@@ -13,8 +13,6 @@ from database import get_engine
 CHECKINS_FILE = "data/processed/checkins_clean.csv"
 REJECTS_FILE = "data/processed/rejects_clean.csv"
 STATUS_FILE = "data/processed/pipeline_status.json"
-CHECKINS_HISTORY_FILE = "data/processed/checkins_history.csv"
-REJECTS_HISTORY_FILE = "data/processed/rejects_history.csv"
 logger = logging.getLogger("sortview.data_loader")
 
 # Local-dev escape hatch only.
@@ -320,15 +318,7 @@ def load_checkins_history_df(org_slug, branch_slug, mtime=None, refresh_count=0)
         st.error(str(e))
         return pd.DataFrame()
 
-    df = _load_checkins_history_from_db(org_slug, branch_slug)
-
-    if not df.empty:
-        return df
-
-    if ALLOW_FILE_FALLBACK:
-        return _load_checkins_from_csv(CHECKINS_HISTORY_FILE)
-
-    return pd.DataFrame()
+    return _load_checkins_history_from_db(org_slug, branch_slug)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -370,22 +360,14 @@ def load_rejects_df(org_slug, branch_slug, path=REJECTS_FILE, mtime=None, refres
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def load_rejects_history_df(org_slug, branch_slug, path=REJECTS_HISTORY_FILE, mtime=None, refresh_count=0):
+def load_rejects_history_df(org_slug, branch_slug, mtime=None, refresh_count=0):
     try:
         _require_scope(org_slug, branch_slug)
     except ValueError as e:
         st.error(str(e))
         return pd.DataFrame()
 
-    df = _load_rejects_history_from_db(org_slug, branch_slug)
-
-    if not df.empty:
-        return df
-
-    if ALLOW_FILE_FALLBACK:
-        return _load_rejects_from_csv(path)
-
-    return pd.DataFrame()
+    return _load_rejects_history_from_db(org_slug, branch_slug)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -430,12 +412,13 @@ def load_pipeline_status(org_slug, branch_slug, path=STATUS_FILE, mtime=None, re
             status,
             checkins_rows,
             rejects_rows,
+            acs_rows,
             uploaded_checkins_rows,
             uploaded_rejects_rows,
-            checkins_history_rows,
-            rejects_history_rows,
+            uploaded_acs_rows,
             checkins_bad_datetime_rows,
             rejects_bad_datetime_rows,
+            acs_bad_datetime_rows,
             transit_items,
             problem_items,
             destination_breakdown,
