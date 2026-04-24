@@ -1,6 +1,6 @@
 import pandas as pd
 
-from scripts.parse_rejects import (
+from agent.parse_rejects import (
     simplify_error_message,
     load_rejects,
     save_rejects_csv,
