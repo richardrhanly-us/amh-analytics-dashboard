@@ -1,6 +1,6 @@
 import pandas as pd
 
-from scripts.parse_checkins import (
+from agent.parse_checkins import (
     normalize_destination,
     load_checkins,
     save_checkins_csv,
