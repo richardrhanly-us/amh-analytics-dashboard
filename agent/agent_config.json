@@ -1,0 +1,12 @@
+{
+  "customer_id": 1,
+  "branch_id": 1,
+  "api_url": "https://sortview-app-2p336.ondigitalocean.app",
+  "raw_checkins_file": "C:\\TLCFinalDlls\\Checkins.txt",
+  "raw_rejects_file": "C:\\TLCFinalDlls\\Rejects.txt",
+  "processed_checkins_file": "data\\processed\\checkins_clean.csv",
+  "processed_rejects_file": "data\\processed\\rejects_clean.csv",
+  "status_file": "data\\processed\\pipeline_status.json",
+  "raw_acs_file": "C:\\TLCFinalDlls\\ACS Log.txt",
+  "processed_acs_file": "data\\processed\\acs_clean.csv"
+}
