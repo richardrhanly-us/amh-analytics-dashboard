@@ -208,8 +208,6 @@ def _scoped_query(table_name, org_column, branch_column, live_only=False):
           AND {branch_column} = :branch_slug
         ORDER BY event_time
     """
-
-
 def _load_checkins_history_from_db(org_slug, branch_slug):
     params = {"org_slug": org_slug, "branch_slug": branch_slug}
 
@@ -221,6 +219,7 @@ def _load_checkins_history_from_db(org_slug, branch_slug):
     )
     df = _read_table(query, params=params)
     return _normalize_checkins_df(df)
+
 
 def _load_checkins_live_from_db(org_slug, branch_slug):
     params = {"org_slug": org_slug, "branch_slug": branch_slug}
@@ -235,14 +234,14 @@ def _load_checkins_live_from_db(org_slug, branch_slug):
     return _normalize_checkins_df(df)
 
 
-def _load_rejects_live_from_db(org_slug, branch_slug):
+def _load_rejects_history_from_db(org_slug, branch_slug):
     params = {"org_slug": org_slug, "branch_slug": branch_slug}
 
     query = _scoped_query(
         table_name="rejects",
         org_column=REJECTS_ORG_COLUMN,
         branch_column=REJECTS_BRANCH_COLUMN,
-        live_only=True,
+        live_only=False,
     )
     df = _read_table(query, params=params)
     return _normalize_rejects_df(df)
@@ -252,7 +251,7 @@ def _load_rejects_live_from_db(org_slug, branch_slug):
     params = {"org_slug": org_slug, "branch_slug": branch_slug}
 
     query = _scoped_query(
-        table_name="rejects_clean",
+        table_name="rejects",
         org_column=REJECTS_ORG_COLUMN,
         branch_column=REJECTS_BRANCH_COLUMN,
         live_only=True,
