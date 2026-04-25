@@ -214,58 +214,35 @@ def _load_checkins_history_from_db(org_slug, branch_slug):
     params = {"org_slug": org_slug, "branch_slug": branch_slug}
 
     query = _scoped_query(
-        table_name="checkins_routed",
+        table_name="checkins",
         org_column=CHECKINS_ORG_COLUMN,
         branch_column=CHECKINS_BRANCH_COLUMN,
         live_only=False,
     )
     df = _read_table(query, params=params)
-
-    if not df.empty:
-        return _normalize_checkins_df(df)
-
-    fallback_query = _scoped_query(
-        table_name="checkins_clean",
-        org_column=CHECKINS_ORG_COLUMN,
-        branch_column=CHECKINS_BRANCH_COLUMN,
-        live_only=False,
-    )
-    df = _read_table(fallback_query, params=params)
     return _normalize_checkins_df(df)
-
 
 def _load_checkins_live_from_db(org_slug, branch_slug):
     params = {"org_slug": org_slug, "branch_slug": branch_slug}
 
     query = _scoped_query(
-        table_name="checkins_routed",
+        table_name="checkins",
         org_column=CHECKINS_ORG_COLUMN,
         branch_column=CHECKINS_BRANCH_COLUMN,
         live_only=True,
     )
     df = _read_table(query, params=params)
-
-    if not df.empty:
-        return _normalize_checkins_df(df)
-
-    fallback_query = _scoped_query(
-        table_name="checkins_clean",
-        org_column=CHECKINS_ORG_COLUMN,
-        branch_column=CHECKINS_BRANCH_COLUMN,
-        live_only=True,
-    )
-    df = _read_table(fallback_query, params=params)
     return _normalize_checkins_df(df)
 
 
-def _load_rejects_history_from_db(org_slug, branch_slug):
+def _load_rejects_live_from_db(org_slug, branch_slug):
     params = {"org_slug": org_slug, "branch_slug": branch_slug}
 
     query = _scoped_query(
-        table_name="rejects_clean",
+        table_name="rejects",
         org_column=REJECTS_ORG_COLUMN,
         branch_column=REJECTS_BRANCH_COLUMN,
-        live_only=False,
+        live_only=True,
     )
     df = _read_table(query, params=params)
     return _normalize_rejects_df(df)
@@ -496,20 +473,15 @@ def _table_has_columns(table_name, required_columns):
     missing = [col for col in required_columns if col not in existing]
     return len(missing) == 0, missing
 
-
 def validate_tenant_schema():
     checks = []
 
     checks.append((
-        "checkins_routed",
+        "checkins",
         [CHECKINS_ORG_COLUMN, CHECKINS_BRANCH_COLUMN, "event_time"],
     ))
     checks.append((
-        "checkins_clean",
-        [CHECKINS_ORG_COLUMN, CHECKINS_BRANCH_COLUMN, "event_time"],
-    ))
-    checks.append((
-        "rejects_clean",
+        "rejects",
         [REJECTS_ORG_COLUMN, REJECTS_BRANCH_COLUMN, "event_time"],
     ))
     checks.append((
