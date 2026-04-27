@@ -1,211 +1,258 @@
-# AMH Analytics Dashboard
+# SortView
 
-AMH Analytics is a data pipeline and Streamlit dashboard for analyzing Automated Materials Handler (AMH) activity at a library system.
+SortView is a multi-part system for ingesting, storing, and visualizing Automated Materials Handler activity for a library system.
 
-It processes raw check-in and reject logs, generates cleaned datasets, and provides operational insights including transit activity, reject trends, and system alerts.
+It currently includes:
+- a Windows-side AMH agent that reads local sorter logs and uploads data
+- a FastAPI backend that receives uploads and writes to Neon
+- a Streamlit dashboard for operational monitoring, reports, transit analysis, and alerts
+- Alembic-based database migration tracking for schema changes
 
----
-
-## Features
-
-* Parse raw AMH check-in and reject logs
-* Clean and normalize data for analysis
-* Generate pipeline status summaries
-* Streamlit dashboard with:
-
-  * Live daily metrics
-  * Transit analytics
-  * Reject analysis
-  * Dynamic alert system with severity levels
-* Logging for all pipeline and parsing steps
-* Unit tests for core logic layers
+The project is designed around New Braunfels Public Library and Tech Logic UltraSort workflows, but the architecture supports broader multi-tenant library operations.
 
 ---
 
-## Project Structure
+## what this repo contains
 
-```
-amh_analytics/
-├─ data/
-│  ├─ raw/                # Raw AMH log files
-│  └─ processed/          # Cleaned CSV outputs + pipeline status
-│
-├─ logs/
-│  └─ pipeline.log        # Pipeline + parser logs
-│
-├─ scripts/
-│  ├─ parse_checkins.py   # Check-in parser
-│  ├─ parse_rejects.py    # Reject parser
-│  └─ run_pipeline.py     # End-to-end pipeline runner
-│
-├─ src/
-│  ├─ app.py              # Streamlit dashboard
-│  ├─ alerts.py           # Alert logic (dynamic + severity)
-│  ├─ data_loader.py      # Data loading utilities
-│  ├─ logger_config.py    # Logging setup
-│  ├─ metrics.py          # KPI + summary calculations
-│  ├─ reject_logic.py     # Reject analytics
-│  └─ transit_logic.py    # Transit analytics
-│
-├─ tests/
-│  ├─ test_alerts.py
-│  ├─ test_metrics.py
-│  ├─ test_transit_logic.py
-│  ├─ test_parse_checkins.py
-│  └─ test_parse_rejects.py
-│
-├─ requirements.txt
-└─ README.md
-```
+This repo contains the source-of-truth code for:
+- backend API
+- Streamlit dashboard
+- AMH agent
+- database migration files
+- tests
+
+The live AMH agent does not run directly from this repo. The deployed copy runs on the AMH-attached Windows machine and is manually updated from the source in agent/.
 
 ---
 
-## Setup
+## project structure
+
+    amh-analytics-dashboard/
+    ├─ agent/                  # Source-of-truth AMH agent code
+    ├─ alembic/                # Alembic migration files
+    ├─ src/                    # Main dashboard app code
+    ├─ super_admin/            # Super admin pages and auth
+    ├─ tests/                  # Automated tests
+    ├─ alembic.ini             # Alembic configuration
+    ├─ init_db.py              # Transitional DB bootstrap script
+    ├─ main.py                 # FastAPI backend for uploads and pipeline status
+    ├─ packages.txt            # System packages for deployment environment
+    ├─ requirements.txt        # Python dependencies
+    └─ README.md
+
+## key folders
+
+### agent
+
+Contains the source-of-truth code for the AMH pipeline agent.
+
+Main files:
+- run_pipeline.py
+- parse_checkins.py
+- parse_rejects.py
+- parse_acs.py
+- uploader.py
+- config.py
+- logger_config.py
+
+The deployed agent runs on the AMH-attached Windows machine, typically in:
+C:\SortViewAgent
+
+### src
+
+Contains the main dashboard code.
+
+Important areas include:
+- app.py
+- data_loader.py
+- metrics.py
+- alerts.py
+- transit_logic.py
+- reject_logic.py
+- views/
+- services/
+- pages/
+
+### main.py
+
+FastAPI backend entrypoint for:
+- /upload
+- /upload-pipeline-status
+
+### alembic and alembic.ini
+
+Database migration system for tracked Neon schema changes.
+
+### tests
+
+Automated tests for:
+- alerts
+- metrics
+- transit logic
+- parser logic
+
+---
+
+## architecture overview
+
+### AMH agent
+
+The AMH agent runs on the sorter-side Windows machine. It:
+- reads local Tech Logic and TLC logs
+- parses incremental checkins, rejects, and ACS events
+- uploads data to the backend API
+- writes local state and status files
+
+### backend API
+
+The backend API:
+- authenticates the agent
+- receives uploads
+- writes data into Neon
+- records pipeline status updates
+
+### dashboard
+
+The Streamlit dashboard:
+- reads data from Neon
+- shows live daily metrics
+- shows transit analytics
+- shows reject analysis
+- shows pipeline health and status
+- supports super admin features
+
+### database
+
+Neon is the system-of-record database.
+
+Schema changes are now managed with Alembic.
+
+---
+
+## setup
 
 Create and activate a virtual environment:
 
-```
-python -m venv .venv
-.venv\Scripts\activate
-```
+    python -m venv .venv
+    .venv\Scripts\activate
 
 Install dependencies:
 
-```
-pip install -r requirements.txt
-```
+    pip install -r requirements.txt
 
 ---
 
-## Running the Pipeline
+## running the dashboard
 
-Run the full pipeline:
-
-```
-python -m scripts.run_pipeline
-```
-
-This will:
-
-* parse raw checkins and rejects
-* save cleaned CSV files to `data/processed/`
-* generate `pipeline_status.json`
-* write logs to `logs/pipeline.log`
+    streamlit run src/app.py
 
 ---
 
-## Running Parsers Individually
+## running the backend API
 
-```
-python -m scripts.parse_checkins
-python -m scripts.parse_rejects
-```
+The backend entrypoint is:
 
----
+    python main.py
 
-## Running the Dashboard
-
-```
-streamlit run src/app.py
-```
+Actual deployment may use a process manager or platform-specific startup command depending on environment.
 
 ---
 
-## Running Tests
+## running the AMH agent locally
+
+The source-of-truth agent code lives in agent/.
+
+Run the full pipeline locally with:
+
+    python -m agent.run_pipeline
+
+Run parsers individually with:
+
+    python -m agent.parse_checkins
+    python -m agent.parse_rejects
+    python -m agent.parse_acs
+
+Note: the live production agent runs from the deployed copy on the AMH machine, not directly from this repo.
+
+---
+
+## database migrations
+
+SortView now uses Alembic for schema version tracking.
+
+Check current DB revision:
+
+    alembic current
+
+Create a new migration:
+
+    alembic revision -m "describe the schema change"
+
+Apply migrations:
+
+    alembic upgrade head
+
+The current live database has already been baselined in Alembic.
+
+---
+
+## tests
 
 Run all tests:
 
-```
-python -m pytest
-```
+    python -m pytest
 
 Run a specific test file:
 
-```
-python -m pytest tests/test_alerts.py
-```
+    python -m pytest tests/test_alerts.py
 
 ---
 
-## Logging
+## documentation
 
-Logs are written to:
-
-```
-logs/pipeline.log
-```
-
-Includes:
-
-* pipeline execution steps
-* row counts
-* data quality checks
-* destination and reject breakdowns
+Additional documentation should live in docs/, including:
+- docs/deployment.md
+- docs/database-migrations.md
+- docs/agent-deployment.md
 
 ---
 
-## Pipeline Output
+## operational notes
 
-Generated files:
-
-```
-data/processed/checkins_clean.csv
-data/processed/rejects_clean.csv
-data/processed/pipeline_status.json
-```
-
-`pipeline_status.json` includes:
-
-* last run timestamp
-* row counts
-* transit item counts
-* reject stats
-* destination breakdown
+- Do not run Alembic from the AMH machine
+- Do not manage database schema changes in request handlers
+- Do not rely on startup-time schema creation for production workflows
+- The AMH agent must be manually deployed to the sorter-side machine after validation
+- The repo copy in agent/ is the source-of-truth for the agent
 
 ---
 
-## Alerts System
+## status of the project
 
-The dashboard includes dynamic alerts with severity levels:
-
-* CRITICAL
-
-  * Data quality issues
-  * Reject spikes
-  * Missing routing (No Agency Destination)
-
-* WARNING
-
-  * Transit imbalance
-  * Westside elevated vs historical baseline
-  * Library Express below baseline
-
-* INFO
-
-  * No active system alerts
-
-Alerts are based on:
-
-* real-time metrics
-* historical baselines
-* system thresholds
+The project currently includes:
+- Neon-backed ingestion
+- FastAPI upload endpoints
+- Streamlit dashboard views
+- pipeline status tracking
+- Alembic migration baseline
+- agent retry and backoff behavior
+- database-first history model
 
 ---
 
-## Notes
+## transitional note on init_db.py
 
-* Do not commit `.venv/`, `logs/`, or large raw data files
-* Close CSV files before rerunning pipeline (Windows file lock issue)
-* Tests ensure stability of parsing and analytics logic
+init_db.py remains in the repo as a transitional bootstrap and reference script.
 
----
-
-## Future Improvements
-
-* Persist alert history
-* Add database (Neon / Supabase)
-* Optimize transit time calculations
-* Add automated scheduled runs (cron / VM)
-* Expand dashboard visualizations
+Future schema changes should be handled through Alembic migrations rather than expanding init_db.py.
 
 ---
+
+## next improvements
+
+Likely future improvements include:
+- additional indexed query optimization
+- persistent alert history
+- richer agent operational metadata
+- more formal deployment automation
+- additional reports and admin tooling
