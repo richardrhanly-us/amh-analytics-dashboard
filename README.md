@@ -1,8 +1,8 @@
 # SortView
 [![Launch SortView](https://img.shields.io/badge/Launch-SortView-FF4B4B?logo=streamlit&logoColor=white)](https://sortview.streamlit.app/)
 
-Username: guest
-Password: guest
+- Username: guest@gmail.com
+- Password: guest
 
 SortView is a multi-part system for ingesting, storing, and visualizing Automated Materials Handler activity for a library system.
 
