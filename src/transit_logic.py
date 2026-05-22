@@ -1,17 +1,51 @@
+#***************************************************************
+#
+#  Author:       Richard Hanly
+#
+#  File:         transit_logic.py
+#
+#  Description: Provides transit and internal routing logic for the
+#               SortView dashboard. This file normalizes transit
+#               destinations, identifies internal routing categories,
+#               summarizes transit activity, calculates transit times,
+#               compares transit and reject patterns, and builds
+#               diagnostic summaries for transit destinations.
+#
+#***************************************************************
+
 import re
 import pandas as pd
 
 
+#***************************************************************
+#
+#  Function:     normalize_transit_destination
+#
+#  Description: Converts raw destination values into standardized
+#               transit destination names used by the dashboard.
+#               Local, Main, blank, and invalid values are treated
+#               as non-transit destinations.
+#
+#  Parameters:  value - Raw destination value from checkin data.
+#
+#  Returns:     str - Normalized transit destination name, original
+#                     text, or an empty string for non-transit items.
+#
+#***************************************************************
+
 def normalize_transit_destination(value):
+    # Treat missing values as non-transit destinations.
     if pd.isna(value):
         return ""
 
     text = str(value).strip()
     upper_text = text.upper()
 
+    # Local/Main routing is not counted as transit activity.
     if not text or upper_text in {"1", "LOCAL", "MAIN"}:
         return ""
 
+    # Standardize known transit branch names.
     if "WESTSIDE" in upper_text:
         return "Westside"
 
@@ -21,25 +55,50 @@ def normalize_transit_destination(value):
     return text
 
 
+#***************************************************************
+#
+#  Function:     normalize_internal_destination
+#
+#  Description: Classifies non-public routing destinations into
+#               internal workflow categories such as ILL, Collection
+#               Services, Repair/Mending, Staff Review, or Other
+#               Internal. Public transit destinations and invalid
+#               routing values are ignored.
+#
+#  Parameters:  destination - Destination value from ACS or routing data.
+#               raw_message - Raw ACS message text.
+#               message_code - ACS message code.
+#
+#  Returns:     str | None - Internal routing category, or None if the
+#                            row should not be counted as internal routing.
+#
+#***************************************************************
+
 def normalize_internal_destination(destination, raw_message="", message_code=""):
+    # Normalize inputs so text checks do not fail on None values.
     destination = "" if destination is None else str(destination).strip()
     raw_message = "" if raw_message is None else str(raw_message)
     message_code = "" if message_code is None else str(message_code).strip()
 
     combined = f"{destination} {raw_message}".upper()
 
+    # Ignore rows that do not provide any destination or message text.
     if not destination and not raw_message:
         return None
 
+    # Ignore normal public transit destinations.
     if "WESTSIDE" in combined or "LIBRARY EXPRESS" in combined:
         return None
 
+    # Ignore missing or invalid agency destinations.
     if "NO AGENCY DESTINATION" in combined or destination == "":
         return None
 
+    # Identify interlibrary loan routing.
     if re.search(r"\bILL\b", combined) or "INTERLIBRARY" in combined:
         return "ILL"
 
+    # Identify collection services or processing-related routing.
     if (
         "COLLECTION SERVICES" in combined
         or "COLLECTION" in combined
@@ -48,17 +107,35 @@ def normalize_internal_destination(destination, raw_message="", message_code="")
     ):
         return "Collection Services"
 
+    # Identify repair or mending workflows.
     if "REPAIR" in combined or "MENDING" in combined or "MEND" in combined:
         return "Repair / Mending"
 
+    # Identify staff review workflows.
     if "STAFF" in combined or "REVIEW" in combined:
         return "Staff Review"
 
+    # Exclude message codes that should not be treated as internal routing.
     if message_code in {"09", "10", "11", "12", "13", "14", "15", "16", "17", "18"}:
         return None
 
     return "Other Internal"
 
+
+#***************************************************************
+#
+#  Function:     build_internal_routing_summary
+#
+#  Description: Builds a summary dataframe of internal routing
+#               categories from ACS event data. Each ACS row is
+#               classified with normalize_internal_destination, then
+#               grouped by category.
+#
+#  Parameters:  acs_df - ACS event dataframe.
+#
+#  Returns:     DataFrame - Internal routing category counts.
+#
+#***************************************************************
 
 def build_internal_routing_summary(acs_df):
     if acs_df is None or len(acs_df) == 0:
@@ -66,9 +143,11 @@ def build_internal_routing_summary(acs_df):
 
     work_df = acs_df.copy()
 
+    # Normalize datetime values when available.
     if "datetime" in work_df.columns:
         work_df["datetime"] = pd.to_datetime(work_df["datetime"], errors="coerce")
 
+    # Classify each row into an internal routing category.
     work_df["internal_category"] = work_df.apply(
         lambda row: normalize_internal_destination(
             row.get("destination"),
@@ -78,6 +157,7 @@ def build_internal_routing_summary(acs_df):
         axis=1,
     )
 
+    # Keep only rows that were classified as internal routing.
     work_df = work_df[work_df["internal_category"].notna()].copy()
 
     if len(work_df) == 0:
@@ -93,6 +173,20 @@ def build_internal_routing_summary(acs_df):
     return summary
 
 
+#***************************************************************
+#
+#  Function:     get_internal_count
+#
+#  Description: Retrieves the count for one internal routing category
+#               from an internal routing summary dataframe.
+#
+#  Parameters:  summary_df - Internal routing summary dataframe.
+#               category_name - Category name to look up.
+#
+#  Returns:     int - Count for the requested category, or 0 if missing.
+#
+#***************************************************************
+
 def get_internal_count(summary_df, category_name):
     if summary_df is None or len(summary_df) == 0:
         return 0
@@ -104,10 +198,25 @@ def get_internal_count(summary_df, category_name):
     return int(match.iloc[0])
 
 
+#***************************************************************
+#
+#  Function:     get_transit_summary
+#
+#  Description: Builds a destination-level summary of public transit
+#               activity for Westside and Library Express. The summary
+#               includes item counts and percent of total checkins.
+#
+#  Parameters:  df - Checkin dataframe containing transit_destination.
+#
+#  Returns:     DataFrame - Transit item counts and percentages.
+#
+#***************************************************************
+
 def get_transit_summary(df):
     if len(df) == 0:
         return pd.DataFrame(columns=["destination", "transit_items", "pct_of_total_items"])
 
+    # Keep only destinations counted as public transit branches.
     transit_df = df[df["transit_destination"].isin(["Westside", "Library Express"])].copy()
 
     if len(transit_df) == 0:
@@ -123,6 +232,22 @@ def get_transit_summary(df):
     return summary
 
 
+#***************************************************************
+#
+#  Function:     compute_transit_times
+#
+#  Description: Estimates transit timing by comparing repeated scans
+#               for the same barcode. When an item has a later scan
+#               with a transit destination, the elapsed time from the
+#               previous scan is recorded in minutes.
+#
+#  Parameters:  df - Checkin dataframe containing barcode, datetime,
+#                    and transit_destination columns.
+#
+#  Returns:     DataFrame - Destination-level transit time observations.
+#
+#***************************************************************
+
 def compute_transit_times(df):
     if "barcode" not in df.columns or len(df) == 0:
         return pd.DataFrame()
@@ -132,6 +257,7 @@ def compute_transit_times(df):
 
     grouped = work_df.groupby("barcode")
 
+    # Review each barcode's scan history in chronological order.
     for _, group in grouped:
         group = group.sort_values("datetime")
         last_time = None
@@ -140,9 +266,12 @@ def compute_transit_times(df):
             current_time = row["datetime"]
             current_dest = row.get("transit_destination")
 
+            # Record a transit time only when there is a previous scan and
+            # the current row has a transit destination.
             if last_time is not None and current_dest:
                 delta_minutes = (current_time - last_time).total_seconds() / 60
 
+                # Ignore impossible or extreme values over one day.
                 if 0 < delta_minutes < 1440:
                     results.append({
                         "destination": current_dest,
@@ -156,6 +285,20 @@ def compute_transit_times(df):
 
     return pd.DataFrame(results)
 
+
+#***************************************************************
+#
+#  Function:     get_transit_time_summary
+#
+#  Description: Calculates average transit time by destination using
+#               the transit time observations created by
+#               compute_transit_times.
+#
+#  Parameters:  df - Checkin dataframe.
+#
+#  Returns:     DataFrame - Destination and average transit time in minutes.
+#
+#***************************************************************
 
 def get_transit_time_summary(df):
     transit_times_df = compute_transit_times(df)
@@ -171,6 +314,21 @@ def get_transit_time_summary(df):
     summary_df["avg_minutes"] = summary_df["transit_time_min"].round(1)
     return summary_df[["destination", "avg_minutes"]]
 
+
+#***************************************************************
+#
+#  Function:     get_peak_transit_day_summary
+#
+#  Description: Determines which weekday has the highest average
+#               transit volume and builds a short summary label and
+#               subtitle for dashboard display.
+#
+#  Parameters:  transit_df - Dataframe containing transit rows.
+#               weekday_order - Ordered list of weekdays for display.
+#
+#  Returns:     dict - Peak transit day label and subtitle text.
+#
+#***************************************************************
 
 def get_peak_transit_day_summary(transit_df, weekday_order):
     if len(transit_df) == 0:
@@ -204,10 +362,28 @@ def get_peak_transit_day_summary(transit_df, weekday_order):
     }
 
 
+#***************************************************************
+#
+#  Function:     get_transit_weekday_comparison
+#
+#  Description: Compares average transit volume and average reject
+#               rate by weekday. This helps determine whether heavier
+#               transit days also show higher reject rates.
+#
+#  Parameters:  df - Checkin dataframe containing date and transit data.
+#               rejects_df - Reject dataframe containing date values.
+#               weekday_order - Ordered list of weekdays for display.
+#
+#  Returns:     DataFrame - Weekday comparison of transit load and
+#                           reject rate.
+#
+#***************************************************************
+
 def get_transit_weekday_comparison(df, rejects_df, weekday_order):
     if len(df) == 0:
         return pd.DataFrame()
 
+    # Build daily checkin and reject counts for reject-rate comparison.
     checkins_daily_for_corr = df.groupby("date").size().rename("checkins")
     rejects_daily_for_corr = rejects_df.groupby("date").size().rename("rejects")
 
@@ -220,6 +396,7 @@ def get_transit_weekday_comparison(df, rejects_df, weekday_order):
     daily_ops["day_of_week"] = pd.to_datetime(daily_ops["date"]).dt.day_name()
     daily_ops["reject_rate"] = (daily_ops["rejects"] / daily_ops["checkins"]) * 100
 
+    # Build daily transit counts for public transit destinations.
     transit_daily_counts = (
         df[df["transit_destination"].isin(["Westside", "Library Express"])]
         .groupby("date")
@@ -248,6 +425,22 @@ def get_transit_weekday_comparison(df, rejects_df, weekday_order):
     }).dropna(how="all")
 
 
+#***************************************************************
+#
+#  Function:     get_destination_weekday_mix
+#
+#  Description: Calculates average transit volume by weekday and
+#               destination. This supports charts that show whether
+#               certain transit destinations are busier on specific
+#               days of the week.
+#
+#  Parameters:  transit_df - Dataframe containing transit rows.
+#               weekday_order - Ordered list of weekdays for display.
+#
+#  Returns:     DataFrame - Weekday-by-destination transit averages.
+#
+#***************************************************************
+
 def get_destination_weekday_mix(transit_df, weekday_order):
     if len(transit_df) == 0:
         return pd.DataFrame()
@@ -272,6 +465,26 @@ def get_destination_weekday_mix(transit_df, weekday_order):
     return destination_weekday_mix
 
 
+#***************************************************************
+#
+#  Function:     get_destination_reject_summary
+#
+#  Description: Builds a destination-level reject diagnostic summary
+#               for public transit destinations. This links reject
+#               records back to the most recent checkin destination
+#               for the same barcode, then calculates reject counts,
+#               reject rates, top reject reasons, and top reason
+#               percentages by destination.
+#
+#  Parameters:  df - Checkin dataframe.
+#               rejects_df - Reject dataframe.
+#               transit_summary - Transit summary dataframe.
+#               valid_transit_destinations - List of destinations to include.
+#
+#  Returns:     DataFrame - Transit destination reject diagnostics.
+#
+#***************************************************************
+
 def get_destination_reject_summary(df, rejects_df, transit_summary, valid_transit_destinations):
     if len(df) == 0 or len(transit_summary) == 0:
         return pd.DataFrame()
@@ -281,6 +494,8 @@ def get_destination_reject_summary(df, rejects_df, transit_summary, valid_transi
 
     summary = transit_summary.copy()
 
+    # If reject data is unavailable, return the transit summary with
+    # zeroed reject diagnostic fields.
     if len(rejects_df) == 0 or "barcode" not in rejects_df.columns:
         summary["reject_count"] = 0
         summary["reject_rate_pct"] = 0.0
@@ -289,12 +504,14 @@ def get_destination_reject_summary(df, rejects_df, transit_summary, valid_transi
         summary["top_reason_pct_of_destination_rejects"] = 0.0
         return summary
 
+    # Map each barcode to its most recent known transit destination.
     barcode_map = (
         df.sort_values("datetime")
         .drop_duplicates(subset=["barcode"], keep="last")
         [["barcode", "destination", "transit_destination"]]
     )
 
+    # Attach the most recent destination information to reject records.
     rejects_with_destination = rejects_df.merge(
         barcode_map,
         on="barcode",
@@ -316,6 +533,7 @@ def get_destination_reject_summary(df, rejects_df, transit_summary, valid_transi
     if "error_simple" not in transit_rejects.columns:
         transit_rejects["error_simple"] = "Unknown"
 
+    # Count transit-linked rejects by destination.
     destination_reject_counts = (
         transit_rejects["transit_destination"]
         .value_counts()
@@ -323,6 +541,7 @@ def get_destination_reject_summary(df, rejects_df, transit_summary, valid_transi
         .reset_index(name="reject_count")
     )
 
+    # Identify the most common reject reason for each transit destination.
     destination_top_issue_count = (
         transit_rejects.groupby(["transit_destination", "error_simple"])
         .size()
@@ -364,6 +583,24 @@ def get_destination_reject_summary(df, rejects_df, transit_summary, valid_transi
     return destination_reject_summary
 
 
+#***************************************************************
+#
+#  Function:     get_transit_reject_insight
+#
+#  Description: Builds a short dashboard insight comparing weekday
+#               transit volume and reject-rate patterns. The function
+#               identifies whether the highest transit day and highest
+#               reject-rate day match or whether the relationship is
+#               weak.
+#
+#  Parameters:  transit_weekday_comparison - Dataframe containing
+#                                            average transit items and
+#                                            reject rates by weekday.
+#
+#  Returns:     dict - Insight title, text, and display color.
+#
+#***************************************************************
+
 def get_transit_reject_insight(transit_weekday_comparison):
     title = "Transit / Reject Pattern"
     text = "Not enough data to compare transit load and reject patterns yet."
@@ -388,6 +625,7 @@ def get_transit_reject_insight(transit_weekday_comparison):
             transit_weekday_comparison["Avg Reject Rate %"]
         )
 
+    # Strongest signal: transit volume and reject rate peak on the same day.
     if transit_peak_day == reject_peak_day:
         title = "Strong Correlation"
         text = (
@@ -397,6 +635,7 @@ def get_transit_reject_insight(transit_weekday_comparison):
         )
         color = "#b91c1c"
 
+    # Moderate signal: transit and reject patterns trend together.
     elif correlation is not None and correlation > 0.5:
         title = "Moderate Correlation"
         text = (
@@ -405,6 +644,7 @@ def get_transit_reject_insight(transit_weekday_comparison):
         )
         color = "#d97706"
 
+    # Weak signal: peak transit and reject patterns do not align.
     else:
         title = "No Clear Relationship"
         text = (
@@ -422,6 +662,21 @@ def get_transit_reject_insight(transit_weekday_comparison):
     }
 
 
+#***************************************************************
+#
+#  Function:     get_destination_driver_summary
+#
+#  Description: Builds a short diagnostic summary explaining whether
+#               the destination with the highest transit volume is also
+#               the destination driving the most transit-linked rejects.
+#
+#  Parameters:  destination_reject_summary - Destination-level transit
+#                                            and reject diagnostic dataframe.
+#
+#  Returns:     dict - Summary text and display color.
+#
+#***************************************************************
+
 def get_destination_driver_summary(destination_reject_summary):
     text = "No transit destination diagnostics available for the selected date range."
     color = "#6b7280"
@@ -435,6 +690,7 @@ def get_destination_driver_summary(destination_reject_summary):
     top_volume_row = destination_reject_summary.sort_values("transit_items", ascending=False).iloc[0]
     top_reject_row = destination_reject_summary.sort_values("reject_count", ascending=False).iloc[0]
 
+    # Good outcome: transit volume exists, but no linked rejects were found.
     if top_reject_row["reject_count"] == 0:
         text = (
             f"{top_volume_row['destination']} drives most transit volume "
@@ -443,6 +699,7 @@ def get_destination_driver_summary(destination_reject_summary):
         )
         color = "#059669"
 
+    # Warning outcome: the same destination has the most volume and rejects.
     elif top_volume_row["destination"] == top_reject_row["destination"]:
         text = (
             f"{top_volume_row['destination']} leads both transit volume and transit-linked rejects: "
@@ -452,6 +709,7 @@ def get_destination_driver_summary(destination_reject_summary):
         )
         color = "#b91c1c"
 
+    # Mixed outcome: one destination drives volume, another drives rejects.
     else:
         text = (
             f"{top_volume_row['destination']} has the most transit volume "
