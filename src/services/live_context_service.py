@@ -1,3 +1,16 @@
+#***************************************************************
+#
+#  Author:       Richard Hanly
+#
+#  File:         live_context_service.py
+#
+#  Description: Builds the live dashboard context for the SortView
+#               dashboard. This file prepares today's checkin, reject,
+#               transit, ACS, alert, and live-performance values used
+#               by the Live Today view.
+#
+#***************************************************************
+
 from datetime import datetime
 
 import pandas as pd
@@ -9,6 +22,41 @@ from metrics import (
     build_acs_item_summary,
 )
 
+
+#***************************************************************
+#
+#  Function:     build_live_context
+#
+#  Description: Builds the data context used by the Live Today dashboard
+#               view. This includes today's checkin and reject metrics,
+#               current processing speed, historical baselines, transit
+#               percentages, ACS hold and internal workflow summaries,
+#               live alert details, and theme-aware alert colors.
+#
+#  Parameters:  df_live_raw - Live checkin dataframe.
+#               df_history_raw - Historical checkin dataframe.
+#               rejects_live_raw - Live rejects dataframe.
+#               rejects_history_raw - Historical rejects dataframe.
+#               acs_live_raw - Live ACS dataframe.
+#               pipeline_status - Latest pipeline status dictionary.
+#               refresh_count - Streamlit auto-refresh counter.
+#               today - Current local date.
+#               now_ct - Current datetime in Central Time.
+#               transit_labels - List of configured transit destination labels.
+#               transit_home_label - Display label used for home/local routing.
+#               branch_services_names - Configured branch services names.
+#               collection_services_names - Configured collection services names.
+#               branch_services_da_patterns - Configured branch services
+#                                             destination patterns.
+#               collection_services_da_patterns - Configured collection
+#                                                 services destination patterns.
+#               theme_palette - Dictionary of theme-aware alert colors.
+#
+#  Returns:     dict - Live dashboard context containing no-today-data
+#                      status, Live Today view arguments, today's dataframes,
+#                      and transit percentage maps.
+#
+#***************************************************************
 
 def build_live_context(
     df_live_raw,
@@ -28,13 +76,16 @@ def build_live_context(
     collection_services_da_patterns,
     theme_palette,
 ):
+    # Build today's base metrics from live checkin and reject data.
     today_metrics = get_today_metrics(df_live_raw, rejects_live_raw, today)
     no_today_data = len(today_metrics["today_df"]) == 0
 
+    # Prepare current-speed defaults.
     current_speed = 0
     current_speed_fill_pct = 0
     max_observed_hourly_throughput = 1
 
+    # Calculate the current processing speed from the latest activity hour in today's data.
     if len(today_metrics["today_df"]) > 0 and "datetime" in today_metrics["today_df"].columns:
         today_df_for_speed = today_metrics["today_df"].copy()
         today_df_for_speed["datetime"] = pd.to_datetime(today_df_for_speed["datetime"], errors="coerce")
@@ -44,6 +95,7 @@ def build_live_context(
             latest_activity_hour = today_df_for_speed["datetime"].max().hour
             current_speed = int((today_df_for_speed["datetime"].dt.hour == latest_activity_hour).sum())
 
+    # Calculate the highest observed hourly throughput from historical data.
     if len(df_history_raw) > 0 and "datetime" in df_history_raw.columns:
         hourly_baseline_df = df_history_raw.copy()
         hourly_baseline_df["datetime"] = pd.to_datetime(hourly_baseline_df["datetime"], errors="coerce")
@@ -62,13 +114,16 @@ def build_live_context(
             if len(hourly_counts) > 0:
                 max_observed_hourly_throughput = int(hourly_counts["checkins"].max())
 
+    # Keep the baseline above zero so fill percentage calculations are safe.
     max_observed_hourly_throughput = max(max_observed_hourly_throughput, 1)
     current_speed_fill_pct = current_speed / max_observed_hourly_throughput
 
+    # Add current-speed values back into the today metrics dictionary.
     today_metrics["current_speed"] = current_speed
     today_metrics["current_speed_fill_pct"] = current_speed_fill_pct
     today_metrics["max_observed_hourly_throughput"] = max_observed_hourly_throughput
 
+    # Pull individual today metrics into local variables for readability.
     today_df = today_metrics["today_df"]
     today_rejects_df = today_metrics["today_rejects_df"]
     today_checkins = today_metrics["today_checkins"]
@@ -79,6 +134,7 @@ def build_live_context(
     today_peak_hour_pct = today_metrics["today_peak_hour_pct"]
     today_reject_rate = today_metrics["today_reject_rate"]
 
+    # Build historical transit percentages using data before today.
     historical_checkins_df = df_history_raw[df_history_raw["datetime"].dt.date < today].copy()
     historical_transit_pct_map = {}
 
@@ -98,6 +154,7 @@ def build_live_context(
                 / len(historical_checkins_df)
             ) * 100
 
+    # Count today's transit activity for each configured transit destination.
     today_transit_counts_map = {}
     for transit_label in transit_labels:
         transit_count = int(
@@ -105,21 +162,25 @@ def build_live_context(
         ) if len(today_df) > 0 else 0
         today_transit_counts_map[transit_label] = transit_count
 
+    # Convert today's transit counts into percentages of today's checkins.
     today_transit_pct_map = {
         transit_label: ((count / today_checkins) * 100 if today_checkins > 0 else 0)
         for transit_label, count in today_transit_counts_map.items()
     }
 
+    # Build hourly checkin counts for the live chart.
     if "datetime" in today_df.columns:
         today_hourly_checkins = today_df["datetime"].dt.hour.value_counts().sort_index()
     else:
         today_hourly_checkins = pd.Series(dtype=int)
 
+    # Build hourly reject counts for live comparison.
     if "datetime" in today_rejects_df.columns:
         today_hourly_rejects = today_rejects_df["datetime"].dt.hour.value_counts().sort_index()
     else:
         today_hourly_rejects = pd.Series(dtype=int)
 
+    # Prepare live ACS data for today's hold and internal workflow summary.
     today_acs_df = acs_live_raw.copy()
 
     if len(today_acs_df) > 0 and "datetime" in today_acs_df.columns:
@@ -132,6 +193,7 @@ def build_live_context(
     if "raw_message" in today_acs_df.columns:
         today_acs_df["raw_message"] = today_acs_df["raw_message"].fillna("").astype(str).str.strip()
 
+    # For item message rows, keep only the latest row per barcode while preserving non-item rows.
     if (
         "barcode" in today_acs_df.columns
         and "datetime" in today_acs_df.columns
@@ -151,6 +213,7 @@ def build_live_context(
     print("DEBUG collection_services_da_patterns =", collection_services_da_patterns)
     print("DEBUG branch_services_da_patterns =", branch_services_da_patterns)
     
+    # Build today's ACS item summary for holds, ILL, programming, and collection services.
     acs_summary_today = build_acs_item_summary(
         today_acs_df,
         transit_labels=transit_labels,
@@ -160,6 +223,7 @@ def build_live_context(
         collection_services_da_patterns=collection_services_da_patterns,
     )
 
+    # Pull ACS summary values into local variables for the Live Today view.
     today_holds = acs_summary_today["holds_total"]
     today_ill = acs_summary_today["ill_total"]
     today_ill_main = acs_summary_today["ill_main"]
@@ -171,9 +235,11 @@ def build_live_context(
     today_collection_services_df = acs_summary_today["collection_services_df"]
     today_public_holds_df = acs_summary_today["holds_df"]
 
+    # Build the historical reject baseline used to judge today's reject rate.
     historical_baseline = get_historical_reject_baseline(df_history_raw, rejects_history_raw, today)
     historical_daily_avg_reject = historical_baseline.get("historical_daily_avg_reject")
 
+    # Recalculate the reject baseline if the helper returns no usable average.
     if historical_daily_avg_reject is None or historical_daily_avg_reject == 0:
         historical_df = df_history_raw[df_history_raw["datetime"].dt.date < today]
 
@@ -198,14 +264,17 @@ def build_live_context(
         else:
             historical_daily_avg_reject = 0
 
+    # Compare today's reject rate against the historical baseline.
     live_reject_deviation = today_reject_rate - historical_daily_avg_reject
 
+    # Set default live reject display values.
     live_reject_subtitle_color = "#6b7280"
     live_reject_value_color = "#1f2937"
     live_alert_title = ""
     live_alert_text = ""
     show_live_alert = False
 
+    # Choose alert styling and message text based on today's reject rate.
     if today_reject_rate >= 10:
         live_reject_value_color = "#d97706"
         live_reject_subtitle_color = "#d97706"
@@ -233,9 +302,11 @@ def build_live_context(
         live_reject_value_color = "#059669"
         live_reject_subtitle_color = "#059669"
 
+    # Select the first two configured transit labels for trend alert comparisons.
     default_alert_branch_1 = transit_labels[0] if len(transit_labels) > 0 else None
     default_alert_branch_2 = transit_labels[1] if len(transit_labels) > 1 else None
 
+    # Build system alerts from pipeline status, reject activity, and transit trends.
     alerts = get_system_alerts(
         pipeline_status=pipeline_status,
         show_live_alert=show_live_alert,
@@ -245,10 +316,12 @@ def build_live_context(
         historical_library_express_pct=historical_transit_pct_map.get(default_alert_branch_2),
     )
 
+    # Keep informational and trend alerts for display in the Live Today view.
     info_alerts = []
     if alerts:
         info_alerts = [a for a in alerts if a["level"].lower() in ["info", "trend"]]
 
+    # Build the visible live-hour range for same-day charts.
     start_hour = 7
     end_hour = 20
     current_hour = now_ct.hour
@@ -257,6 +330,7 @@ def build_live_context(
     else:
         live_hour_range = list(range(start_hour, min(current_hour, end_hour) + 1))
 
+    # Package all values needed by the Live Today view.
     live_today_args = {
         "today": today,
         "refresh_count": refresh_count,
