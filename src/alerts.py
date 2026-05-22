@@ -2,7 +2,7 @@
 #
 #  Author:       Richard Hanly
 #
-#  File:         system_alerts.py
+#  File:         alerts.py
 #
 #  Description: Contains alert-building logic for the SortView
 #               dashboard. This file evaluates pipeline status,
