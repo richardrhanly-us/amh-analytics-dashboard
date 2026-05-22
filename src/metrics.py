@@ -2,7 +2,7 @@
 #
 #  Author:       Richard Hanly
 #
-#  File:         metrics_service.py
+#  File:         metrics.py
 #
 #  Description: Provides shared metric-building utilities for the
 #               SortView dashboard. This file filters dashboard data
