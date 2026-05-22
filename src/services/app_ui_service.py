@@ -1,7 +1,37 @@
+#***************************************************************
+#
+#  Author:       Richard Hanly
+#
+#  File:         app_ui_service.py
+#
+#  Description: Provides shared Streamlit page styling and header
+#               rendering for the SortView dashboard. This file hides
+#               Streamlit's default sidebar navigation, applies custom
+#               SortView branding styles, and renders the main dashboard
+#               header with optional admin navigation.
+#
+#***************************************************************
+
 import streamlit as st
 
 
+#***************************************************************
+#
+#  Function:     apply_page_chrome
+#
+#  Description: Applies custom page-level styling for the SortView
+#               dashboard. This hides Streamlit's default sidebar
+#               navigation and adds custom CSS for the SortView title
+#               and download buttons.
+#
+#  Parameters:  None
+#
+#  Returns:     None
+#
+#***************************************************************
+
 def apply_page_chrome():
+    # Hide Streamlit's default sidebar page navigation.
     st.markdown("""
     <style>
         [data-testid="stSidebarNav"] {
@@ -10,6 +40,7 @@ def apply_page_chrome():
     </style>
     """, unsafe_allow_html=True)
 
+    # Apply SortView branding styles and custom download button styling.
     st.markdown("""
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&display=swap" rel="stylesheet">
 
@@ -46,9 +77,30 @@ def apply_page_chrome():
     """, unsafe_allow_html=True)
 
 
+#***************************************************************
+#
+#  Function:     render_app_header
+#
+#  Description: Renders the main SortView dashboard header. The header
+#               includes the Hanly Analytics caption, SortView title,
+#               selected library/branch/system details, and an optional
+#               admin settings button.
+#
+#  Parameters:  library_name - Display name of the selected library.
+#               branch_name - Display name of the selected branch.
+#               system_name - Display name of the AMH or library system.
+#               show_admin_button - Boolean flag that controls whether
+#                                   the admin settings button is shown.
+#
+#  Returns:     None
+#
+#***************************************************************
+
 def render_app_header(library_name, branch_name, system_name, show_admin_button=True):
+    # Split the header into a large branding area and a small admin button area.
     header_left, header_right = st.columns([12, 1])
 
+    # Render the main title and selected system information.
     with header_left:
         st.caption("Hanly Analytics")
         st.markdown('<div class="sortview-title">SORTVIEW</div>', unsafe_allow_html=True)
@@ -59,6 +111,7 @@ def render_app_header(library_name, branch_name, system_name, show_admin_button=
             unsafe_allow_html=True
         )
 
+    # Render the admin settings shortcut when the current user has access.
     with header_right:
         if show_admin_button:
             if st.button("⚙️", help="Admin Settings"):
