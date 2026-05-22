@@ -1,3 +1,18 @@
+#***************************************************************
+#
+#  Author:       Richard Hanly
+#
+#  File:         dashboard_context.py
+#
+#  Description: Builds the shared dashboard context for the SortView
+#               Streamlit application. This file prepares copies of
+#               raw AMH data, applies reject error simplification,
+#               builds pipeline, filtered, and live context objects,
+#               and packages the arguments needed by each dashboard
+#               view.
+#
+#***************************************************************
+
 from reject_logic import simplify_error
 
 from services.pipeline_context_service import build_pipeline_context
@@ -5,6 +20,46 @@ from services.filter_context_service import build_filtered_context
 from services.live_context_service import build_live_context
 from services.theme_service import get_theme_palette
 
+
+#***************************************************************
+#
+#  Function:     build_dashboard_context
+#
+#  Description: Creates the combined context object used by the main
+#               SortView dashboard views. This function prepares safe
+#               copies of the raw dataframes, simplifies reject error
+#               messages, builds supporting context dictionaries, and
+#               organizes the final argument sets for the Live Today,
+#               Overview, Reports, and Transits pages.
+#
+#  Parameters:  df_live_raw - Live checkin dataframe.
+#               df_history_raw - Historical checkin dataframe.
+#               rejects_live_raw - Live rejects dataframe.
+#               rejects_history_raw - Historical rejects dataframe.
+#               acs_live_raw - Live ACS dataframe.
+#               acs_history_raw - Historical ACS dataframe.
+#               pipeline_status - Latest pipeline status details.
+#               refresh_count - Streamlit auto-refresh counter.
+#               start_date - Start date for the active report range.
+#               end_date - End date for the active report range.
+#               today - Current local date.
+#               now_ct - Current datetime in Central Time.
+#               app_tz - Application timezone.
+#               transit_labels - List of transit routing labels.
+#               transit_home_label - Label used for home branch routing.
+#               branch_services_names - Branch services destination names.
+#               collection_services_names - Collection services destination names.
+#               branch_services_da_patterns - Branch services destination patterns.
+#               collection_services_da_patterns - Collection services destination patterns.
+#               library_name - Display name for the library.
+#               branch_name - Display name for the selected branch.
+#               system_name - Display name for the library system.
+#               theme_base - Active Streamlit theme base.
+#
+#  Returns:     dict - Dashboard context containing no-today-data status
+#                      and argument dictionaries for each dashboard view.
+#
+#***************************************************************
 
 def build_dashboard_context(
     df_live_raw,
@@ -31,6 +86,8 @@ def build_dashboard_context(
     system_name,
     theme_base,
 ):
+    # Create local dataframe copies so this function can safely modify
+    # values without changing the original dataframes passed into it.
     df_live_raw = df_live_raw.copy()
     df_history_raw = df_history_raw.copy()
     rejects_live_raw = rejects_live_raw.copy()
@@ -38,13 +95,17 @@ def build_dashboard_context(
     acs_live_raw = acs_live_raw.copy()
     acs_history_raw = acs_history_raw.copy()
 
+    # Add simplified reject error labels when reject error messages are available.
+    # These simplified labels make the dashboard easier to read and summarize.
     if "error_message" in rejects_live_raw.columns:
         rejects_live_raw["error_simple"] = rejects_live_raw["error_message"].apply(simplify_error)
     if "error_message" in rejects_history_raw.columns:
         rejects_history_raw["error_simple"] = rejects_history_raw["error_message"].apply(simplify_error)
 
+    # Load the theme palette so downstream views can use consistent colors.
     theme_palette = get_theme_palette(theme_base)
 
+    # Build context related to pipeline health, freshness, and status display.
     pipeline_ctx = build_pipeline_context(
         pipeline_status=pipeline_status,
         df_live_raw=df_live_raw,
@@ -53,6 +114,7 @@ def build_dashboard_context(
         theme_base=theme_base,
     )
 
+    # Build filtered historical context for date-based reporting views.
     filtered_ctx = build_filtered_context(
         df_history_raw=df_history_raw,
         rejects_history_raw=rejects_history_raw,
@@ -62,6 +124,8 @@ def build_dashboard_context(
         transit_home_label=transit_home_label,
     )
 
+    # Build live dashboard context for today's activity, live rejects,
+    # routing summaries, and operational workflow indicators.
     live_ctx = build_live_context(
         df_live_raw=df_live_raw,
         df_history_raw=df_history_raw,
@@ -81,11 +145,15 @@ def build_dashboard_context(
         theme_palette=theme_palette,
     )
 
+    # Combine pipeline context and live context into the argument dictionary
+    # needed by the Live Today dashboard view.
     live_today_args = {
         **pipeline_ctx,
         **live_ctx["live_today_args"],
     }
 
+    # Build the argument dictionary used by the Overview page.
+    # This page focuses on filtered historical activity and summary metrics.
     overview_args = {
         "df": filtered_ctx["df"],
         "rejects_df": filtered_ctx["rejects_df"],
@@ -106,6 +174,9 @@ def build_dashboard_context(
         "overview_transit_pct_map": filtered_ctx["overview_transit_pct_map"],
     }
 
+    # Build the argument dictionary used by the Reports page.
+    # This includes filtered data, raw history, date range details,
+    # summary metrics, and display names for report output.
     reports_args = {
         "df": filtered_ctx["df"],
         "df_history_raw": df_history_raw,
@@ -122,6 +193,9 @@ def build_dashboard_context(
         "SYSTEM_NAME": system_name,
     }
 
+    # Build the argument dictionary used by the Transits page.
+    # This page compares transit activity across the selected date range
+    # and the current day.
     transits_args = {
         "df": filtered_ctx["df"],
         "rejects_df": filtered_ctx["rejects_df"],
@@ -133,6 +207,7 @@ def build_dashboard_context(
         "end_date": end_date,
     }
 
+    # Return the complete dashboard context consumed by app.py.
     return {
         "no_today_data": live_ctx["no_today_data"],
         "live_today_args": live_today_args,
