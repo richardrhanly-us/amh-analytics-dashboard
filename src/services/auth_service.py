@@ -1,3 +1,16 @@
+#***************************************************************
+#
+#  Author:       Richard Hanly
+#
+#  File:         auth_service.py
+#
+#  Description: Provides authentication and user account helpers for
+#               the SortView dashboard. This file handles login
+#               auditing, user lookup, failed-login tracking, account
+#               lockouts, password changes, and user creation.
+#
+#***************************************************************
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -8,9 +21,38 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from database import get_engine
 
+
+#***************************************************************
+# Authentication Settings
+#
+# Defines the failed-login threshold and temporary account lockout
+# window used during authentication.
+#***************************************************************
+
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_MINUTES = 1
 
+
+#***************************************************************
+#
+#  Function:     log_auth_event
+#
+#  Description: Writes an authentication-related event to the audit
+#               log. This is used to track successful logins, failed
+#               logins, lockouts, password changes, and user creation
+#               events.
+#
+#  Parameters:  event_type - Type of authentication event being logged.
+#               is_success - Boolean flag indicating whether the event
+#                            was successful.
+#               user_id - Optional user ID connected to the event.
+#               email - Optional email address connected to the event.
+#               message - Optional human-readable event message.
+#               metadata - Optional dictionary with extra event details.
+#
+#  Returns:     None
+#
+#***************************************************************
 
 def log_auth_event(
     event_type: str,
@@ -20,6 +62,7 @@ def log_auth_event(
     message: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> None:
+    # Build the insert statement for the authentication audit log.
     sql = text("""
         INSERT INTO auth_audit_log (
             user_id,
@@ -39,6 +82,7 @@ def log_auth_event(
         )
     """)
 
+    # Normalize the email address and store metadata as JSON text.
     engine = get_engine()
     with engine.begin() as conn:
         conn.execute(
@@ -54,7 +98,23 @@ def log_auth_event(
         )
 
 
+#***************************************************************
+#
+#  Function:     get_user_by_email
+#
+#  Description: Retrieves a user account by email address. The lookup
+#               is case-insensitive and returns account status,
+#               password, lockout, and login tracking fields.
+#
+#  Parameters:  email - Email address to search for.
+#
+#  Returns:     dict[str, Any] | None - User record if found;
+#                                      otherwise None.
+#
+#***************************************************************
+
 def get_user_by_email(email: str) -> dict[str, Any] | None:
+    # Build the user lookup query using a case-insensitive email match.
     sql = text("""
         SELECT
             id,
@@ -73,13 +133,30 @@ def get_user_by_email(email: str) -> dict[str, Any] | None:
         LIMIT 1
     """)
 
+    # Execute the lookup and return the first matching user as a dictionary.
     engine = get_engine()
     with engine.connect() as conn:
         row = conn.execute(sql, {"email": email.strip()}).mappings().first()
         return dict(row) if row else None
 
 
+#***************************************************************
+#
+#  Function:     get_user_by_id
+#
+#  Description: Retrieves a user account by internal user ID. The
+#               returned record includes account status, password,
+#               lockout, and login tracking fields.
+#
+#  Parameters:  user_id - Internal user ID to search for.
+#
+#  Returns:     dict[str, Any] | None - User record if found;
+#                                      otherwise None.
+#
+#***************************************************************
+
 def get_user_by_id(user_id: int) -> dict[str, Any] | None:
+    # Build the user lookup query using the internal user ID.
     sql = text("""
         SELECT
             id,
@@ -98,13 +175,30 @@ def get_user_by_id(user_id: int) -> dict[str, Any] | None:
         LIMIT 1
     """)
 
+    # Execute the lookup and return the first matching user as a dictionary.
     engine = get_engine()
     with engine.connect() as conn:
         row = conn.execute(sql, {"user_id": user_id}).mappings().first()
         return dict(row) if row else None
 
 
+#***************************************************************
+#
+#  Function:     record_failed_login
+#
+#  Description: Records a failed login attempt for a user. The function
+#               increments the failed-login count, stores the latest
+#               failed-login timestamp, and applies a temporary lockout
+#               when the failed-attempt limit is reached.
+#
+#  Parameters:  user_id - Internal user ID for the failed login.
+#
+#  Returns:     None
+#
+#***************************************************************
+
 def record_failed_login(user_id: int) -> None:
+    # Update failed-login counters and apply lockout when the limit is reached.
     sql = text(f"""
         UPDATE app_users
         SET
@@ -123,7 +217,22 @@ def record_failed_login(user_id: int) -> None:
         conn.execute(sql, {"user_id": user_id})
 
 
+#***************************************************************
+#
+#  Function:     record_successful_login
+#
+#  Description: Records a successful login for a user. The function
+#               clears failed-login tracking, removes any lockout, and
+#               updates the last-login timestamp.
+#
+#  Parameters:  user_id - Internal user ID for the successful login.
+#
+#  Returns:     None
+#
+#***************************************************************
+
 def record_successful_login(user_id: int) -> None:
+    # Clear lockout state and update the successful login timestamp.
     sql = text("""
         UPDATE app_users
         SET
@@ -138,23 +247,61 @@ def record_successful_login(user_id: int) -> None:
         conn.execute(sql, {"user_id": user_id})
 
 
+#***************************************************************
+#
+#  Function:     _minutes_remaining
+#
+#  Description: Calculates the number of whole minutes remaining in
+#               an account lockout period. Naive datetime values are
+#               treated as UTC before comparison.
+#
+#  Parameters:  locked_until - Datetime value indicating when the
+#                              lockout expires.
+#
+#  Returns:     int - Minutes remaining in the lockout period.
+#
+#***************************************************************
+
 def _minutes_remaining(locked_until) -> int:
     if locked_until is None:
         return 0
 
+    # Treat timezone-naive lockout values as UTC.
     if locked_until.tzinfo is None:
         locked_until = locked_until.replace(tzinfo=timezone.utc)
 
+    # Round remaining seconds up to the next full minute.
     delta = locked_until - datetime.now(timezone.utc)
     seconds = max(0, int(delta.total_seconds()))
     minutes = max(1, (seconds + 59) // 60)
     return minutes
 
 
+#***************************************************************
+#
+#  Function:     authenticate_user
+#
+#  Description: Authenticates a user by email and password. The
+#               function checks for valid credentials, active account
+#               status, account lockout state, missing password hashes,
+#               and failed-login limits. All important outcomes are
+#               written to the authentication audit log.
+#
+#  Parameters:  email - Email address submitted by the user.
+#               password - Password submitted by the user.
+#
+#  Returns:     dict[str, Any] - Authentication result containing an
+#                                ok flag, status code/message, and
+#                                user details on success.
+#
+#***************************************************************
+
 def authenticate_user(email: str, password: str) -> dict[str, Any]:
+    # Normalize the email before lookup.
     normalized_email = email.strip().lower()
     user = get_user_by_email(normalized_email)
 
+    # Return a generic login error when the user is not found.
     if not user:
         log_auth_event(
             event_type="login_failed",
@@ -169,6 +316,7 @@ def authenticate_user(email: str, password: str) -> dict[str, Any]:
             "message": "Invalid email or password.",
         }
 
+    # Block login for inactive accounts.
     if not user.get("is_active"):
         log_auth_event(
             event_type="login_failed",
@@ -184,6 +332,7 @@ def authenticate_user(email: str, password: str) -> dict[str, Any]:
             "message": "This account is inactive.",
         }
 
+    # Check whether the account is currently locked from prior failures.
     locked_until = user.get("locked_until")
     if locked_until is not None:
         if locked_until.tzinfo is None:
@@ -206,6 +355,7 @@ def authenticate_user(email: str, password: str) -> dict[str, Any]:
                 "message": f"Too many failed login attempts. Try again in {minutes_remaining} minute(s).",
             }
 
+    # Require a stored password hash before validating the supplied password.
     password_hash = user.get("password_hash")
     if not password_hash:
         log_auth_event(
@@ -222,9 +372,11 @@ def authenticate_user(email: str, password: str) -> dict[str, Any]:
             "message": "Invalid email or password.",
         }
 
+    # Check the supplied password against the stored password hash.
     if not check_password_hash(password_hash, password):
         record_failed_login(user["id"])
 
+        # Reload the user after the failed attempt to see whether lockout was applied.
         refreshed_user = get_user_by_email(normalized_email)
         locked_until = refreshed_user.get("locked_until") if refreshed_user else None
 
@@ -249,6 +401,7 @@ def authenticate_user(email: str, password: str) -> dict[str, Any]:
                     "message": f"Too many failed login attempts. Try again in {minutes_remaining} minute(s).",
                 }
 
+        # Return a generic invalid-credentials response for a bad password.
         log_auth_event(
             event_type="login_failed",
             is_success=False,
@@ -263,6 +416,7 @@ def authenticate_user(email: str, password: str) -> dict[str, Any]:
             "message": "Invalid email or password.",
         }
 
+    # Successful login resets failure tracking and returns safe user details.
     record_successful_login(user["id"])
     log_auth_event(
         event_type="login_success",
@@ -282,12 +436,33 @@ def authenticate_user(email: str, password: str) -> dict[str, Any]:
     }
 
 
+#***************************************************************
+#
+#  Function:     change_password
+#
+#  Description: Changes a user's password after validating the user,
+#               current password, new password length, confirmation
+#               match, and difference from the current password. The
+#               function updates the password hash and records the
+#               outcome in the authentication audit log.
+#
+#  Parameters:  user_id - Internal user ID requesting the password change.
+#               current_password - User's current password.
+#               new_password - Requested new password.
+#               confirm_password - Confirmation value for the new password.
+#
+#  Returns:     dict[str, Any] - Password-change result containing an
+#                                ok flag, status code, and message.
+#
+#***************************************************************
+
 def change_password(
     user_id: int,
     current_password: str,
     new_password: str,
     confirm_password: str,
 ) -> dict[str, Any]:
+    # Confirm that the user exists before attempting a password change.
     user = get_user_by_id(user_id)
     if not user:
         log_auth_event(
@@ -303,6 +478,7 @@ def change_password(
             "message": "User account could not be found.",
         }
 
+    # Do not allow password changes for inactive accounts.
     if not user.get("is_active"):
         log_auth_event(
             event_type="password_change_failed",
@@ -318,6 +494,7 @@ def change_password(
             "message": "This account is inactive.",
         }
 
+    # Verify the current password before accepting a new password.
     password_hash = user.get("password_hash")
     if not password_hash or not check_password_hash(password_hash, current_password):
         log_auth_event(
@@ -337,6 +514,7 @@ def change_password(
     new_password = new_password or ""
     confirm_password = confirm_password or ""
 
+    # Enforce the minimum password length.
     if len(new_password) < 8:
         log_auth_event(
             event_type="password_change_failed",
@@ -352,6 +530,7 @@ def change_password(
             "message": "Your new password must be at least 8 characters long.",
         }
 
+    # Require the new password and confirmation to match.
     if new_password != confirm_password:
         log_auth_event(
             event_type="password_change_failed",
@@ -367,6 +546,7 @@ def change_password(
             "message": "New password and confirmation do not match.",
         }
 
+    # Prevent users from reusing the same password.
     if check_password_hash(password_hash, new_password):
         log_auth_event(
             event_type="password_change_failed",
@@ -382,6 +562,7 @@ def change_password(
             "message": "Your new password must be different from your current password.",
         }
 
+    # Store the new password hash and clear any failed-login or lockout state.
     sql = text("""
         UPDATE app_users
         SET
@@ -417,7 +598,27 @@ def change_password(
     }
 
 
+#***************************************************************
+#
+#  Function:     create_user
+#
+#  Description: Creates a new active application user with a hashed
+#               password. The function prevents duplicate emails,
+#               inserts the new user record, logs the creation event,
+#               and returns the created user details.
+#
+#  Parameters:  email - Email address for the new user.
+#               password - Initial password for the new user.
+#               full_name - Optional full name for the new user.
+#
+#  Returns:     dict[str, Any] - Created user record.
+#
+#  Raises:      ValueError - If a user with the email already exists.
+#
+#***************************************************************
+
 def create_user(email: str, password: str, full_name: str = "") -> dict[str, Any]:
+    # Normalize email before checking for duplicates or inserting the user.
     normalized_email = email.strip().lower()
 
     existing = get_user_by_email(normalized_email)
@@ -431,6 +632,7 @@ def create_user(email: str, password: str, full_name: str = "") -> dict[str, Any
         )
         raise ValueError("A user with that email already exists.")
 
+    # Insert the new user with an active status and hashed password.
     sql = text("""
         INSERT INTO app_users (
             email,
