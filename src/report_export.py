@@ -1,10 +1,48 @@
+#***************************************************************
+#
+#  Author:       Richard Hanly
+#
+#  File:         director_report_service.py
+#
+#  Description: Builds director-level AMH report data, renders the
+#               report as HTML, and converts the report to PDF bytes.
+#               This file supports SortView reporting by formatting
+#               key performance indicators, labor savings, ROI values,
+#               executive summaries, and printable report output.
+#
+#***************************************************************
+
 from datetime import datetime
 from typing import Any, Dict, Optional
 
 import pandas as pd
 
+
+#***************************************************************
+# Report Defaults
+#
+# Defines the default report brand name and report title used when
+# custom values are not provided.
+#***************************************************************
+
 REPORT_BRAND_NAME = "SortView"
 DEFAULT_REPORT_TITLE = "AMH Director Report"
+
+
+#***************************************************************
+#
+#  Function:     safe_int
+#
+#  Description: Safely converts a value to an integer. If the value is
+#               missing, invalid, or cannot be converted, the supplied
+#               default value is returned instead.
+#
+#  Parameters:  value - Value to convert to an integer.
+#               default - Value returned when conversion fails.
+#
+#  Returns:     int - Converted integer value or the default value.
+#
+#***************************************************************
 
 def safe_int(value, default=0):
     try:
@@ -15,6 +53,21 @@ def safe_int(value, default=0):
         return default
 
 
+#***************************************************************
+#
+#  Function:     safe_float
+#
+#  Description: Safely converts a value to a float. If the value is
+#               missing, invalid, or cannot be converted, the supplied
+#               default value is returned instead.
+#
+#  Parameters:  value - Value to convert to a float.
+#               default - Value returned when conversion fails.
+#
+#  Returns:     float - Converted float value or the default value.
+#
+#***************************************************************
+
 def safe_float(value, default=0.0):
     try:
         if pd.isna(value):
@@ -24,15 +77,58 @@ def safe_float(value, default=0.0):
         return default
 
 
+#***************************************************************
+#
+#  Function:     format_hour_plain
+#
+#  Description: Formats an hour value into a readable 12-hour clock
+#               time for report display.
+#
+#  Parameters:  hour_value - Numeric hour value using 24-hour time.
+#
+#  Returns:     str - Formatted time string, or "N/A" if unavailable.
+#
+#***************************************************************
+
 def format_hour_plain(hour_value):
     if hour_value is None or pd.isna(hour_value):
         return "N/A"
     return pd.to_datetime(f"{int(hour_value):02d}:00").strftime("%I:%M %p")
 
 
+#***************************************************************
+#
+#  Function:     format_date_range
+#
+#  Description: Formats a start date and end date into a readable
+#               report date range.
+#
+#  Parameters:  start_date - First date in the reporting period.
+#               end_date - Last date in the reporting period.
+#
+#  Returns:     str - Formatted date range text.
+#
+#***************************************************************
+
 def format_date_range(start_date, end_date):
     return f"{pd.to_datetime(start_date).strftime('%b %d, %Y')} to {pd.to_datetime(end_date).strftime('%b %d, %Y')}"
 
+
+#***************************************************************
+#
+#  Function:     build_executive_summary
+#
+#  Description: Builds the written executive summary used in the
+#               director report. The summary describes processing
+#               volume, estimated hours saved, reject rate, top issue,
+#               peak hour, and transit routing percentages.
+#
+#  Parameters:  report_data - Dictionary containing prepared report
+#                             metrics and display values.
+#
+#  Returns:     str - Executive summary paragraph.
+#
+#***************************************************************
 
 def build_executive_summary(report_data: Dict[str, Any]) -> str:
     total_checkins = report_data["total_checkins"]
@@ -57,6 +153,46 @@ def build_executive_summary(report_data: Dict[str, Any]) -> str:
         f"{library_express_pct:.2f}% routed to Library Express."
     )
 
+
+#***************************************************************
+#
+#  Function:     build_director_report_data
+#
+#  Description: Prepares all calculated values and formatted display
+#               fields needed by the director report. This includes
+#               checkin totals, reject metrics, routing metrics, labor
+#               savings, ROI values, report metadata, and the executive
+#               summary text.
+#
+#  Parameters:  start_date - First date in the reporting period.
+#               end_date - Last date in the reporting period.
+#               df - Checkin dataframe for the selected report range.
+#               rejects_df - Reject dataframe for the selected report range.
+#               overall_metrics - Dictionary of summary dashboard metrics.
+#               top_issue - Leading reject issue category.
+#               attention_text - Recommended attention text for the report.
+#               avg_hours_saved - Average staff hours saved per day.
+#               total_hours_saved - Total staff hours saved in the range.
+#               peak_day_saved - Optional highest single-day hours saved.
+#               peak_day_saved_date - Optional date for the highest saved day.
+#               manual_rate - Optional manual processing rate.
+#               amh_rate - Optional observed AMH processing rate.
+#               hourly_cost - Optional hourly labor cost.
+#               roi_mode - Optional ROI display mode.
+#               yearly_savings_after_cost - Optional projected annual net savings.
+#               annual_cost - Optional annual recurring cost.
+#               payback_months - Optional payback period in months.
+#               since_install_net_value - Optional since-install net value.
+#               install_date - Optional AMH installation date.
+#               library_name - Library display name.
+#               branch_name - Branch display name.
+#               system_name - AMH system display name.
+#               report_title - Report title.
+#               report_brand_name - Report brand name.
+#
+#  Returns:     dict - Prepared report data used by the HTML renderer.
+#
+#***************************************************************
 
 def build_director_report_data(
     *,
@@ -86,14 +222,17 @@ def build_director_report_data(
     report_title: str = DEFAULT_REPORT_TITLE,
     report_brand_name: str = REPORT_BRAND_NAME,
 ) -> Dict[str, Any]:
+    # Calculate basic date range and volume totals.
     days_in_range = df["datetime"].dt.date.nunique() if len(df) > 0 and "datetime" in df.columns else 0
     total_checkins = len(df)
     avg_daily_checkins = (total_checkins / days_in_range) if days_in_range > 0 else 0.0
 
+    # Estimate labor value when both labor cost and hours saved are available.
     labor_value_saved = None
     if hourly_cost is not None and total_hours_saved is not None:
         labor_value_saved = total_hours_saved * hourly_cost
 
+    # Determine the busiest weekday by average daily activity.
     busiest_weekday_avg = "N/A"
     if len(df) > 0 and "datetime" in df.columns:
         weekday_avg = (
@@ -110,6 +249,7 @@ def build_director_report_data(
         if len(weekday_avg.dropna()) > 0:
             busiest_weekday_avg = weekday_avg.idxmax()
 
+    # Safely extract reject and routing metrics from the overall metrics dictionary.
     reject_count = safe_int(overall_metrics.get("reject_count", len(rejects_df)))
     reject_pct = safe_float(overall_metrics.get("reject_pct", 0.0))
     westside_count = safe_int(overall_metrics.get("westside_count", 0))
@@ -117,9 +257,11 @@ def build_director_report_data(
     library_express_count = safe_int(overall_metrics.get("library_express_count", 0))
     library_express_pct = safe_float(overall_metrics.get("library_express_pct", 0.0))
 
+    # Convert the peak hour into a readable report value.
     peak_hour_raw = overall_metrics.get("peak_hour")
     peak_hour = format_hour_plain(peak_hour_raw)
 
+    # Build the full report data dictionary consumed by the HTML template.
     report_data = {
         "report_title": report_title,
         "report_brand_name": report_brand_name,
@@ -160,14 +302,33 @@ def build_director_report_data(
         "amh_total_hours": safe_float(total_checkins / amh_rate) if amh_rate not in (None, 0) else None,
     }
 
+    # Add the narrative summary after all report metrics are prepared.
     report_data["executive_summary"] = build_executive_summary(report_data)
     return report_data
 
+
+#***************************************************************
+#
+#  Function:     render_director_report_html
+#
+#  Description: Renders the director report as a complete HTML document.
+#               The HTML includes report styling, executive summary,
+#               KPI cards, optional ROI sections, optional labor value
+#               details, processing rate assumptions, and recommended
+#               attention text.
+#
+#  Parameters:  report_data - Prepared report data dictionary created by
+#                             build_director_report_data.
+#
+#  Returns:     str - Complete HTML report document.
+#
+#***************************************************************
 
 def render_director_report_html(report_data: Dict[str, Any]) -> str:
     labor_value_html = ""
     labor_value_method_html = ""
 
+    # Add the labor value section when labor value data is available.
     if report_data.get("labor_value_saved") is not None:
         labor_value_html = f"""
         <div class="section">
@@ -182,6 +343,7 @@ def render_director_report_html(report_data: Dict[str, Any]) -> str:
         </div>
         """
 
+        # Add the method explanation only when all calculation inputs are available.
         if (
             report_data.get("labor_value_saved") is not None
             and report_data.get("hourly_cost_display") is not None
@@ -250,6 +412,7 @@ def render_director_report_html(report_data: Dict[str, Any]) -> str:
         </div>
         """
 
+    # Add the ROI section only when ROI-related values are available.
     roi_html = ""
     if (
         report_data.get("yearly_savings_after_cost") is not None
@@ -322,6 +485,7 @@ def render_director_report_html(report_data: Dict[str, Any]) -> str:
         else "N/A"
     )
 
+    # Build the full printable HTML document.
     html = f"""
     <!DOCTYPE html>
     <html>
@@ -581,6 +745,21 @@ def render_director_report_html(report_data: Dict[str, Any]) -> str:
     return html
 
 
+#***************************************************************
+#
+#  Function:     html_to_pdf_bytes
+#
+#  Description: Converts an HTML report string into PDF bytes using
+#               WeasyPrint.
+#
+#  Parameters:  html - Complete HTML document string.
+#
+#  Returns:     bytes - Generated PDF content.
+#
+#  Raises:      ImportError - If WeasyPrint is not installed.
+#
+#***************************************************************
+
 def html_to_pdf_bytes(html: str) -> bytes:
     try:
         from weasyprint import HTML
@@ -592,6 +771,44 @@ def html_to_pdf_bytes(html: str) -> bytes:
     pdf_bytes = HTML(string=html).write_pdf()
     return pdf_bytes
 
+
+#***************************************************************
+#
+#  Function:     build_director_report_pdf
+#
+#  Description: Builds a complete director report PDF. This function
+#               prepares report data, renders the report HTML, and
+#               converts that HTML into PDF bytes.
+#
+#  Parameters:  start_date - First date in the reporting period.
+#               end_date - Last date in the reporting period.
+#               df - Checkin dataframe for the selected report range.
+#               rejects_df - Reject dataframe for the selected report range.
+#               overall_metrics - Dictionary of summary dashboard metrics.
+#               top_issue - Leading reject issue category.
+#               attention_text - Recommended attention text for the report.
+#               avg_hours_saved - Average staff hours saved per day.
+#               total_hours_saved - Total staff hours saved in the range.
+#               peak_day_saved - Optional highest single-day hours saved.
+#               peak_day_saved_date - Optional date for the highest saved day.
+#               manual_rate - Optional manual processing rate.
+#               amh_rate - Optional observed AMH processing rate.
+#               hourly_cost - Optional hourly labor cost.
+#               roi_mode - Optional ROI display mode.
+#               yearly_savings_after_cost - Optional projected annual net savings.
+#               annual_cost - Optional annual recurring cost.
+#               payback_months - Optional payback period in months.
+#               since_install_net_value - Optional since-install net value.
+#               install_date - Optional AMH installation date.
+#               library_name - Library display name.
+#               branch_name - Branch display name.
+#               system_name - AMH system display name.
+#               report_title - Report title.
+#               report_brand_name - Report brand name.
+#
+#  Returns:     bytes - Generated PDF report content.
+#
+#***************************************************************
 
 def build_director_report_pdf(
     *,
@@ -621,6 +838,7 @@ def build_director_report_pdf(
     report_title: str = DEFAULT_REPORT_TITLE,
     report_brand_name: str = REPORT_BRAND_NAME,
 ) -> bytes:
+    # Build the report data dictionary from the supplied dashboard metrics.
     report_data = build_director_report_data(
         start_date=start_date,
         end_date=end_date,
@@ -649,5 +867,6 @@ def build_director_report_pdf(
         report_brand_name=report_brand_name,
     )
 
+    # Render the report as HTML, then convert the HTML to PDF bytes.
     html = render_director_report_html(report_data)
     return html_to_pdf_bytes(html)
