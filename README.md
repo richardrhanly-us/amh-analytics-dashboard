@@ -18,8 +18,11 @@ It collects sorter activity from a Windows-based agent, processes and uploads th
 The project was built around New Braunfels Public Library and Tech Logic UltraSort workflows, while supporting a broader multi-library and multi-tenant architecture.
 
 ---
+
+## Dashboard Preview
+
 <p align="center">
-  <img src="images/SortViewCapture1.png" width="1000" alt="SortView dashboard showing operational analytics and AMH activity">
+  <img src="images/SortViewCapture1.PNG" width="1000" alt="SortView dashboard showing operational analytics and AMH activity">
 </p>
 
 ## Key Features
