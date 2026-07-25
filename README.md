@@ -1,262 +1,404 @@
 # SortView
-[![Launch SortView](https://img.shields.io/badge/Launch-SortView-FF4B4B?logo=streamlit&logoColor=white)](https://sortview.streamlit.app/)
 
-- Username: guest@gmail.com
-- Password: guest
+[![Launch SortView](https://img.shields.io/badge/Launch-SortView-FF4B4B?logo=streamlit\&logoColor=white)](https://sortview.streamlit.app/)
+![Python](https://img.shields.io/badge/Python-3.x-3776AB?logo=python\&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi\&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Neon-4169E1?logo=postgresql\&logoColor=white)
+![Tests](https://img.shields.io/badge/Tests-Pytest-yellow)
 
-SortView is a multi-part system for ingesting, storing, and visualizing Automated Materials Handler activity for a library system.
+**Demo account**
 
-It currently includes:
-- a Windows-side AMH agent that reads local sorter logs and uploads data
-- a FastAPI backend that receives uploads and writes to Neon
-- a Streamlit dashboard for operational monitoring, reports, transit analysis, and alerts
-- Alembic-based database migration tracking for schema changes
+* Username: `guest@gmail.com`
+* Password: `guest`
 
-The project is designed around New Braunfels Public Library and Tech Logic UltraSort workflows, but the architecture supports broader multi-tenant library operations.
+SortView is a full-stack analytics and monitoring system for Automated Materials Handler operations in library environments.
 
----
+It collects sorter activity from a Windows-based agent, processes and uploads the data through a FastAPI backend, stores it in Neon PostgreSQL, and presents operational insights through a Streamlit dashboard.
 
-## what this repo contains
-
-This repo contains the source-of-truth code for:
-- backend API
-- Streamlit dashboard
-- AMH agent
-- database migration files
-- tests
-
-The live AMH agent does not run directly from this repo. The deployed copy runs on the AMH-attached Windows machine and is manually updated from the source in agent/.
+The project was built around New Braunfels Public Library and Tech Logic UltraSort workflows, while supporting a broader multi-library and multi-tenant architecture.
 
 ---
 
-## project structure
+## Key Features
 
-    amh-analytics-dashboard/
-    ├─ agent/                  # Source-of-truth AMH agent code
-    ├─ alembic/                # Alembic migration files
-    ├─ src/                    # Main dashboard app code
-    ├─ super_admin/            # Super admin pages and auth
-    ├─ tests/                  # Automated tests
-    ├─ alembic.ini             # Alembic configuration
-    ├─ init_db.py              # Transitional DB bootstrap script
-    ├─ main.py                 # FastAPI backend for uploads and pipeline status
-    ├─ packages.txt            # System packages for deployment environment
-    ├─ requirements.txt        # Python dependencies
-    └─ README.md
-
-## key folders
-
-### agent
-
-Contains the source-of-truth code for the AMH pipeline agent.
-
-Main files:
-- run_pipeline.py
-- parse_checkins.py
-- parse_rejects.py
-- parse_acs.py
-- uploader.py
-- config.py
-- logger_config.py
-
-The deployed agent runs on the AMH-attached Windows machine, typically in:
-C:\SortViewAgent
-
-### src
-
-Contains the main dashboard code.
-
-Important areas include:
-- app.py
-- data_loader.py
-- metrics.py
-- alerts.py
-- transit_logic.py
-- reject_logic.py
-- views/
-- services/
-- pages/
-
-### main.py
-
-FastAPI backend entrypoint for:
-- /upload
-- /upload-pipeline-status
-
-### alembic and alembic.ini
-
-Database migration system for tracked Neon schema changes.
-
-### tests
-
-Automated tests for:
-- alerts
-- metrics
-- transit logic
-- parser logic
+* Automated ingestion of AMH check-in, reject, and ACS logs
+* Incremental file processing that avoids re-uploading previously handled records
+* FastAPI endpoints for authenticated data uploads
+* Neon PostgreSQL storage and reporting
+* Live operational metrics and pipeline health monitoring
+* Transit-time and materials-flow analysis
+* Reject analysis and alert generation
+* Multi-tenant library support
+* Alembic-managed database migrations
+* Automated tests for parsing, metrics, alerts, and business logic
+* Agent retry and exponential backoff behavior
 
 ---
 
-## architecture overview
+## Architecture
 
-### AMH agent
-
-The AMH agent runs on the sorter-side Windows machine. It:
-- reads local Tech Logic and TLC logs
-- parses incremental checkins, rejects, and ACS events
-- uploads data to the backend API
-- writes local state and status files
-
-### backend API
-
-The backend API:
-- authenticates the agent
-- receives uploads
-- writes data into Neon
-- records pipeline status updates
-
-### dashboard
-
-The Streamlit dashboard:
-- reads data from Neon
-- shows live daily metrics
-- shows transit analytics
-- shows reject analysis
-- shows pipeline health and status
-- supports super admin features
-
-### database
-
-Neon is the system-of-record database.
-
-Schema changes are now managed with Alembic.
-
----
-
-## setup
-
-Create and activate a virtual environment:
-
-    python -m venv .venv
-    .venv\Scripts\activate
-
-Install dependencies:
-
-    pip install -r requirements.txt
+```text
+Tech Logic UltraSort / TLC Logs
+              |
+              v
+Windows AMH Agent
+- Reads local log files
+- Parses new records
+- Tracks processing state
+- Retries failed uploads
+              |
+              v
+FastAPI Backend
+- Authenticates agent
+- Validates uploads
+- Records pipeline status
+- Writes operational data
+              |
+              v
+Neon PostgreSQL
+- System of record
+- Multi-library data model
+- Alembic schema tracking
+              |
+              v
+Streamlit Dashboard
+- Daily operations
+- Transit analytics
+- Reject analysis
+- Alerts
+- Pipeline health
+- Super-admin tools
+```
 
 ---
 
-## running the dashboard
+## System Components
 
-    streamlit run src/app.py
+### Windows AMH Agent
+
+The agent runs on the Windows machine connected to the automated materials handler.
+
+It:
+
+* Reads Tech Logic and TLC log files
+* Parses check-in, reject, and ACS activity
+* Processes only newly added records
+* Uploads batches to the backend API
+* Maintains local state and pipeline-status files
+* Retries failed uploads using backoff behavior
+
+The source-of-truth agent code is stored in `agent/`. The production copy is manually deployed to the AMH-connected machine after validation.
+
+### FastAPI Backend
+
+The backend receives and validates agent uploads before storing them in Neon.
+
+Primary endpoints:
+
+```text
+POST /upload
+POST /upload-pipeline-status
+```
+
+Responsibilities include:
+
+* Agent authentication
+* Request validation
+* Database writes
+* Duplicate-handling support
+* Pipeline-health reporting
+
+### Streamlit Dashboard
+
+The dashboard reads data from Neon and provides:
+
+* Live daily sorter activity
+* Check-in and reject metrics
+* Transit-time reporting
+* Materials-flow analysis
+* Alert conditions
+* Agent and pipeline status
+* Administrative and multi-tenant features
+
+### PostgreSQL Database
+
+Neon PostgreSQL serves as the system-of-record database.
+
+Schema changes are tracked through Alembic rather than being created dynamically inside application startup or request handlers.
 
 ---
 
-## running the backend API
+## Repository Structure
 
-The backend entrypoint is:
+```text
+amh-analytics-dashboard/
+├── agent/                  # AMH agent and parser code
+├── alembic/                # Database migration files
+├── src/                    # Streamlit dashboard
+├── super_admin/            # Super-admin pages and authentication
+├── tests/                  # Automated tests
+├── alembic.ini             # Alembic configuration
+├── init_db.py              # Transitional database bootstrap
+├── main.py                 # FastAPI backend entrypoint
+├── packages.txt            # Deployment system packages
+├── requirements.txt        # Python dependencies
+└── README.md
+```
 
-    python main.py
+### Important Directories
 
-Actual deployment may use a process manager or platform-specific startup command depending on environment.
+#### `agent/`
+
+```text
+agent/
+├── run_pipeline.py
+├── parse_checkins.py
+├── parse_rejects.py
+├── parse_acs.py
+├── uploader.py
+├── config.py
+└── logger_config.py
+```
+
+#### `src/`
+
+Key dashboard components include:
+
+```text
+src/
+├── app.py
+├── data_loader.py
+├── metrics.py
+├── alerts.py
+├── transit_logic.py
+├── reject_logic.py
+├── views/
+├── services/
+└── pages/
+```
+
+#### `tests/`
+
+Automated tests cover:
+
+* Alert logic
+* Dashboard metrics
+* Transit calculations
+* Reject analysis
+* AMH log parsing
+* Pipeline behavior
 
 ---
 
-## running the AMH agent locally
+## Local Setup
 
-The source-of-truth agent code lives in agent/.
+### 1. Clone the repository
 
-Run the full pipeline locally with:
+```bash
+git clone <repository-url>
+cd amh-analytics-dashboard
+```
 
-    python -m agent.run_pipeline
+### 2. Create a virtual environment
 
-Run parsers individually with:
+Windows:
 
-    python -m agent.parse_checkins
-    python -m agent.parse_rejects
-    python -m agent.parse_acs
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+```
 
-Note: the live production agent runs from the deployed copy on the AMH machine, not directly from this repo.
+macOS or Linux:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
+### 3. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Configure environment variables
+
+Create a local environment file containing the required application settings.
+
+Example:
+
+```env
+DATABASE_URL=
+AGENT_API_KEY=
+```
+
+Do not commit production credentials or database connection strings.
 
 ---
 
-## database migrations
+## Running the Application
 
-SortView now uses Alembic for schema version tracking.
+### Streamlit Dashboard
 
-Check current DB revision:
+```bash
+streamlit run src/app.py
+```
 
-    alembic current
+### FastAPI Backend
 
-Create a new migration:
+```bash
+python main.py
+```
 
-    alembic revision -m "describe the schema change"
+Production deployment may use a platform-specific startup command or process manager.
 
-Apply migrations:
+### AMH Agent
 
-    alembic upgrade head
+Run the complete pipeline:
 
-The current live database has already been baselined in Alembic.
+```bash
+python -m agent.run_pipeline
+```
+
+Run individual parsers:
+
+```bash
+python -m agent.parse_checkins
+python -m agent.parse_rejects
+python -m agent.parse_acs
+```
+
+The production agent runs from a deployed copy on the AMH-attached Windows machine rather than directly from the repository.
 
 ---
 
-## tests
+## Database Migrations
 
-Run all tests:
+SortView uses Alembic to track and apply schema changes.
 
-    python -m pytest
+Check the current database revision:
+
+```bash
+alembic current
+```
+
+Create a migration:
+
+```bash
+alembic revision -m "describe the schema change"
+```
+
+Apply all pending migrations:
+
+```bash
+alembic upgrade head
+```
+
+The live database has already been baselined in Alembic.
+
+Future schema changes should be implemented through migrations rather than by expanding `init_db.py`.
+
+---
+
+## Testing
+
+Run the complete test suite:
+
+```bash
+python -m pytest
+```
 
 Run a specific test file:
 
-    python -m pytest tests/test_alerts.py
+```bash
+python -m pytest tests/test_alerts.py
+```
+
+The test suite verifies core logic separately from the live AMH environment and production database.
 
 ---
 
-## documentation
+## Reliability and Security
 
-Additional documentation should live in docs/, including:
-- docs/deployment.md
-- docs/database-migrations.md
-- docs/agent-deployment.md
+SortView includes several safeguards for production-like operation:
 
----
+* Agent authentication for upload endpoints
+* Incremental parsing to prevent unnecessary reprocessing
+* Retry and backoff behavior for failed uploads
+* Local agent state tracking
+* Pipeline status reporting
+* Database migrations managed separately from request handling
+* Environment-based secret management
+* Automated tests for important calculations and parsers
+* Separation between source code and the deployed AMH agent
+* Multi-tenant data boundaries within the application architecture
 
-## operational notes
-
-- Do not run Alembic from the AMH machine
-- Do not manage database schema changes in request handlers
-- Do not rely on startup-time schema creation for production workflows
-- The AMH agent must be manually deployed to the sorter-side machine after validation
-- The repo copy in agent/ is the source-of-truth for the agent
-
----
-
-## status of the project
-
-The project currently includes:
-- Neon-backed ingestion
-- FastAPI upload endpoints
-- Streamlit dashboard views
-- pipeline status tracking
-- Alembic migration baseline
-- agent retry and backoff behavior
-- database-first history model
+No API keys, database credentials, patron information, private logs, or production configuration files should be committed to this repository.
 
 ---
 
-## transitional note on init_db.py
+## Operational Notes
 
-init_db.py remains in the repo as a transitional bootstrap and reference script.
-
-Future schema changes should be handled through Alembic migrations rather than expanding init_db.py.
+* The `agent/` directory is the source of truth for the AMH agent.
+* The deployed agent must be updated manually after changes are tested.
+* Alembic should not be run from the AMH machine.
+* Database schema changes should not occur inside API request handlers.
+* Production workflows should not rely on startup-time table creation.
+* `init_db.py` remains only as a transitional bootstrap and reference script.
 
 ---
 
-## next improvements
+## Current Status
 
-Likely future improvements include:
-- additional indexed query optimization
-- persistent alert history
-- richer agent operational metadata
-- more formal deployment automation
-- additional reports and admin tooling
+Implemented:
+
+* AMH log ingestion
+* Incremental parser state
+* FastAPI upload endpoints
+* Neon-backed storage
+* Streamlit analytics dashboard
+* Transit and reject reporting
+* Pipeline-health tracking
+* Agent retry and backoff
+* Alembic migration baseline
+* Automated tests
+* Multi-tenant architecture
+
+---
+
+## Roadmap
+
+Planned improvements include:
+
+* Additional database indexes and query optimization
+* Persistent alert history
+* Richer agent-health metadata
+* Automated agent deployment
+* Expanded admin tooling
+* Additional operational reports
+* Broader automated test coverage
+* Containerized local development
+* Continuous integration with GitHub Actions
+
+---
+
+## Skills Demonstrated
+
+* Python application development
+* FastAPI and REST API design
+* Streamlit dashboard development
+* PostgreSQL and Neon
+* Alembic database migrations
+* Log parsing and data pipelines
+* Windows agent deployment
+* Retry and failure-handling design
+* Multi-tenant system architecture
+* Automated testing with Pytest
+* Operational analytics
+* Production-oriented documentation
+
+---
+
+## Disclaimer
+
+SortView is an independent portfolio project designed around library automated-materials-handling workflows. It is not an official product of Tech Logic, TLC, Neon, or Streamlit.
