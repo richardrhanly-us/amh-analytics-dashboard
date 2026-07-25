@@ -21,8 +21,8 @@ The project was built around New Braunfels Public Library and Tech Logic UltraSo
 <p align="center">
   <img src="images/SortViewCapture1.png" width="1000" alt="SortView dashboard showing operational analytics and AMH activity">
 </p>
+
 ## Key Features
----
 * Automated ingestion of AMH check-in, reject, and ACS logs
 * Incremental file processing that avoids re-uploading previously handled records
 * FastAPI endpoints for authenticated data uploads
