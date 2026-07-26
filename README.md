@@ -5,6 +5,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi\&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Neon-4169E1?logo=postgresql\&logoColor=white)
 ![Tests](https://img.shields.io/badge/Tests-Pytest-yellow)
+![Python Tests](https://github.com/richardrhanly-us/amh-analytics-dashboard/actions/workflows/python-tests.yml/badge.svg)
 
 **Demo account**
 
