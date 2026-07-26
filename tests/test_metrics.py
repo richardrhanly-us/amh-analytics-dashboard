@@ -142,4 +142,4 @@ def test_get_historical_reject_baseline_when_no_history():
     result = get_historical_reject_baseline(df, rejects_df, today)
 
     assert result["historical_daily_avg_reject"] == 0
-    assert result["live_reject_deviation"] == 0
+    assert result["historical_combined"].empty

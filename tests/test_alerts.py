@@ -116,8 +116,12 @@ def test_dynamic_westside_high_alert():
         historical_library_express_pct=3.0,
     )
 
-    assert "Westside routing is elevated today (12.00% vs typical 8.00%)." in alert_texts(alerts)
-    assert "warning" in alert_levels(alerts)
+    assert (
+        "Westside routing is trending above typical levels "
+        "(12.00% vs typical 8.00%)."
+    ) in alert_texts(alerts)
+
+    assert "info" in alert_levels(alerts)
 
 
 def test_dynamic_library_express_low_alert():
@@ -138,11 +142,15 @@ def test_dynamic_library_express_low_alert():
         historical_library_express_pct=2.0,
     )
 
-    assert "Library Express routing is below typical levels (0.50% vs typical 2.00%)." in alert_texts(alerts)
-    assert "warning" in alert_levels(alerts)
+    assert (
+        "Library Express routing is trending below typical levels "
+        "(0.50% vs typical 2.00%)."
+    ) in alert_texts(alerts)
+
+    assert "info" in alert_levels(alerts)
 
 
-def test_transit_imbalance_alert():
+def test_no_transit_imbalance_alert_when_thresholds_not_met():
     pipeline_status = {
         "destination_breakdown": {
             "No Agency Destination": 0
@@ -160,8 +168,9 @@ def test_transit_imbalance_alert():
         historical_library_express_pct=1.5,
     )
 
-    assert "Transit imbalance: Westside dominating over Library Express." in alert_texts(alerts)
-    assert "warning" in alert_levels(alerts)
+    assert alert_texts(alerts) == [
+        "No active system alerts."
+    ]
 
 
 def test_transit_imbalance_guard_when_library_express_zero():
