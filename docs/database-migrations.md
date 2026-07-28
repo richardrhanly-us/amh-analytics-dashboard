@@ -20,7 +20,7 @@ Alembic replaces the old pattern of managing schema changes through:
 - startup-time schema creation
 - one-off schema edits in application code
 
-`init_db.py` may still exist as a transitional or bootstrap reference, but future schema evolution should go through Alembic.
+`init_db.py` has been retired. The baseline migration (`26397a3947b1`) now reconstructs the full schema, so `alembic upgrade head` alone is enough to build a fresh database.
 
 ## where Alembic lives
 

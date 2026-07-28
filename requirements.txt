@@ -10,3 +10,4 @@ weasyprint
 fastapi
 uvicorn
 werkzeug
+alembic

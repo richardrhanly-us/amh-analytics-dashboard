@@ -299,6 +299,6 @@ When something goes wrong:
 
 - Neon is the system-of-record database
 - Alembic is now the official schema-tracking path
-- `init_db.py` is transitional and should not become the long-term schema evolution process
+- `init_db.py` has been retired; the Alembic baseline migration is the schema evolution process
 - the AMH agent is deployed manually even though its source-of-truth lives in the repo
 - future improvements can automate parts of this process, but the documented order should remain the same

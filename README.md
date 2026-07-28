@@ -144,7 +144,6 @@ amh-analytics-dashboard/
 ├── super_admin/            # Super-admin pages and authentication
 ├── tests/                  # Automated tests
 ├── alembic.ini             # Alembic configuration
-├── init_db.py              # Transitional database bootstrap
 ├── main.py                 # FastAPI backend entrypoint
 ├── packages.txt            # Deployment system packages
 ├── requirements.txt        # Python dependencies
@@ -302,7 +301,7 @@ alembic upgrade head
 
 The live database has already been baselined in Alembic.
 
-Future schema changes should be implemented through migrations rather than by expanding `init_db.py`.
+Future schema changes should be implemented through migrations. A fresh database can be built entirely with `alembic upgrade head` — the baseline migration reconstructs the full schema.
 
 ---
 
@@ -350,7 +349,7 @@ No API keys, database credentials, patron information, private logs, or producti
 * Alembic should not be run from the AMH machine.
 * Database schema changes should not occur inside API request handlers.
 * Production workflows should not rely on startup-time table creation.
-* `init_db.py` remains only as a transitional bootstrap and reference script.
+* Schema is defined entirely by Alembic migrations; there is no separate bootstrap script.
 
 ---
 
