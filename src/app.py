@@ -12,6 +12,8 @@
 #
 #***************************************************************
 
+import os
+
 import streamlit as st
 from pathlib import Path
 from datetime import datetime
@@ -80,6 +82,28 @@ if "auth_user" not in st.session_state:
     st.session_state["auth_user"] = None
 
 APP_TZ = ZoneInfo("America/Chicago")
+
+
+#***************************************************************
+# Guest Auto-Login
+#
+# Visiting the app with a "guest" URL query parameter (used by the
+# public demo link) signs the visitor straight in as the guest
+# account, skipping the login form entirely. The plain URL with no
+# query parameter is unaffected, so real accounts keep logging in
+# normally. Falls through to the regular login form if guest
+# authentication fails for any reason (e.g. the account is
+# deactivated).
+#***************************************************************
+
+GUEST_EMAIL = os.getenv("SORTVIEW_GUEST_EMAIL", "guest@gmail.com")
+GUEST_PASSWORD = os.getenv("SORTVIEW_GUEST_PASSWORD", "guest")
+
+if st.session_state["auth_user"] is None and "guest" in st.query_params:
+    guest_result = auth_service.authenticate_user(email=GUEST_EMAIL, password=GUEST_PASSWORD)
+    if guest_result["ok"]:
+        st.session_state["auth_user"] = guest_result["user"]
+        st.rerun()
 
 
 #***************************************************************
