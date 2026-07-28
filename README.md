@@ -30,7 +30,11 @@ The project was built around New Braunfels Public Library and Tech Logic UltraSo
 
 ## Demonstration of when a log trransaction occurs is being logged. 
 ### The AMH scans the RFID tag of the material and sorts into the appropriate bin.
-https://github.com/user-attachments/assets/3be69708-db60-40e1-9cf0-4d206aeedde3
+
+
+https://github.com/user-attachments/assets/46c64d68-90d8-4439-b8ac-3eb0a2b20a2c
+
+
 
 
 ---
