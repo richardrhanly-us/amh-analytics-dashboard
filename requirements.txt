@@ -1,6 +1,6 @@
-streamlit==1.50.0
+streamlit==1.52.0
 pandas==2.3.3
-altair==5.5.0
+altair==6.2.2
 streamlit-autorefresh==1.0.1
 sqlalchemy==2.0.51
 psycopg2-binary==2.9.12
