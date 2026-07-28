@@ -30,7 +30,7 @@ from database import get_engine
 #***************************************************************
 
 MAX_FAILED_ATTEMPTS = 5
-LOCKOUT_MINUTES = 1
+LOCKOUT_MINUTES = 15
 
 
 #***************************************************************

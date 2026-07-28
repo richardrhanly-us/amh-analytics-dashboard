@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Header
+from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, text
 from typing import Optional
 import os
@@ -22,7 +23,79 @@ engine = create_engine(
 )
 
 
+#***************************************************************
+# Request Models
+#
+# Pydantic models for the agent upload payloads. These give the
+# API automatic type validation, clear 422 error responses, and
+# generated OpenAPI docs instead of accepting raw dicts.
+#***************************************************************
 
+class CheckinRow(BaseModel):
+    customer_id: int
+    branch_id: int
+    event_time: Optional[str] = None
+    title: Optional[str] = None
+    barcode: Optional[str] = None
+    collection_code: Optional[str] = None
+    call_number: Optional[str] = None
+    shelf_code: Optional[str] = None
+    destination: Optional[str] = None
+    bin: Optional[str] = None
+    is_problem: Optional[bool] = None
+    message: Optional[str] = None
+    flag_1: Optional[str] = None
+    flag_2: Optional[str] = None
+    flag_3: Optional[str] = None
+    source_file: Optional[str] = None
+
+
+class RejectRow(BaseModel):
+    customer_id: int
+    branch_id: int
+    event_time: Optional[str] = None
+    barcode: Optional[str] = None
+    message: Optional[str] = None
+    source_file: Optional[str] = None
+
+
+class AcsRow(BaseModel):
+    customer_id: int
+    branch_id: int
+    event_time: Optional[str] = None
+    message_code: Optional[str] = None
+    barcode: Optional[str] = None
+    title: Optional[str] = None
+    patron_id: Optional[str] = None
+    destination: Optional[str] = None
+    raw_message: Optional[str] = None
+    source_file: Optional[str] = None
+
+
+class UploadRequest(BaseModel):
+    checkins: list[CheckinRow] = Field(default_factory=list)
+    rejects: list[RejectRow] = Field(default_factory=list)
+    acs: list[AcsRow] = Field(default_factory=list)
+
+
+class PipelineStatusRequest(BaseModel):
+    customer_id: int
+    branch_id: int
+    last_attempt: Optional[str] = None
+    last_run: Optional[str] = None
+    status: Optional[str] = None
+    checkins_rows: Optional[int] = None
+    rejects_rows: Optional[int] = None
+    acs_rows: Optional[int] = None
+    uploaded_checkins_rows: Optional[int] = None
+    uploaded_rejects_rows: Optional[int] = None
+    uploaded_acs_rows: Optional[int] = None
+    checkins_bad_datetime_rows: Optional[int] = None
+    rejects_bad_datetime_rows: Optional[int] = None
+    acs_bad_datetime_rows: Optional[int] = None
+    transit_items: Optional[int] = None
+    problem_items: Optional[int] = None
+    destination_breakdown: dict = Field(default_factory=dict)
 
 
 def get_bearer_token(authorization: Optional[str]) -> str:
@@ -86,11 +159,11 @@ def root():
 
 
 @app.post("/upload")
-def upload(data: dict, authorization: Optional[str] = Header(default=None)):
+def upload(data: UploadRequest, authorization: Optional[str] = Header(default=None)):
     try:
-        checkins = data.get("checkins", [])
-        rejects = data.get("rejects", [])
-        acs = data.get("acs", [])
+        checkins = [row.model_dump() for row in data.checkins]
+        rejects = [row.model_dump() for row in data.rejects]
+        acs = [row.model_dump() for row in data.acs]
 
         all_rows = []
         all_rows.extend(checkins)
@@ -100,14 +173,11 @@ def upload(data: dict, authorization: Optional[str] = Header(default=None)):
         if not all_rows:
             raise HTTPException(status_code=400, detail="No upload rows provided")
 
-        first_customer_id = all_rows[0].get("customer_id")
-        first_branch_id = all_rows[0].get("branch_id")
-
-        if first_customer_id is None or first_branch_id is None:
-            raise HTTPException(status_code=400, detail="customer_id and branch_id are required on uploaded rows")
+        first_customer_id = all_rows[0]["customer_id"]
+        first_branch_id = all_rows[0]["branch_id"]
 
         for row in all_rows:
-            if row.get("customer_id") != first_customer_id or row.get("branch_id") != first_branch_id:
+            if row["customer_id"] != first_customer_id or row["branch_id"] != first_branch_id:
                 raise HTTPException(
                     status_code=400,
                     detail="All uploaded rows must have the same customer_id and branch_id"
@@ -121,8 +191,8 @@ def upload(data: dict, authorization: Optional[str] = Header(default=None)):
             authenticate_agent(
                 conn=conn,
                 authorization=authorization,
-                customer_id=int(first_customer_id),
-                branch_id=int(first_branch_id),
+                customer_id=first_customer_id,
+                branch_id=first_branch_id,
             )
 
             for row in checkins:
@@ -145,15 +215,13 @@ def upload(data: dict, authorization: Optional[str] = Header(default=None)):
                 inserted_checkins += result.rowcount
 
             for row in rejects:
-                barcode_value = row.get("barcode") or ""
-
                 reject_row = {
-                    "customer_id": row.get("customer_id"),
-                    "branch_id": row.get("branch_id"),
-                    "event_time": row.get("event_time"),
-                    "barcode": barcode_value,
-                    "error_message": row.get("message"),
-                    "source_file": row.get("source_file"),
+                    "customer_id": row["customer_id"],
+                    "branch_id": row["branch_id"],
+                    "event_time": row["event_time"],
+                    "barcode": row["barcode"] or "",
+                    "error_message": row["message"],
+                    "source_file": row["source_file"],
                 }
 
                 result = conn.execute(text("""
@@ -172,17 +240,17 @@ def upload(data: dict, authorization: Optional[str] = Header(default=None)):
 
             for row in acs:
                 acs_row = {
-                    "customer_id": row.get("customer_id"),
-                    "branch_id": row.get("branch_id"),
-                    "event_time": row.get("event_time"),
-                    "message_code": row.get("message_code"),
-                    "barcode": row.get("barcode"),
-                    "barcode_key": row.get("barcode") or "",
-                    "title": row.get("title"),
-                    "patron_id": row.get("patron_id"),
-                    "destination": row.get("destination"),
-                    "raw_message": row.get("raw_message"),
-                    "source_file": row.get("source_file"),
+                    "customer_id": row["customer_id"],
+                    "branch_id": row["branch_id"],
+                    "event_time": row["event_time"],
+                    "message_code": row["message_code"],
+                    "barcode": row["barcode"],
+                    "barcode_key": row["barcode"] or "",
+                    "title": row["title"],
+                    "patron_id": row["patron_id"],
+                    "destination": row["destination"],
+                    "raw_message": row["raw_message"],
+                    "source_file": row["source_file"],
                 }
 
                 result = conn.execute(text("""
@@ -220,24 +288,14 @@ def upload(data: dict, authorization: Optional[str] = Header(default=None)):
 
 
 @app.post("/upload-pipeline-status")
-def upload_pipeline_status(data: dict, authorization: Optional[str] = Header(default=None)):
+def upload_pipeline_status(data: PipelineStatusRequest, authorization: Optional[str] = Header(default=None)):
     try:
-        customer_id = data.get("customer_id")
-        branch_id = data.get("branch_id")
-
-        if customer_id is None or branch_id is None:
-            raise HTTPException(status_code=400, detail="customer_id and branch_id are required")
-
-        destination_breakdown = data.get("destination_breakdown", {})
-        if destination_breakdown is None:
-            destination_breakdown = {}
-
         with engine.begin() as conn:
             authenticate_agent(
                 conn=conn,
                 authorization=authorization,
-                customer_id=int(customer_id),
-                branch_id=int(branch_id),
+                customer_id=data.customer_id,
+                branch_id=data.branch_id,
             )
 
             conn.execute(text("""
@@ -300,23 +358,23 @@ def upload_pipeline_status(data: dict, authorization: Optional[str] = Header(def
                     destination_breakdown = EXCLUDED.destination_breakdown,
                     updated_at = CURRENT_TIMESTAMP
             """), {
-                "customer_id": int(customer_id),
-                "branch_id": int(branch_id),
-                "last_attempt": data.get("last_attempt"),
-                "last_run": data.get("last_run"),
-                "status": data.get("status"),
-                "checkins_rows": data.get("checkins_rows"),
-                "rejects_rows": data.get("rejects_rows"),
-                "acs_rows": data.get("acs_rows"),
-                "uploaded_checkins_rows": data.get("uploaded_checkins_rows"),
-                "uploaded_rejects_rows": data.get("uploaded_rejects_rows"),
-                "uploaded_acs_rows": data.get("uploaded_acs_rows"),
-                "checkins_bad_datetime_rows": data.get("checkins_bad_datetime_rows"),
-                "rejects_bad_datetime_rows": data.get("rejects_bad_datetime_rows"),
-                "acs_bad_datetime_rows": data.get("acs_bad_datetime_rows"),
-                "transit_items": data.get("transit_items"),
-                "problem_items": data.get("problem_items"),
-                "destination_breakdown": json.dumps(destination_breakdown),
+                "customer_id": data.customer_id,
+                "branch_id": data.branch_id,
+                "last_attempt": data.last_attempt,
+                "last_run": data.last_run,
+                "status": data.status,
+                "checkins_rows": data.checkins_rows,
+                "rejects_rows": data.rejects_rows,
+                "acs_rows": data.acs_rows,
+                "uploaded_checkins_rows": data.uploaded_checkins_rows,
+                "uploaded_rejects_rows": data.uploaded_rejects_rows,
+                "uploaded_acs_rows": data.uploaded_acs_rows,
+                "checkins_bad_datetime_rows": data.checkins_bad_datetime_rows,
+                "rejects_bad_datetime_rows": data.rejects_bad_datetime_rows,
+                "acs_bad_datetime_rows": data.acs_bad_datetime_rows,
+                "transit_items": data.transit_items,
+                "problem_items": data.problem_items,
+                "destination_breakdown": json.dumps(data.destination_breakdown),
             })
 
         return {
