@@ -25,6 +25,16 @@ The project was built around New Braunfels Public Library and Tech Logic UltraSo
   <img src="images/SortViewCapture1.PNG" width="1000" alt="SortView dashboard showing operational analytics and AMH activity">
 </p>
 
+---
+
+
+## Demonstration of when a log trransaction occurs is being logged. 
+### The AMH scans the RFID tag of the material and sorts into the appropriate bin.
+https://github.com/user-attachments/assets/3be69708-db60-40e1-9cf0-4d206aeedde3
+
+
+---
+
 ## Key Features
 * Automated ingestion of AMH check-in, reject, and ACS logs
 * Incremental file processing that avoids re-uploading previously handled records
