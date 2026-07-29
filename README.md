@@ -8,6 +8,7 @@
 ![Python Tests](https://github.com/richardrhanly-us/amh-analytics-dashboard/actions/workflows/python-tests.yml/badge.svg)
 
 **Live demo**
+
 [![Launch SortView](https://img.shields.io/badge/Launch-SortView-FF4B4B?logo=streamlit\&logoColor=white)](https://sortview.streamlit.app/?guest=1)
 
 Click the link above to log directly into the app as a guest — no login required.
