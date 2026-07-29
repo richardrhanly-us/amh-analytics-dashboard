@@ -1,6 +1,6 @@
 # SortView
 
-[![Launch SortView](https://img.shields.io/badge/Launch-SortView-FF4B4B?logo=streamlit\&logoColor=white)](https://sortview.streamlit.app/?guest=1)
+
 ![Python](https://img.shields.io/badge/Python-3.x-3776AB?logo=python\&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi\&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Neon-4169E1?logo=postgresql\&logoColor=white)
@@ -8,8 +8,9 @@
 ![Python Tests](https://github.com/richardrhanly-us/amh-analytics-dashboard/actions/workflows/python-tests.yml/badge.svg)
 
 **Live demo**
+[![Launch SortView](https://img.shields.io/badge/Launch-SortView-FF4B4B?logo=streamlit\&logoColor=white)](https://sortview.streamlit.app/?guest=1)
 
-The badge above links directly into the app as a guest — no login required.
+Click the link above to log directly into the app as a guest — no login required.
 
 SortView is a full-stack analytics and monitoring system for Automated Materials Handler operations in library environments.
 
