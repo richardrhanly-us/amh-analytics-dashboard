@@ -14,10 +14,18 @@ init_db.py and src/sql/001_multi_tenant_foundation.sql.
 
 Content was reconstructed by introspecting the live production schema
 (information_schema.columns, pg_indexes, pg_constraint) on 2026-07-27.
-A few tables here (customers, bin_routing_map, checkins_clean,
-checkins_routed, rejects_clean) and pipeline_status's *_history_rows
-columns are not created or referenced by any code in this repo. They are
-included for fidelity with production; confirm before removing them.
+
+Corrected on 2026-08-04: an initial pass of this migration modeled
+checkins_routed as a plain table and omitted two triggers entirely.
+Neither checkins_clean nor rejects_clean nor checkins_routed are dead --
+checkins/rejects each have an AFTER INSERT trigger (sync_checkins_to_clean,
+sync_rejects_to_clean) that copies every new row into checkins_clean /
+rejects_clean in real time, and checkins_routed is a VIEW joining
+checkins_clean with bin_routing_map to add routing labels and a
+Transit/Internal grouping. None of this is referenced by any Python code
+in this repo -- it's a live, database-level system invisible to a
+code-only audit. pipeline_status's *_history_rows columns are still
+unconfirmed as unused; left as-is pending that check.
 """
 from typing import Sequence, Union
 
@@ -338,10 +346,13 @@ def upgrade() -> None:
         )
     """)
 
-    # --- tables not referenced by any code in this repo ------------------------
-    # Included for fidelity with the live production schema. Confirm their
-    # purpose (external tool? dbt? manual experiment?) before relying on them
-    # or dropping them.
+    # --- bin routing / "clean" sync system --------------------------------------
+    # Not referenced by any Python code in this repo, but very much live:
+    # checkins/rejects each have an AFTER INSERT trigger (created below) that
+    # copies every new row into checkins_clean / rejects_clean in real time,
+    # and checkins_routed is a view built on top of checkins_clean that adds
+    # routing labels from bin_routing_map. Confirmed with production DDL on
+    # 2026-08-04.
 
     op.execute("""
         CREATE TABLE IF NOT EXISTS bin_routing_map (
@@ -380,35 +391,6 @@ def upgrade() -> None:
     """)
 
     op.execute("""
-        CREATE TABLE IF NOT EXISTS checkins_routed (
-            id BIGINT,
-            customer_id INTEGER,
-            branch_id INTEGER,
-            event_time TIMESTAMP,
-            title TEXT,
-            barcode TEXT,
-            collection_code TEXT,
-            call_number TEXT,
-            shelf_code TEXT,
-            destination TEXT,
-            destination_raw TEXT,
-            destination_clean TEXT,
-            bin TEXT,
-            is_problem BOOLEAN,
-            message TEXT,
-            flag_1 TEXT,
-            flag_2 TEXT,
-            flag_3 TEXT,
-            source_file TEXT,
-            created_at TIMESTAMP,
-            ingested_at TIMESTAMPTZ,
-            routing_label TEXT,
-            routing_group TEXT,
-            destination_group TEXT
-        )
-    """)
-
-    op.execute("""
         CREATE TABLE IF NOT EXISTS rejects_clean (
             id BIGINT,
             customer_id INTEGER,
@@ -421,6 +403,162 @@ def upgrade() -> None:
             ingested_at TIMESTAMPTZ,
             UNIQUE (id)
         )
+    """)
+
+    # checkins_routed is a VIEW, not a table -- joins checkins_clean with
+    # bin_routing_map to add routing labels and a Transit/Internal grouping.
+    op.execute("""
+        CREATE OR REPLACE VIEW checkins_routed AS
+        SELECT
+            c.id,
+            c.customer_id,
+            c.branch_id,
+            c.event_time,
+            c.title,
+            c.barcode,
+            c.collection_code,
+            c.call_number,
+            c.shelf_code,
+            c.destination,
+            c.destination_raw,
+            c.destination_clean,
+            c.bin,
+            c.is_problem,
+            c.message,
+            c.flag_1,
+            c.flag_2,
+            c.flag_3,
+            c.source_file,
+            c.created_at,
+            c.ingested_at,
+            m.routing_label,
+            m.routing_group,
+            CASE
+                WHEN c.destination_clean = ANY (ARRAY['Westside'::text, 'Library Express'::text])
+                THEN 'Transit'::text
+                ELSE 'Internal'::text
+            END AS destination_group
+        FROM checkins_clean c
+        LEFT JOIN bin_routing_map m ON c.bin = m.bin
+    """)
+
+    # Trigger functions that keep checkins_clean / rejects_clean in sync with
+    # every new checkins / rejects row. destination_clean normalizes the raw
+    # destination text into the labels the dashboard displays.
+    op.execute("""
+        CREATE OR REPLACE FUNCTION sync_checkins_to_clean()
+         RETURNS trigger
+         LANGUAGE plpgsql
+        AS $function$
+        BEGIN
+            INSERT INTO checkins_clean (
+                id,
+                customer_id,
+                branch_id,
+                event_time,
+                title,
+                barcode,
+                collection_code,
+                call_number,
+                shelf_code,
+                destination,
+                destination_raw,
+                destination_clean,
+                bin,
+                is_problem,
+                message,
+                flag_1,
+                flag_2,
+                flag_3,
+                source_file,
+                created_at,
+                ingested_at
+            )
+            VALUES (
+                NEW.id,
+                NEW.customer_id,
+                NEW.branch_id,
+                NEW.event_time,
+                NEW.title,
+                NEW.barcode,
+                NEW.collection_code,
+                NEW.call_number,
+                NEW.shelf_code,
+                NEW.destination,
+                NEW.destination,
+                CASE
+                    WHEN UPPER(TRIM(COALESCE(NEW.destination, ''))) IN ('1', 'LOCAL', 'MAIN') THEN 'Main'
+                    WHEN UPPER(TRIM(COALESCE(NEW.destination, ''))) LIKE '%WESTSIDE%' THEN 'Westside'
+                    WHEN UPPER(TRIM(COALESCE(NEW.destination, ''))) LIKE '%LIBRARY EXPRESS%' THEN 'Library Express'
+                    WHEN UPPER(TRIM(COALESCE(NEW.destination, ''))) LIKE '%NO AGENCY DESTINATION%' THEN 'No Agency Destination'
+                    ELSE COALESCE(NEW.destination, '')
+                END,
+                NEW.bin,
+                NEW.is_problem,
+                NEW.message,
+                NEW.flag_1,
+                NEW.flag_2,
+                NEW.flag_3,
+                NEW.source_file,
+                NEW.created_at,
+                CURRENT_TIMESTAMP
+            )
+            ON CONFLICT (id) DO NOTHING;
+
+            RETURN NEW;
+        END;
+        $function$
+    """)
+
+    op.execute("""
+        CREATE OR REPLACE FUNCTION sync_rejects_to_clean()
+         RETURNS trigger
+         LANGUAGE plpgsql
+        AS $function$
+        BEGIN
+            INSERT INTO rejects_clean (
+                id,
+                customer_id,
+                branch_id,
+                event_time,
+                barcode,
+                error_message,
+                source_file,
+                created_at,
+                ingested_at
+            )
+            VALUES (
+                NEW.id,
+                NEW.customer_id,
+                NEW.branch_id,
+                NEW.event_time,
+                NEW.barcode,
+                NEW.error_message,
+                NEW.source_file,
+                NEW.created_at,
+                CURRENT_TIMESTAMP
+            )
+            ON CONFLICT (id) DO NOTHING;
+
+            RETURN NEW;
+        END;
+        $function$
+    """)
+
+    op.execute("DROP TRIGGER IF EXISTS trg_sync_checkins_to_clean ON checkins")
+    op.execute("""
+        CREATE TRIGGER trg_sync_checkins_to_clean
+        AFTER INSERT ON checkins
+        FOR EACH ROW
+        EXECUTE FUNCTION sync_checkins_to_clean()
+    """)
+
+    op.execute("DROP TRIGGER IF EXISTS trg_sync_rejects_to_clean ON rejects")
+    op.execute("""
+        CREATE TRIGGER trg_sync_rejects_to_clean
+        AFTER INSERT ON rejects
+        FOR EACH ROW
+        EXECUTE FUNCTION sync_rejects_to_clean()
     """)
 
     # --- seed data ---------------------------------------------------------------
@@ -466,9 +604,14 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Downgrade schema."""
 
+    op.execute("DROP TRIGGER IF EXISTS trg_sync_checkins_to_clean ON checkins")
+    op.execute("DROP TRIGGER IF EXISTS trg_sync_rejects_to_clean ON rejects")
+    op.execute("DROP FUNCTION IF EXISTS sync_checkins_to_clean()")
+    op.execute("DROP FUNCTION IF EXISTS sync_rejects_to_clean()")
+    op.execute("DROP VIEW IF EXISTS checkins_routed CASCADE")
+
     for table in (
         "rejects_clean",
-        "checkins_routed",
         "checkins_clean",
         "bin_routing_map",
         "pipeline_status",
