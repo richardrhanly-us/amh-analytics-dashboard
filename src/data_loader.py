@@ -616,7 +616,7 @@ def _load_acs_live_from_db(org_slug, branch_slug):
 #
 #***************************************************************
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=900, show_spinner=False)
 def load_checkins_history_df(org_slug, branch_slug, mtime=None, refresh_count=0):
     try:
         _require_scope(org_slug, branch_slug)
@@ -646,7 +646,7 @@ def load_checkins_history_df(org_slug, branch_slug, mtime=None, refresh_count=0)
 #
 #***************************************************************
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=900, show_spinner=False)
 def load_checkins_df(org_slug, branch_slug, path=CHECKINS_FILE, mtime=None, refresh_count=0):
     try:
         _require_scope(org_slug, branch_slug)
@@ -684,7 +684,7 @@ def load_checkins_df(org_slug, branch_slug, path=CHECKINS_FILE, mtime=None, refr
 #
 #***************************************************************
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=900, show_spinner=False)
 def load_rejects_df(org_slug, branch_slug, path=REJECTS_FILE, mtime=None, refresh_count=0):
     try:
         _require_scope(org_slug, branch_slug)
@@ -720,7 +720,7 @@ def load_rejects_df(org_slug, branch_slug, path=REJECTS_FILE, mtime=None, refres
 #
 #***************************************************************
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=900, show_spinner=False)
 def load_rejects_history_df(org_slug, branch_slug, mtime=None, refresh_count=0):
     try:
         _require_scope(org_slug, branch_slug)
@@ -748,7 +748,7 @@ def load_rejects_history_df(org_slug, branch_slug, mtime=None, refresh_count=0):
 #
 #***************************************************************
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=900, show_spinner=False)
 def load_acs_history_df(org_slug, branch_slug, mtime=None, refresh_count=0):
     try:
         _require_scope(org_slug, branch_slug)
@@ -776,7 +776,7 @@ def load_acs_history_df(org_slug, branch_slug, mtime=None, refresh_count=0):
 #
 #***************************************************************
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=900, show_spinner=False)
 def load_acs_df(org_slug, branch_slug, mtime=None, refresh_count=0):
     try:
         _require_scope(org_slug, branch_slug)

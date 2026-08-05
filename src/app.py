@@ -455,9 +455,16 @@ def is_operating_hours(now_ct: datetime) -> bool:
 #***************************************************************
 # Auto Refresh Handling
 #
-# Enables automatic dashboard refresh during operating hours. When
-# an auto-refresh cycle is detected, cached data is cleared so the
-# dashboard can reload current pipeline and AMH data.
+# Enables automatic dashboard refresh during operating hours. The
+# refresh_count value is passed into the cached data loaders below as
+# part of their cache key, so each auto-refresh cycle naturally picks
+# up fresh data without needing to wipe the shared cache. A manual
+# st.cache_data.clear() used to run here on every cycle, but that
+# clears cached data for every tenant/session on the server, not just
+# this one -- with more than one active session, that made the shared
+# cache get wiped far more often than once per refresh interval. The
+# loaders' own TTLs (data_loader.py) already bound staleness to how
+# often the AMH pipeline actually updates.
 #***************************************************************
 
 now_ct = datetime.now(APP_TZ)
@@ -468,15 +475,6 @@ if is_operating_hours(now_ct):
         interval=10 * 60 * 1000,
         key="sortview_auto_refresh"
     )
-
-if "last_refresh_count" not in st.session_state:
-    st.session_state["last_refresh_count"] = refresh_count
-
-auto_refresh_triggered = refresh_count != st.session_state["last_refresh_count"]
-
-if auto_refresh_triggered:
-    st.cache_data.clear()
-    st.session_state["last_refresh_count"] = refresh_count
 
 
 #***************************************************************
@@ -662,6 +660,7 @@ context = build_dashboard_context(
     branch_name=BRANCH_NAME,
     system_name=SYSTEM_NAME,
     theme_base=theme_base,
+    selected_view=selected_view,
 )
 
 

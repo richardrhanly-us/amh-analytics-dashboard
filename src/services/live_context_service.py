@@ -168,14 +168,19 @@ def build_live_context(
         for transit_label, count in today_transit_counts_map.items()
     }
 
-    # Build hourly checkin counts for the live chart.
-    if "datetime" in today_df.columns:
+    # Build hourly checkin counts for the live chart. When there is no
+    # checkin data for today, get_today_metrics returns an empty
+    # DataFrame built via pd.DataFrame(columns=...), which does not
+    # preserve the datetime dtype -- guard on row count too, not just
+    # column presence, so .dt access is never attempted on an empty
+    # object-dtype column.
+    if len(today_df) > 0 and "datetime" in today_df.columns:
         today_hourly_checkins = today_df["datetime"].dt.hour.value_counts().sort_index()
     else:
         today_hourly_checkins = pd.Series(dtype=int)
 
     # Build hourly reject counts for live comparison.
-    if "datetime" in today_rejects_df.columns:
+    if len(today_rejects_df) > 0 and "datetime" in today_rejects_df.columns:
         today_hourly_rejects = today_rejects_df["datetime"].dt.hour.value_counts().sort_index()
     else:
         today_hourly_rejects = pd.Series(dtype=int)
@@ -208,11 +213,6 @@ def build_live_context(
 
         today_acs_df = pd.concat([item_rows, non_item_rows], ignore_index=True)
 
-    print("DEBUG collection_services_names =", collection_services_names)
-    print("DEBUG branch_services_names =", branch_services_names)
-    print("DEBUG collection_services_da_patterns =", collection_services_da_patterns)
-    print("DEBUG branch_services_da_patterns =", branch_services_da_patterns)
-    
     # Build today's ACS item summary for holds, ILL, programming, and collection services.
     acs_summary_today = build_acs_item_summary(
         today_acs_df,
