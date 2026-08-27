@@ -13,7 +13,9 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import hashlib
+import secrets
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import text
@@ -31,6 +33,8 @@ from database import get_engine
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
 
+PASSWORD_RESET_MINUTES = 30
+PASSWORD_RESET_TOKEN_BYTES = 32
 
 #***************************************************************
 #
@@ -444,6 +448,204 @@ def authenticate_user(email: str, password: str) -> dict[str, Any]:
         },
     }
 
+
+def request_password_reset(email: str) -> dict[str, Any]:
+    """Create a single-use password reset token for an active user."""
+
+    normalized_email = (email or "").strip().lower()
+
+    generic_response = {
+        "ok": True,
+        "code": "reset_requested",
+        "message": (
+            "If an active account exists for that email address, "
+            "password reset instructions will be sent."
+        ),
+    }
+
+    user = get_user_by_email(normalized_email)
+
+    if not user or not user.get("is_active"):
+        log_auth_event(
+            event_type="password_reset_requested",
+            is_success=True,
+            email=normalized_email,
+            message="Password reset request processed.",
+            metadata={"account_matched": False},
+        )
+        return generic_response
+
+    raw_token = secrets.token_urlsafe(PASSWORD_RESET_TOKEN_BYTES)
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    expires_at = datetime.now(UTC) + timedelta(minutes=PASSWORD_RESET_MINUTES)
+
+    engine = get_engine()
+
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+            UPDATE password_reset_tokens
+            SET used_at = now()
+            WHERE user_id = :user_id
+            AND used_at IS NULL
+            """),
+            {"user_id": user["id"]},
+        )
+
+        conn.execute(
+            text("""
+            INSERT INTO password_reset_tokens (
+                user_id,
+                token_hash,
+                expires_at
+            )
+            VALUES (
+                :user_id,
+                :token_hash,
+                :expires_at
+            )
+            """),
+            {
+                "user_id": user["id"],
+                "token_hash": token_hash,
+                "expires_at": expires_at,
+            },
+        )
+
+        log_auth_event(
+            event_type="password_reset_requested",
+            is_success=True,
+            user_id=user["id"],
+            email=user["email"],
+            message="Password reset token created.",
+            metadata={"expires_in_minutes": PASSWORD_RESET_MINUTES},
+        )
+
+        return {
+            **generic_response,
+            "reset_token": raw_token,
+            "reset_email": user["email"],
+        }
+
+
+def reset_password_with_token(
+    token: str,
+    new_password: str,
+    confirm_password: str,
+) -> dict[str, Any]:
+    """Reset a user's password with a valid single-use reset token."""
+
+    token = (token or "").strip()
+    new_password = new_password or ""
+    confirm_password = confirm_password or ""
+
+    if not token:
+        return {
+            "ok": False,
+            "code": "invalid_reset_token",
+            "message": "This password reset link is invalid or has expired.",
+        }
+
+    if len(new_password) < 8:
+        return {
+            "ok": False,
+            "code": "password_too_short",
+            "message": "Your new password must be at least 8 characters long.",
+        }
+
+    if new_password != confirm_password:
+        return {
+            "ok": False,
+            "code": "password_mismatch",
+            "message": "New password and confirmation do not match.",
+        }
+
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    engine = get_engine()
+
+    with engine.begin() as conn:
+        reset_row = conn.execute(
+            text("""
+                SELECT
+                    prt.id,
+                    prt.user_id,
+                    au.email,
+                    au.password_hash,
+                    au.is_active
+                FROM password_reset_tokens prt
+                JOIN app_users au
+                    ON au.id = prt.user_id
+                WHERE prt.token_hash = :token_hash
+                    AND prt.used_at IS NULL
+                    AND prt.expires_at > now()
+                LIMIT 1
+                FOR UPDATE
+            """),
+            {"token_hash": token_hash},
+        ).mappings().first()
+
+        if not reset_row or not reset_row["is_active"]:
+            return {
+                "ok": False,
+                "code": "invalid_reset_token",
+                "message": "This password reset link is invalid or has expired.",
+            }
+
+        existing_password_hash = reset_row["password_hash"]
+
+        if (
+            existing_password_hash
+            and check_password_hash(existing_password_hash, new_password)
+        ):
+            return {
+                "ok": False,
+                "code": "same_password",
+                "message": (
+                    "Your new password must be different "
+                    "from your current password."
+                ),
+            }
+
+        conn.execute(
+            text("""
+                UPDATE app_users
+                SET
+                    password_hash = :password_hash,
+                    failed_login_attempts = 0,
+                    locked_until = NULL,
+                    last_password_changed_at = now()
+                WHERE id = :user_id
+            """),
+            {
+                "user_id": reset_row["user_id"],
+                "password_hash": generate_password_hash(new_password),
+            },
+        )
+
+        conn.execute(
+            text("""
+                UPDATE password_reset_tokens
+                SET used_at = now()
+                WHERE user_id = :user_id
+                    AND used_at IS NULL
+            """),
+            {"user_id": reset_row["user_id"]},
+        )
+
+        log_auth_event(
+            event_type="password_reset_success",
+            is_success=True,
+            user_id=reset_row["user_id"],
+            email=reset_row["email"],
+            message="Password reset completed successfully.",
+        )
+
+        return {
+            "ok": True,
+            "code": "password_reset",
+            "message": "Your password has been reset successfully.",
+        }
 
 #***************************************************************
 #

@@ -1,7 +1,8 @@
+import hashlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from werkzeug.security import generate_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from src.services import auth_service
 
@@ -211,3 +212,342 @@ def test_change_password_success_updates_hash(monkeypatch):
     assert result["ok"] is True
     assert captured["user_id"] == user["id"]
     assert captured["password_hash"] != user["password_hash"]
+
+# --- password reset -------------------------------------------------------
+
+
+class FakeResult:
+    def __init__(self, row=None):
+        self.row = row
+
+    def mappings(self):
+        return self
+
+    def first(self):
+        return self.row
+
+
+class FakeResetConn:
+    def __init__(self, reset_row=None):
+        self.reset_row = reset_row
+        self.calls = []
+
+    def execute(self, stmt, params=None):
+        sql = str(stmt)
+        params = params or {}
+
+        self.calls.append({
+            "sql": sql,
+            "params": params,
+        })
+
+        if "SELECT" in sql and "password_reset_tokens" in sql:
+            return FakeResult(self.reset_row)
+
+        return FakeResult()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class FakeResetEngine:
+    def __init__(self, reset_row=None):
+        self.conn = FakeResetConn(reset_row=reset_row)
+
+    def begin(self):
+        return self.conn
+
+
+def test_password_reset_unknown_email_returns_generic_response(monkeypatch):
+    monkeypatch.setattr(
+        auth_service,
+        "get_user_by_email",
+        lambda email: None,
+    )
+
+    result = auth_service.request_password_reset("nobody@example.com")
+
+    assert result == {
+        "ok": True,
+        "code": "reset_requested",
+        "message": (
+            "If an active account exists for that email address, "
+            "password reset instructions will be sent."
+        ),
+    }
+
+
+def test_password_reset_inactive_user_returns_generic_response(monkeypatch):
+    user = make_user(is_active=False)
+
+    monkeypatch.setattr(
+        auth_service,
+        "get_user_by_email",
+        lambda email: user,
+    )
+
+    result = auth_service.request_password_reset(user["email"])
+
+    assert result["ok"] is True
+    assert result["code"] == "reset_requested"
+    assert "reset_token" not in result
+    assert "reset_email" not in result
+
+
+def test_password_reset_request_creates_hashed_token(monkeypatch):
+    user = make_user()
+    engine = FakeResetEngine()
+
+    monkeypatch.setattr(
+        auth_service,
+        "get_user_by_email",
+        lambda email: user,
+    )
+    monkeypatch.setattr(
+        auth_service,
+        "get_engine",
+        lambda: engine,
+    )
+
+    result = auth_service.request_password_reset(user["email"])
+
+    assert result["ok"] is True
+    assert result["code"] == "reset_requested"
+    assert result["reset_email"] == user["email"]
+
+    raw_token = result["reset_token"]
+
+    insert_call = next(
+        call
+        for call in engine.conn.calls
+        if "INSERT INTO password_reset_tokens" in call["sql"]
+    )
+
+    stored_hash = insert_call["params"]["token_hash"]
+
+    assert stored_hash != raw_token
+    assert stored_hash == hashlib.sha256(
+        raw_token.encode("utf-8")
+    ).hexdigest()
+
+
+def test_password_reset_request_invalidates_existing_tokens(monkeypatch):
+    user = make_user()
+    engine = FakeResetEngine()
+
+    monkeypatch.setattr(
+        auth_service,
+        "get_user_by_email",
+        lambda email: user,
+    )
+    monkeypatch.setattr(
+        auth_service,
+        "get_engine",
+        lambda: engine,
+    )
+
+    auth_service.request_password_reset(user["email"])
+
+    invalidate_call = next(
+        call
+        for call in engine.conn.calls
+        if "UPDATE password_reset_tokens" in call["sql"]
+        and "used_at = now()" in call["sql"]
+    )
+
+    assert invalidate_call["params"]["user_id"] == user["id"]
+
+
+def test_reset_password_rejects_missing_token():
+    result = auth_service.reset_password_with_token(
+        "",
+        "NewPassword123",
+        "NewPassword123",
+    )
+
+    assert result["ok"] is False
+    assert result["code"] == "invalid_reset_token"
+
+
+def test_reset_password_rejects_short_password():
+    result = auth_service.reset_password_with_token(
+        "some-token",
+        "short",
+        "short",
+    )
+
+    assert result["ok"] is False
+    assert result["code"] == "password_too_short"
+
+
+def test_reset_password_rejects_mismatched_confirmation():
+    result = auth_service.reset_password_with_token(
+        "some-token",
+        "NewPassword123",
+        "DifferentPassword123",
+    )
+
+    assert result["ok"] is False
+    assert result["code"] == "password_mismatch"
+
+
+def test_reset_password_rejects_invalid_or_expired_token(monkeypatch):
+    engine = FakeResetEngine(reset_row=None)
+
+    monkeypatch.setattr(
+        auth_service,
+        "get_engine",
+        lambda: engine,
+    )
+
+    result = auth_service.reset_password_with_token(
+        "invalid-or-expired-token",
+        "NewPassword123",
+        "NewPassword123",
+    )
+
+    assert result["ok"] is False
+    assert result["code"] == "invalid_reset_token"
+
+
+def test_reset_password_rejects_inactive_user(monkeypatch):
+    reset_row = {
+        "id": 10,
+        "user_id": 1,
+        "email": "user@example.com",
+        "password_hash": generate_password_hash(CORRECT_PASSWORD),
+        "is_active": False,
+    }
+
+    engine = FakeResetEngine(reset_row=reset_row)
+
+    monkeypatch.setattr(
+        auth_service,
+        "get_engine",
+        lambda: engine,
+    )
+
+    result = auth_service.reset_password_with_token(
+        "valid-token",
+        "NewPassword123",
+        "NewPassword123",
+    )
+
+    assert result["ok"] is False
+    assert result["code"] == "invalid_reset_token"
+
+
+def test_reset_password_rejects_reusing_current_password(monkeypatch):
+    reset_row = {
+        "id": 10,
+        "user_id": 1,
+        "email": "user@example.com",
+        "password_hash": generate_password_hash(CORRECT_PASSWORD),
+        "is_active": True,
+    }
+
+    engine = FakeResetEngine(reset_row=reset_row)
+
+    monkeypatch.setattr(
+        auth_service,
+        "get_engine",
+        lambda: engine,
+    )
+
+    result = auth_service.reset_password_with_token(
+        "valid-token",
+        CORRECT_PASSWORD,
+        CORRECT_PASSWORD,
+    )
+
+    assert result["ok"] is False
+    assert result["code"] == "same_password"
+
+
+def test_reset_password_success_updates_password_and_invalidates_tokens(monkeypatch):
+    old_hash = generate_password_hash(CORRECT_PASSWORD)
+
+    reset_row = {
+        "id": 10,
+        "user_id": 1,
+        "email": "user@example.com",
+        "password_hash": old_hash,
+        "is_active": True,
+    }
+
+    engine = FakeResetEngine(reset_row=reset_row)
+
+    monkeypatch.setattr(
+        auth_service,
+        "get_engine",
+        lambda: engine,
+    )
+
+    result = auth_service.reset_password_with_token(
+        "valid-token",
+        "NewPassword123",
+        "NewPassword123",
+    )
+
+    assert result["ok"] is True
+    assert result["code"] == "password_reset"
+
+    user_update_call = next(
+        call
+        for call in engine.conn.calls
+        if "UPDATE app_users" in call["sql"]
+    )
+
+    assert user_update_call["params"]["user_id"] == reset_row["user_id"]
+
+    new_hash = user_update_call["params"]["password_hash"]
+
+    assert new_hash != old_hash
+    assert check_password_hash(new_hash, "NewPassword123")
+
+    token_update_call = next(
+        call
+        for call in engine.conn.calls
+        if "UPDATE password_reset_tokens" in call["sql"]
+        and "used_at = now()" in call["sql"]
+    )
+
+    assert token_update_call["params"]["user_id"] == reset_row["user_id"]
+
+
+def test_reset_password_success_clears_lockout_state(monkeypatch):
+    reset_row = {
+        "id": 10,
+        "user_id": 1,
+        "email": "user@example.com",
+        "password_hash": generate_password_hash(CORRECT_PASSWORD),
+        "is_active": True,
+    }
+
+    engine = FakeResetEngine(reset_row=reset_row)
+
+    monkeypatch.setattr(
+        auth_service,
+        "get_engine",
+        lambda: engine,
+    )
+
+    result = auth_service.reset_password_with_token(
+        "valid-token",
+        "NewPassword123",
+        "NewPassword123",
+    )
+
+    assert result["ok"] is True
+
+    update_call = next(
+        call
+        for call in engine.conn.calls
+        if "UPDATE app_users" in call["sql"]
+    )
+
+    assert "failed_login_attempts = 0" in update_call["sql"]
+    assert "locked_until = NULL" in update_call["sql"]

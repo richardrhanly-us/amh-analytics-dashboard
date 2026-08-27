@@ -39,6 +39,7 @@ from services.access_service import (
     user_can_access_org,
 )
 from services.app_ui_service import apply_page_chrome, render_app_header
+from services.email_service import send_password_reset_email
 from services.entitlement_service import build_entitlement_context
 from services.filters_service import resolve_date_filters
 from services.permission_service import (
@@ -127,6 +128,88 @@ if (
 #***************************************************************
 
 if st.session_state["auth_user"] is None:
+    reset_token = st.query_params.get("reset_token")
+
+    if reset_token:
+        st.title("Reset SortView Password")
+
+        with st.form("reset_password_form"):
+            new_password = st.text_input(
+                "New password",
+                type="password",
+            )
+            confirm_password = st.text_input(
+                "Confirm new password",
+                type="password",
+            )
+            reset_submitted = st.form_submit_button("Reset Password")
+
+        if reset_submitted:
+            result = auth_service.reset_password_with_token(
+                token=reset_token,
+                new_password=new_password,
+                confirm_password=confirm_password,
+            )
+
+            if result["ok"]:
+                st.success(result["message"])
+
+                st.query_params.clear()
+
+                if st.button("Return to login"):
+                    st.rerun()
+            else:
+                st.error(result["message"])
+
+        st.stop()
+
+    if "show_forgot_password" not in st.session_state:
+        st.session_state["show_forgot_password"] = False
+
+    if st.session_state["show_forgot_password"]:
+        st.title("Reset SortView Password")
+
+        st.write(
+            "Enter your email address and we'll send you "
+            "a password reset link."
+        )
+
+        with st.form("forgot_password_form"):
+            reset_email = st.text_input("Email")
+            reset_requested = st.form_submit_button(
+                "Send Reset Link"
+            )
+
+        if reset_requested:
+            result = auth_service.request_password_reset(
+                reset_email
+            )
+
+            reset_token = result.get("reset_token")
+            recipient_email = result.get("reset_email")
+
+            if reset_token and recipient_email:
+                try:
+                    send_password_reset_email(
+                        recipient_email=recipient_email,
+                        reset_token=reset_token,
+                    )
+                except Exception:
+                    logger.exception("Password reset email delivery failed")
+                    st.error(
+                        "We couldn't send the reset email. "
+                        "Please try again later."
+                    )
+                    st.stop()
+
+            st.success(result["message"])
+
+        if st.button("Back to login"):
+            st.session_state["show_forgot_password"] = False
+            st.rerun()
+
+        st.stop()
+
     st.title("SortView Login")
 
     with st.form("login_form"):
@@ -135,12 +218,20 @@ if st.session_state["auth_user"] is None:
         submitted = st.form_submit_button("Log In")
 
     if submitted:
-        result = auth_service.authenticate_user(email=email, password=password)
+        result = auth_service.authenticate_user(
+            email=email,
+            password=password,
+        )
+
         if result["ok"]:
             st.session_state["auth_user"] = result["user"]
             st.rerun()
         else:
             st.error(result["message"])
+
+    if st.button("Forgot password?"):
+        st.session_state["show_forgot_password"] = True
+        st.rerun()
 
     st.stop()
 
