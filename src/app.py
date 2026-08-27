@@ -12,6 +12,7 @@
 #
 #***************************************************************
 
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
@@ -55,6 +56,8 @@ from views.overview_view import render_overview
 from views.reports_view import render_reports
 from views.transits_view import render_transits
 
+logger = logging.getLogger("sortview.app")
+
 #***************************************************************
 # Page Configuration and Global Setup
 #
@@ -81,23 +84,38 @@ APP_TZ = ZoneInfo("America/Chicago")
 #***************************************************************
 # Guest Auto-Login
 #
-# Visiting the app with a "guest" URL query parameter (used by the
-# public demo link) signs the visitor straight in as the guest
-# account, skipping the login form entirely. The plain URL with no
-# query parameter is unaffected, so real accounts keep logging in
-# normally. Falls through to the regular login form if guest
-# authentication fails for any reason (e.g. the account is
-# deactivated).
+# Visiting the app with "?guest=1" (used by the public portfolio demo
+# link) signs the visitor straight in as the guest account, skipping
+# the login form entirely. This entire block is inert unless
+# SORTVIEW_DEMO_MODE_ENABLED is explicitly set to "true" for this
+# deployment -- a real customer deployment simply doesn't have this
+# code path reachable unless someone deliberately turns it on. There
+# is deliberately no default guest email/password: if demo mode is on
+# but those aren't configured, guest login is treated as unavailable
+# rather than falling back to a guessable credential. Falls through to
+# the regular login form if guest authentication fails for any reason
+# (e.g. the account is deactivated).
 #***************************************************************
 
-GUEST_EMAIL = os.getenv("SORTVIEW_GUEST_EMAIL", "guest@gmail.com")
-GUEST_PASSWORD = os.getenv("SORTVIEW_GUEST_PASSWORD", "guest")
+DEMO_MODE_ENABLED = os.getenv("SORTVIEW_DEMO_MODE_ENABLED", "false").strip().lower() == "true"
+GUEST_EMAIL = os.getenv("SORTVIEW_GUEST_EMAIL")
+GUEST_PASSWORD = os.getenv("SORTVIEW_GUEST_PASSWORD")
 
-if st.session_state["auth_user"] is None and "guest" in st.query_params:
-    guest_result = auth_service.authenticate_user(email=GUEST_EMAIL, password=GUEST_PASSWORD)
-    if guest_result["ok"]:
-        st.session_state["auth_user"] = guest_result["user"]
-        st.rerun()
+if (
+    DEMO_MODE_ENABLED
+    and st.session_state["auth_user"] is None
+    and st.query_params.get("guest") == "1"
+):
+    if GUEST_EMAIL and GUEST_PASSWORD:
+        guest_result = auth_service.authenticate_user(email=GUEST_EMAIL, password=GUEST_PASSWORD)
+        if guest_result["ok"]:
+            st.session_state["auth_user"] = guest_result["user"]
+            st.rerun()
+    else:
+        logger.warning(
+            "SORTVIEW_DEMO_MODE_ENABLED is true but SORTVIEW_GUEST_EMAIL/"
+            "SORTVIEW_GUEST_PASSWORD are not set; guest login is unavailable."
+        )
 
 
 #***************************************************************

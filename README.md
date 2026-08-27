@@ -13,6 +13,11 @@
 
 Click the link above to log directly into the app as a guest — no login required.
 
+Guest login only works on deployments that explicitly opt into it. It's controlled by
+`SORTVIEW_DEMO_MODE_ENABLED=true` plus `SORTVIEW_GUEST_EMAIL` / `SORTVIEW_GUEST_PASSWORD`;
+there is no default guest account baked into the code, so a real customer deployment simply
+doesn't have this feature unless someone deliberately turns it on.
+
 SortView is a full-stack analytics and monitoring system for Automated Materials Handler operations in library environments.
 
 It collects sorter activity from a Windows-based agent, processes and uploads the data through a FastAPI backend, stores it in Neon PostgreSQL, and presents operational insights through a Streamlit dashboard.
