@@ -200,10 +200,11 @@ def save_checkins_csv(df, output_path=None):
         df.to_csv(output_file, index=False)
         logger.info("Saved checkins CSV to %s", output_path)
     except PermissionError:
-        logger.exception("Could not save checkins CSV because the file is open: %s", output_path)
-        print()
-        print("Could not save checkins_clean.csv because the file is open in another program.")
-        print("Close the CSV in Excel and run the script again.")
+        logger.exception(
+            "Could not save checkins CSV because the file is open: %s "
+            "(close it in Excel and run the script again)",
+            output_path,
+        )
         raise
 
 
@@ -211,13 +212,9 @@ if __name__ == "__main__":
     df = load_checkins()
     save_checkins_csv(df)
 
-    print("Saved cleaned checkins file to:", PROCESSED_CHECKINS_FILE)
-    print("Row count:", len(df))
-    print()
-    print("Destination breakdown:")
-    print(df["destination"].value_counts(dropna=False))
-    print()
-    print("Bad datetime rows:", df["datetime"].isna().sum())
-    print()
-    print("Problem items:", int(df["is_problem"].sum()))
-    print("Transit items:", int(df["is_transit"].sum()))
+    logger.info("Saved cleaned checkins file to: %s", PROCESSED_CHECKINS_FILE)
+    logger.info("Row count: %s", len(df))
+    logger.info("Destination breakdown:\n%s", df["destination"].value_counts(dropna=False))
+    logger.info("Bad datetime rows: %s", df["datetime"].isna().sum())
+    logger.info("Problem items: %s", int(df["is_problem"].sum()))
+    logger.info("Transit items: %s", int(df["is_transit"].sum()))

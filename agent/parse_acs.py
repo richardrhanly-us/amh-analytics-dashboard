@@ -150,7 +150,6 @@ def save_acs_csv(df):
 if __name__ == "__main__":
     df = load_acs()
     save_acs_csv(df)
-    print("Saved cleaned ACS file to:", PROCESSED_ACS_FILE)
-    print("Row count:", len(df))
-    print()
-    print("Bad datetime rows:", df["datetime"].isna().sum())
+    logger.info("Saved cleaned ACS file to: %s", PROCESSED_ACS_FILE)
+    logger.info("Row count: %s", len(df))
+    logger.info("Bad datetime rows: %s", df["datetime"].isna().sum())

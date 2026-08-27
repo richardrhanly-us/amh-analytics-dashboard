@@ -1,11 +1,17 @@
 import json
+import logging
 import os
 import re
-import traceback
 
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, text
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+logger = logging.getLogger("sortview.api")
 
 app = FastAPI()
 
@@ -282,8 +288,7 @@ def upload(data: UploadRequest, authorization: str | None = Header(default=None)
     except HTTPException:
         raise
     except Exception as e:
-        print("UPLOAD ERROR:")
-        traceback.print_exc()
+        logger.exception("Upload failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -385,6 +390,5 @@ def upload_pipeline_status(data: PipelineStatusRequest, authorization: str | Non
     except HTTPException:
         raise
     except Exception as e:
-        print("PIPELINE STATUS UPLOAD ERROR:")
-        traceback.print_exc()
+        logger.exception("Pipeline status upload failed")
         raise HTTPException(status_code=500, detail=str(e))
