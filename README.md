@@ -426,3 +426,8 @@ Planned improvements include:
 ## Disclaimer
 
 SortView is an independent portfolio project designed around library automated-materials-handling workflows. It is not an official product of Tech Logic, TLC, Neon, or Streamlit.
+
+## License
+
+SortView is proprietary software. All rights reserved.
+See `LICENSE` for details.
