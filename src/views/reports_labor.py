@@ -183,7 +183,6 @@ def render_labor_efficiency_section(
         if roi_payload:
             net_roi_value = roi_payload["net_roi_value"]
             total_roi_cost = roi_payload["total_roi_cost"]
-            roi_pct = roi_payload["roi_pct"]
             payback_months = roi_payload["payback_months"]
         
             annual_labor_value = roi_payload["annual_labor_value"]
@@ -378,8 +377,6 @@ def render_labor_efficiency_section(
                 st.markdown("### ROI Breakdown")
             
                 if roi_mode == "Annualized Projection":
-                    payback_display = f"{payback_months:,.1f} months" if payback_months is not None else "Not available"
-                    roi_display = f"{roi_pct:,.1f}%" if roi_pct is not None else "N/A"
                     since_install_roi_display = f"{since_install_roi_pct:,.1f}%" if since_install_roi_pct is not None else "N/A"
                     
                     st.markdown("### How to interpret Annualized metrics")

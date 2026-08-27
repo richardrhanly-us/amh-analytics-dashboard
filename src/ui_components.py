@@ -16,7 +16,6 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-
 #***************************************************************
 #
 #  Function:     render_kpi_card

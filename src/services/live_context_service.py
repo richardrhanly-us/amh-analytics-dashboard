@@ -11,17 +11,15 @@
 #
 #***************************************************************
 
-from datetime import datetime
 
 import pandas as pd
 
 from alerts import get_system_alerts
 from metrics import (
-    get_today_metrics,
-    get_historical_reject_baseline,
     build_acs_item_summary,
+    get_historical_reject_baseline,
+    get_today_metrics,
 )
-
 
 #***************************************************************
 #
@@ -178,12 +176,6 @@ def build_live_context(
         today_hourly_checkins = today_df["datetime"].dt.hour.value_counts().sort_index()
     else:
         today_hourly_checkins = pd.Series(dtype=int)
-
-    # Build hourly reject counts for live comparison.
-    if len(today_rejects_df) > 0 and "datetime" in today_rejects_df.columns:
-        today_hourly_rejects = today_rejects_df["datetime"].dt.hour.value_counts().sort_index()
-    else:
-        today_hourly_rejects = pd.Series(dtype=int)
 
     # Prepare live ACS data for today's hold and internal workflow summary.
     today_acs_df = acs_live_raw.copy()

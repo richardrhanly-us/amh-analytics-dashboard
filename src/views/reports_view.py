@@ -1,10 +1,10 @@
 import streamlit as st
 
 from ui_components import download_button
-from views.reports_labor import render_labor_efficiency_section
-from views.reports_volume import render_volume_capacity_section
-from views.reports_routing import render_routing_destinations_section
 from views.reports_errors import render_errors_exceptions_section
+from views.reports_labor import render_labor_efficiency_section
+from views.reports_routing import render_routing_destinations_section
+from views.reports_volume import render_volume_capacity_section
 
 
 def render_reports(

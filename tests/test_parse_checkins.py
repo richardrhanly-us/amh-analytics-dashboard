@@ -1,8 +1,8 @@
 import pandas as pd
 
 from agent.parse_checkins import (
-    normalize_destination,
     load_checkins,
+    normalize_destination,
     save_checkins_csv,
 )
 

@@ -2,8 +2,8 @@ import re
 from pathlib import Path
 
 import pandas as pd
-
 from config import load_config
+
 from logger_config import get_logger
 
 config = load_config()

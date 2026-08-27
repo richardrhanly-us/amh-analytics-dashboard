@@ -15,12 +15,10 @@
 
 from metrics import get_today_metrics
 from reject_logic import simplify_error
-
-from services.pipeline_context_service import build_pipeline_context
 from services.filter_context_service import build_filtered_context
 from services.live_context_service import build_live_context
+from services.pipeline_context_service import build_pipeline_context
 from services.theme_service import get_theme_palette
-
 
 #***************************************************************
 #

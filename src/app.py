@@ -13,53 +13,47 @@
 #***************************************************************
 
 import os
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import streamlit as st
-from pathlib import Path
-from datetime import datetime
-from zoneinfo import ZoneInfo
 from streamlit_autorefresh import st_autorefresh
 
+from dashboard_context import build_dashboard_context
+from data_loader import (
+    load_acs_df,
+    load_acs_history_df,
+    load_checkins_df,
+    load_checkins_history_df,
+    load_pipeline_status,
+    load_rejects_df,
+    load_rejects_history_df,
+    validate_tenant_schema,
+)
+from services import auth_service
+from services.access_service import (
+    get_org_branches,
+    get_user_memberships,
+    user_can_access_org,
+)
+from services.app_ui_service import apply_page_chrome, render_app_header
+from services.entitlement_service import build_entitlement_context
+from services.filters_service import resolve_date_filters
+from services.permission_service import (
+    can_export,
+    can_manage_settings,
+    can_view_advanced_reports,
+    can_view_internal_workflow,
+    can_view_transits,
+)
+from services.readiness_service import get_branch_readiness
+from services.settings_service import load_runtime_settings
+from services.sidebar_service import render_main_sidebar
 from views.live_today_view import render_live_today
 from views.overview_view import render_overview
 from views.reports_view import render_reports
 from views.transits_view import render_transits
-from services.settings_service import load_runtime_settings
-from services.filters_service import resolve_date_filters
-from services.app_ui_service import apply_page_chrome, render_app_header
-import services.auth_service as auth_service
-from services.access_service import (
-    get_user_memberships,
-    user_can_access_org,
-    get_org_branches,
-)
-
-from services.entitlement_service import build_entitlement_context
-
-from services.permission_service import (
-    can_manage_settings,
-    can_export,
-    can_view_advanced_reports,
-    can_view_transits,
-    can_view_internal_workflow,
-)
-
-
-from data_loader import (
-    load_checkins_df,
-    load_checkins_history_df,
-    load_rejects_df,
-    load_rejects_history_df,
-    load_pipeline_status,
-    load_acs_df,
-    load_acs_history_df,
-    validate_tenant_schema,
-)
-
-from dashboard_context import build_dashboard_context
-from services.readiness_service import get_branch_readiness
-from services.sidebar_service import render_main_sidebar
-
 
 #***************************************************************
 # Page Configuration and Global Setup
@@ -492,7 +486,7 @@ pipeline_status = load_pipeline_status(
     refresh_count=refresh_count,
 )
 
-status_mtime = 0
+status_mtime = "0"
 if pipeline_status:
     status_updated_at = pipeline_status.get("updated_at")
     if status_updated_at:

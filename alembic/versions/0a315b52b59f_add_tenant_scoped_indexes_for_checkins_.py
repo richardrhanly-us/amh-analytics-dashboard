@@ -22,16 +22,15 @@ Uses CREATE INDEX CONCURRENTLY (via autocommit_block) so index
 creation does not lock the tables against writes from the agent/API
 while running.
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 from alembic import op
 
-
 # revision identifiers, used by Alembic.
 revision: str = '0a315b52b59f'
-down_revision: Union[str, Sequence[str], None] = '26397a3947b1'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = '26397a3947b1'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 INDEXES = [

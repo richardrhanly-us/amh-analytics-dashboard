@@ -17,8 +17,9 @@ if SRC_DIR not in sys.path:
 if SUPER_ADMIN_DIR not in sys.path:
     sys.path.insert(0, SUPER_ADMIN_DIR)
 
-from services.tenant_service import create_organization_with_primary_branch
 from super_auth import require_super_admin
+
+from services.tenant_service import create_organization_with_primary_branch
 
 st.set_page_config(
     page_title="Provision Library",
@@ -33,7 +34,8 @@ DEFAULT_ORG_SETTINGS = {
     "system_name": "Tech Logic UltraSort",
     "security": {
         "admin_enabled": True,
-        "admin_password": "",
+        # Empty default in a settings template, not a real credential.
+        "admin_password": "",  # nosec B105
     },
     "transit": {
         "home_branch_label": "Main",

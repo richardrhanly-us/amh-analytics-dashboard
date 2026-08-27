@@ -77,20 +77,18 @@ def get_system_alerts(
         })
 
     # Compare current Westside routing against the historical average when available.
-    if historical_westside_pct is not None:
-        if westside_pct >= historical_westside_pct + 3:
-            alerts.append({
-                "level": "info",
-                "text": f"Westside routing is trending above typical levels ({westside_pct:.2f}% vs typical {historical_westside_pct:.2f}%)."
-            })
+    if historical_westside_pct is not None and westside_pct >= historical_westside_pct + 3:
+        alerts.append({
+            "level": "info",
+            "text": f"Westside routing is trending above typical levels ({westside_pct:.2f}% vs typical {historical_westside_pct:.2f}%)."
+        })
 
     # Compare current Library Express routing against the historical average when available.
-    if historical_library_express_pct is not None:
-        if library_express_pct <= max(historical_library_express_pct - 1, 0):
-            alerts.append({
-                "level": "info",
-                "text": f"Library Express routing is trending below typical levels ({library_express_pct:.2f}% vs typical {historical_library_express_pct:.2f}%)."
-            })
+    if historical_library_express_pct is not None and library_express_pct <= max(historical_library_express_pct - 1, 0):
+        alerts.append({
+            "level": "info",
+            "text": f"Library Express routing is trending below typical levels ({library_express_pct:.2f}% vs typical {historical_library_express_pct:.2f}%)."
+        })
 
     # If no problems or notable trends were found, return a normal informational alert.
     if not alerts:

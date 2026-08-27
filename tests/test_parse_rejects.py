@@ -1,9 +1,9 @@
 import pandas as pd
 
 from agent.parse_rejects import (
-    simplify_error_message,
     load_rejects,
     save_rejects_csv,
+    simplify_error_message,
 )
 
 

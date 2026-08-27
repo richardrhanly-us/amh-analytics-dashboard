@@ -1,13 +1,14 @@
 import json
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 from config import load_config
+from parse_acs import load_acs_incremental, save_acs_csv
 from parse_checkins import load_checkins_incremental, save_checkins_csv
 from parse_rejects import load_rejects_incremental, save_rejects_csv
-from parse_acs import load_acs_incremental, save_acs_csv
-from logger_config import get_logger
 from uploader import upload_checkins_and_rejects, upload_pipeline_status
+
+from logger_config import get_logger
 
 config = load_config()
 
@@ -102,7 +103,7 @@ def save_pipeline_state(
 
 
 def main():
-    start_time = datetime.now()
+    start_time = datetime.now().astimezone()
     logger.info("Pipeline run started")
 
     existing_status = load_status_file()
@@ -258,7 +259,7 @@ def main():
     )
     logger.info("Updated pipeline state file")
 
-    finished_time = datetime.now()
+    finished_time = datetime.now().astimezone()
 
     new_rows_uploaded = (
         int(upload_result.get("uploaded_checkins", 0)) > 0
@@ -277,9 +278,9 @@ def main():
         "updated_at": finished_time.isoformat(timespec="seconds"),
         "status": final_status_code,
 
-        "checkins_rows": int(len(checkins_df)),
-        "rejects_rows": int(len(rejects_df)),
-        "acs_rows": int(len(acs_df)),
+        "checkins_rows": len(checkins_df),
+        "rejects_rows": len(rejects_df),
+        "acs_rows": len(acs_df),
 
         "uploaded_checkins_rows": int(upload_result.get("uploaded_checkins", 0)),
         "uploaded_rejects_rows": int(upload_result.get("uploaded_rejects", 0)),
@@ -316,7 +317,7 @@ def main():
     logger.info("Destination breakdown: %s", status["destination_breakdown"])
     logger.info("Pipeline run completed successfully")
 
-    end_time = datetime.now()
+    end_time = datetime.now().astimezone()
     duration = (end_time - start_time).total_seconds()
     logger.info("Pipeline runtime: %.2f seconds", duration)
 

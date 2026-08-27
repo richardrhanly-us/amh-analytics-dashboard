@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import pandas as pd
 import streamlit as st
 
 from services.app_ui_service import apply_page_chrome
 from services.platform_admin_service import is_platform_admin
-from services.tenant_service import get_organization_by_slug
 
 st.set_page_config(
     page_title="Super Admin",

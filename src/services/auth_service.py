@@ -13,14 +13,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import text
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from database import get_engine
-
 
 #***************************************************************
 # Authentication Settings
@@ -199,14 +198,17 @@ def get_user_by_id(user_id: int) -> dict[str, Any] | None:
 
 def record_failed_login(user_id: int) -> None:
     # Update failed-login counters and apply lockout when the limit is reached.
-    sql = text(f"""
+    # max_attempts / lockout_minutes are bound parameters (not f-string
+    # interpolation) even though both values only ever come from the
+    # MAX_FAILED_ATTEMPTS / LOCKOUT_MINUTES module constants above.
+    sql = text("""
         UPDATE app_users
         SET
             failed_login_attempts = failed_login_attempts + 1,
             last_failed_login_at = now(),
             locked_until = CASE
-                WHEN failed_login_attempts + 1 >= {MAX_FAILED_ATTEMPTS}
-                THEN now() + interval '{LOCKOUT_MINUTES} minutes'
+                WHEN failed_login_attempts + 1 >= :max_attempts
+                THEN now() + (:lockout_minutes * interval '1 minute')
                 ELSE locked_until
             END
         WHERE id = :user_id
@@ -214,7 +216,14 @@ def record_failed_login(user_id: int) -> None:
 
     engine = get_engine()
     with engine.begin() as conn:
-        conn.execute(sql, {"user_id": user_id})
+        conn.execute(
+            sql,
+            {
+                "user_id": user_id,
+                "max_attempts": MAX_FAILED_ATTEMPTS,
+                "lockout_minutes": LOCKOUT_MINUTES,
+            },
+        )
 
 
 #***************************************************************
@@ -268,10 +277,10 @@ def _minutes_remaining(locked_until) -> int:
 
     # Treat timezone-naive lockout values as UTC.
     if locked_until.tzinfo is None:
-        locked_until = locked_until.replace(tzinfo=timezone.utc)
+        locked_until = locked_until.replace(tzinfo=UTC)
 
     # Round remaining seconds up to the next full minute.
-    delta = locked_until - datetime.now(timezone.utc)
+    delta = locked_until - datetime.now(UTC)
     seconds = max(0, int(delta.total_seconds()))
     minutes = max(1, (seconds + 59) // 60)
     return minutes
@@ -336,9 +345,9 @@ def authenticate_user(email: str, password: str) -> dict[str, Any]:
     locked_until = user.get("locked_until")
     if locked_until is not None:
         if locked_until.tzinfo is None:
-            locked_until = locked_until.replace(tzinfo=timezone.utc)
+            locked_until = locked_until.replace(tzinfo=UTC)
 
-        if locked_until > datetime.now(timezone.utc):
+        if locked_until > datetime.now(UTC):
             minutes_remaining = _minutes_remaining(locked_until)
             log_auth_event(
                 event_type="login_locked",
@@ -382,9 +391,9 @@ def authenticate_user(email: str, password: str) -> dict[str, Any]:
 
         if locked_until is not None:
             if locked_until.tzinfo is None:
-                locked_until = locked_until.replace(tzinfo=timezone.utc)
+                locked_until = locked_until.replace(tzinfo=UTC)
 
-            if locked_until > datetime.now(timezone.utc):
+            if locked_until > datetime.now(UTC):
                 minutes_remaining = _minutes_remaining(locked_until)
                 log_auth_event(
                     event_type="login_locked",

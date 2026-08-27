@@ -15,8 +15,8 @@
 #***************************************************************
 
 import re
-import pandas as pd
 
+import pandas as pd
 
 #***************************************************************
 #
@@ -720,10 +720,10 @@ def build_acs_item_summary(
     )
 
     return {
-        "holds_total": int(len(public_holds_df)),
-        "ill_total": int(len(ill_df)),
-        "programming_total": int(len(programming_df)),
-        "collection_services_total": int(len(collection_services_df)),
+        "holds_total": len(public_holds_df),
+        "ill_total": len(ill_df),
+        "programming_total": len(programming_df),
+        "collection_services_total": len(collection_services_df),
         "ill_main": ill_main_count,
         "ill_by_branch": ill_by_branch,
         "items_df": items,

@@ -14,7 +14,6 @@
 
 import streamlit as st
 
-
 #***************************************************************
 #
 #  Function:     apply_page_chrome
@@ -113,6 +112,5 @@ def render_app_header(library_name, branch_name, system_name, show_admin_button=
 
     # Render the admin settings shortcut when the current user has access.
     with header_right:
-        if show_admin_button:
-            if st.button("⚙️", help="Admin Settings"):
-                st.switch_page("pages/1_admin_settings.py")
+        if show_admin_button and st.button("⚙️", help="Admin Settings"):
+            st.switch_page("pages/1_admin_settings.py")

@@ -14,7 +14,6 @@
 import pandas as pd
 import streamlit as st
 
-
 #***************************************************************
 #
 #  Function:     resolve_date_filters

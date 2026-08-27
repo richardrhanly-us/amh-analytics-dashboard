@@ -17,11 +17,12 @@ if SRC_DIR not in sys.path:
 if SUPER_ADMIN_DIR not in sys.path:
     sys.path.insert(0, SUPER_ADMIN_DIR)
 
+from super_auth import require_super_admin
+
 from services.platform_admin_service import (
     list_libraries_with_status,
     set_library_active_status,
 )
-from super_auth import require_super_admin
 
 st.set_page_config(
     page_title="Manage Libraries",

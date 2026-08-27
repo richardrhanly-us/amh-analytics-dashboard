@@ -14,7 +14,6 @@
 
 import pandas as pd
 
-
 #***************************************************************
 #
 #  Function:     simplify_error

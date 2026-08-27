@@ -117,3 +117,16 @@ This reduces the chance of payload/schema mismatches.
 - do not rely on startup-time schema creation in production
 - future schema changes should use Alembic
 - agent changes must be manually deployed to the AMH machine
+
+## python version
+
+Local dev, the devcontainer, and CI all target Python 3.11.
+
+The dashboard's production Streamlit Community Cloud deployment does **not**
+read a `runtime.txt` for this — that mechanism is currently broken/ignored on
+the platform. The actual Python version for that deployment is controlled
+only through the "Python version" dropdown in the app's **Advanced Settings**
+in the Streamlit Cloud dashboard, which isn't visible from this repo at all.
+Before pinning or upgrading a dependency, confirm that dropdown matches 3.11
+(or whatever version is intentionally set) rather than assuming it matches
+local/CI.

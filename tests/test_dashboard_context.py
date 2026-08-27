@@ -34,37 +34,37 @@ def base_kwargs(selected_view, with_today_data=True):
     live_dates = ["2026-03-30 09:00"] if with_today_data else []
     history_dates = ["2026-03-29 09:00", "2026-03-30 09:00"]
 
-    return dict(
-        df_live_raw=build_checkins_df(live_dates),
-        df_history_raw=build_checkins_df(history_dates),
-        rejects_live_raw=build_rejects_df(live_dates),
-        rejects_history_raw=build_rejects_df(history_dates),
-        acs_live_raw=empty_acs_df(),
-        acs_history_raw=empty_acs_df(),
-        pipeline_status={
+    return {
+        "df_live_raw": build_checkins_df(live_dates),
+        "df_history_raw": build_checkins_df(history_dates),
+        "rejects_live_raw": build_rejects_df(live_dates),
+        "rejects_history_raw": build_rejects_df(history_dates),
+        "acs_live_raw": empty_acs_df(),
+        "acs_history_raw": empty_acs_df(),
+        "pipeline_status": {
             "status": "completed",
             "updated_at": "2026-03-30T12:00:00",
             "last_run": "2026-03-30T12:00:00",
             "last_attempt": "2026-03-30T12:00:00",
         },
-        refresh_count=0,
-        start_date=pd.Timestamp("2026-03-29").date(),
-        end_date=TODAY,
-        today=TODAY,
-        now_ct=NOW_CT,
-        app_tz=APP_TZ,
-        transit_labels=["Westside"],
-        transit_home_label="Main",
-        branch_services_names=[],
-        collection_services_names=[],
-        branch_services_da_patterns=[],
-        collection_services_da_patterns=[],
-        library_name="Test Library",
-        branch_name="Main Branch",
-        system_name="SortView",
-        theme_base="light",
-        selected_view=selected_view,
-    )
+        "refresh_count": 0,
+        "start_date": pd.Timestamp("2026-03-29").date(),
+        "end_date": TODAY,
+        "today": TODAY,
+        "now_ct": NOW_CT,
+        "app_tz": APP_TZ,
+        "transit_labels": ["Westside"],
+        "transit_home_label": "Main",
+        "branch_services_names": [],
+        "collection_services_names": [],
+        "branch_services_da_patterns": [],
+        "collection_services_da_patterns": [],
+        "library_name": "Test Library",
+        "branch_name": "Main Branch",
+        "system_name": "SortView",
+        "theme_base": "light",
+        "selected_view": selected_view,
+    }
 
 
 @pytest.mark.parametrize("selected_view", ["Live Today", "Overview", "Reports", "Transits"])

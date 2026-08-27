@@ -37,3 +37,58 @@ jobs:
 
       - name: Run tests
         run: python -m pytest -v
+
+  lint:
+    name: Lint and type-check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run ruff
+        run: python -m ruff check .
+
+      - name: Run mypy
+        run: python -m mypy src agent main.py
+
+  security:
+    name: Dependency and security scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run bandit
+        run: python -m bandit -r src agent super_admin main.py -q
+
+      # Tracked but not yet blocking: known CVEs in streamlit/weasyprint/
+      # starlette are a deliberate, separate upgrade decision (they touch a
+      # live production app) rather than something to force through here.
+      # Flip continue-on-error off once those version bumps have landed.
+      - name: Run pip-audit
+        continue-on-error: true
+        run: python -m pip_audit -r requirements.txt

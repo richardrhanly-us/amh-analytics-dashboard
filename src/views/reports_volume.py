@@ -2,11 +2,11 @@ import pandas as pd
 import streamlit as st
 
 from ui_components import (
-    render_chart,
-    build_hourly_bar_chart,
     build_category_bar_chart,
+    build_hourly_bar_chart,
     build_hourly_line_chart,
     format_hour_plain,
+    render_chart,
 )
 
 

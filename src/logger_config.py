@@ -14,7 +14,6 @@
 import logging
 from pathlib import Path
 
-
 #***************************************************************
 # Log File Configuration
 #

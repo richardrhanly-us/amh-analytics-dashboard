@@ -1,6 +1,6 @@
-import src.services.entitlement_service as entitlement_service
 from db_fakes import FakeEngine, FakeQueryResult
 
+from src.services import entitlement_service
 
 # --- get_org_role_for_user ---------------------------------------------------
 

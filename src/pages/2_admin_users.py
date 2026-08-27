@@ -3,18 +3,18 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from services.access_service import get_org_branches, get_user_memberships
 from services.app_ui_service import apply_page_chrome
-from services.access_service import get_user_memberships, get_org_branches
 from services.entitlement_service import build_entitlement_context
 from services.permission_service import can_manage_settings
 from services.sidebar_service import render_main_sidebar
 from services.user_admin_service import (
     ALLOWED_MEMBERSHIP_ROLES,
-    list_org_users,
     create_or_add_org_user,
-    update_org_user_role,
-    set_user_active,
+    list_org_users,
     list_recent_org_auth_events,
+    set_user_active,
+    update_org_user_role,
 )
 
 st.set_page_config(

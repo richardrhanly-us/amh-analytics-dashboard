@@ -1,0 +1,26 @@
+[tool.ruff]
+target-version = "py311"
+extend-exclude = [".venv", ".venv_old"]
+
+[tool.ruff.lint]
+# Everything else in ruff's default rule set runs as a blocking CI check.
+# These three are deliberately silenced rather than force-fixed:
+ignore = [
+    # Broad `except Exception` is an intentional error-boundary pattern used
+    # throughout the API and dashboard (main.py, data_loader.py, etc.), not a
+    # bug. Narrowing all ~24 call sites is a dedicated hardening task, not
+    # something to force through while bootstrapping CI lint.
+    "BLE001",
+    # Single stylistic nit in agent/run_pipeline.py (prefers TypeError over
+    # RuntimeError for a type-mismatch guard). Changing the raised exception
+    # type is a deliberate choice, not a lint fix.
+    "TRY004",
+    # Security-flavored checks (bandit-equivalent) are handled by the
+    # dedicated bandit CI job instead, to avoid duplicate/conflicting
+    # findings from two tools covering the same ground.
+    "S",
+]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true

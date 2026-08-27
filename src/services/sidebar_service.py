@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import streamlit as st
-import services.auth_service as auth_service
+
+from services import auth_service
 
 
 def render_main_sidebar(

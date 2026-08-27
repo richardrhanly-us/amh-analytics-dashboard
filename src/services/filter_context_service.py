@@ -18,7 +18,6 @@ import pandas as pd
 from metrics import get_date_filtered_df, get_overall_metrics
 from ui_components import format_hour
 
-
 #***************************************************************
 #
 #  Function:     build_filtered_context
@@ -142,12 +141,7 @@ def build_filtered_context(
     if len(rejects_df) > 0:
         peak_failure_hour_counts = rejects_df["datetime"].dt.hour.value_counts().sort_index()
         peak_failure_hour = peak_failure_hour_counts.idxmax()
-        peak_failure_count = peak_failure_hour_counts.max()
-        peak_failure_pct = (peak_failure_count / len(rejects_df)) * 100
         peak_failure_window_text = format_hour(peak_failure_hour)
-    else:
-        peak_failure_count = 0
-        peak_failure_pct = 0
 
     # Build attention messages from notable reject, routing, and timing patterns.
     attention_items = []

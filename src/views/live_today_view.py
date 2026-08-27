@@ -3,11 +3,11 @@ import pandas as pd
 import streamlit as st
 
 from ui_components import (
-    render_kpi_card,
     format_hour,
     format_hour_plain,
     format_ill_branch_subtitle,
     render_chart,
+    render_kpi_card,
 )
 
 

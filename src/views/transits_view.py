@@ -2,26 +2,23 @@ import pandas as pd
 import streamlit as st
 
 from transit_logic import (
-    normalize_transit_destination,
-    get_transit_summary,
-    get_transit_time_summary,
-    get_peak_transit_day_summary,
-    get_transit_weekday_comparison,
-    get_destination_weekday_mix,
-    get_transit_reject_insight,
     get_destination_reject_summary,
-    get_destination_driver_summary,
+    get_peak_transit_day_summary,
+    get_transit_reject_insight,
+    get_transit_summary,
+    get_transit_weekday_comparison,
+    normalize_transit_destination,
 )
-
 from ui_components import (
-    render_kpi_card,
-    download_button,
-    render_chart,
-    build_hourly_bar_chart,
     build_category_bar_chart,
     build_date_line_chart,
+    build_hourly_bar_chart,
+    download_button,
     format_hour_plain,
+    render_chart,
+    render_kpi_card,
 )
+
 
 def render_transits(
     df,
@@ -115,22 +112,9 @@ def render_transits(
     ].copy()
     
     transit_summary = get_transit_summary(base_df)
-    transit_time_summary = get_transit_time_summary(transit_df)
 
     total_transit_items = len(transit_df)
     total_transit_pct = (total_transit_items / len(base_df) * 100) if len(base_df) > 0 else 0
-    transit_destination_count = transit_summary["destination"].nunique() if len(transit_summary) > 0 else 0
-
-    top_transit_destination = "N/A"
-    top_transit_subtitle = ""
-
-    if len(transit_summary) > 0:
-        top_row = transit_summary.iloc[0]
-        top_transit_destination = top_row["destination"]
-        top_transit_subtitle = (
-            f"{int(top_row['transit_items']):,} items "
-            f"({float(top_row['pct_of_total_items']):.2f}% of total)"
-        )
 
     westside_count = len(
         base_df[base_df["transit_destination"] == "Westside"]
@@ -142,16 +126,11 @@ def render_transits(
     )
     library_express_pct = (library_express_count / len(base_df) * 100) if len(base_df) > 0 else 0
 
-    no_agency_dest_count = int(
-        base_df["destination_clean"].astype(str).str.upper().str.contains("NO AGENCY DESTINATION", na=False).sum()
-    )
-
     peak_transit_day = get_peak_transit_day_summary(transit_df, weekday_order)
     peak_transit_day_label = peak_transit_day["peak_transit_day_label"]
     peak_transit_day_subtitle = peak_transit_day["peak_transit_day_subtitle"]
 
     transit_weekday_comparison = get_transit_weekday_comparison(base_df, base_rejects_df, weekday_order)
-    destination_weekday_mix = get_destination_weekday_mix(transit_df, weekday_order)
 
     transit_insight = get_transit_reject_insight(transit_weekday_comparison)
     transit_reject_insight_title = transit_insight["title"]
@@ -164,10 +143,6 @@ def render_transits(
         transit_summary,
         valid_transit_destinations
     )
-
-    destination_driver_summary = get_destination_driver_summary(destination_reject_summary)
-    destination_transit_summary_text = destination_driver_summary["text"]
-    destination_transit_summary_color = destination_driver_summary["color"]
 
     transit1, transit2, transit3, transit4 = st.columns(4)
     
@@ -615,7 +590,6 @@ def render_transits(
         
         if len(base_df) > 0 and len(historical_df) > 0:
             current_total_transit = len(transit_df)
-            current_total_items = len(base_df)
             current_ws_pct = westside_pct
             current_le_pct = library_express_pct
         

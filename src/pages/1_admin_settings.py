@@ -6,8 +6,8 @@ import streamlit as st
 from sqlalchemy import text
 
 from database import get_engine
+from services.access_service import get_org_branches, get_user_memberships
 from services.app_ui_service import apply_page_chrome
-from services.access_service import get_user_memberships, get_org_branches
 from services.entitlement_service import build_entitlement_context
 from services.permission_service import can_manage_settings
 from services.sidebar_service import render_main_sidebar
@@ -29,7 +29,8 @@ DEFAULT_SETTINGS = {
     },
     "security": {
         "admin_enabled": True,
-        "admin_password": "",
+        # Empty default in a settings template, not a real credential.
+        "admin_password": "",  # nosec B105
     },
     "transit": {
         "home_branch_label": "Main",

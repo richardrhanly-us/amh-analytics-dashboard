@@ -2,7 +2,12 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from ui_components import render_kpi_card, render_chart, build_hourly_bar_chart, format_hour_plain
+from ui_components import (
+    build_hourly_bar_chart,
+    format_hour_plain,
+    render_chart,
+    render_kpi_card,
+)
 
 
 def render_errors_exceptions_section(df, rejects_df, gated_csv_download):

@@ -1,7 +1,7 @@
 import altair as alt
 import streamlit as st
 
-from ui_components import render_kpi_card, render_chart, format_hour_plain
+from ui_components import format_hour_plain, render_chart, render_kpi_card
 
 
 def render_routing_destinations_section(df, gated_csv_download):
@@ -91,8 +91,7 @@ def render_routing_destinations_section(df, gated_csv_download):
     
             top_bin_row = bin_summary.loc[bin_summary["checkins"].idxmax()]
             low_bin_row = bin_summary.loc[bin_summary["checkins"].idxmin()]
-            bin_discrepancy = int(top_bin_row["checkins"] - low_bin_row["checkins"])
-    
+
             st.markdown(
                 f"""
                 <div style="

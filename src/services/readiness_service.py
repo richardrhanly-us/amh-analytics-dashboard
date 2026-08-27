@@ -4,7 +4,6 @@ from sqlalchemy import text
 
 from database import get_engine
 
-
 DEFAULT_MESSAGES = {
     "pending": "This branch is still being onboarded.",
     "mapping": "This branch is waiting for operational tenant mapping.",

@@ -1,8 +1,7 @@
 import pytest
-
-import src.services.tenant_service as tenant_service
 from db_fakes import FakeEngine, FakeQueryResult
 
+from src.services import tenant_service
 
 # --- create_organization_with_primary_branch --------------------------------
 

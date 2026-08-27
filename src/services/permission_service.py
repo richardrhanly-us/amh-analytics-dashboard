@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 ADMIN_ROLES = {"owner", "admin"}
 STAFF_ROLES = {"owner", "admin", "manager"}
 VIEW_ROLES = {"owner", "admin", "manager", "viewer"}

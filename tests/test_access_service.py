@@ -1,6 +1,6 @@
-import src.services.access_service as access_service
 from db_fakes import FakeEngine, FakeQueryResult
 
+from src.services import access_service
 
 # --- get_org_branches ---------------------------------------------------
 

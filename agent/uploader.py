@@ -1,12 +1,12 @@
 import math
 import os
 
-import requests
 import pandas as pd
-
+import requests
 from config import load_config
-from logger_config import get_logger
 from urllib3.util.retry import Retry
+
+from logger_config import get_logger
 
 logger = get_logger("uploader")
 config = load_config()
@@ -57,16 +57,20 @@ def make_json_safe(value):
     if value is None:
         return None
 
+    # pd.isna raises on some array-like inputs; every ordinary scalar
+    # (str, int, etc.) falls through here, so this guards a duck-type
+    # check rather than a real fault.
     try:
         if pd.isna(value):
             return None
-    except Exception:
+    except Exception:  # nosec B110
         pass
 
+    # Same rationale: logging here would fire on every non-NaN-checkable value.
     try:
         if isinstance(value, float) and math.isnan(value):
             return None
-    except Exception:
+    except Exception:  # nosec B110
         pass
 
     if isinstance(value, (str, int, float, bool)):

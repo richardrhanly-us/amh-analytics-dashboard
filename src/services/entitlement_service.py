@@ -21,7 +21,6 @@ from sqlalchemy import text
 
 from database import get_engine
 
-
 #***************************************************************
 #
 #  Function:     get_org_role_for_user

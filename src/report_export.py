@@ -13,10 +13,9 @@
 #***************************************************************
 
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any
 
 import pandas as pd
-
 
 #***************************************************************
 # Report Defaults
@@ -130,7 +129,7 @@ def format_date_range(start_date, end_date):
 #
 #***************************************************************
 
-def build_executive_summary(report_data: Dict[str, Any]) -> str:
+def build_executive_summary(report_data: dict[str, Any]) -> str:
     total_checkins = report_data["total_checkins"]
     total_hours_saved = report_data["total_hours_saved"]
     reject_pct = report_data["reject_pct"]
@@ -200,28 +199,28 @@ def build_director_report_data(
     end_date,
     df: pd.DataFrame,
     rejects_df: pd.DataFrame,
-    overall_metrics: Dict[str, Any],
+    overall_metrics: dict[str, Any],
     top_issue: str,
     attention_text: str,
     avg_hours_saved: float,
     total_hours_saved: float,
-    peak_day_saved: Optional[float] = None,
-    peak_day_saved_date: Optional[str] = None,
-    manual_rate: Optional[float] = None,
-    amh_rate: Optional[float] = None,
-    hourly_cost: Optional[float] = None,
-    roi_mode: Optional[str] = None,
-    yearly_savings_after_cost: Optional[float] = None,
-    annual_cost: Optional[float] = None,
-    payback_months: Optional[float] = None,
-    since_install_net_value: Optional[float] = None,
-    install_date: Optional[str] = None,
+    peak_day_saved: float | None = None,
+    peak_day_saved_date: str | None = None,
+    manual_rate: float | None = None,
+    amh_rate: float | None = None,
+    hourly_cost: float | None = None,
+    roi_mode: str | None = None,
+    yearly_savings_after_cost: float | None = None,
+    annual_cost: float | None = None,
+    payback_months: float | None = None,
+    since_install_net_value: float | None = None,
+    install_date: str | None = None,
     library_name: str = "New Braunfels Public Library",
     branch_name: str = "Main Branch",
     system_name: str = "Tech Logic UltraSort",
     report_title: str = DEFAULT_REPORT_TITLE,
     report_brand_name: str = REPORT_BRAND_NAME,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     # Calculate basic date range and volume totals.
     days_in_range = df["datetime"].dt.date.nunique() if len(df) > 0 and "datetime" in df.columns else 0
     total_checkins = len(df)
@@ -265,7 +264,7 @@ def build_director_report_data(
     report_data = {
         "report_title": report_title,
         "report_brand_name": report_brand_name,
-        "generated_at": datetime.now().strftime("%b %d, %Y %I:%M %p"),
+        "generated_at": datetime.now().astimezone().strftime("%b %d, %Y %I:%M %p"),
         "library_name": library_name,
         "branch_name": branch_name,
         "system_name": system_name,
@@ -324,7 +323,7 @@ def build_director_report_data(
 #
 #***************************************************************
 
-def render_director_report_html(report_data: Dict[str, Any]) -> str:
+def render_director_report_html(report_data: dict[str, Any]) -> str:
     labor_value_html = ""
     labor_value_method_html = ""
 
@@ -816,22 +815,22 @@ def build_director_report_pdf(
     end_date,
     df: pd.DataFrame,
     rejects_df: pd.DataFrame,
-    overall_metrics: Dict[str, Any],
+    overall_metrics: dict[str, Any],
     top_issue: str,
     attention_text: str,
     avg_hours_saved: float,
     total_hours_saved: float,
-    peak_day_saved: Optional[float] = None,
-    peak_day_saved_date: Optional[str] = None,
-    manual_rate: Optional[float] = None,
-    amh_rate: Optional[float] = None,
-    hourly_cost: Optional[float] = None,
-    roi_mode: Optional[str] = None,
-    yearly_savings_after_cost: Optional[float] = None,
-    annual_cost: Optional[float] = None,
-    payback_months: Optional[float] = None,
-    since_install_net_value: Optional[float] = None,
-    install_date: Optional[str] = None,
+    peak_day_saved: float | None = None,
+    peak_day_saved_date: str | None = None,
+    manual_rate: float | None = None,
+    amh_rate: float | None = None,
+    hourly_cost: float | None = None,
+    roi_mode: str | None = None,
+    yearly_savings_after_cost: float | None = None,
+    annual_cost: float | None = None,
+    payback_months: float | None = None,
+    since_install_net_value: float | None = None,
+    install_date: str | None = None,
     library_name: str = "New Braunfels Public Library",
     branch_name: str = "Main Branch",
     system_name: str = "Tech Logic UltraSort",

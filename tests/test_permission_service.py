@@ -1,4 +1,4 @@
-import src.services.permission_service as permission_service
+from src.services import permission_service
 
 
 def ctx(role=None, entitlements=None):

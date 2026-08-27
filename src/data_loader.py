@@ -13,9 +13,8 @@
 #***************************************************************
 
 import json
-import os
 import logging
-
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -23,7 +22,6 @@ import streamlit as st
 from sqlalchemy import text
 
 from database import get_engine
-
 
 #***************************************************************
 # File Paths and Logger Setup
@@ -185,7 +183,7 @@ def _show_db_error_once(key, message):
 def _read_table(query, params=None):
     try:
         engine = get_engine()
-    except Exception as e:
+    except Exception:
         logger.exception("Database engine creation failed")
         _show_db_error_once(
             "engine_creation",
@@ -419,22 +417,37 @@ def _scoped_query(table_name, org_column, branch_column, live_only=False):
     table_name = _safe_identifier(table_name)
 
     if live_only:
-        return f"""
+        live_template = """
             SELECT *
             FROM {table_name}
             WHERE {org_column} = :org_slug
               AND {branch_column} = :branch_slug
-              AND event_time::date = {_today_filter_sql()}
+              AND event_time::date = {today_filter}
             ORDER BY event_time
         """
+        # table_name/org_column/branch_column pass through _safe_identifier()
+        # allowlist above; org_slug/branch_slug stay bound parameters.
+        return live_template.format(  # nosec B608
+            table_name=table_name,
+            org_column=org_column,
+            branch_column=branch_column,
+            today_filter=_today_filter_sql(),
+        )
 
-    return f"""
+    range_template = """
         SELECT *
         FROM {table_name}
         WHERE {org_column} = :org_slug
           AND {branch_column} = :branch_slug
         ORDER BY event_time
     """
+    # table_name/org_column/branch_column pass through _safe_identifier()
+    # allowlist above; org_slug/branch_slug stay bound parameters.
+    return range_template.format(  # nosec B608
+        table_name=table_name,
+        org_column=org_column,
+        branch_column=branch_column,
+    )
 
 
 #***************************************************************
@@ -818,7 +831,7 @@ def load_pipeline_status(org_slug, branch_slug, path=STATUS_FILE, mtime=None, re
     org_column = _safe_identifier(PIPELINE_ORG_COLUMN)
     branch_column = _safe_identifier(PIPELINE_BRANCH_COLUMN)
 
-    query = f"""
+    pipeline_status_template = """
         SELECT
             customer_id,
             branch_id,
@@ -844,6 +857,12 @@ def load_pipeline_status(org_slug, branch_slug, path=STATUS_FILE, mtime=None, re
         ORDER BY updated_at DESC
         LIMIT 1
     """
+    # org_column/branch_column pass through _safe_identifier() allowlist
+    # above; org_slug/branch_slug stay bound parameters.
+    query = pipeline_status_template.format(  # nosec B608
+        org_column=org_column,
+        branch_column=branch_column,
+    )
     df = _read_table(
         query,
         params={"org_slug": org_slug, "branch_slug": branch_slug},

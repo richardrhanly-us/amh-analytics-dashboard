@@ -11,7 +11,7 @@ SRC_DIR = os.path.join(ROOT_DIR, "src")
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
-import services.auth_service as auth_service
+from services import auth_service
 from services.platform_admin_service import is_platform_admin
 
 

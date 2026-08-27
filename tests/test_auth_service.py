@@ -1,9 +1,9 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from werkzeug.security import generate_password_hash
 
-import src.services.auth_service as auth_service
+from src.services import auth_service
 
 CORRECT_PASSWORD = "CorrectHorse123"
 
@@ -57,7 +57,7 @@ def test_inactive_account_is_blocked(monkeypatch):
 
 
 def test_locked_account_blocks_before_checking_password(monkeypatch):
-    user = make_user(locked_until=datetime.now(timezone.utc) + timedelta(minutes=5))
+    user = make_user(locked_until=datetime.now(UTC) + timedelta(minutes=5))
     monkeypatch.setattr(auth_service, "get_user_by_email", lambda email: user)
 
     failed_login_calls = []
@@ -91,7 +91,7 @@ def test_wrong_password_records_failed_login_and_stays_generic(monkeypatch):
 
 def test_wrong_password_that_triggers_lockout_reports_it(monkeypatch):
     user = make_user()
-    locked_user = make_user(locked_until=datetime.now(timezone.utc) + timedelta(minutes=15))
+    locked_user = make_user(locked_until=datetime.now(UTC) + timedelta(minutes=15))
 
     lookups = [user, locked_user]
     monkeypatch.setattr(auth_service, "get_user_by_email", lambda email: lookups.pop(0))

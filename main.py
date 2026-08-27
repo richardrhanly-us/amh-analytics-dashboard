@@ -1,11 +1,11 @@
-from fastapi import FastAPI, HTTPException, Header
+import json
+import os
+import re
+import traceback
+
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, text
-from typing import Optional
-import os
-import traceback
-import json
-import re
 
 app = FastAPI()
 
@@ -34,42 +34,42 @@ engine = create_engine(
 class CheckinRow(BaseModel):
     customer_id: int
     branch_id: int
-    event_time: Optional[str] = None
-    title: Optional[str] = None
-    barcode: Optional[str] = None
-    collection_code: Optional[str] = None
-    call_number: Optional[str] = None
-    shelf_code: Optional[str] = None
-    destination: Optional[str] = None
-    bin: Optional[str] = None
-    is_problem: Optional[bool] = None
-    message: Optional[str] = None
-    flag_1: Optional[str] = None
-    flag_2: Optional[str] = None
-    flag_3: Optional[str] = None
-    source_file: Optional[str] = None
+    event_time: str | None = None
+    title: str | None = None
+    barcode: str | None = None
+    collection_code: str | None = None
+    call_number: str | None = None
+    shelf_code: str | None = None
+    destination: str | None = None
+    bin: str | None = None
+    is_problem: bool | None = None
+    message: str | None = None
+    flag_1: str | None = None
+    flag_2: str | None = None
+    flag_3: str | None = None
+    source_file: str | None = None
 
 
 class RejectRow(BaseModel):
     customer_id: int
     branch_id: int
-    event_time: Optional[str] = None
-    barcode: Optional[str] = None
-    message: Optional[str] = None
-    source_file: Optional[str] = None
+    event_time: str | None = None
+    barcode: str | None = None
+    message: str | None = None
+    source_file: str | None = None
 
 
 class AcsRow(BaseModel):
     customer_id: int
     branch_id: int
-    event_time: Optional[str] = None
-    message_code: Optional[str] = None
-    barcode: Optional[str] = None
-    title: Optional[str] = None
-    patron_id: Optional[str] = None
-    destination: Optional[str] = None
-    raw_message: Optional[str] = None
-    source_file: Optional[str] = None
+    event_time: str | None = None
+    message_code: str | None = None
+    barcode: str | None = None
+    title: str | None = None
+    patron_id: str | None = None
+    destination: str | None = None
+    raw_message: str | None = None
+    source_file: str | None = None
 
 
 class UploadRequest(BaseModel):
@@ -81,24 +81,24 @@ class UploadRequest(BaseModel):
 class PipelineStatusRequest(BaseModel):
     customer_id: int
     branch_id: int
-    last_attempt: Optional[str] = None
-    last_run: Optional[str] = None
-    status: Optional[str] = None
-    checkins_rows: Optional[int] = None
-    rejects_rows: Optional[int] = None
-    acs_rows: Optional[int] = None
-    uploaded_checkins_rows: Optional[int] = None
-    uploaded_rejects_rows: Optional[int] = None
-    uploaded_acs_rows: Optional[int] = None
-    checkins_bad_datetime_rows: Optional[int] = None
-    rejects_bad_datetime_rows: Optional[int] = None
-    acs_bad_datetime_rows: Optional[int] = None
-    transit_items: Optional[int] = None
-    problem_items: Optional[int] = None
+    last_attempt: str | None = None
+    last_run: str | None = None
+    status: str | None = None
+    checkins_rows: int | None = None
+    rejects_rows: int | None = None
+    acs_rows: int | None = None
+    uploaded_checkins_rows: int | None = None
+    uploaded_rejects_rows: int | None = None
+    uploaded_acs_rows: int | None = None
+    checkins_bad_datetime_rows: int | None = None
+    rejects_bad_datetime_rows: int | None = None
+    acs_bad_datetime_rows: int | None = None
+    transit_items: int | None = None
+    problem_items: int | None = None
     destination_breakdown: dict = Field(default_factory=dict)
 
 
-def get_bearer_token(authorization: Optional[str]) -> str:
+def get_bearer_token(authorization: str | None) -> str:
     if not authorization:
         raise HTTPException(status_code=401, detail="Missing Authorization header")
 
@@ -114,7 +114,7 @@ def get_bearer_token(authorization: Optional[str]) -> str:
     return token
 
 
-def authenticate_agent(conn, authorization: Optional[str], customer_id: int, branch_id: int):
+def authenticate_agent(conn, authorization: str | None, customer_id: int, branch_id: int):
     bearer_token = get_bearer_token(authorization)
 
     token_row = conn.execute(
@@ -159,7 +159,7 @@ def root():
 
 
 @app.post("/upload")
-def upload(data: UploadRequest, authorization: Optional[str] = Header(default=None)):
+def upload(data: UploadRequest, authorization: str | None = Header(default=None)):
     try:
         checkins = [row.model_dump() for row in data.checkins]
         rejects = [row.model_dump() for row in data.rejects]
@@ -288,7 +288,7 @@ def upload(data: UploadRequest, authorization: Optional[str] = Header(default=No
 
 
 @app.post("/upload-pipeline-status")
-def upload_pipeline_status(data: PipelineStatusRequest, authorization: Optional[str] = Header(default=None)):
+def upload_pipeline_status(data: PipelineStatusRequest, authorization: str | None = Header(default=None)):
     try:
         with engine.begin() as conn:
             authenticate_agent(
