@@ -2,7 +2,7 @@ streamlit==1.52.0
 pandas==2.3.3
 altair==6.2.2
 streamlit-autorefresh==1.0.1
-sqlalchemy==2.0.51
+sqlalchemy==2.0.52
 psycopg2-binary==2.9.12
 python-dateutil==2.9.0.post0
 pytz==2026.3.post1
