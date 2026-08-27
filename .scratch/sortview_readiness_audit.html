@@ -1,0 +1,726 @@
+<title>SortView Readiness Audit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=Big+Shoulders+Text:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --paper: #eef1ea;
+    --paper-raised: #e3e8dd;
+    --paper-sunken: #dfe4d7;
+    --ink: #1b2318;
+    --ink-dim: #4d5a45;
+    --ink-faint: #7c8873;
+    --rule: #c4ccb8;
+    --rule-strong: #a9b39a;
+    --accent: #12676e;
+    --accent-strong: #0a4145;
+    --accent-soft: #d7e6e4;
+    --accent-soft-ink: #0a4145;
+    --crit: #9c3d27;
+    --crit-soft: #f1ddd3;
+    --crit-ink: #7a2f1e;
+    --warn: #a5701a;
+    --warn-soft: #f0e3c8;
+    --warn-ink: #7d5613;
+    --good: #37734d;
+    --good-soft: #dbe9dd;
+    --good-ink: #2a5a3c;
+    --mono-tint: #e2e0d0;
+    --shadow: 0 1px 0 rgba(27,35,24,0.06);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #12160f;
+      --paper-raised: #191f14;
+      --paper-sunken: #0d100b;
+      --ink: #e9ede2;
+      --ink-dim: #b0bda2;
+      --ink-faint: #7c8873;
+      --rule: #333d29;
+      --rule-strong: #465237;
+      --accent: #59b9b8;
+      --accent-strong: #8fd6d3;
+      --accent-soft: #1a3634;
+      --accent-soft-ink: #a7e2e0;
+      --crit: #e08260;
+      --crit-soft: #3a2318;
+      --crit-ink: #f0ac91;
+      --warn: #dcae55;
+      --warn-soft: #362a12;
+      --warn-ink: #eec98a;
+      --good: #7fca97;
+      --good-soft: #1b3324;
+      --good-ink: #a6dfb6;
+      --mono-tint: #1c2116;
+      --shadow: 0 1px 0 rgba(0,0,0,0.4);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper: #12160f;
+    --paper-raised: #191f14;
+    --paper-sunken: #0d100b;
+    --ink: #e9ede2;
+    --ink-dim: #b0bda2;
+    --ink-faint: #7c8873;
+    --rule: #333d29;
+    --rule-strong: #465237;
+    --accent: #59b9b8;
+    --accent-strong: #8fd6d3;
+    --accent-soft: #1a3634;
+    --accent-soft-ink: #a7e2e0;
+    --crit: #e08260;
+    --crit-soft: #3a2318;
+    --crit-ink: #f0ac91;
+    --warn: #dcae55;
+    --warn-soft: #362a12;
+    --warn-ink: #eec98a;
+    --good: #7fca97;
+    --good-soft: #1b3324;
+    --good-ink: #a6dfb6;
+    --mono-tint: #1c2116;
+    --shadow: 0 1px 0 rgba(0,0,0,0.4);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Source Serif 4", Georgia, "Times New Roman", serif;
+    font-size: 17px;
+    line-height: 1.6;
+    margin: 0;
+    padding: 0 20px 96px;
+  }
+
+  ::selection { background: var(--accent-soft); color: var(--ink); }
+
+  a { color: var(--accent-strong); text-decoration-thickness: 1px; }
+
+  .sheet {
+    max-width: 840px;
+    margin: 0 auto;
+  }
+
+  /* ---------- Masthead ---------- */
+
+  .masthead {
+    padding: 56px 0 28px;
+    border-bottom: 3px solid var(--ink);
+  }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-strong);
+    margin: 0 0 14px;
+  }
+
+  h1.title {
+    font-family: "Big Shoulders Display", "Arial Narrow", sans-serif;
+    font-weight: 800;
+    font-size: clamp(40px, 7vw, 64px);
+    line-height: 0.98;
+    letter-spacing: 0.002em;
+    margin: 0 0 18px;
+    text-wrap: balance;
+    text-transform: uppercase;
+  }
+
+  .dek {
+    font-size: 19px;
+    color: var(--ink-dim);
+    max-width: 62ch;
+    margin: 0 0 26px;
+  }
+
+  .manifest {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12.5px;
+    border-top: 1px solid var(--rule-strong);
+  }
+
+  .manifest dl {
+    margin: 0;
+    padding: 12px 16px 12px 0;
+    border-right: 1px solid var(--rule);
+  }
+  .manifest dl:last-child { border-right: none; }
+  .manifest dt {
+    color: var(--ink-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 10.5px;
+    margin-bottom: 5px;
+  }
+  .manifest dd { margin: 0; color: var(--ink); font-weight: 500; }
+
+  @media (max-width: 640px) {
+    .manifest { grid-template-columns: repeat(2, 1fr); }
+    .manifest dl:nth-child(2) { border-right: none; }
+  }
+
+  /* ---------- Sections ---------- */
+
+  section { padding: 52px 0; border-bottom: 1px solid var(--rule); }
+  section:last-of-type { border-bottom: none; }
+
+  .kicker {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    margin: 0 0 22px;
+  }
+  .kicker .num {
+    font-family: "Big Shoulders Display", sans-serif;
+    font-weight: 700;
+    font-size: 22px;
+    color: var(--accent);
+  }
+  h2 {
+    font-family: "Big Shoulders Text", "Arial Narrow", sans-serif;
+    font-weight: 700;
+    font-size: 28px;
+    letter-spacing: 0.01em;
+    text-transform: uppercase;
+    margin: 0;
+    color: var(--ink);
+  }
+
+  h3 {
+    font-family: "Big Shoulders Text", sans-serif;
+    font-weight: 600;
+    font-size: 19px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    color: var(--ink-dim);
+    margin: 34px 0 14px;
+  }
+
+  p { margin: 0 0 16px; max-width: 68ch; }
+  .lede { font-size: 18px; color: var(--ink); }
+
+  ul.plain, ol.plain { margin: 0 0 16px; padding-left: 22px; max-width: 68ch; }
+  ul.plain li, ol.plain li { margin-bottom: 9px; }
+
+  code, .ref {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.86em;
+    background: var(--mono-tint);
+    padding: 0.1em 0.4em;
+    border-radius: 3px;
+    color: var(--ink);
+    white-space: nowrap;
+  }
+
+  .callout {
+    background: var(--paper-raised);
+    border-left: 3px solid var(--accent);
+    padding: 18px 22px;
+    margin: 20px 0;
+    max-width: 68ch;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .label {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-strong);
+    display: block;
+    margin-bottom: 8px;
+  }
+
+  .bug-box {
+    background: var(--crit-soft);
+    border-left: 3px solid var(--crit);
+    padding: 18px 22px;
+    margin: 20px 0;
+    max-width: 68ch;
+  }
+  .bug-box .label {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--crit-ink);
+    display: block;
+    margin-bottom: 8px;
+  }
+  .bug-box p:last-child { margin-bottom: 0; }
+  .bug-box code { background: rgba(0,0,0,0.06); }
+  :root[data-theme="dark"] .bug-box code,
+  @media (prefers-color-scheme: dark) { }
+
+  /* ---------- Scorecard (bin-fill meters) ---------- */
+
+  .scorecard {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-top: 8px;
+  }
+
+  .meter-row {
+    display: grid;
+    grid-template-columns: 200px 1fr 46px;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .meter-label {
+    font-family: "Big Shoulders Text", sans-serif;
+    font-weight: 600;
+    font-size: 15.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.01em;
+    color: var(--ink);
+  }
+
+  .meter-track {
+    position: relative;
+    height: 22px;
+    background: var(--paper-sunken);
+    border: 1px solid var(--rule-strong);
+    overflow: hidden;
+  }
+  .meter-track::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: repeating-linear-gradient(
+      to right, transparent 0, transparent calc(10% - 1px), var(--rule) 10%
+    );
+    pointer-events: none;
+  }
+  .meter-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    background: var(--fill-color, var(--accent));
+  }
+
+  .meter-pct {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    color: var(--ink-dim);
+  }
+
+  @media (max-width: 640px) {
+    .meter-row { grid-template-columns: 1fr; gap: 6px; }
+    .meter-pct { text-align: left; }
+  }
+
+  .scorecard-note {
+    font-size: 13.5px;
+    color: var(--ink-faint);
+    margin-top: 18px;
+    font-family: "IBM Plex Mono", monospace;
+    max-width: 68ch;
+  }
+
+  /* ---------- Findings tables ---------- */
+
+  .table-wrap { overflow-x: auto; margin: 4px 0 28px; }
+
+  table.findings {
+    width: 100%;
+    min-width: 640px;
+    border-collapse: collapse;
+    font-size: 15px;
+  }
+
+  table.findings th {
+    text-align: left;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    border-bottom: 2px solid var(--ink);
+    padding: 0 10px 10px 0;
+    font-weight: 500;
+  }
+
+  table.findings td {
+    padding: 14px 10px 14px 0;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+
+  table.findings td.gap-cell { font-weight: 600; }
+  table.findings td.why-cell { color: var(--ink-dim); font-size: 14.5px; }
+
+  .pill {
+    display: inline-block;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    white-space: nowrap;
+    border: 1px solid transparent;
+  }
+  .pill.crit { background: var(--crit-soft); color: var(--crit-ink); border-color: var(--crit); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn-ink); border-color: var(--warn); }
+  .pill.good { background: var(--good-soft); color: var(--good-ink); border-color: var(--good); }
+  .pill.neutral { background: var(--paper-raised); color: var(--ink-dim); border-color: var(--rule-strong); }
+
+  /* ---------- Roadmap ---------- */
+
+  .phase {
+    display: grid;
+    grid-template-columns: 92px 1fr;
+    gap: 22px;
+    padding: 26px 0;
+    border-top: 1px solid var(--rule);
+  }
+  .phase:first-of-type { border-top: none; }
+
+  .phase-tag {
+    font-family: "Big Shoulders Display", sans-serif;
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    line-height: 1.3;
+  }
+  .phase-tag .n { display: block; font-size: 34px; line-height: 1; margin-bottom: 4px; color: var(--ink); }
+
+  .phase-body h4 {
+    margin: 0 0 6px;
+    font-family: "Big Shoulders Text", sans-serif;
+    font-size: 19px;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--ink);
+  }
+  .phase-body .timebox {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    color: var(--ink-faint);
+    margin: 0 0 12px;
+  }
+
+  /* ---------- Strengths list ---------- */
+
+  .strength-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px 32px;
+    margin-top: 6px;
+  }
+  @media (max-width: 640px) { .strength-grid { grid-template-columns: 1fr; } }
+
+  .strength-item {
+    display: flex;
+    gap: 12px;
+    align-items: baseline;
+  }
+  .strength-item .mark {
+    color: var(--good);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 15px;
+    flex: none;
+  }
+  .strength-item p { margin: 0; font-size: 15px; }
+
+  footer {
+    padding: 40px 0 0;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: var(--ink-faint);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .meter-fill { transition: width 0.6s ease; }
+  }
+</style>
+
+<div class="sheet">
+
+  <div class="masthead">
+    <p class="eyebrow">Engineering Due-Diligence &nbsp;/&nbsp; Internal Report</p>
+    <h1 class="title">Readiness Audit</h1>
+    <p class="dek">A working assessment of the <strong>SortView</strong> AMH analytics platform: what's genuinely production-grade today, what's still portfolio-grade, and the concrete path from "runs at one library" to "installable, sellable product."</p>
+    <div class="manifest">
+      <dl><dt>Product</dt><dd>SortView</dd></dl>
+      <dl><dt>Repository</dt><dd>amh-analytics-dashboard</dd></dl>
+      <dl><dt>Live tenant</dt><dd>New Braunfels PL</dd></dl>
+      <dl><dt>Reviewed</dt><dd>2026-08-27</dd></dl>
+    </div>
+  </div>
+
+  <section>
+    <div class="kicker"><span class="num">00</span><h2>Executive Summary</h2></div>
+    <p class="lede">SortView is further along than a typical portfolio project. There is a real ingestion pipeline (Windows agent → FastAPI → Postgres), a real multi-tenant schema (organizations, branches, plans, subscriptions, feature entitlements, memberships), a real auth system with lockouts and an audit log, and a real automated test suite for the core business logic. That's the hard, unglamorous 60% that most side projects skip.</p>
+    <p>What's missing is almost entirely <strong>productization</strong>, not engineering fundamentals: billing, a repeatable install story for a new library's AMH machine, security hardening for an internet-facing product, and the compliance paperwork that any library's IT director will ask for before signing anything. That's a favorable gap to have — it says the hard part is done and the remaining work is well-scoped.</p>
+    <p>Bottom line: <strong>not sellable to an external library today</strong>, but a focused 6–10 week push (detailed in the roadmap below) closes most of the gap between "works for one customer we hand-hold" and "a product a second library can install without you in the room."</p>
+  </section>
+
+  <section>
+    <div class="kicker"><span class="num">01</span><h2>Readiness Scorecard</h2></div>
+    <p>Directional, not measured — a qualitative read of how close each dimension is to "ready to hand to a paying, self-service library customer."</p>
+
+    <div class="scorecard">
+      <div class="meter-row">
+        <div class="meter-label">Core logic &amp; tests</div>
+        <div class="meter-track"><div class="meter-fill" style="width:70%; --fill-color: var(--good);"></div></div>
+        <div class="meter-pct">70%</div>
+      </div>
+      <div class="meter-row">
+        <div class="meter-label">Multi-tenant data model</div>
+        <div class="meter-track"><div class="meter-fill" style="width:65%; --fill-color: var(--good);"></div></div>
+        <div class="meter-pct">65%</div>
+      </div>
+      <div class="meter-row">
+        <div class="meter-label">Security &amp; auth</div>
+        <div class="meter-track"><div class="meter-fill" style="width:40%; --fill-color: var(--warn);"></div></div>
+        <div class="meter-pct">40%</div>
+      </div>
+      <div class="meter-row">
+        <div class="meter-label">Deployment &amp; ops</div>
+        <div class="meter-track"><div class="meter-fill" style="width:25%; --fill-color: var(--crit);"></div></div>
+        <div class="meter-pct">25%</div>
+      </div>
+      <div class="meter-row">
+        <div class="meter-label">Commercial readiness</div>
+        <div class="meter-track"><div class="meter-fill" style="width:20%; --fill-color: var(--crit);"></div></div>
+        <div class="meter-pct">20%</div>
+      </div>
+      <div class="meter-row">
+        <div class="meter-label">Compliance &amp; legal</div>
+        <div class="meter-track"><div class="meter-fill" style="width:15%; --fill-color: var(--crit);"></div></div>
+        <div class="meter-pct">15%</div>
+      </div>
+    </div>
+    <p class="scorecard-note">// scored against "ready for an unsupervised second library," not against "impressive portfolio project" — SortView clears the second bar comfortably.</p>
+  </section>
+
+  <section>
+    <div class="kicker"><span class="num">02</span><h2>What's Already Solid</h2></div>
+    <p>Worth stating plainly, because it's the part an interviewer will actually probe on:</p>
+    <div class="strength-grid">
+      <div class="strength-item"><span class="mark">✓</span><p>A real multi-tenant schema — <code>organizations</code>, <code>branches</code>, <code>memberships</code>, <code>subscriptions</code>, <code>plans</code>, <code>feature_entitlements</code> — wired into working <code>tenant_service</code>, <code>entitlement_service</code>, and <code>permission_service</code> layers, not just a <code>customer_id</code> column bolted on.</p></div>
+      <div class="strength-item"><span class="mark">✓</span><p>Password auth done properly: <code>werkzeug</code> hashing, failed-login lockouts, and a genuine <code>auth_audit_log</code> table recording every login/lockout/password-change event.</p></div>
+      <div class="strength-item"><span class="mark">✓</span><p>The AMH agent tracks local state, uploads incrementally, and retries with backoff — it won't silently re-send or silently drop data on a flaky connection.</p></div>
+      <div class="strength-item"><span class="mark">✓</span><p>Idempotent writes: uploads use <code>ON CONFLICT DO NOTHING</code> against real unique constraints, matching an at-least-once delivery design.</p></div>
+      <div class="strength-item"><span class="mark">✓</span><p>Schema changes go through Alembic, not ad hoc SQL or startup-time table creation — and the docs explicitly forbid the shortcuts that cause the worst production incidents.</p></div>
+      <div class="strength-item"><span class="mark">✓</span><p>CI runs the full pytest suite on every push and PR — small, but it's a real gate, not aspirational.</p></div>
+      <div class="strength-item"><span class="mark">✓</span><p><code>docs/deployment.md</code> and <code>docs/release-process.md</code> read like actual internal runbooks — validation checklists, rollback mindset, deployment ordering — well above typical portfolio documentation.</p></div>
+      <div class="strength-item"><span class="mark">✓</span><p>Recent commit history shows real hardening in progress: composite tenant-scoped indexes, fixing a cache-wiping performance regression, correcting the baseline migration for a view and missing sync triggers. That's an iterating engineer, not a one-shot demo.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="kicker"><span class="num">03</span><h2>Gap Analysis</h2></div>
+    <p>Grouped by domain. Severity reflects risk if you onboarded a second, unsupervised library customer tomorrow.</p>
+
+    <h3>Security &amp; Auth</h3>
+    <div class="table-wrap">
+      <table class="findings">
+        <thead><tr><th style="width:26%">Gap</th><th>Why it matters</th><th style="width:110px">Severity</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="gap-cell">No rate limiting on <code>main.py</code> endpoints</td>
+            <td class="why-cell">Login, <code>/upload</code>, and agent-token auth have no throttling — only the login form has attempt-lockout. The API is otherwise open to brute force / abuse from any internet client.</td>
+            <td><span class="pill crit">Critical</span></td>
+          </tr>
+          <tr>
+            <td class="gap-cell">Hardcoded guest fallback credentials</td>
+            <td class="why-cell"><code>src/app.py</code> defaults <code>SORTVIEW_GUEST_EMAIL</code>/<code>SORTVIEW_GUEST_PASSWORD</code> to <code>guest@gmail.com</code>/<code>guest</code> if the env vars aren't set. Fine for the public demo; dangerous if that fallback ever ships in a real tenant's environment by mistake.</td>
+            <td><span class="pill warn">High</span></td>
+          </tr>
+          <tr>
+            <td class="gap-cell">No self-service password reset</td>
+            <td class="why-cell"><code>change_password</code> in <code>auth_service.py</code> requires knowing the current password — there's no "forgot password" recovery path. Every locked-out library staffer becomes a support ticket.</td>
+            <td><span class="pill warn">High</span></td>
+          </tr>
+          <tr>
+            <td class="gap-cell">No MFA, no SSO/OAuth</td>
+            <td class="why-cell">Library IT departments routinely require SSO against their existing identity provider before approving a new vendor app.</td>
+            <td><span class="pill warn">High</span></td>
+          </tr>
+          <tr>
+            <td class="gap-cell">No dependency/SAST scanning</td>
+            <td class="why-cell">No Dependabot config, no <code>pip-audit</code>/<code>bandit</code> step in CI — <code>python-tests.yml</code> only runs pytest.</td>
+            <td><span class="pill warn">High</span></td>
+          </tr>
+          <tr>
+            <td class="gap-cell">Errors go to stdout only</td>
+            <td class="why-cell"><code>main.py</code> catches exceptions with <code>print()</code> + <code>traceback.print_exc()</code> — no structured logging, no error tracking (Sentry or similar), so a production incident produces no alert.</td>
+            <td><span class="pill warn">High</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Testing &amp; Code Quality</h3>
+    <div class="table-wrap">
+      <table class="findings">
+        <thead><tr><th style="width:26%">Gap</th><th>Why it matters</th><th style="width:110px">Severity</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="gap-cell">Zero tests on the tenant-isolation layer</td>
+            <td class="why-cell">8 test files cover alerts, metrics, transit logic, parsers, auth, and the API — but <code>tenant_service.py</code>, <code>entitlement_service.py</code>, <code>permission_service.py</code>, and <code>access_service.py</code> have no tests at all. That's precisely the code that keeps Library A from seeing Library B's data.</td>
+            <td><span class="pill crit">Critical</span></td>
+          </tr>
+          <tr>
+            <td class="gap-cell">No lint or type-check gate in CI</td>
+            <td class="why-cell">CI runs pytest only. No ruff/flake8/mypy step to catch the class of bug below before it merges.</td>
+            <td><span class="pill warn">High</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="bug-box">
+      <span class="label">Found in review</span>
+      <p><code>src/services/tenant_service.py</code> defines <code>get_organization_by_slug</code>, <code>get_branch_by_slug</code>, and <code>get_effective_settings</code> <strong>twice</strong> (lines ~114–281, then duplicated again at ~282–439). Python silently keeps the second definition, which means the second, shallow-merge <code>get_effective_settings</code> (<code>{**org_settings, **branch_settings}</code>) is the one that actually runs — the first version's <code>_deep_merge_settings</code> helper is dead code that never executes. Net effect: nested branch-level settings that override only part of a nested org-level setting will silently wipe the rest of that setting instead of merging into it. Worth a five-minute fix, and exactly the kind of bug a lint pass or a test on <code>get_effective_settings</code> would have caught immediately.</p>
+    </div>
+
+    <h3>Deployment &amp; Operations</h3>
+    <div class="table-wrap">
+      <table class="findings">
+        <thead><tr><th style="width:26%">Gap</th><th>Why it matters</th><th style="width:110px">Severity</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="gap-cell">Agent install is fully manual, per site</td>
+            <td class="why-cell"><code>docs/release-process.md</code> describes copying files by hand onto the AMH-attached Windows machine and re-running the scheduled task. For "install this at another library," this is the single biggest blocker — it doesn't scale past sites you can personally visit or remote into.</td>
+            <td><span class="pill crit">Critical</span></td>
+          </tr>
+          <tr>
+            <td class="gap-cell">No containerization, no CD</td>
+            <td class="why-cell">No Dockerfile anywhere in the repo. Backend and dashboard deploys are "push to GitHub, then manually deploy or restart" per the runbooks — functional, but manual and unrepeatable at any scale.</td>
+            <td><span class="pill warn">High</span></td>
+          </tr>
+          <tr>
+            <td class="gap-cell">Known Python version drift (dev/CI vs. prod)</td>
+            <td class="why-cell">CI pins 3.11; Streamlit Cloud's runtime pinning is reportedly broken. Flagged previously and still open — dependency behavior isn't guaranteed to match between where it's tested and where it runs.</td>
+            <td><span class="pill warn">High</span></td>
+          </tr>
+          <tr>
+            <td class="gap-cell">No monitoring, alerting, or documented backup/restore test</td>
+            <td class="why-cell">No uptime or pipeline-health alerting beyond the dashboard's own pipeline-status panel (which requires a human to be looking at it). No evidence of a tested Neon restore procedure.</td>
+            <td><span class="pill warn">High</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Commercial &amp; Legal Readiness</h3>
+    <div class="table-wrap">
+      <table class="findings">
+        <thead><tr><th style="width:26%">Gap</th><th>Why it matters</th><th style="width:110px">Severity</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="gap-cell">Patron-linked data, no documented privacy posture</td>
+            <td class="why-cell"><code>acs_events.patron_id</code> plus barcode/title fields in <code>checkins</code> mean this system touches circulation-adjacent, patron-linked records. Most U.S. states have library patron-confidentiality statutes governing exactly this kind of data. There is no documented retention policy, no stated encryption-at-rest posture, and no DPA template — all of which a library's legal/IT review will ask for before signing.</td>
+            <td><span class="pill crit">Critical</span></td>
+          </tr>
+          <tr>
+            <td class="gap-cell">No billing integration</td>
+            <td class="why-cell">The schema already has a <code>stripe_customer_id</code> column on <code>subscriptions</code> and a real <code>plans</code>/<code>feature_entitlements</code> model — but nothing calls Stripe. There's no trial-to-paid flow, no invoicing, no self-serve checkout.</td>
+            <td><span class="pill warn">High</span></td>
+          </tr>
+          <tr>
+            <td class="gap-cell">Onboarding is an internal admin action</td>
+            <td class="why-cell"><code>super_admin/pages/Provision_Library.py</code> provisions a new org/branch, but it's an internal tool, not a signup flow a prospective library could use themselves.</td>
+            <td><span class="pill warn">High</span></td>
+          </tr>
+          <tr>
+            <td class="gap-cell">No LICENSE, ToS, or SLA</td>
+            <td class="why-cell">The README's disclaimer frames this as an independent portfolio project. Before pitching it as a product to an institution, the IP terms and support expectations need to be explicit.</td>
+            <td><span class="pill neutral">Medium</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="kicker"><span class="num">04</span><h2>Roadmap</h2></div>
+    <p>Four phases, roughly in dependency order. Phase 0 is cheap and should happen regardless of what comes next; Phase 2 is what actually turns this into something you can put in front of a second library.</p>
+
+    <div class="phase">
+      <div class="phase-tag"><span class="n">0</span>Fix now</div>
+      <div class="phase-body">
+        <h4>Zero-cost corrections</h4>
+        <p class="timebox">~1–2 days</p>
+        <ul class="plain">
+          <li>Fix the <code>tenant_service.py</code> duplicate-definition bug and restore the deep-merge behavior for branch settings.</li>
+          <li>Gate or remove the hardcoded guest-credential fallback outside the demo deployment.</li>
+          <li>Pin and verify the Python version end-to-end (local / CI / Streamlit Cloud) to close the known drift.</li>
+          <li>Add a LICENSE file and decide the IP terms before any external conversation.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="phase-tag"><span class="n">1</span>Harden</div>
+      <div class="phase-body">
+        <h4>Safe for a second real customer</h4>
+        <p class="timebox">~2–4 weeks</p>
+        <ul class="plain">
+          <li>Tests for <code>tenant_service</code>, <code>entitlement_service</code>, <code>permission_service</code>, <code>access_service</code> — the tenant-isolation layer.</li>
+          <li>Structured logging and error tracking in place of <code>print()</code>/<code>traceback</code>.</li>
+          <li>Rate limiting on login, <code>/upload</code>, and agent-token endpoints.</li>
+          <li>Self-service password reset flow.</li>
+          <li>CORS/security headers, plus <code>pip-audit</code> and a lint/type-check step added to CI.</li>
+          <li>A written, tested backup/restore runbook for Neon.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="phase-tag"><span class="n">2</span>Productize</div>
+      <div class="phase-body">
+        <h4>Actually sellable as multi-tenant SaaS</h4>
+        <p class="timebox">~4–8 weeks</p>
+        <ul class="plain">
+          <li>Wire up Stripe against the existing <code>subscriptions</code>/<code>plans</code> schema — trial, upgrade, invoicing.</li>
+          <li>Turn <code>Provision_Library.py</code> into a guided onboarding flow a prospective customer can drive.</li>
+          <li>Containerize the backend and dashboard; add an actual CD pipeline instead of manual deploys.</li>
+          <li>Build a packaged, versioned installer/updater for the Windows AMH agent — this replaces the manual copy-paste-per-site process and is the real unlock for "install this at another library."</li>
+          <li>SSO / OAuth against common identity providers.</li>
+          <li>A written data-handling policy for patron-linked fields, checked against library-confidentiality statutes, with a stated retention and encryption-at-rest posture.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="phase-tag"><span class="n">3</span>Scale</div>
+      <div class="phase-body">
+        <h4>Polish, ongoing</h4>
+        <p class="timebox">ongoing</p>
+        <ul class="plain">
+          <li>Monitoring, alerting, and an uptime SLA; load testing for peak sort-shift traffic.</li>
+          <li>MFA; be ready for a security questionnaire from a library consortium's IT office.</li>
+          <li>ToS/DPA templates, a pricing page, sales collateral.</li>
+          <li>Expand automated coverage to the Streamlit views/pages and add integration-level tests for the dashboard itself.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section style="border-bottom:none;">
+    <div class="kicker"><span class="num">05</span><h2>Telling This Story</h2></div>
+    <p>The useful split here is that almost every open gap is a <em>productization</em> gap, not an <em>engineering</em> gap. The multi-tenant schema, the entitlement/permission layer, the retry-and-backoff agent design, the audit logging, the migration discipline — that's the part employers actually probe on in interviews, and it's already real. What's left (billing, an installer, SSO, compliance docs) is scoped, well-understood work, not open engineering risk. That's a stronger position than either "impressive demo, unclear if it's real" or "real product, but I can't explain the architecture" — this one has the architecture story <em>and</em> a credible, itemized path to shipping.</p>
+  </section>
+
+  <footer>
+    Prepared from a direct review of the repository (main.py, src/, agent/, super_admin/, alembic/, tests/, docs/, .github/workflows/) — findings reference actual files and line ranges as of the reviewed commit.
+  </footer>
+
+</div>
