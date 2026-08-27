@@ -1,14 +1,9 @@
 from pathlib import Path
 
 import pandas as pd
-from config import load_config
 
-from logger_config import get_logger
-
-config = load_config()
-
-REJECTS_FILE = config["raw_rejects_file"]
-PROCESSED_REJECTS_FILE = config["processed_rejects_file"]
+from .config import load_config
+from .logger_config import get_logger
 
 logger = get_logger("parse_rejects")
 
@@ -115,7 +110,7 @@ def _parse_reject_lines(lines):
 
 def load_rejects(filepath=None):
     if filepath is None:
-        filepath = REJECTS_FILE
+        filepath = load_config()["raw_rejects_file"]
 
     logger.info("Loading rejects from %s", filepath)
 
@@ -127,7 +122,7 @@ def load_rejects(filepath=None):
 
 def load_rejects_incremental(filepath=None, start_offset=0):
     if filepath is None:
-        filepath = REJECTS_FILE
+        filepath = load_config()["raw_rejects_file"]
 
     file_path = Path(filepath)
 
@@ -166,7 +161,7 @@ def load_rejects_incremental(filepath=None, start_offset=0):
 
 def save_rejects_csv(df, output_path=None):
     if output_path is None:
-        output_path = PROCESSED_REJECTS_FILE
+        output_path = load_config()["processed_rejects_file"]
 
     output_file = Path(output_path)
     output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -180,10 +175,14 @@ def save_rejects_csv(df, output_path=None):
 
 
 if __name__ == "__main__":
-    df = load_rejects()
-    save_rejects_csv(df)
+    config = load_config()
+    raw_rejects_file = config["raw_rejects_file"]
+    processed_rejects_file = config["processed_rejects_file"]
 
-    logger.info("Saved cleaned rejects file to: %s", PROCESSED_REJECTS_FILE)
+    df = load_rejects(raw_rejects_file)
+    save_rejects_csv(df, processed_rejects_file)
+
+    logger.info("Saved cleaned rejects file to: %s", processed_rejects_file)
     logger.info("Row count: %s", len(df))
     logger.info("Bad datetime rows: %s", df["datetime"].isna().sum())
     logger.info("Top reject reasons:\n%s", df["error_simple"].value_counts())

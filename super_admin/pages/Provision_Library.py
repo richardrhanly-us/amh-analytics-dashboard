@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+from typing import Any
 
 import streamlit as st
 
@@ -138,7 +139,7 @@ if submitted:
         st.error("Primary branch name is required.")
         st.stop()
 
-    org_settings = dict(DEFAULT_ORG_SETTINGS)
+    org_settings: dict[str, Any] = dict(DEFAULT_ORG_SETTINGS)
     org_settings.update({
         "library_name": library_name.strip() or org_name.strip(),
         "system_name": system_name.strip(),

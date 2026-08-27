@@ -4,6 +4,7 @@ import os
 import re
 
 from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -30,6 +31,22 @@ app = FastAPI()
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "SORTVIEW_ALLOWED_ORIGINS",
+        "http://localhost:8501,http://127.0.0.1:8501",
+    ).split(",")
+    if origin.strip()
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 class MaxBodySizeMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -41,8 +58,22 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
             )
         return await call_next(request)
 
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=()"
+        )
+
+        return response
+    
 
 app.add_middleware(MaxBodySizeMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -317,9 +348,12 @@ def upload(request: Request, data: UploadRequest, authorization: str | None = He
 
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.exception("Upload failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+    status_code=500,
+    detail="Internal server error",
+    )
 
 
 @app.post("/upload-pipeline-status")
@@ -420,6 +454,9 @@ def upload_pipeline_status(request: Request, data: PipelineStatusRequest, author
 
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.exception("Pipeline status upload failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+    status_code=500,
+    detail="Internal server error",
+    )

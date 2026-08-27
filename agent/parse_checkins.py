@@ -1,14 +1,9 @@
 from pathlib import Path
 
 import pandas as pd
-from config import load_config
 
-from logger_config import get_logger
-
-config = load_config()
-
-RAW_CHECKINS_FILE = config["raw_checkins_file"]
-PROCESSED_CHECKINS_FILE = config["processed_checkins_file"]
+from .config import load_config
+from .logger_config import get_logger
 
 logger = get_logger("parse_checkins")
 
@@ -140,7 +135,7 @@ def _parse_checkins_lines(lines):
 
 def load_checkins(filepath=None):
     if filepath is None:
-        filepath = RAW_CHECKINS_FILE
+        filepath = load_config()["raw_checkins_file"]
 
     logger.info("Loading checkins from %s", filepath)
 
@@ -152,7 +147,7 @@ def load_checkins(filepath=None):
 
 def load_checkins_incremental(filepath=None, start_offset=0):
     if filepath is None:
-        filepath = RAW_CHECKINS_FILE
+        filepath = load_config()["raw_checkins_file"]
 
     file_path = Path(filepath)
 
@@ -191,7 +186,7 @@ def load_checkins_incremental(filepath=None, start_offset=0):
 
 def save_checkins_csv(df, output_path=None):
     if output_path is None:
-        output_path = PROCESSED_CHECKINS_FILE
+        output_path = load_config()["processed_checkins_file"]
 
     output_file = Path(output_path)
     output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -209,12 +204,19 @@ def save_checkins_csv(df, output_path=None):
 
 
 if __name__ == "__main__":
-    df = load_checkins()
-    save_checkins_csv(df)
+    config = load_config()
+    raw_checkins_file = config["raw_checkins_file"]
+    processed_checkins_file = config["processed_checkins_file"]
 
-    logger.info("Saved cleaned checkins file to: %s", PROCESSED_CHECKINS_FILE)
+    df = load_checkins(raw_checkins_file)
+    save_checkins_csv(df, processed_checkins_file)
+
+    logger.info("Saved cleaned checkins file to: %s", processed_checkins_file)
     logger.info("Row count: %s", len(df))
-    logger.info("Destination breakdown:\n%s", df["destination"].value_counts(dropna=False))
+    logger.info(
+        "Destination breakdown:\n%s",
+        df["destination"].value_counts(dropna=False),
+    )
     logger.info("Bad datetime rows: %s", df["datetime"].isna().sum())
     logger.info("Problem items: %s", int(df["is_problem"].sum()))
     logger.info("Transit items: %s", int(df["is_transit"].sum()))
