@@ -81,6 +81,11 @@ if "auth_user" not in st.session_state:
 
 APP_TZ = ZoneInfo("America/Chicago")
 
+reset_token = st.query_params.get("reset_token")
+
+if reset_token:
+    st.session_state["auth_user"] = None
+
 
 #***************************************************************
 # Guest Auto-Login
@@ -127,8 +132,14 @@ if (
 # session state and the app is rerun.
 #***************************************************************
 
+reset_token = st.query_params.get("reset_token")
+
+# A password-reset link must take precedence over an existing login session.
+if reset_token:
+    st.session_state["auth_user"] = None
+
+
 if st.session_state["auth_user"] is None:
-    reset_token = st.query_params.get("reset_token")
 
     if reset_token:
         st.title("Reset SortView Password")
