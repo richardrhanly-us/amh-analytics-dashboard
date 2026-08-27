@@ -1,8 +1,17 @@
+import pytest
 from fastapi.testclient import TestClient
 
 import main
 
 client = TestClient(main.app)
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limiter():
+    # The limiter's in-memory storage persists across requests within a
+    # process; reset it before each test so one test's request count can't
+    # push another test over the limit.
+    main.limiter.reset()
 
 VALID_TOKEN_ROW = {
     "id": 1,
@@ -190,3 +199,25 @@ def test_upload_pipeline_status_success(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["status"] == "success"
+
+
+# --- rate limiting and request hardening ------------------------------------
+
+def test_upload_rate_limited_after_too_many_requests():
+    limit = int(main.UPLOAD_RATE_LIMIT.split("/")[0])
+
+    responses = [
+        client.post("/upload", json={"checkins": [], "rejects": [], "acs": []})
+        for _ in range(limit + 1)
+    ]
+
+    assert responses[-1].status_code == 429
+
+
+def test_upload_request_body_too_large_returns_413(monkeypatch):
+    monkeypatch.setattr(main, "MAX_REQUEST_BODY_BYTES", 10)
+    payload = {"checkins": [base_checkin_row()]}
+
+    response = client.post("/upload", json=payload, headers=auth_headers())
+
+    assert response.status_code == 413

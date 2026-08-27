@@ -3,9 +3,14 @@ import logging
 import os
 import re
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from sqlalchemy import create_engine, text
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 
 logging.basicConfig(
     level=logging.INFO,
@@ -13,7 +18,31 @@ logging.basicConfig(
 )
 logger = logging.getLogger("sortview.api")
 
+# Agent uploads run on a schedule from a single machine per branch, so these
+# limits exist to blunt brute-forcing/abuse of the bearer token, not to
+# constrain legitimate traffic. Configurable per deployment via env var.
+UPLOAD_RATE_LIMIT = os.getenv("SORTVIEW_UPLOAD_RATE_LIMIT", "30/minute")
+MAX_REQUEST_BODY_BYTES = int(os.getenv("SORTVIEW_MAX_REQUEST_BODY_BYTES", str(5 * 1024 * 1024)))
+
+limiter = Limiter(key_func=get_remote_address)
+
 app = FastAPI()
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+
+
+class MaxBodySizeMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length is not None and int(content_length) > MAX_REQUEST_BODY_BYTES:
+            return JSONResponse(
+                status_code=413,
+                content={"detail": "Request body too large"},
+            )
+        return await call_next(request)
+
+
+app.add_middleware(MaxBodySizeMiddleware)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -165,7 +194,8 @@ def root():
 
 
 @app.post("/upload")
-def upload(data: UploadRequest, authorization: str | None = Header(default=None)):
+@limiter.limit(UPLOAD_RATE_LIMIT)
+def upload(request: Request, data: UploadRequest, authorization: str | None = Header(default=None)):
     try:
         checkins = [row.model_dump() for row in data.checkins]
         rejects = [row.model_dump() for row in data.rejects]
@@ -293,7 +323,8 @@ def upload(data: UploadRequest, authorization: str | None = Header(default=None)
 
 
 @app.post("/upload-pipeline-status")
-def upload_pipeline_status(data: PipelineStatusRequest, authorization: str | None = Header(default=None)):
+@limiter.limit(UPLOAD_RATE_LIMIT)
+def upload_pipeline_status(request: Request, data: PipelineStatusRequest, authorization: str | None = Header(default=None)):
     try:
         with engine.begin() as conn:
             authenticate_agent(
