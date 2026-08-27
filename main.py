@@ -3,6 +3,7 @@ import logging
 import os
 import re
 
+import sentry_sdk
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -18,6 +19,24 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 logger = logging.getLogger("sortview.api")
+
+SENTRY_DSN = os.getenv("SENTRY_DSN")
+SENTRY_ENVIRONMENT = os.getenv("SENTRY_ENVIRONMENT", "development")
+
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=SENTRY_ENVIRONMENT,
+        send_default_pii=False,
+        traces_sample_rate=0.0,
+    )
+    logger.info(
+        "Sentry error tracking enabled | environment=%s",
+        SENTRY_ENVIRONMENT,
+    )
+else:
+    logger.info("Sentry error tracking disabled | SENTRY_DSN not configured")
+
 
 # Agent uploads run on a schedule from a single machine per branch, so these
 # limits exist to blunt brute-forcing/abuse of the bearer token, not to
@@ -348,8 +367,9 @@ def upload(request: Request, data: UploadRequest, authorization: str | None = He
 
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("Upload failed")
+        sentry_sdk.capture_exception(exc)
         raise HTTPException(
     status_code=500,
     detail="Internal server error",
@@ -454,8 +474,9 @@ def upload_pipeline_status(request: Request, data: PipelineStatusRequest, author
 
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("Pipeline status upload failed")
+        sentry_sdk.capture_exception(exc)
         raise HTTPException(
     status_code=500,
     detail="Internal server error",
