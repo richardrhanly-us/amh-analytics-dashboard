@@ -4,10 +4,14 @@ import sys
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC_DIR = os.path.join(ROOT_DIR, "src")
 
-# src/services/*.py import their sibling modules top-level style
-# (e.g. `from database import get_engine`), matching how Streamlit
-# runs the app with src/ as the working directory. Tests need src/
-# on sys.path too so those imports resolve the same way.
+# src/services/*.py import their sibling modules top-level style (e.g.
+# `from database import get_engine`), matching how Streamlit runs with
+# src/ as the working directory. Tests need src/ on sys.path too so those
+# imports resolve the same way. Every agent/*.py module uses
+# package-relative imports (`from .config import ...`) and is only ever
+# imported as part of the `agent` package -- that already works via
+# ROOT_DIR on sys.path plus agent/__init__.py, no separate sys.path entry
+# needed for agent/ itself.
 for path in (ROOT_DIR, SRC_DIR):
     if path not in sys.path:
         sys.path.insert(0, path)

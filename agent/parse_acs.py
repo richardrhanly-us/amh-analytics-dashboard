@@ -2,14 +2,9 @@ import re
 from pathlib import Path
 
 import pandas as pd
-from config import load_config
 
-from logger_config import get_logger
-
-config = load_config()
-
-RAW_ACS_FILE = config["raw_acs_file"]
-PROCESSED_ACS_FILE = config["processed_acs_file"]
+from .config import load_config
+from .logger_config import get_logger
 
 logger = get_logger("parse_acs")
 
@@ -84,7 +79,7 @@ def _parse_lines(lines):
 
 def load_acs(filepath=None):
     if filepath is None:
-        filepath = RAW_ACS_FILE
+        filepath = load_config()["raw_acs_file"]
 
     with open(filepath, "r", encoding="utf-8", errors="replace") as f:
         lines = f.readlines()
@@ -94,7 +89,7 @@ def load_acs(filepath=None):
 
 def load_acs_incremental(filepath=None, start_offset=0):
     if filepath is None:
-        filepath = RAW_ACS_FILE
+        filepath = load_config()["raw_acs_file"]
 
     file_path = Path(filepath)
 
@@ -141,15 +136,22 @@ def load_acs_incremental(filepath=None, start_offset=0):
     return df, end_offset
 
 
-def save_acs_csv(df):
-    Path(PROCESSED_ACS_FILE).parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(PROCESSED_ACS_FILE, index=False)
+def save_acs_csv(df, output_path=None):
+    if output_path is None:
+        output_path = load_config()["processed_acs_file"]
+
+    output_file = Path(output_path)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_file, index=False)
     logger.info("Saved ACS CSV")
 
 
 if __name__ == "__main__":
+    config = load_config()
+    processed_acs_file = config["processed_acs_file"]
+
     df = load_acs()
-    save_acs_csv(df)
-    logger.info("Saved cleaned ACS file to: %s", PROCESSED_ACS_FILE)
+    save_acs_csv(df, processed_acs_file)
+    logger.info("Saved cleaned ACS file to: %s", processed_acs_file)
     logger.info("Row count: %s", len(df))
     logger.info("Bad datetime rows: %s", df["datetime"].isna().sum())
