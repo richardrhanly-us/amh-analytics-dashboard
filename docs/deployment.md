@@ -118,6 +118,58 @@ This reduces the chance of payload/schema mismatches.
 - future schema changes should use Alembic
 - agent changes must be manually deployed to the AMH machine
 
+## environment variables
+
+Every environment variable the codebase reads is listed in
+[`.env.example`](../.env.example) at the repo root, with a comment on each
+one. That file is a documentation template only -- nothing in this repo
+loads a `.env` file automatically (no `python-dotenv`), so treat it as the
+source of truth to copy from into whatever actually sets env vars for each
+target: a real `.env` plus your own process manager for local dev,
+Streamlit Cloud's Secrets panel for the dashboard, the AMH machine's
+scheduled task environment for the agent, CI secrets for the pipeline.
+
+| Variable | Target | Required? | Default |
+|---|---|---|---|
+| `DATABASE_URL` | backend, dashboard | required | -- (dashboard falls back to `st.secrets["DATABASE_URL"]`) |
+| `SENTRY_DSN` | backend | optional | unset = Sentry disabled |
+| `SENTRY_ENVIRONMENT` | backend | optional | `development` |
+| `SORTVIEW_UPLOAD_RATE_LIMIT` | backend | optional | `30/minute` |
+| `SORTVIEW_MAX_REQUEST_BODY_BYTES` | backend | optional | `5242880` (5 MB) |
+| `SORTVIEW_ALLOWED_ORIGINS` | backend | optional | `http://localhost:8501,http://127.0.0.1:8501` |
+| `SORTVIEW_DEMO_MODE_ENABLED` | dashboard | optional | `false` |
+| `SORTVIEW_GUEST_EMAIL` | dashboard | required if demo mode on | -- |
+| `SORTVIEW_GUEST_PASSWORD` | dashboard | required if demo mode on | -- |
+| `SORTVIEW_APP_URL` | dashboard | required for password reset | -- |
+| `SORTVIEW_SMTP_HOST` | dashboard | required for password reset | -- |
+| `SORTVIEW_SMTP_PORT` | dashboard | optional | `587` |
+| `SORTVIEW_SMTP_USERNAME` | dashboard | required for password reset | -- |
+| `SORTVIEW_SMTP_PASSWORD` | dashboard | required for password reset | -- |
+| `SORTVIEW_EMAIL_FROM` | dashboard | required for password reset | -- |
+| `SORTVIEW_ALLOW_FILE_FALLBACK` | dashboard | optional | `false` |
+| `SORTVIEW_CHECKINS_ORG_COLUMN` | dashboard | optional | `customer_id` |
+| `SORTVIEW_CHECKINS_BRANCH_COLUMN` | dashboard | optional | `branch_id` |
+| `SORTVIEW_REJECTS_ORG_COLUMN` | dashboard | optional | `customer_id` |
+| `SORTVIEW_REJECTS_BRANCH_COLUMN` | dashboard | optional | `branch_id` |
+| `SORTVIEW_ACS_ORG_COLUMN` | dashboard | optional | `customer_id` |
+| `SORTVIEW_ACS_BRANCH_COLUMN` | dashboard | optional | `branch_id` |
+| `SORTVIEW_PIPELINE_ORG_COLUMN` | dashboard | optional | `customer_id` |
+| `SORTVIEW_PIPELINE_BRANCH_COLUMN` | dashboard | optional | `branch_id` |
+| `SORTVIEW_LIVE_TIMEZONE` | dashboard | optional | `America/Chicago` |
+| `SORTVIEW_API_TOKEN` | agent | required | -- |
+| `SORTVIEW_HTTP_CONNECT_TIMEOUT` | agent | optional | `10` |
+| `SORTVIEW_HTTP_UPLOAD_READ_TIMEOUT` | agent | optional | `300` |
+| `SORTVIEW_HTTP_STATUS_READ_TIMEOUT` | agent | optional | `60` |
+| `SORTVIEW_HTTP_RETRY_TOTAL` | agent | optional | `3` |
+| `SORTVIEW_HTTP_RETRY_BACKOFF_FACTOR` | agent | optional | `1.0` |
+| `SORTVIEW_MAX_RECORDS_PER_REQUEST` | agent | optional | `1000` |
+| `SORTVIEW_MAX_LOG_RESPONSE_CHARS` | agent | optional | `500` |
+
+The agent also reads per-site, non-secret config (`customer_id`, `branch_id`,
+`api_url`, local file paths) from `agent/agent_config.json` on the AMH
+machine -- that file is not an environment variable and is not covered by
+`.env.example`.
+
 ## python version
 
 Local dev, the devcontainer, and CI all target Python 3.11.
