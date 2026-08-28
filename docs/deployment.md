@@ -164,6 +164,12 @@ scheduled task environment for the agent, CI secrets for the pipeline.
 | `SORTVIEW_HTTP_RETRY_BACKOFF_FACTOR` | agent | optional | `1.0` |
 | `SORTVIEW_MAX_RECORDS_PER_REQUEST` | agent | optional | `1000` |
 | `SORTVIEW_MAX_LOG_RESPONSE_CHARS` | agent | optional | `500` |
+| `SORTVIEW_API_BASE_URL` | monitoring | required | -- |
+| `SORTVIEW_ALERT_EMAIL_TO` | monitoring | optional | unset = no alert emails sent |
+| `SORTVIEW_PIPELINE_STALE_MINUTES` | monitoring | optional | `60` |
+
+See [`docs/monitoring.md`](monitoring.md) for how the monitoring target
+(GitHub Actions, not the backend or dashboard) is wired up.
 
 The agent also reads per-site, non-secret config (`customer_id`, `branch_id`,
 `api_url`, local file paths) from `agent/agent_config.json` on the AMH
