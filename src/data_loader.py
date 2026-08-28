@@ -622,15 +622,21 @@ def _load_acs_live_from_db(org_slug, branch_slug):
 #
 #  Parameters:  org_slug - Organization/customer identifier.
 #               branch_slug - Branch identifier.
-#               mtime - Optional cache-busting value.
-#               refresh_count - Optional auto-refresh cache-busting value.
 #
 #  Returns:     DataFrame - Historical checkin dataframe.
 #
 #***************************************************************
 
+# Continuous Ingestion Phase 4: deliberately does NOT take refresh_count
+# or mtime. This is an all-time, unbounded history query (see
+# _load_checkins_history_from_db / _scoped_query) -- tying it to the live
+# refresh cadence would re-run it every refresh tick (as fast as every
+# 10s) for data that doesn't need sub-minute freshness, and mtime would
+# reintroduce the same problem via pipeline_status.updated_at, which the
+# Phase 3 heartbeat now touches roughly every 60s on any cut-over branch.
+# This loader relies solely on its own ttl=900 (15 min) instead.
 @st.cache_data(ttl=900, show_spinner=False)
-def load_checkins_history_df(org_slug, branch_slug, mtime=None, refresh_count=0):
+def load_checkins_history_df(org_slug, branch_slug):
     try:
         _require_scope(org_slug, branch_slug)
     except ValueError as e:
@@ -726,15 +732,15 @@ def load_rejects_df(org_slug, branch_slug, path=REJECTS_FILE, mtime=None, refres
 #
 #  Parameters:  org_slug - Organization/customer identifier.
 #               branch_slug - Branch identifier.
-#               mtime - Optional cache-busting value.
-#               refresh_count - Optional auto-refresh cache-busting value.
 #
 #  Returns:     DataFrame - Historical reject dataframe.
 #
 #***************************************************************
 
+# See load_checkins_history_df above -- same Phase 4 reasoning for why
+# refresh_count/mtime are deliberately absent here.
 @st.cache_data(ttl=900, show_spinner=False)
-def load_rejects_history_df(org_slug, branch_slug, mtime=None, refresh_count=0):
+def load_rejects_history_df(org_slug, branch_slug):
     try:
         _require_scope(org_slug, branch_slug)
     except ValueError as e:
@@ -754,15 +760,15 @@ def load_rejects_history_df(org_slug, branch_slug, mtime=None, refresh_count=0):
 #
 #  Parameters:  org_slug - Organization/customer identifier.
 #               branch_slug - Branch identifier.
-#               mtime - Optional cache-busting value.
-#               refresh_count - Optional auto-refresh cache-busting value.
 #
 #  Returns:     DataFrame - Historical ACS dataframe.
 #
 #***************************************************************
 
+# See load_checkins_history_df above -- same Phase 4 reasoning for why
+# refresh_count/mtime are deliberately absent here.
 @st.cache_data(ttl=900, show_spinner=False)
-def load_acs_history_df(org_slug, branch_slug, mtime=None, refresh_count=0):
+def load_acs_history_df(org_slug, branch_slug):
     try:
         _require_scope(org_slug, branch_slug)
     except ValueError as e:
