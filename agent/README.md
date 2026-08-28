@@ -30,6 +30,12 @@ These are the main files that make up the deployed agent:
 - `uploader.py`
 - `config.py`
 - `logger_config.py`
+- `outbox.py`, `watcher.py`, `outbox_uploader.py`, `heartbeat.py`,
+  `maintenance.py` -- the Continuous Ingestion components (Phases 1-5).
+  Each has its own standalone `__main__` entrypoint
+  (`python -m agent.<module>`) and is not yet wired into the scheduled
+  `run_pipeline.py` flow above -- see `docs/deployment.md`'s "Local outbox
+  maintenance" section for `maintenance.py` specifically.
 
 ## Configuration
 

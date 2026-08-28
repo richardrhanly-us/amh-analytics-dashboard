@@ -100,6 +100,58 @@ Typical AMH deployment flow:
    - state file update
 6. re-enable normal scheduled execution
 
+## Local outbox maintenance (Continuous Ingestion Phase 5: Sustain)
+
+`agent/maintenance.py` is a separate, independent component from the
+uploader -- its own interval, its own connection, no HTTP calls. It keeps
+the local SQLite outbox (`agent/outbox.py`) safe for long-term unattended
+operation:
+
+- **Retention**: delivered rows (`uploaded_at` set) older than
+  `SORTVIEW_OUTBOX_DELIVERED_RETENTION_DAYS` (default 7) become eligible
+  for deletion. Age is measured from `uploaded_at` (actual delivery time),
+  not `created_at` (when the watcher first captured it).
+- **Quarantined rows are never auto-pruned**, regardless of age. There is
+  no operator-facing tool to review or clear them yet (out of scope for
+  Phase 5) -- they simply accumulate in `local_events` until a human looks
+  at them directly in the database.
+- **Pending rows are never auto-pruned**, regardless of age -- deleting an
+  undelivered row would be data loss.
+- **Batched, bounded deletes**: `SORTVIEW_OUTBOX_PRUNE_BATCH_SIZE` (default
+  1000) rows per transaction, oldest-first, committed between batches;
+  `SORTVIEW_OUTBOX_MAINTENANCE_MAX_BATCHES_PER_CYCLE` (default 10) caps how
+  many batches one cycle may run, so a very large backlog drains gradually
+  across cycles instead of monopolizing SQLite in one long-running cycle.
+- **Cadence**: `SORTVIEW_OUTBOX_MAINTENANCE_INTERVAL_SECONDS` (default
+  3600 -- once an hour), deliberately independent of the uploader's 2-5s
+  poll cadence.
+- **WAL checkpointing**: `PRAGMA wal_checkpoint(TRUNCATE)` once per cycle,
+  after pruning -- the only checkpoint mode that actually shrinks the
+  `-wal` file's on-disk size (PASSIVE/RESTART checkpoint the WAL's content
+  into the main file but leave the file's current size unchanged). A
+  checkpoint under contention (another connection still needs some WAL
+  frames) blocks the calling thread for up to that connection's own
+  busy-wait timeout before giving up -- not an instant return. The
+  maintenance component uses a short, dedicated timeout for this reason
+  (`SORTVIEW_OUTBOX_MAINTENANCE_BUSY_TIMEOUT_SECONDS`, default 5s, vs. the
+  other components' 30s), so a contended checkpoint blocks for at most a
+  few seconds, then simply retries on the next hourly cycle.
+- **Space reclamation is limited on existing databases.** A brand-new
+  agent database (created after this deployment) is created with
+  `auto_vacuum=INCREMENTAL`, so `PRAGMA incremental_vacuum` can actually
+  shrink its file over time as rows are pruned
+  (`SORTVIEW_OUTBOX_MAX_INCREMENTAL_VACUUM_PAGES` bounds how much one
+  cycle reclaims). An **existing** database (anything that has already run
+  through Phases 1-4) was created with `auto_vacuum=NONE`, and there is no
+  way to change that retroactively without a full `VACUUM` (a full file
+  rebuild) -- which Phase 5 deliberately does not perform, on a running
+  agent or otherwise. On an existing database, pruned rows' pages are
+  still freed onto SQLite's internal freelist and reused by future
+  inserts (so the file doesn't grow unbounded from normal churn), but the
+  `.db` file itself will not shrink back down to reflect that reuse -- it
+  stays at its current high-water mark. A one-time rebuild/compaction path
+  for existing databases is intentionally deferred to later work.
+
 ## AMH validation checklist
 
 After agent deployment, verify:
@@ -176,6 +228,15 @@ scheduled task environment for the agent, CI secrets for the pipeline.
 | `SORTVIEW_HTTP_RETRY_BACKOFF_FACTOR` | agent | optional | `1.0` |
 | `SORTVIEW_MAX_RECORDS_PER_REQUEST` | agent | optional | `1000` |
 | `SORTVIEW_MAX_LOG_RESPONSE_CHARS` | agent | optional | `500` |
+| `SORTVIEW_OUTBOX_DELIVERED_RETENTION_DAYS` | agent | optional | `7` |
+| `SORTVIEW_OUTBOX_PRUNE_BATCH_SIZE` | agent | optional | `1000` |
+| `SORTVIEW_OUTBOX_MAINTENANCE_MAX_BATCHES_PER_CYCLE` | agent | optional | `10` |
+| `SORTVIEW_OUTBOX_MAINTENANCE_INTERVAL_SECONDS` | agent | optional | `3600` |
+| `SORTVIEW_OUTBOX_MAINTENANCE_BUSY_TIMEOUT_SECONDS` | agent | optional | `5` |
+| `SORTVIEW_OUTBOX_MAX_INCREMENTAL_VACUUM_PAGES` | agent | optional | `1000` |
+| `SORTVIEW_OUTBOX_MAINTENANCE_BACKOFF_BASE_SECONDS` | agent | optional | `60` |
+| `SORTVIEW_OUTBOX_MAINTENANCE_BACKOFF_MAX_SECONDS` | agent | optional | `3600` |
+| `SORTVIEW_OUTBOX_MAINTENANCE_BACKOFF_MULTIPLIER` | agent | optional | `2` |
 | `SORTVIEW_API_BASE_URL` | monitoring | required | -- |
 | `SORTVIEW_ALERT_EMAIL_TO` | monitoring | optional | unset = no alert emails sent |
 | `SORTVIEW_PIPELINE_STALE_MINUTES` | monitoring | optional | `60` |
