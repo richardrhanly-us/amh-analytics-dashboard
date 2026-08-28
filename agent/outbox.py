@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS file_state (
 _EVOLVED_COLUMNS = [
     ("quarantined_at", "TEXT"),
     ("quarantine_reason", "TEXT"),
+    ("last_error_category", "TEXT"),
 ]
 
 
@@ -255,3 +256,61 @@ def count_quarantined_events(conn: sqlite3.Connection) -> int:
         "SELECT COUNT(*) FROM local_events WHERE quarantined_at IS NOT NULL"
     ).fetchone()
     return int(count)
+
+
+def get_oldest_pending_created_at(conn: sqlite3.Connection) -> str | None:
+    """created_at (outbox entry time) of the longest-waiting pending row,
+    or None if nothing is pending. Uses created_at rather than
+    event_timestamp deliberately: this answers "how long has something
+    been stuck in the queue", which is what a backlog-age health check
+    needs -- event_timestamp is the AMH log's own (sometimes missing or
+    unparseable) timestamp, not the outbox's."""
+    (value,) = conn.execute(
+        "SELECT MIN(created_at) FROM local_events "
+        "WHERE uploaded_at IS NULL AND quarantined_at IS NULL"
+    ).fetchone()
+    return value
+
+
+def get_last_success_at(conn: sqlite3.Connection) -> str | None:
+    """Most recent uploaded_at across all rows ever delivered, or None if
+    nothing has ever been delivered. Fully durable and restart-safe --
+    uploaded_at is written transactionally at delivery time (see
+    outbox_uploader._mark_rows_delivered), so this needs no separate
+    tracking mechanism."""
+    (value,) = conn.execute("SELECT MAX(uploaded_at) FROM local_events").fetchone()
+    return value
+
+
+def get_latest_unresolved_failure(conn: sqlite3.Connection) -> sqlite3.Row | None:
+    """The most recent delivery attempt among rows that are still pending
+    (not delivered, not quarantined) -- i.e. a failure that hasn't since
+    been superseded by a success. Once the rows behind a given failure are
+    either delivered or quarantined, they drop out of this query entirely,
+    so a recovered uploader naturally stops reporting a stale failure
+    without needing any separate "clear" step: the next heartbeat simply
+    finds nothing here and reports last_failure_category/last_error as
+    None again.
+
+    Only rows with a recorded last_attempt_at are considered (a
+    never-attempted fresh row has neither), and only the single most
+    recent attempt is returned -- the caller cares about current state,
+    not history.
+    """
+    return conn.execute(
+        "SELECT last_error_category, last_error, last_attempt_at FROM local_events "
+        "WHERE uploaded_at IS NULL AND quarantined_at IS NULL AND last_attempt_at IS NOT NULL "
+        "ORDER BY last_attempt_at DESC LIMIT 1"
+    ).fetchone()
+
+
+def get_watcher_last_active_at(conn: sqlite3.Connection) -> str | None:
+    """Most recent file_state.updated_at across all watched files.
+    save_file_state is called on every poll cycle the watcher makes for a
+    file that exists, whether or not any new lines were found, so this is
+    already a durable "the watcher loop is still ticking" signal with no
+    new column or write needed -- it's a liveness signal, not an activity
+    count: an idle branch with zero new AMH events still refreshes this
+    every poll."""
+    (value,) = conn.execute("SELECT MAX(updated_at) FROM file_state").fetchone()
+    return value
