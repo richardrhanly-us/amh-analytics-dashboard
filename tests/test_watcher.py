@@ -2,9 +2,9 @@
 truncation detection, and outbox insertion. No network access anywhere in
 this module or the one under test.
 
-Requires agent/ on sys.path for watcher.py's own top-level-style imports
-(config/parse_checkins/parse_rejects/parse_acs/logger_config) -- provided
-by tests/conftest.py, matching CI's PYTHONPATH.
+Imports via `from agent import outbox, watcher` -- every module under
+agent/ uses package-relative imports, so this only needs the repo root on
+sys.path (already provided by tests/conftest.py), not agent/ itself.
 """
 
 import json
@@ -141,7 +141,22 @@ def test_restart_resumes_from_stored_offset(tmp_path, watched_paths):
         conn_b.close()
 
 
-def test_delete_and_recreate_detected_via_dev_ino(conn, watched_paths):
+def test_delete_and_recreate_is_read_safely_from_byte_zero(conn, watched_paths):
+    """Real delete+recreate at the same path, on the real filesystem.
+
+    Which internal branch catches this is filesystem-dependent: on
+    Windows/NTFS a delete+recreate reliably gets a new (dev, ino), so the
+    watcher reports rotated=True. On some Linux filesystems (observed on
+    a GitHub Actions runner) the freed inode can be reused immediately
+    for the new file, so (dev, ino) comes back unchanged and the watcher
+    instead catches it via truncated=True (new size < stored offset) --
+    same safe outcome, different branch. This test asserts the actual
+    safety requirement, which holds either way: the stale offset is
+    discarded and the recreated file is read from byte 0, not skipped or
+    corrupted. The rotation branch itself is covered deterministically,
+    independent of any filesystem's inode-reuse behavior, by
+    test_resolve_start_offset_rotated_when_dev_ino_differ below.
+    """
     path = watched_paths["checkins_path"]
 
     with open(path, "w", encoding="utf-8") as f:
@@ -151,28 +166,95 @@ def test_delete_and_recreate_detected_via_dev_ino(conn, watched_paths):
     first = _poll(conn, watched_paths)
     assert first.checkins.events_inserted == 2
 
-    state_before = outbox.get_file_state(conn, path)
-
     os.remove(path)
     with open(path, "w", encoding="utf-8") as f:
         f.write(make_checkin_line("999"))
 
+    expected_end_offset = os.path.getsize(path)
+
     second = _poll(conn, watched_paths)
 
-    assert second.checkins.rotated is True
+    assert second.checkins.rotated or second.checkins.truncated
     assert second.checkins.start_offset == 0
+    assert second.checkins.end_offset == expected_end_offset
     # The new file's one line must be captured, not skipped as if it
     # were a continuation of the old file at some nonzero offset.
     assert second.checkins.events_inserted == 1
 
     state_after = outbox.get_file_state(conn, path)
-    assert state_after["file_ino"] != state_before["file_ino"]
+    assert state_after["last_byte_offset"] == expected_end_offset
 
     rows = conn.execute(
         "SELECT payload_json FROM local_events WHERE event_type = 'checkin' ORDER BY id"
     ).fetchall()
     barcodes = [json.loads(r["payload_json"])["barcode"] for r in rows]
     assert barcodes == ["111", "222", "999"]
+
+
+def test_resolve_start_offset_rotated_when_dev_ino_differ(conn, watched_paths):
+    """Deterministic unit test for the rotation branch of
+    watcher._resolve_start_offset, independent of what any given
+    filesystem actually does on a real delete+recreate (see the
+    integration-style test above). Drives the function directly with a
+    synthetic FileIdentity whose (dev, ino) differ from what's stored, so
+    this stays true no matter how inode allocation behaves in CI.
+    """
+    path = watched_paths["checkins_path"]
+
+    outbox.save_file_state(
+        conn,
+        file_path=path,
+        file_dev=111,
+        file_ino=222,
+        last_byte_offset=500,
+        last_modified="2026-08-27T10:00:00.000000Z",
+    )
+
+    changed_identity = watcher.FileIdentity(
+        dev=111,
+        ino=999,  # different from the stored ino -- simulates a real rotation
+        size=50,  # also smaller than the stored offset; rotation must still
+                  # win over truncation once identity itself has changed
+        mtime="2026-08-27T10:05:00.000000Z",
+    )
+
+    start_offset, rotated, truncated = watcher._resolve_start_offset(
+        conn, file_path=path, identity=changed_identity
+    )
+
+    assert rotated is True
+    assert truncated is False
+    assert start_offset == 0
+
+
+def test_resolve_start_offset_truncated_when_identity_matches_but_shrinks(conn, watched_paths):
+    """Companion deterministic unit test for the truncation branch, same
+    direct-call approach as the rotation test above."""
+    path = watched_paths["checkins_path"]
+
+    outbox.save_file_state(
+        conn,
+        file_path=path,
+        file_dev=111,
+        file_ino=222,
+        last_byte_offset=500,
+        last_modified="2026-08-27T10:00:00.000000Z",
+    )
+
+    same_identity_smaller = watcher.FileIdentity(
+        dev=111,
+        ino=222,  # unchanged from stored
+        size=50,  # smaller than the stored offset
+        mtime="2026-08-27T10:05:00.000000Z",
+    )
+
+    start_offset, rotated, truncated = watcher._resolve_start_offset(
+        conn, file_path=path, identity=same_identity_smaller
+    )
+
+    assert rotated is False
+    assert truncated is True
+    assert start_offset == 0
 
 
 def test_in_place_truncation_resets_offset(conn, watched_paths):
