@@ -197,12 +197,16 @@ The live AMH agent runs on the AMH-attached Windows machine and is manually upda
 ### deployment steps
 
 1. validate source changes in `agent/`
-2. copy approved files to the deployed AMH folder
+2. copy the approved `agent/` folder to the deployed AMH install root,
+   keeping it as an `agent/` subfolder there (not flattened) -- every
+   module under `agent/` uses package-relative imports, so it only runs
+   as a package
 3. confirm `agent_config.json` is still correct
-4. open Command Prompt on the AMH machine
+4. open Command Prompt on the AMH machine, in the install root (the
+   parent of the deployed `agent/` folder -- not inside `agent/` itself)
 5. run:
 
-    python run_pipeline.py
+    python -m agent.run_pipeline
 
 6. review output carefully
 7. if healthy, return the scheduled task or normal execution process to service
@@ -265,7 +269,7 @@ Use this when a release affects more than one layer.
 
 ### agent
 - deploy agent changes if included
-- run `python run_pipeline.py` on AMH machine
+- run `python -m agent.run_pipeline` from the AMH install root (not from inside `agent/`)
 - verify successful upload and status writes
 
 ### post-release

@@ -2,13 +2,12 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from config import load_config
-from parse_acs import load_acs_incremental, save_acs_csv
-from parse_checkins import load_checkins_incremental, save_checkins_csv
-from parse_rejects import load_rejects_incremental, save_rejects_csv
-from uploader import upload_checkins_and_rejects, upload_pipeline_status
-
-from logger_config import get_logger
+from .config import load_config
+from .logger_config import get_logger
+from .parse_acs import load_acs_incremental, save_acs_csv
+from .parse_checkins import load_checkins_incremental, save_checkins_csv
+from .parse_rejects import load_rejects_incremental, save_rejects_csv
+from .uploader import upload_checkins_and_rejects, upload_pipeline_status
 
 config = load_config()
 

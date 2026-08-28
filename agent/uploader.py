@@ -3,10 +3,10 @@ import os
 
 import pandas as pd
 import requests
-from config import load_config
 from urllib3.util.retry import Retry
 
-from logger_config import get_logger
+from .config import load_config
+from .logger_config import get_logger
 
 logger = get_logger("uploader")
 config = load_config()

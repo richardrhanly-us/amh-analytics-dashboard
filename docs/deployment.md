@@ -75,12 +75,24 @@ The AMH agent is the Windows-side process that runs near the sorter and uploads 
 
 The repo stores the source-of-truth code in `agent/`, but the live deployed copy runs on the AMH-attached Windows machine.
 
+The agent runs as a Python package (`python -m agent.run_pipeline`), not a
+standalone script -- every module under `agent/` uses package-relative
+imports (`from .config import ...`), so it only works invoked that way.
+
 Typical AMH deployment flow:
 
 1. update and validate source in `agent/`
-2. copy approved agent files to the AMH machine
-3. confirm local config is still correct
-4. run `python run_pipeline.py`
+2. copy the approved `agent/` folder to the AMH machine, keeping it as a
+   subfolder of whatever install root you're deploying to (e.g.
+   `C:\SortViewAgent\agent\`) -- not flattened into that root directly,
+   since the package import needs `agent/` to still be a package
+   directory, not a pile of loose top-level scripts
+3. confirm local config (`agent/agent_config.json`) is still correct
+4. from the install root (`C:\SortViewAgent\`, the parent of `agent/` --
+   never from inside the `agent/` folder itself), run:
+
+       python -m agent.run_pipeline
+
 5. review logs for:
    - successful start status upload
    - successful batch upload
