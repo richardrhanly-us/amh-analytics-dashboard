@@ -42,18 +42,20 @@ DEFAULT_DB_PATH = Path("data") / "sortview_agent.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS local_events (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_type      TEXT NOT NULL CHECK (event_type IN ('checkin', 'reject', 'acs')),
-    customer_id     INTEGER NOT NULL,
-    branch_id       INTEGER NOT NULL,
-    event_timestamp TEXT,
-    dedup_key       TEXT NOT NULL,
-    payload_json    TEXT NOT NULL,
-    created_at      TEXT NOT NULL,
-    uploaded_at     TEXT,
-    attempt_count   INTEGER NOT NULL DEFAULT 0,
-    last_attempt_at TEXT,
-    last_error      TEXT
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type        TEXT NOT NULL CHECK (event_type IN ('checkin', 'reject', 'acs')),
+    customer_id       INTEGER NOT NULL,
+    branch_id         INTEGER NOT NULL,
+    event_timestamp   TEXT,
+    dedup_key         TEXT NOT NULL,
+    payload_json      TEXT NOT NULL,
+    created_at        TEXT NOT NULL,
+    uploaded_at       TEXT,
+    attempt_count     INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at   TEXT,
+    last_error        TEXT,
+    quarantined_at    TEXT,
+    quarantine_reason TEXT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_local_events_dedup
@@ -74,10 +76,32 @@ CREATE TABLE IF NOT EXISTS file_state (
 """
 
 
+# Columns added after the initial Phase 1 schema. CREATE TABLE IF NOT
+# EXISTS (in SCHEMA above) only helps a brand-new database -- an existing
+# local_events table from an earlier phase needs these added explicitly.
+# Each entry is (column_name, column_ddl_suffix); ADD COLUMN has no
+# IF NOT EXISTS in SQLite, so _ensure_columns checks PRAGMA table_info
+# first and only adds what's actually missing, making this safe to run
+# against a fresh database (nothing to add) or a pre-existing one alike.
+_EVOLVED_COLUMNS = [
+    ("quarantined_at", "TEXT"),
+    ("quarantine_reason", "TEXT"),
+]
+
+
+def _ensure_columns(conn: sqlite3.Connection) -> None:
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(local_events)").fetchall()}
+
+    for column_name, column_ddl in _EVOLVED_COLUMNS:
+        if column_name not in existing:
+            conn.execute(f"ALTER TABLE local_events ADD COLUMN {column_name} {column_ddl}")
+
+
 def connect(db_path: str | Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     """Open (creating if needed) the outbox database with WAL mode enabled
     and the schema applied. Safe to call every time the agent starts --
-    every statement in SCHEMA is idempotent (CREATE ... IF NOT EXISTS)."""
+    every statement in SCHEMA is idempotent (CREATE ... IF NOT EXISTS),
+    and _ensure_columns only adds columns that are actually missing."""
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -94,6 +118,7 @@ def connect(db_path: str | Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=ON")
 
     conn.executescript(SCHEMA)
+    _ensure_columns(conn)
 
     return conn
 
@@ -213,7 +238,20 @@ def save_file_state(
 
 
 def count_pending_events(conn: sqlite3.Connection) -> int:
+    """Rows that are still eligible for automatic delivery -- not yet
+    uploaded and not quarantined. A quarantined row is deliberately
+    parked (see quarantine_rows below); calling it "pending" would be
+    misleading since nothing will attempt it again without a human
+    or a future recovery mechanism.
+    """
     (count,) = conn.execute(
-        "SELECT COUNT(*) FROM local_events WHERE uploaded_at IS NULL"
+        "SELECT COUNT(*) FROM local_events WHERE uploaded_at IS NULL AND quarantined_at IS NULL"
+    ).fetchone()
+    return int(count)
+
+
+def count_quarantined_events(conn: sqlite3.Connection) -> int:
+    (count,) = conn.execute(
+        "SELECT COUNT(*) FROM local_events WHERE quarantined_at IS NOT NULL"
     ).fetchone()
     return int(count)

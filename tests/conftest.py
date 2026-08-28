@@ -20,6 +20,16 @@ for path in (ROOT_DIR, SRC_DIR):
 # database (main.engine is monkeypatched), so a placeholder is enough.
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost/test")
 
+# agent/uploader.py reads SORTVIEW_API_TOKEN eagerly at import time (it's
+# a real uploader -- genuinely needs a token, unlike Phase 1's watcher,
+# which deliberately doesn't import uploader.py at all). Anything that
+# imports agent.outbox_uploader transitively imports agent.uploader, so
+# this placeholder keeps that import from failing. Tests that assert the
+# real token value is never logged/stored read it back via
+# agent.uploader.API_TOKEN rather than hardcoding a second copy of this
+# string, so the two can't drift apart.
+os.environ.setdefault("SORTVIEW_API_TOKEN", "test-agent-token-placeholder")
+
 # Never initialize Sentry during tests, even if the developer's shell
 # currently has a real SENTRY_DSN configured.
 os.environ["SENTRY_DSN"] = ""

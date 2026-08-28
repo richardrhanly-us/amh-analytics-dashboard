@@ -1,9 +1,25 @@
 import pytest
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 import main
 
 client = TestClient(main.app)
+
+
+def make_request(headers=None, client_host="203.0.113.10"):
+    """Minimal Starlette Request for unit-testing get_agent_rate_limit_key
+    directly, without going through a real ASGI call."""
+    headers = headers or {}
+    raw_headers = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
+    scope = {
+        "type": "http",
+        "headers": raw_headers,
+        "client": (client_host, 12345),
+        "method": "POST",
+        "path": "/upload",
+    }
+    return Request(scope)
 
 
 @pytest.fixture(autouse=True)
@@ -221,3 +237,74 @@ def test_upload_request_body_too_large_returns_413(monkeypatch):
     response = client.post("/upload", json=payload, headers=auth_headers())
 
     assert response.status_code == 413
+
+
+# --- rate-limit key: per-agent identity, not per-IP -------------------------
+
+
+def test_rate_limit_key_is_hash_based_not_the_raw_token():
+    token = "super-secret-token-value"
+    request = make_request(headers={"Authorization": f"Bearer {token}"})
+
+    key = main.get_agent_rate_limit_key(request)
+
+    assert key.startswith("agent:")
+    assert token not in key
+
+
+def test_rate_limit_key_same_token_produces_same_key():
+    request_a = make_request(headers={"Authorization": "Bearer same-token"})
+    request_b = make_request(headers={"Authorization": "Bearer same-token"}, client_host="10.0.0.9")
+
+    assert main.get_agent_rate_limit_key(request_a) == main.get_agent_rate_limit_key(request_b)
+
+
+def test_rate_limit_key_different_tokens_produce_different_keys():
+    request_a = make_request(headers={"Authorization": "Bearer token-a"})
+    request_b = make_request(headers={"Authorization": "Bearer token-b"})
+
+    assert main.get_agent_rate_limit_key(request_a) != main.get_agent_rate_limit_key(request_b)
+
+
+def test_rate_limit_key_falls_back_to_ip_when_auth_header_missing():
+    request = make_request(headers={}, client_host="198.51.100.5")
+
+    key = main.get_agent_rate_limit_key(request)
+
+    assert key == "ip:198.51.100.5"
+
+
+def test_rate_limit_key_falls_back_to_ip_when_auth_header_malformed():
+    request = make_request(headers={"Authorization": "NotBearer whatever"}, client_host="198.51.100.5")
+
+    key = main.get_agent_rate_limit_key(request)
+
+    assert key == "ip:198.51.100.5"
+
+
+def test_rate_limit_key_falls_back_to_ip_when_bearer_token_empty():
+    request = make_request(headers={"Authorization": "Bearer  "}, client_host="198.51.100.5")
+
+    key = main.get_agent_rate_limit_key(request)
+
+    assert key == "ip:198.51.100.5"
+
+
+def test_rate_limit_isolated_per_token_not_shared_across_agents():
+    limit = int(main.UPLOAD_RATE_LIMIT.split("/")[0])
+    empty_payload = {"checkins": [], "rejects": [], "acs": []}
+
+    # Exhaust the limit for one agent token.
+    responses_a = [
+        client.post("/upload", json=empty_payload, headers=auth_headers(token="agent-a-token"))
+        for _ in range(limit + 1)
+    ]
+    assert responses_a[-1].status_code == 429
+
+    # A different agent token must not be affected by agent A's usage --
+    # this is the whole point of keying by token instead of by IP (the
+    # TestClient always presents the same client IP for both).
+    response_b = client.post(
+        "/upload", json=empty_payload, headers=auth_headers(token="agent-b-token")
+    )
+    assert response_b.status_code != 429
