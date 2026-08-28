@@ -98,21 +98,59 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE local_events ADD COLUMN {column_name} {column_ddl}")
 
 
-def connect(db_path: str | Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
+def connect(
+    db_path: str | Path = DEFAULT_DB_PATH, *, busy_timeout_seconds: float = 30
+) -> sqlite3.Connection:
     """Open (creating if needed) the outbox database with WAL mode enabled
     and the schema applied. Safe to call every time the agent starts --
     every statement in SCHEMA is idempotent (CREATE ... IF NOT EXISTS),
-    and _ensure_columns only adds columns that are actually missing."""
+    and _ensure_columns only adds columns that are actually missing.
+
+    Phase 5 / auto_vacuum: `PRAGMA auto_vacuum=INCREMENTAL` only takes
+    effect when issued before any table exists in a brand-new database
+    file -- confirmed empirically, including that the *order* matters
+    (it must also come before `journal_mode=WAL` is set). Issuing it
+    against an existing, already-populated database (every agent DB that
+    has run through Phase 1-4 today) is a silent no-op: `PRAGMA
+    auto_vacuum` keeps reporting 'none' afterward, and `PRAGMA
+    incremental_vacuum` then does nothing. There is no way to retroactively
+    enable it without a full VACUUM (a full file rebuild), which Phase 5
+    deliberately does not do -- see agent/maintenance.py and the Phase 5
+    report for what existing databases get instead (freelist page reuse
+    + periodic WAL checkpointing).
+
+    is_new_database is determined by the file's existence *before* this
+    call creates it -- sqlite3.connect() itself creates an empty file, so
+    checking afterward would always say "new".
+
+    busy_timeout_seconds: each component (watcher/uploader/heartbeat/
+    maintenance) opens its own connection via this function, so this can
+    differ per component. Confirmed empirically (Phase 5 investigation):
+    `PRAGMA wal_checkpoint` genuinely blocks the calling thread for up to
+    this connection's own busy_timeout when another connection holds
+    conflicting WAL frames open (e.g. a long read transaction) -- it does
+    NOT return immediately with a "busy" status the way it might appear
+    to from the result tuple alone. agent/maintenance.py deliberately
+    uses a much shorter timeout than the default 30s so a checkpoint
+    contending with something else blocks for at most a few seconds, not
+    thirty, before giving up and simply retrying on the next cycle.
+    """
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    is_new_database = not db_path.exists()
 
     # isolation_level=None puts the connection in autocommit mode, so
     # transaction() below has full, explicit control over BEGIN/COMMIT/
     # ROLLBACK instead of relying on sqlite3's implicit transaction
     # handling (which opens a transaction before the first DML statement
     # and can make it non-obvious exactly what's inside one).
-    conn = sqlite3.connect(str(db_path), isolation_level=None, timeout=30)
+    conn = sqlite3.connect(str(db_path), isolation_level=None, timeout=busy_timeout_seconds)
     conn.row_factory = sqlite3.Row
+
+    if is_new_database:
+        # Must come before journal_mode=WAL and before any table is
+        # created -- see the docstring above.
+        conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
 
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
@@ -314,3 +352,160 @@ def get_watcher_last_active_at(conn: sqlite3.Connection) -> str | None:
     every poll."""
     (value,) = conn.execute("SELECT MAX(updated_at) FROM file_state").fetchone()
     return value
+
+
+# ---------------------------------------------------------------------
+# Phase 5: local database maintenance (retention/pruning, WAL
+# checkpointing, space diagnostics). Everything below is either a plain
+# read-only PRAGMA/COUNT helper or a single bounded DELETE -- the actual
+# scheduling, batching-across-cycles, and result reporting live in
+# agent/maintenance.py, which is the only module that imports a logger
+# and drives these in a loop. Kept here, not there, because these are
+# the same kind of small, dependency-free, directly-testable primitives
+# as the rest of this file.
+# ---------------------------------------------------------------------
+
+
+_AUTO_VACUUM_MODES = {0: "none", 1: "full", 2: "incremental"}
+
+
+def get_auto_vacuum_mode(conn: sqlite3.Connection) -> str:
+    """'none' | 'full' | 'incremental' | 'unknown'. See the Phase 5
+    investigation note on connect() below: this reflects the mode that
+    was ACTUALLY locked in when the database file was first created --
+    issuing `PRAGMA auto_vacuum=INCREMENTAL` against an existing,
+    already-populated database is a silent no-op in SQLite, confirmed
+    empirically. Callers (agent/maintenance.py) use this to decide
+    whether incremental_vacuum can do anything at all, never assume it
+    from config alone."""
+    (value,) = conn.execute("PRAGMA auto_vacuum").fetchone()
+    return _AUTO_VACUUM_MODES.get(int(value), "unknown")
+
+
+def get_page_count(conn: sqlite3.Connection) -> int:
+    (value,) = conn.execute("PRAGMA page_count").fetchone()
+    return int(value)
+
+
+def get_freelist_count(conn: sqlite3.Connection) -> int:
+    """Pages freed by DELETEs that SQLite has already reclaimed onto its
+    internal freelist and will reuse for future inserts -- this happens
+    regardless of auto_vacuum mode. A nonzero value here on a 'none'-mode
+    database is expected and fine; it just won't shrink the file itself
+    (see get_auto_vacuum_mode)."""
+    (value,) = conn.execute("PRAGMA freelist_count").fetchone()
+    return int(value)
+
+
+def count_delivered_events(conn: sqlite3.Connection) -> int:
+    """All rows ever successfully delivered (uploaded_at set), regardless
+    of retention age -- the broader diagnostic count. See
+    count_eligible_for_prune for the narrower, age-and-quarantine-scoped
+    count that pruning actually acts on."""
+    (count,) = conn.execute(
+        "SELECT COUNT(*) FROM local_events WHERE uploaded_at IS NOT NULL"
+    ).fetchone()
+    return int(count)
+
+
+def count_eligible_for_prune(conn: sqlite3.Connection, cutoff: str) -> int:
+    """Rows prune_delivered_events is actually allowed to delete: must be
+    delivered (uploaded_at set), never quarantined (quarantined_at NULL
+    -- defensive; Phase 2 never sets both on one row, but the predicate
+    doesn't assume that), and delivered before the retention cutoff."""
+    (count,) = conn.execute(
+        "SELECT COUNT(*) FROM local_events "
+        "WHERE uploaded_at IS NOT NULL AND quarantined_at IS NULL AND uploaded_at < ?",
+        (cutoff,),
+    ).fetchone()
+    return int(count)
+
+
+def prune_delivered_events(conn: sqlite3.Connection, *, cutoff: str, batch_size: int) -> int:
+    """Deletes up to batch_size of the oldest eligible delivered rows
+    (see count_eligible_for_prune for the exact predicate) in one bounded
+    transaction, oldest uploaded_at first. Returns the number of rows
+    actually deleted (0 if nothing was eligible). Never touches pending
+    or quarantined rows, or a delivered row newer than cutoff, by
+    construction of the WHERE clause -- not by relying on caller
+    discipline.
+
+    Bounded and batched deliberately: the caller (agent/maintenance.py)
+    calls this repeatedly, once per batch, up to its own per-cycle
+    workload cap, so a very large eligible backlog is drained gradually
+    across cycles rather than in one unbounded transaction that could
+    hold locks against the watcher/uploader for an extended period.
+    """
+    with transaction(conn):
+        conn.execute(
+            """
+            DELETE FROM local_events WHERE id IN (
+                SELECT id FROM local_events
+                WHERE uploaded_at IS NOT NULL AND quarantined_at IS NULL AND uploaded_at < ?
+                ORDER BY uploaded_at ASC
+                LIMIT ?
+            )
+            """,
+            (cutoff, batch_size),
+        )
+        (deleted,) = conn.execute("SELECT changes()").fetchone()
+    return int(deleted)
+
+
+_WAL_CHECKPOINT_MODES = ("PASSIVE", "FULL", "RESTART", "TRUNCATE")
+
+
+def checkpoint_wal(conn: sqlite3.Connection, mode: str = "TRUNCATE") -> tuple[int, int, int]:
+    """Returns (busy, log_frames, checkpointed_frames) from
+    `PRAGMA wal_checkpoint(<mode>)`. Confirmed empirically (Phase 5
+    investigation): this never *raises* on a busy reader/writer -- busy=1
+    just means the checkpoint couldn't fully complete (e.g. another
+    connection has an open read transaction still needing older WAL
+    frames), which is a normal, expected condition to be retried on a
+    later cycle, not an error.
+
+    It DOES block the calling thread while contended, though, for up to
+    this connection's own busy_timeout (see connect()'s
+    busy_timeout_seconds) before giving up and returning busy=1 -- also
+    confirmed empirically (a 30s-timeout connection blocked for ~32s
+    under sustained contention; a 2s-timeout connection blocked for
+    ~2.3s). It is not a fire-and-forget, instant call. Callers that care
+    about bounding worst-case blocking time should use a connection
+    opened with a correspondingly short busy_timeout_seconds --
+    agent/maintenance.py does exactly this.
+
+    Only TRUNCATE actually shrinks the -wal file's on-disk size; PASSIVE
+    and RESTART checkpoint the WAL's *content* into the main file
+    (frames become safely reusable) but leave the file's current size
+    unchanged -- also confirmed empirically.
+
+    mode is restricted to the four real SQLite checkpoint modes (not
+    caller-controlled free text) since PRAGMA statements don't support
+    bound parameters at all -- SQLite rejects `PRAGMA wal_checkpoint(?)`
+    outright, confirmed empirically -- so this must be interpolated
+    directly into the SQL string.
+    """
+    if mode not in _WAL_CHECKPOINT_MODES:
+        raise ValueError(f"Unsupported WAL checkpoint mode: {mode!r}")
+
+    row = conn.execute(f"PRAGMA wal_checkpoint({mode})").fetchone()  # nosec B608 -- mode is restricted to the fixed _WAL_CHECKPOINT_MODES tuple above, never caller-controlled text
+    busy, log_frames, checkpointed = row
+    return int(busy), int(log_frames), int(checkpointed)
+
+
+def run_incremental_vacuum(conn: sqlite3.Connection, max_pages: int) -> None:
+    """Bounded `PRAGMA incremental_vacuum(N)`. Only meaningful when
+    get_auto_vacuum_mode(conn) == "incremental" -- confirmed empirically
+    to be a silent no-op otherwise (see connect()'s docstring and the
+    Phase 5 investigation note). Callers are expected to check the mode
+    and the freelist before calling this; this function itself doesn't
+    guard against a wasted call, so it stays a plain, honest wrapper
+    around one PRAGMA rather than silently deciding not to run.
+
+    max_pages must be a real int (not caller-controlled text) since, like
+    wal_checkpoint above, PRAGMA statements reject bound `?` parameters
+    entirely -- confirmed empirically -- so this has to be interpolated
+    directly into the SQL string.
+    """
+    max_pages = int(max_pages)
+    conn.execute(f"PRAGMA incremental_vacuum({max_pages})")  # nosec B608 -- max_pages is coerced to int() immediately above, never caller-controlled text
