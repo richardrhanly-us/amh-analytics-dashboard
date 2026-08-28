@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import os
@@ -38,11 +39,39 @@ else:
     logger.info("Sentry error tracking disabled | SENTRY_DSN not configured")
 
 
-# Agent uploads run on a schedule from a single machine per branch, so these
-# limits exist to blunt brute-forcing/abuse of the bearer token, not to
-# constrain legitimate traffic. Configurable per deployment via env var.
+# Agent uploads run from one machine per branch, so these limits exist to
+# blunt brute-forcing/abuse of the bearer token, not to constrain
+# legitimate traffic. Configurable per deployment via env var.
 UPLOAD_RATE_LIMIT = os.getenv("SORTVIEW_UPLOAD_RATE_LIMIT", "30/minute")
 MAX_REQUEST_BODY_BYTES = int(os.getenv("SORTVIEW_MAX_REQUEST_BODY_BYTES", str(5 * 1024 * 1024)))
+
+
+def get_agent_rate_limit_key(request: Request) -> str:
+    """Rate-limit key for /upload, derived from the bearer token instead
+    of the client IP -- an IP is a proxy for "which branch," not the
+    actual identity, and multiple branches can share an egress IP (or a
+    NAT'd network can make one branch's traffic look like many IPs).
+
+    Never returns or logs the raw token -- only a SHA-256 hash of it,
+    the same hashing scheme already used to look up agent_tokens
+    (see authenticate_agent below). Deliberately never raises: this runs
+    as part of the rate-limit decorator, before the endpoint body's own
+    get_bearer_token() gets a chance to return a clean 401, so a missing
+    or malformed Authorization header falls back to IP-based limiting
+    rather than a raw exception.
+    """
+    authorization = request.headers.get("authorization")
+
+    if authorization:
+        match = re.match(r"^Bearer\s+(.+)$", authorization.strip(), re.IGNORECASE)
+        if match:
+            token = match.group(1).strip()
+            if token:
+                token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+                return f"agent:{token_hash}"
+
+    return f"ip:{get_remote_address(request)}"
+
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -244,7 +273,7 @@ def root():
 
 
 @app.post("/upload")
-@limiter.limit(UPLOAD_RATE_LIMIT)
+@limiter.limit(UPLOAD_RATE_LIMIT, key_func=get_agent_rate_limit_key)
 def upload(request: Request, data: UploadRequest, authorization: str | None = Header(default=None)):
     try:
         checkins = [row.model_dump() for row in data.checkins]
