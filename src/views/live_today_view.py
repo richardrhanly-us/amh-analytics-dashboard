@@ -89,6 +89,15 @@ def render_live_today(
         st.header(f"{today.strftime('%A, %b %d')}")
 
         if st.button("Refresh Live Data"):
+            # Pre-existing, manual, global cache clear -- wipes every
+            # tenant/session's cached data on the server, not just this
+            # one. Out of scope for Continuous Ingestion Phase 4 (which
+            # only touches the automatic refresh_count-driven cadence in
+            # app.py/data_loader.py), but worth a note now that the
+            # automatic refresh is much faster (as low as 10s): this
+            # button is a much bigger hammer than the interval users can
+            # already just wait out, and is a candidate to revisit if it
+            # turns out to be needed/used often post-Phase-4.
             st.cache_data.clear()
             st.session_state["last_refresh_count"] = refresh_count
             st.rerun()

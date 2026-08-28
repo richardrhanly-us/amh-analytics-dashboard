@@ -39,6 +39,10 @@ from services.access_service import (
     user_can_access_org,
 )
 from services.app_ui_service import apply_page_chrome, render_app_header
+from services.dashboard_refresh_service import (
+    is_operating_hours,
+    resolve_refresh_interval_seconds,
+)
 from services.email_service import send_password_reset_email
 from services.entitlement_service import build_entitlement_context
 from services.filters_service import resolve_date_filters
@@ -546,47 +550,48 @@ if selected_customer_id is None or selected_branch_id is None:
     st.stop()
 
 
-#***************************************************************
-#
-#  Function:     is_operating_hours
-#
-#  Description: Determines whether the current Central Time value
-#               falls within the dashboard's active operating window.
-#               Auto-refresh is only enabled during these hours to
-#               reduce unnecessary refreshes outside normal use.
-#
-#  Parameters:  now_ct - Current datetime in the application timezone.
-#
-#  Returns:     bool - True if the time is between 6:00 AM and
-#               8:59 PM Central Time; otherwise False.
-#
-#***************************************************************
-
-def is_operating_hours(now_ct: datetime) -> bool:
-    return 6 <= now_ct.hour < 21
+# is_operating_hours moved to services.dashboard_refresh_service alongside
+# resolve_refresh_interval_seconds (Phase 4) so both auto-refresh gating
+# decisions are unit-testable without importing this Streamlit entry
+# point. Behavior is unchanged -- see that module for the definition.
 
 
 #***************************************************************
 # Auto Refresh Handling
 #
 # Enables automatic dashboard refresh during operating hours. The
-# refresh_count value is passed into the cached data loaders below as
-# part of their cache key, so each auto-refresh cycle naturally picks
-# up fresh data without needing to wipe the shared cache. A manual
+# refresh_count value is passed into the live-facing cached data loaders
+# below (today's checkins/rejects/ACS, pipeline/heartbeat status) as part
+# of their cache key, so each auto-refresh cycle naturally picks up fresh
+# data without needing to wipe the shared cache. A manual
 # st.cache_data.clear() used to run here on every cycle, but that
 # clears cached data for every tenant/session on the server, not just
 # this one -- with more than one active session, that made the shared
-# cache get wiped far more often than once per refresh interval. The
-# loaders' own TTLs (data_loader.py) already bound staleness to how
-# often the AMH pipeline actually updates.
+# cache get wiped far more often than once per refresh interval.
+#
+# Continuous Ingestion Phase 4: the interval is now configurable
+# (SORTVIEW_DASHBOARD_REFRESH_SECONDS, default 10s) so the dashboard can
+# reflect live ingestion/heartbeat changes quickly. The three historical
+# loaders (load_checkins_history_df / load_rejects_history_df /
+# load_acs_history_df) deliberately do NOT take refresh_count -- an
+# all-time, unbounded history query re-running every 10 seconds would be
+# a large, unnecessary jump in database load for data that doesn't need
+# sub-minute freshness. They rely solely on their own 900s TTL instead;
+# see data_loader.py.
 #***************************************************************
 
 now_ct = datetime.now(APP_TZ)
 
+refresh_interval_seconds, refresh_interval_warning = resolve_refresh_interval_seconds(
+    os.getenv("SORTVIEW_DASHBOARD_REFRESH_SECONDS")
+)
+if refresh_interval_warning:
+    logger.warning(refresh_interval_warning)
+
 refresh_count = 0
 if is_operating_hours(now_ct):
     refresh_count = st_autorefresh(
-        interval=10 * 60 * 1000,
+        interval=refresh_interval_seconds * 1000,
         key="sortview_auto_refresh"
     )
 
@@ -631,8 +636,6 @@ df_live_raw = load_checkins_df(
 df_history_raw = load_checkins_history_df(
     org_slug=selected_customer_id,
     branch_slug=selected_branch_id,
-    mtime=status_mtime,
-    refresh_count=refresh_count,
 )
 
 rejects_live_raw = load_rejects_df(
@@ -645,8 +648,6 @@ rejects_live_raw = load_rejects_df(
 rejects_history_raw = load_rejects_history_df(
     org_slug=selected_customer_id,
     branch_slug=selected_branch_id,
-    mtime=status_mtime,
-    refresh_count=refresh_count,
 )
 
 acs_live_raw = load_acs_df(
@@ -659,8 +660,6 @@ acs_live_raw = load_acs_df(
 acs_history_raw = load_acs_history_df(
     org_slug=selected_customer_id,
     branch_slug=selected_branch_id,
-    mtime=status_mtime,
-    refresh_count=refresh_count,
 )
 
 
