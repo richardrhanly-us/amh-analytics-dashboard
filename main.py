@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+from typing import Literal
 
 import sentry_sdk
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -193,8 +194,22 @@ class UploadRequest(BaseModel):
 
 
 class PipelineStatusRequest(BaseModel):
+    """Shared by two independent writers -- the legacy scheduled
+    run_pipeline uploader (last_attempt..destination_breakdown, the
+    original per-run fields) and the new continuous-agent heartbeat
+    component (health_status..watcher_last_active_at). Every field below
+    is optional specifically so each writer can send only the fields it
+    owns; see upload_pipeline_status's partial-update logic, which uses
+    model_fields_set to update only the fields actually present in a given
+    request, leaving the other writer's columns untouched -- including
+    letting a field explicitly sent as null clear a previously-stored
+    value, which is different from a field being omitted entirely.
+    """
+
     customer_id: int
     branch_id: int
+
+    # --- legacy per-run fields (existing scheduled run_pipeline uploader) ---
     last_attempt: str | None = None
     last_run: str | None = None
     status: str | None = None
@@ -209,7 +224,127 @@ class PipelineStatusRequest(BaseModel):
     acs_bad_datetime_rows: int | None = None
     transit_items: int | None = None
     problem_items: int | None = None
-    destination_breakdown: dict = Field(default_factory=dict)
+    # None (omitted or explicit null) is distinct from {} (explicitly an
+    # empty breakdown) -- Optional with no default factory so an omitted
+    # field is never silently coerced into an empty dict that would then
+    # look like an explicit value to model_fields_set.
+    destination_breakdown: dict | None = None
+
+    # --- continuous-agent heartbeat fields (Phase 3) -------------------------
+    health_status: Literal["healthy", "degraded", "auth_failure"] | None = None
+    pending_outbox_count: int | None = None
+    quarantined_count: int | None = None
+    oldest_pending_event_at: str | None = None
+    last_success_at: str | None = None
+    last_failure_category: Literal["retryable_infra", "auth_failure"] | None = None
+    last_error: str | None = None
+    watcher_last_active_at: str | None = None
+
+
+# Fixed allowlists of pipeline_status columns each writer type may update.
+# _build_pipeline_status_upsert only ever builds SQL column references from
+# these two Python lists -- never from caller-controlled field names -- so
+# a request can only ever touch a column that's both a real Pydantic field
+# and named here explicitly.
+_PIPELINE_STATUS_LEGACY_FIELDS = [
+    "last_attempt",
+    "last_run",
+    "status",
+    "checkins_rows",
+    "rejects_rows",
+    "acs_rows",
+    "uploaded_checkins_rows",
+    "uploaded_rejects_rows",
+    "uploaded_acs_rows",
+    "checkins_bad_datetime_rows",
+    "rejects_bad_datetime_rows",
+    "acs_bad_datetime_rows",
+    "transit_items",
+    "problem_items",
+    "destination_breakdown",
+]
+_PIPELINE_STATUS_HEARTBEAT_FIELDS = [
+    "health_status",
+    "pending_outbox_count",
+    "quarantined_count",
+    "oldest_pending_event_at",
+    "last_success_at",
+    "last_failure_category",
+    "last_error",
+    "watcher_last_active_at",
+]
+_PIPELINE_STATUS_UPDATABLE_FIELDS = _PIPELINE_STATUS_LEGACY_FIELDS + _PIPELINE_STATUS_HEARTBEAT_FIELDS
+
+
+def _pipeline_status_column_sql(field: str) -> str:
+    if field == "destination_breakdown":
+        return f"CAST(:{field} AS JSONB)"
+    return f":{field}"
+
+
+def _pipeline_status_bind_value(field: str, value):
+    if field == "destination_breakdown":
+        return json.dumps(value) if value is not None else None
+    return value
+
+
+def _build_pipeline_status_upsert(data: PipelineStatusRequest) -> tuple[str, dict]:
+    """Builds an INSERT ... ON CONFLICT DO UPDATE for pipeline_status that
+    only overwrites the columns actually present in this request.
+
+    The legacy scheduled uploader and the new heartbeat component both
+    write to the same (customer_id, branch_id) row during Phase 0's
+    parallel-validation coexistence window, each owning a disjoint set of
+    columns. A field omitted from the request must leave the other
+    writer's existing value untouched; a field explicitly sent as null
+    must be allowed to clear a previously-stored value (e.g. heartbeat
+    clearing last_error after recovery, or oldest_pending_event_at once
+    the backlog drains) -- so this can't use a blanket
+    COALESCE(EXCLUDED.col, pipeline_status.col), which would treat
+    "omitted" and "explicit null" as the same thing.
+
+    data.model_fields_set (Pydantic v2) is exactly the set of field names
+    present in the incoming request body, regardless of whether their
+    value is null -- an omitted field is never in it. Only fields in that
+    set, intersected with the fixed allowlist above, appear in the UPDATE
+    SET clause; every other existing column is left alone. The INSERT
+    branch (first-ever row for a branch) always writes every updatable
+    field from the request, defaulting absent ones to NULL, since there's
+    no prior value to preserve there.
+    """
+    provided = data.model_fields_set
+    update_fields = [f for f in _PIPELINE_STATUS_UPDATABLE_FIELDS if f in provided]
+
+    insert_columns = ["customer_id", "branch_id", *_PIPELINE_STATUS_UPDATABLE_FIELDS, "updated_at"]
+    insert_values_sql = ", ".join(
+        [":customer_id", ":branch_id"]
+        + [_pipeline_status_column_sql(f) for f in _PIPELINE_STATUS_UPDATABLE_FIELDS]
+        + ["CURRENT_TIMESTAMP"]
+    )
+
+    update_set_parts = ["updated_at = CURRENT_TIMESTAMP"] + [
+        f"{f} = {_pipeline_status_column_sql(f)}" for f in update_fields
+    ]
+
+    # nosec B608 -- every column name interpolated above comes from
+    # _PIPELINE_STATUS_UPDATABLE_FIELDS / update_fields, both filtered from
+    # the fixed _PIPELINE_STATUS_LEGACY_FIELDS + _PIPELINE_STATUS_HEARTBEAT_FIELDS
+    # allowlists defined next to PipelineStatusRequest, never from caller-
+    # controlled field names; every actual value is a bound :name parameter
+    # in `params` below, nothing here is string-interpolated from request
+    # data.
+    sql = f"""
+        INSERT INTO pipeline_status ({", ".join(insert_columns)})
+        VALUES ({insert_values_sql})
+        ON CONFLICT (customer_id, branch_id)
+        DO UPDATE SET {", ".join(update_set_parts)}
+    """  # nosec B608
+
+    params = {"customer_id": data.customer_id, "branch_id": data.branch_id}
+    for field in _PIPELINE_STATUS_UPDATABLE_FIELDS:
+        params[field] = _pipeline_status_bind_value(field, getattr(data, field))
+
+    return sql, params
 
 
 def get_bearer_token(authorization: str | None) -> str:
@@ -417,84 +552,8 @@ def upload_pipeline_status(request: Request, data: PipelineStatusRequest, author
                 branch_id=data.branch_id,
             )
 
-            conn.execute(text("""
-                INSERT INTO pipeline_status (
-                    customer_id,
-                    branch_id,
-                    last_attempt,
-                    last_run,
-                    status,
-                    checkins_rows,
-                    rejects_rows,
-                    acs_rows,
-                    uploaded_checkins_rows,
-                    uploaded_rejects_rows,
-                    uploaded_acs_rows,
-                    checkins_bad_datetime_rows,
-                    rejects_bad_datetime_rows,
-                    acs_bad_datetime_rows,
-                    transit_items,
-                    problem_items,
-                    destination_breakdown,
-                    updated_at
-                )
-                VALUES (
-                    :customer_id,
-                    :branch_id,
-                    :last_attempt,
-                    :last_run,
-                    :status,
-                    :checkins_rows,
-                    :rejects_rows,
-                    :acs_rows,
-                    :uploaded_checkins_rows,
-                    :uploaded_rejects_rows,
-                    :uploaded_acs_rows,
-                    :checkins_bad_datetime_rows,
-                    :rejects_bad_datetime_rows,
-                    :acs_bad_datetime_rows,
-                    :transit_items,
-                    :problem_items,
-                    CAST(:destination_breakdown AS JSONB),
-                    CURRENT_TIMESTAMP
-                )
-                ON CONFLICT (customer_id, branch_id)
-                DO UPDATE SET
-                    last_attempt = EXCLUDED.last_attempt,
-                    last_run = EXCLUDED.last_run,
-                    status = EXCLUDED.status,
-                    checkins_rows = EXCLUDED.checkins_rows,
-                    rejects_rows = EXCLUDED.rejects_rows,
-                    acs_rows = EXCLUDED.acs_rows,
-                    uploaded_checkins_rows = EXCLUDED.uploaded_checkins_rows,
-                    uploaded_rejects_rows = EXCLUDED.uploaded_rejects_rows,
-                    uploaded_acs_rows = EXCLUDED.uploaded_acs_rows,
-                    checkins_bad_datetime_rows = EXCLUDED.checkins_bad_datetime_rows,
-                    rejects_bad_datetime_rows = EXCLUDED.rejects_bad_datetime_rows,
-                    acs_bad_datetime_rows = EXCLUDED.acs_bad_datetime_rows,
-                    transit_items = EXCLUDED.transit_items,
-                    problem_items = EXCLUDED.problem_items,
-                    destination_breakdown = EXCLUDED.destination_breakdown,
-                    updated_at = CURRENT_TIMESTAMP
-            """), {
-                "customer_id": data.customer_id,
-                "branch_id": data.branch_id,
-                "last_attempt": data.last_attempt,
-                "last_run": data.last_run,
-                "status": data.status,
-                "checkins_rows": data.checkins_rows,
-                "rejects_rows": data.rejects_rows,
-                "acs_rows": data.acs_rows,
-                "uploaded_checkins_rows": data.uploaded_checkins_rows,
-                "uploaded_rejects_rows": data.uploaded_rejects_rows,
-                "uploaded_acs_rows": data.uploaded_acs_rows,
-                "checkins_bad_datetime_rows": data.checkins_bad_datetime_rows,
-                "rejects_bad_datetime_rows": data.rejects_bad_datetime_rows,
-                "acs_bad_datetime_rows": data.acs_bad_datetime_rows,
-                "transit_items": data.transit_items,
-                "problem_items": data.problem_items,
-                "destination_breakdown": json.dumps(data.destination_breakdown),
-            })
+            sql, params = _build_pipeline_status_upsert(data)
+            conn.execute(text(sql), params)
 
         return {
             "status": "success",

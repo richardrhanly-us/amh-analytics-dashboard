@@ -217,6 +217,148 @@ def test_upload_pipeline_status_success(monkeypatch):
     assert response.json()["status"] == "success"
 
 
+def test_upload_pipeline_status_heartbeat_success(monkeypatch):
+    use_fake_engine(monkeypatch)
+    payload = {
+        "customer_id": VALID_TOKEN_ROW["customer_id"],
+        "branch_id": VALID_TOKEN_ROW["branch_id"],
+        "health_status": "degraded",
+        "pending_outbox_count": 3,
+        "quarantined_count": 0,
+        "oldest_pending_event_at": None,
+        "last_success_at": "2026-08-28T10:00:00.000000Z",
+        "last_failure_category": "retryable_infra",
+        "last_error": "connection refused",
+        "watcher_last_active_at": "2026-08-28T10:05:00.000000Z",
+    }
+
+    response = client.post(
+        "/upload-pipeline-status", json=payload, headers=auth_headers()
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+
+
+def test_upload_pipeline_status_rejects_invalid_health_status():
+    payload = {
+        "customer_id": VALID_TOKEN_ROW["customer_id"],
+        "branch_id": VALID_TOKEN_ROW["branch_id"],
+        "health_status": "not-a-real-status",
+    }
+
+    response = client.post(
+        "/upload-pipeline-status", json=payload, headers=auth_headers()
+    )
+
+    assert response.status_code == 422
+
+
+# --- pipeline_status partial-update mechanism (_build_pipeline_status_upsert) --
+#
+# main._build_pipeline_status_upsert is the function responsible for the
+# omitted-vs-explicit-null partial update semantics that two independent
+# writers (the legacy scheduled uploader and the new heartbeat component)
+# depend on to coexist safely against the same (customer_id, branch_id)
+# row. These are unit tests against that function directly -- there is no
+# Postgres available in this repo's CI (see the Phase 3 report), so this
+# is what actually exercises the column-selection logic; it does not
+# prove the resulting SQL executes correctly against a real database.
+
+
+def test_upsert_legacy_only_request_updates_only_legacy_fields():
+    data = main.PipelineStatusRequest(
+        customer_id=1, branch_id=1, status="completed", checkins_rows=5,
+    )
+    sql, _params = main._build_pipeline_status_upsert(data)
+
+    for field in ["status", "checkins_rows"]:
+        assert f"{field} = :{field}" in sql
+    for field in main._PIPELINE_STATUS_HEARTBEAT_FIELDS:
+        assert f"{field} = :{field}" not in sql
+
+
+def test_upsert_heartbeat_only_request_updates_only_heartbeat_fields():
+    data = main.PipelineStatusRequest(
+        customer_id=1, branch_id=1, health_status="healthy", pending_outbox_count=0,
+    )
+    sql, _params = main._build_pipeline_status_upsert(data)
+
+    for field in ["health_status", "pending_outbox_count"]:
+        assert f"{field} = :{field}" in sql
+    for field in main._PIPELINE_STATUS_LEGACY_FIELDS:
+        assert f"{field} = :{field}" not in sql
+
+
+def test_upsert_omitted_field_is_absent_from_update_set():
+    data = main.PipelineStatusRequest(customer_id=1, branch_id=1, health_status="healthy")
+    sql, _params = main._build_pipeline_status_upsert(data)
+
+    # pending_outbox_count was never supplied -- must not appear in the
+    # UPDATE SET clause at all (an omitted field must never overwrite a
+    # previously-stored value).
+    assert "pending_outbox_count = :pending_outbox_count" not in sql
+
+
+def test_upsert_explicit_null_field_is_present_in_update_set():
+    data = main.PipelineStatusRequest(
+        customer_id=1, branch_id=1, health_status="healthy", last_error=None,
+    )
+    # last_error explicitly passed as None -- this differs from never
+    # mentioning it at all.
+    assert "last_error" in data.model_fields_set
+
+    sql, params = main._build_pipeline_status_upsert(data)
+
+    assert "last_error = :last_error" in sql
+    assert params["last_error"] is None
+
+
+def test_upsert_always_touches_updated_at():
+    data = main.PipelineStatusRequest(customer_id=1, branch_id=1)
+    sql, _params = main._build_pipeline_status_upsert(data)
+
+    assert "updated_at = CURRENT_TIMESTAMP" in sql
+
+
+def test_upsert_destination_breakdown_explicit_empty_dict_is_provided():
+    # The legacy client always sends destination_breakdown (defaulting to
+    # {} when it has nothing to report) -- {} is a provided value, not an
+    # omission, and must still appear in the UPDATE SET clause.
+    data = main.PipelineStatusRequest(customer_id=1, branch_id=1, destination_breakdown={})
+    sql, params = main._build_pipeline_status_upsert(data)
+
+    assert "destination_breakdown = CAST(:destination_breakdown AS JSONB)" in sql
+    assert params["destination_breakdown"] == "{}"
+
+
+def test_upsert_destination_breakdown_omitted_binds_none():
+    data = main.PipelineStatusRequest(customer_id=1, branch_id=1, health_status="healthy")
+    sql, params = main._build_pipeline_status_upsert(data)
+
+    assert "destination_breakdown = CAST(:destination_breakdown AS JSONB)" not in sql
+    # Still bound in params (used by the INSERT branch), but never
+    # referenced by the UPDATE SET clause above.
+    assert params["destination_breakdown"] is None
+
+
+def test_upsert_only_uses_fixed_allowlist_column_names():
+    # Guards against ever building SQL from caller-controlled field names:
+    # every column reference in the UPDATE SET clause must come from the
+    # fixed Python allowlists, not from arbitrary request data.
+    data = main.PipelineStatusRequest(
+        customer_id=1, branch_id=1, status="completed", health_status="healthy",
+    )
+    sql, _params = main._build_pipeline_status_upsert(data)
+
+    referenced = {
+        part.split(" = ")[0].strip()
+        for part in sql.split("SET", 1)[1].split("WHERE", 1)[0].split(",")
+    }
+    referenced.discard("updated_at")
+    assert referenced <= set(main._PIPELINE_STATUS_UPDATABLE_FIELDS)
+
+
 # --- rate limiting and request hardening ------------------------------------
 
 def test_upload_rate_limited_after_too_many_requests():

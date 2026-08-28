@@ -850,6 +850,14 @@ def load_pipeline_status(org_slug, branch_slug, path=STATUS_FILE, mtime=None, re
             transit_items,
             problem_items,
             destination_breakdown,
+            health_status,
+            pending_outbox_count,
+            quarantined_count,
+            oldest_pending_event_at,
+            last_success_at,
+            last_failure_category,
+            last_error,
+            watcher_last_active_at,
             updated_at
         FROM pipeline_status
         WHERE {org_column} = :org_slug
@@ -887,7 +895,14 @@ def load_pipeline_status(org_slug, branch_slug, path=STATUS_FILE, mtime=None, re
 
     # Convert timestamp values into strings so they are safe to store
     # in the returned status dictionary and easy for the UI to display.
-    for key in ["last_attempt", "last_run", "updated_at"]:
+    for key in [
+        "last_attempt",
+        "last_run",
+        "updated_at",
+        "oldest_pending_event_at",
+        "last_success_at",
+        "watcher_last_active_at",
+    ]:
         value = row.get(key)
         if pd.notna(value):
             if hasattr(value, "isoformat"):

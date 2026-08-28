@@ -2,10 +2,15 @@
 
 Reads pipeline_status for every active branch and flags branches where the
 most recent report is older than SORTVIEW_PIPELINE_STALE_MINUTES, has never
-reported at all, or reported a failed run. Meant to run on a schedule (a
-GitHub Actions cron job by default) so a dead agent or a stalled AMH machine
-gets noticed without a human staring at the dashboard's pipeline-status
-panel.
+reported at all, or reported an unhealthy status. Two vocabularies can be
+live on the same row during Continuous Ingestion Phase 0's parallel
+validation: the legacy scheduled pipeline's status (started/completed/
+failed*) and the new continuous-agent heartbeat's health_status (healthy/
+degraded/auth_failure). health_status is preferred whenever a branch has
+ever reported one; legacy status parsing is the fallback for branches that
+haven't. Meant to run on a schedule (a GitHub Actions cron job by default)
+so a dead agent or a stalled AMH machine gets noticed without a human
+staring at the dashboard's pipeline-status panel.
 
 SORTVIEW_PIPELINE_STALE_MINUTES has no single correct value -- it depends on
 how often each branch's AMH agent is actually scheduled to run, which lives
@@ -65,7 +70,10 @@ def find_unhealthy_branches(
                 ps.status,
                 ps.last_run,
                 ps.last_attempt,
-                ps.updated_at
+                ps.updated_at,
+                ps.health_status,
+                ps.quarantined_count,
+                ps.last_error
             FROM branches b
             JOIN organizations o ON o.id = b.organization_id
             LEFT JOIN pipeline_status ps
@@ -88,9 +96,22 @@ def find_unhealthy_branches(
             if updated_at.tzinfo is None:
                 updated_at = updated_at.replace(tzinfo=UTC)
             if updated_at < stale_after:
-                reasons.append(f"last reported at {updated_at.isoformat()} (stale)")
+                reasons.append(f"last reported at {updated_at.isoformat()} (stale/no heartbeat)")
 
-        if row["status"] and str(row["status"]).startswith("failed"):
+        # During coexistence a branch may be reported by the legacy
+        # scheduled pipeline (ps.status, started/completed/failed*) or by
+        # the new continuous-agent heartbeat (ps.health_status,
+        # healthy/degraded/auth_failure) -- prefer health_status when
+        # present, since it's the more precise, currently-live signal;
+        # fall back to legacy status parsing only when health_status has
+        # never been reported for this branch.
+        if row["health_status"] is not None:
+            if row["health_status"] == "auth_failure":
+                reasons.append("agent heartbeat reports auth_failure")
+            elif row["health_status"] == "degraded":
+                detail = f" ({row['last_error']})" if row["last_error"] else ""
+                reasons.append(f"agent heartbeat reports degraded{detail}")
+        elif row["status"] and str(row["status"]).startswith("failed"):
             reasons.append(f"latest run status is '{row['status']}'")
 
         if reasons:

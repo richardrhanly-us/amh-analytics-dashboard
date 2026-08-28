@@ -102,10 +102,35 @@ def build_pipeline_context(pipeline_status, df_live_raw, now_ct, local_tz, theme
     )
     latest_checkin_ago = format_relative_time(checkins_updated, now_ct)
 
+    # During Continuous Ingestion Phase 0's parallel validation, a branch's
+    # pipeline_status row may carry two independent vocabularies: the
+    # legacy scheduled pipeline's `status` (started/completed/failed*) and
+    # the new continuous-agent heartbeat's `health_status` (healthy/
+    # degraded/auth_failure). A branch that has ever reported a heartbeat
+    # is understood via health_status; legacy status parsing remains the
+    # fallback for branches that haven't (or haven't yet) cut over --
+    # both must keep working at the same time, not one replacing the
+    # other.
+    health_status = pipeline_status.get("health_status") if pipeline_status else None
     pipeline_run_status = pipeline_status.get("status", "unknown") if pipeline_status else "unknown"
-    status_code_text = str(pipeline_run_status)
+    status_code_text = str(health_status) if health_status else str(pipeline_run_status)
 
-    if pipeline_run_status == "completed":
+    if health_status == "healthy":
+        pipeline_status_label = "Pipeline Healthy"
+        pipeline_status_color = "#059669"
+        pipeline_status_bg = "rgba(5, 150, 105, 0.14)" if theme_base == "dark" else "#ecfdf5"
+        pipeline_result_text = "Continuous agent reporting healthy"
+    elif health_status == "degraded":
+        pipeline_status_label = "Pipeline Degraded"
+        pipeline_status_color = "#d97706"
+        pipeline_status_bg = "rgba(217, 119, 6, 0.14)" if theme_base == "dark" else "#fffbeb"
+        pipeline_result_text = "Continuous agent reporting degraded -- backlog, quarantine, or unresolved delivery failure"
+    elif health_status == "auth_failure":
+        pipeline_status_label = "Pipeline Auth Failure"
+        pipeline_status_color = "#dc2626"
+        pipeline_status_bg = "rgba(220, 38, 38, 0.14)" if theme_base == "dark" else "#fef2f2"
+        pipeline_result_text = "Continuous agent cannot authenticate -- check the agent token"
+    elif pipeline_run_status == "completed":
         pipeline_status_label = "Pipeline Healthy"
         pipeline_status_color = "#059669"
         pipeline_status_bg = "rgba(5, 150, 105, 0.14)" if theme_base == "dark" else "#ecfdf5"
@@ -138,7 +163,10 @@ def build_pipeline_context(pipeline_status, df_live_raw, now_ct, local_tz, theme
         pipeline_status_bg = "rgba(148, 163, 184, 0.12)" if theme_base == "dark" else "#f9fafb"
         pipeline_result_text = "Unknown"
 
-    pipeline_expanded = pipeline_run_status not in ["completed", "skipped_no_source_changes"]
+    if health_status is not None:
+        pipeline_expanded = health_status != "healthy"
+    else:
+        pipeline_expanded = pipeline_run_status not in ["completed", "skipped_no_source_changes"]
 
     if isinstance(destination_breakdown, dict) and destination_breakdown:
         destination_breakdown_text = ", ".join(

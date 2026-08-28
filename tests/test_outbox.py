@@ -239,3 +239,135 @@ def test_transaction_rollback_also_protects_file_state(conn):
     # actually committed to local_events.
     state = outbox.get_file_state(conn, "C:\\logs\\Checkins.txt")
     assert state["last_byte_offset"] == 0
+
+
+# --- Phase 3 heartbeat query helpers ----------------------------------------
+
+
+def _insert(conn, barcode):
+    outbox.insert_event(
+        conn,
+        event_type="checkin",
+        customer_id=1,
+        branch_id=1,
+        event_timestamp="2026-08-27T10:00:00",
+        dedup_key=outbox.compute_dedup_key({"barcode": barcode}),
+        payload={"barcode": barcode},
+    )
+
+
+def test_get_oldest_pending_created_at_none_when_empty(conn):
+    assert outbox.get_oldest_pending_created_at(conn) is None
+
+
+def test_get_oldest_pending_created_at_returns_earliest(conn):
+    _insert(conn, "1")
+    _insert(conn, "2")
+
+    oldest = outbox.get_oldest_pending_created_at(conn)
+    row = conn.execute(
+        "SELECT MIN(created_at) AS c FROM local_events"
+    ).fetchone()
+    assert oldest == row["c"]
+
+
+def test_get_oldest_pending_created_at_excludes_delivered_and_quarantined(conn):
+    _insert(conn, "1")
+    (row_id,) = conn.execute("SELECT id FROM local_events").fetchone()
+    conn.execute("UPDATE local_events SET uploaded_at = '2026-08-27T11:00:00.000000Z' WHERE id = ?", (row_id,))
+
+    assert outbox.get_oldest_pending_created_at(conn) is None
+
+
+def test_get_last_success_at_none_when_nothing_delivered(conn):
+    _insert(conn, "1")
+    assert outbox.get_last_success_at(conn) is None
+
+
+def test_get_last_success_at_returns_max_uploaded_at(conn):
+    _insert(conn, "1")
+    _insert(conn, "2")
+    ids = [r["id"] for r in conn.execute("SELECT id FROM local_events ORDER BY id").fetchall()]
+    conn.execute("UPDATE local_events SET uploaded_at = ? WHERE id = ?", ("2026-08-27T11:00:00.000000Z", ids[0]))
+    conn.execute("UPDATE local_events SET uploaded_at = ? WHERE id = ?", ("2026-08-27T12:00:00.000000Z", ids[1]))
+
+    assert outbox.get_last_success_at(conn) == "2026-08-27T12:00:00.000000Z"
+
+
+def test_get_last_success_at_survives_reconnect(tmp_path):
+    db_path = tmp_path / "agent.db"
+    first = outbox.connect(db_path)
+    try:
+        _insert(first, "1")
+        (row_id,) = first.execute("SELECT id FROM local_events").fetchone()
+        first.execute(
+            "UPDATE local_events SET uploaded_at = ? WHERE id = ?",
+            ("2026-08-27T12:00:00.000000Z", row_id),
+        )
+    finally:
+        first.close()
+
+    second = outbox.connect(db_path)
+    try:
+        assert outbox.get_last_success_at(second) == "2026-08-27T12:00:00.000000Z"
+    finally:
+        second.close()
+
+
+def test_get_latest_unresolved_failure_none_when_nothing_attempted(conn):
+    _insert(conn, "1")
+    assert outbox.get_latest_unresolved_failure(conn) is None
+
+
+def test_get_latest_unresolved_failure_returns_most_recent(conn):
+    _insert(conn, "1")
+    _insert(conn, "2")
+    ids = [r["id"] for r in conn.execute("SELECT id FROM local_events ORDER BY id").fetchall()]
+    conn.execute(
+        "UPDATE local_events SET last_attempt_at = ?, last_error = ?, last_error_category = ? WHERE id = ?",
+        ("2026-08-27T11:00:00.000000Z", "first error", "retryable_infra", ids[0]),
+    )
+    conn.execute(
+        "UPDATE local_events SET last_attempt_at = ?, last_error = ?, last_error_category = ? WHERE id = ?",
+        ("2026-08-27T12:00:00.000000Z", "second error", "auth_failure", ids[1]),
+    )
+
+    latest = outbox.get_latest_unresolved_failure(conn)
+    assert latest["last_error_category"] == "auth_failure"
+    assert latest["last_error"] == "second error"
+
+
+def test_get_latest_unresolved_failure_excludes_delivered_rows(conn):
+    _insert(conn, "1")
+    (row_id,) = conn.execute("SELECT id FROM local_events").fetchone()
+    conn.execute(
+        "UPDATE local_events SET last_attempt_at = ?, last_error = ?, last_error_category = ?, uploaded_at = ? WHERE id = ?",
+        ("2026-08-27T11:00:00.000000Z", "old error", "retryable_infra", "2026-08-27T12:00:00.000000Z", row_id),
+    )
+
+    assert outbox.get_latest_unresolved_failure(conn) is None
+
+
+def test_get_latest_unresolved_failure_excludes_quarantined_rows(conn):
+    _insert(conn, "1")
+    (row_id,) = conn.execute("SELECT id FROM local_events").fetchone()
+    conn.execute(
+        "UPDATE local_events SET last_attempt_at = ?, last_error = ?, last_error_category = ?, quarantined_at = ? WHERE id = ?",
+        ("2026-08-27T11:00:00.000000Z", "bad row", "request_failure", "2026-08-27T12:00:00.000000Z", row_id),
+    )
+
+    assert outbox.get_latest_unresolved_failure(conn) is None
+
+
+def test_get_watcher_last_active_at_none_when_no_file_state(conn):
+    assert outbox.get_watcher_last_active_at(conn) is None
+
+
+def test_get_watcher_last_active_at_returns_max_across_files(conn):
+    outbox.save_file_state(
+        conn, file_path="Checkins.txt", file_dev=1, file_ino=1,
+        last_byte_offset=0, last_modified=None,
+    )
+    checkins_state = outbox.get_file_state(conn, "Checkins.txt")
+
+    assert outbox.get_watcher_last_active_at(conn) == checkins_state["updated_at"]

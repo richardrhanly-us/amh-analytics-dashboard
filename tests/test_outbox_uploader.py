@@ -1102,3 +1102,57 @@ def test_token_never_appears_in_budget_or_error_state(conn, monkeypatch):
             assert API_TOKEN not in row["quarantine_reason"]
         if row["last_error"]:
             assert API_TOKEN not in row["last_error"]
+
+
+# --- last_error_category persistence (Phase 3: heartbeat needs the ----------
+# --- structured category, not just the error text) -------------------------
+
+
+def test_retryable_infra_failure_persists_category(conn, monkeypatch):
+    _insert_checkin(conn, "111")
+    scripted = ScriptedPost([requests.ConnectionError("boom")])
+    monkeypatch.setattr(ou.session, "post", scripted)
+
+    ou.upload_pending_batch(conn)
+
+    assert _all_rows(conn)[0]["last_error_category"] == "retryable_infra"
+
+
+def test_auth_failure_persists_category(conn, monkeypatch):
+    _insert_checkin(conn, "111")
+    scripted = ScriptedPost([FakeResponse(401, text="unauthorized")])
+    monkeypatch.setattr(ou.session, "post", scripted)
+
+    ou.upload_pending_batch(conn)
+
+    assert _all_rows(conn)[0]["last_error_category"] == "auth_failure"
+
+
+def test_quarantined_row_persists_category(conn, monkeypatch):
+    _insert_checkin(conn, "111")
+    scripted = PoisonAwarePost(poison_barcodes={"111"}, status_code=400)
+    monkeypatch.setattr(ou.session, "post", scripted)
+
+    ou.upload_pending_batch(conn)
+
+    row = _all_rows(conn)[0]
+    assert row["quarantined_at"] is not None
+    assert row["last_error_category"] == "request_failure"
+
+
+def test_category_cleared_on_row_reaching_delivery_via_a_later_row(conn, monkeypatch):
+    """last_error_category is never explicitly cleared on delivery -- it's
+    simply excluded from future "unresolved failure" queries once
+    uploaded_at is set (see outbox.get_latest_unresolved_failure and
+    tests/test_heartbeat.py). This just confirms delivery doesn't crash or
+    corrupt a row that previously recorded a category."""
+    _insert_checkin(conn, "111")
+    scripted = ScriptedPost([requests.ConnectionError("boom"), success_response(checkins=1)])
+    monkeypatch.setattr(ou.session, "post", scripted)
+
+    ou.upload_pending_batch(conn)
+    ou.upload_pending_batch(conn)
+
+    row = _all_rows(conn)[0]
+    assert row["uploaded_at"] is not None
+    assert row["last_error_category"] == "retryable_infra"  # historical, row is no longer pending

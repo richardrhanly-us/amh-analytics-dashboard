@@ -457,35 +457,52 @@ def _mark_rows_delivered(conn: Any, row_ids: list[int], timestamp: str) -> None:
     )
 
 
-def _record_failed_attempt(conn: Any, row_ids: list[int], timestamp: str, error: str) -> None:
+def _record_failed_attempt(
+    conn: Any, row_ids: list[int], timestamp: str, error: str, category: FailureCategory
+) -> None:
     """Used only for RETRYABLE_INFRA/AUTH_FAILURE, where the whole
     attempted set genuinely failed together and the outcome is equally
     uninformative about every row in it -- never called mid-isolation for
     a batch that's merely being split, since that would misattribute a
-    collective, inconclusive outcome onto rows that may well be fine."""
+    collective, inconclusive outcome onto rows that may well be fine.
+
+    last_error_category is written alongside last_error purely so a
+    heartbeat/health reader can distinguish failure *kinds* (Phase 3)
+    without parsing error text -- it's read-only from this module's own
+    perspective and doesn't change delivery, retry, or isolation
+    behavior."""
     placeholders = ",".join("?" * len(row_ids))
     conn.execute(
         # nosec B608 -- see _mark_rows_delivered above; same pattern.
         f"UPDATE local_events SET attempt_count = attempt_count + 1, "  # nosec B608
-        f"last_attempt_at = ?, last_error = ? WHERE id IN ({placeholders})",
-        [timestamp, error, *row_ids],
+        f"last_attempt_at = ?, last_error = ?, last_error_category = ? "
+        f"WHERE id IN ({placeholders})",
+        [timestamp, error, category.value, *row_ids],
     )
 
 
-def _quarantine_rows(conn: Any, row_ids: list[int], reason: str, timestamp: str) -> None:
+def _quarantine_rows(
+    conn: Any, row_ids: list[int], reason: str, timestamp: str, category: FailureCategory
+) -> None:
     """Only ever called with a single row id that independently
     reproduced a deterministic failure. attempt_count is bumped by
     exactly 1 here -- the one definitive singleton attempt that proved
     this row is bad -- so its metadata honestly reflects what happened,
     not an inflated count from being part of larger batches that were
-    split around it."""
+    split around it.
+
+    last_error_category is stored the same as in _record_failed_attempt,
+    though quarantined rows are excluded from the "currently unresolved"
+    heartbeat query (get_latest_unresolved_failure) -- quarantine already
+    has its own explicit quarantined_count signal, so this is kept for
+    completeness/diagnostics rather than double-counted into that query."""
     placeholders = ",".join("?" * len(row_ids))
     conn.execute(
         # nosec B608 -- see _mark_rows_delivered above; same pattern.
         f"UPDATE local_events SET quarantined_at = ?, quarantine_reason = ?, "  # nosec B608
-        f"attempt_count = attempt_count + 1, last_attempt_at = ? "
+        f"attempt_count = attempt_count + 1, last_attempt_at = ?, last_error_category = ? "
         f"WHERE id IN ({placeholders})",
-        [timestamp, reason, timestamp, *row_ids],
+        [timestamp, reason, timestamp, category.value, *row_ids],
     )
 
 
@@ -541,8 +558,14 @@ def _attempt_and_isolate(conn: Any, rows: list[Any], budget: _IsolationBudget) -
         return DrainResult(delivered_ids=row_ids)
 
     if outcome.category in (FailureCategory.RETRYABLE_INFRA, FailureCategory.AUTH_FAILURE):
+        if outcome.category is None:
+            raise RuntimeError(
+                "unreachable: outcome.category matched the `in` check above, so it can't be None"
+            )
         with outbox.transaction(conn):
-            _record_failed_attempt(conn, row_ids, timestamp, outcome.error or "unknown error")
+            _record_failed_attempt(
+                conn, row_ids, timestamp, outcome.error or "unknown error", outcome.category
+            )
         logger.warning(
             "Batch upload failed | rows=%s category=%s error=%s",
             len(row_ids),
@@ -553,8 +576,12 @@ def _attempt_and_isolate(conn: Any, rows: list[Any], budget: _IsolationBudget) -
 
     # REQUEST_FAILURE or PAYLOAD_TOO_LARGE: deterministic, isolate.
     if len(rows) == 1:
+        if outcome.category is None:
+            raise RuntimeError("unreachable: only a success outcome has category=None")
         with outbox.transaction(conn):
-            _quarantine_rows(conn, row_ids, outcome.error or "unknown error", timestamp)
+            _quarantine_rows(
+                conn, row_ids, outcome.error or "unknown error", timestamp, outcome.category
+            )
         logger.warning(
             "Row quarantined | row_id=%s category=%s reason=%s",
             row_ids[0],
