@@ -12,6 +12,11 @@ for path in (ROOT_DIR, SRC_DIR):
     if path not in sys.path:
         sys.path.insert(0, path)
 
-# main.py reads DATABASE_URL at import time. Tests never hit a real
-# database (main.engine is monkeypatched), so a placeholder is enough.
-os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost/test")
+        # main.py reads DATABASE_URL at import time. Tests never hit a real
+        # database (main.engine is monkeypatched), so a placeholder is enough.
+        os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost/test")
+
+        # Never initialize Sentry during tests, even if the developer's shell
+        # currently has a real SENTRY_DSN configured.
+        os.environ["SENTRY_DSN"] = ""
+        os.environ["SENTRY_ENVIRONMENT"] = "test"
