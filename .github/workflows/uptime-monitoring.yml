@@ -1,6 +1,8 @@
 name: Uptime and Pipeline Health
 
 on:
+  schedule:
+    - cron: "*/15 * * * *"
   workflow_dispatch: {}
 
 permissions:
