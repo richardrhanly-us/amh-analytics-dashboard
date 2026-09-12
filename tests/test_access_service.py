@@ -1,6 +1,22 @@
+import pytest
 from db_fakes import FakeEngine, FakeQueryResult
 
 from src.services import access_service
+
+
+@pytest.fixture(autouse=True)
+def _clear_access_service_caches():
+    # get_org_branches/get_user_memberships are now st.cache_data-wrapped
+    # (dashboard performance pass); its cache is process-global, so clear
+    # it before/after every test to keep these tests isolated from each
+    # other and from other test modules, matching the existing convention
+    # in tests/test_data_loader_refresh.py.
+    access_service.get_org_branches.clear()
+    access_service.get_user_memberships.clear()
+    yield
+    access_service.get_org_branches.clear()
+    access_service.get_user_memberships.clear()
+
 
 # --- get_org_branches ---------------------------------------------------
 
@@ -87,3 +103,79 @@ def test_user_can_access_org_checks_the_specific_org_requested(monkeypatch):
 
     assert result is False
     assert engine.calls[0]["params"]["org_slug"] == "other-co"
+
+
+def test_user_can_access_org_never_cached(monkeypatch):
+    # The tenant-isolation gate must re-check the database every call --
+    # unlike get_org_branches/get_user_memberships, it is deliberately not
+    # st.cache_data-wrapped, so a revoked membership is never masked by a
+    # stale cached "True" for the rest of the cache's TTL.
+    engine = FakeEngine([FakeQueryResult(first=(1,)), FakeQueryResult(first=None)])
+    monkeypatch.setattr(access_service, "get_engine", lambda: engine)
+
+    first = access_service.user_can_access_org(user_id=1, org_slug="acme")
+    second = access_service.user_can_access_org(user_id=1, org_slug="acme")
+
+    assert first is True
+    assert second is False
+    assert len(engine.calls) == 2
+
+
+# --- cache scoping (dashboard performance pass) ------------------------------
+
+
+def test_get_org_branches_cache_hits_on_repeated_call_same_org(monkeypatch):
+    engine = FakeEngine([FakeQueryResult(all_rows=[{"id": 1, "branch_id": 100, "branch_slug": "main",
+                                                      "branch_name": "Main", "is_primary": True, "status": "active"}])])
+    monkeypatch.setattr(access_service, "get_engine", lambda: engine)
+
+    for _ in range(5):
+        access_service.get_org_branches(org_slug="acme")
+
+    assert len(engine.calls) == 1
+
+
+def test_get_org_branches_cache_is_scoped_per_org(monkeypatch):
+    # A different org_slug must be a genuine cache miss -- caching must
+    # never collapse two different tenants' branch lists together.
+    engine = FakeEngine([
+        FakeQueryResult(all_rows=[{"id": 1, "branch_id": 100, "branch_slug": "main",
+                                    "branch_name": "Main", "is_primary": True, "status": "active"}]),
+        FakeQueryResult(all_rows=[{"id": 2, "branch_id": 200, "branch_slug": "north",
+                                    "branch_name": "North", "is_primary": True, "status": "active"}]),
+    ])
+    monkeypatch.setattr(access_service, "get_engine", lambda: engine)
+
+    acme_branches = access_service.get_org_branches(org_slug="acme")
+    other_branches = access_service.get_org_branches(org_slug="other-org")
+
+    assert len(engine.calls) == 2
+    assert acme_branches != other_branches
+
+
+def test_get_user_memberships_cache_hits_on_repeated_call_same_user(monkeypatch):
+    engine = FakeEngine([FakeQueryResult(all_rows=[{"organization_id": 1, "customer_id": 10, "role": "owner",
+                                                     "organization_slug": "acme", "organization_name": "Acme"}])])
+    monkeypatch.setattr(access_service, "get_engine", lambda: engine)
+
+    for _ in range(5):
+        access_service.get_user_memberships(user_id=1)
+
+    assert len(engine.calls) == 1
+
+
+def test_get_user_memberships_cache_is_scoped_per_user(monkeypatch):
+    # A different user_id must be a genuine cache miss -- caching must
+    # never leak one user's memberships into another user's lookup.
+    engine = FakeEngine([
+        FakeQueryResult(all_rows=[{"organization_id": 1, "customer_id": 10, "role": "owner",
+                                    "organization_slug": "acme", "organization_name": "Acme"}]),
+        FakeQueryResult(all_rows=[]),
+    ])
+    monkeypatch.setattr(access_service, "get_engine", lambda: engine)
+
+    user_1_memberships = access_service.get_user_memberships(user_id=1)
+    user_2_memberships = access_service.get_user_memberships(user_id=2)
+
+    assert len(engine.calls) == 2
+    assert user_1_memberships != user_2_memberships

@@ -1,7 +1,20 @@
 import json
 from pathlib import Path
 
+import streamlit as st
+
 from services.tenant_service import get_effective_settings
+
+# load_runtime_settings (via get_effective_settings: 4 sequential
+# queries -- org, branch, subscription, entitlements) previously ran on
+# every single Streamlit rerun -- every auto-refresh tick, every nav
+# click -- to answer a question (what are this org/branch's effective
+# settings right now) that only changes on an admin settings change.
+# ttl=120 keeps it feeling live for anyone actively editing settings
+# while eliminating repeat round trips otherwise. Cache key is
+# (settings_file, org_slug, branch_slug, prefer_database), so this is
+# naturally tenant- and branch-scoped.
+_SETTINGS_CACHE_TTL_SECONDS = 120
 
 
 def _dedupe_transit_destinations(destinations: list[dict]) -> list[dict]:
@@ -156,6 +169,7 @@ def load_app_settings_from_db(org_slug: str, branch_slug: str | None = None) -> 
     }
 
 
+@st.cache_data(ttl=_SETTINGS_CACHE_TTL_SECONDS, show_spinner=False)
 def load_runtime_settings(
     settings_file: Path,
     org_slug: str | None = None,

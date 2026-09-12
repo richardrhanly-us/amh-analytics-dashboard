@@ -17,9 +17,19 @@ from __future__ import annotations
 
 from typing import Any
 
+import streamlit as st
 from sqlalchemy import text
 
 from database import get_engine
+
+# build_entitlement_context (3 sequential queries: role, subscription,
+# entitlements) previously ran on every single Streamlit rerun -- every
+# auto-refresh tick, every nav click -- to answer a question (what plan/
+# role/features does this user+org have right now) that only actually
+# changes on an admin action. ttl=120 keeps that feeling live enough
+# while eliminating the repeat cost. Cache key is (user_id, org_slug),
+# so this is naturally tenant-scoped.
+_ENTITLEMENT_CACHE_TTL_SECONDS = 120
 
 #***************************************************************
 #
@@ -158,6 +168,7 @@ def get_plan_entitlements(plan_id: int) -> dict[str, dict[str, Any]]:
 #
 #***************************************************************
 
+@st.cache_data(ttl=_ENTITLEMENT_CACHE_TTL_SECONDS, show_spinner=False)
 def build_entitlement_context(user_id: int, org_slug: str) -> dict[str, Any]:
     # Load the user's role and the organization's subscription.
     role = get_org_role_for_user(user_id=user_id, org_slug=org_slug)

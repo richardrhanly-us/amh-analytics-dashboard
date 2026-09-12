@@ -990,6 +990,15 @@ def _table_has_columns(table_name, required_columns):
 #
 #***************************************************************
 
+# validate_tenant_schema previously ran 4 information_schema.columns
+# queries on every single Streamlit rerun -- every auto-refresh tick,
+# every nav click -- to check something that cannot change without a
+# database migration/deploy. It takes no tenant-scoped arguments (schema
+# is shared across the whole database, not per-tenant), so one cached
+# value serves every session; ttl=3600 is generous since a real schema
+# change requires a deploy, which restarts the process (and this
+# in-memory cache) anyway.
+@st.cache_data(ttl=3600, show_spinner=False)
 def validate_tenant_schema():
     checks = []
 

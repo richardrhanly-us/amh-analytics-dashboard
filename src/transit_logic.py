@@ -252,38 +252,37 @@ def compute_transit_times(df):
     if "barcode" not in df.columns or len(df) == 0:
         return pd.DataFrame()
 
-    work_df = df.sort_values("datetime").copy()
-    results = []
+    # Vectorized equivalent of the original per-barcode Python loop: for
+    # each barcode's scans in chronological order, the elapsed time since
+    # its own previous scan is a transit-time observation whenever the
+    # current scan has a transit destination. groupby(...).shift(1) gives
+    # "the previous scan's datetime for this same barcode" in one pass
+    # instead of a Python-level iterrows() per row -- this was previously
+    # one of the slowest operations on the Transits page (O(rows) Python
+    # loop over the full date-range-filtered dataframe on every render).
+    work_df = df.sort_values(["barcode", "datetime"]).copy()
 
-    grouped = work_df.groupby("barcode")
+    if "transit_destination" in work_df.columns:
+        current_dest = work_df["transit_destination"]
+    else:
+        current_dest = pd.Series([None] * len(work_df), index=work_df.index)
 
-    # Review each barcode's scan history in chronological order.
-    for _, group in grouped:
-        group = group.sort_values("datetime")
-        last_time = None
+    prev_time = work_df.groupby("barcode")["datetime"].shift(1)
+    delta_minutes = (work_df["datetime"] - prev_time).dt.total_seconds() / 60
 
-        for _, row in group.iterrows():
-            current_time = row["datetime"]
-            current_dest = row.get("transit_destination")
+    has_prev_scan = prev_time.notna()
+    has_dest = current_dest.map(bool)
+    in_range = (delta_minutes > 0) & (delta_minutes < 1440)
 
-            # Record a transit time only when there is a previous scan and
-            # the current row has a transit destination.
-            if last_time is not None and current_dest:
-                delta_minutes = (current_time - last_time).total_seconds() / 60
+    keep = has_prev_scan & has_dest & in_range
 
-                # Ignore impossible or extreme values over one day.
-                if 0 < delta_minutes < 1440:
-                    results.append({
-                        "destination": current_dest,
-                        "transit_time_min": delta_minutes,
-                    })
-
-            last_time = current_time
-
-    if not results:
+    if not keep.any():
         return pd.DataFrame()
 
-    return pd.DataFrame(results)
+    return pd.DataFrame({
+        "destination": current_dest[keep],
+        "transit_time_min": delta_minutes[keep],
+    }).reset_index(drop=True)
 
 
 #***************************************************************
