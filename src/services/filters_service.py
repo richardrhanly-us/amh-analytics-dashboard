@@ -33,6 +33,44 @@ import streamlit as st
 #
 #***************************************************************
 
+DATE_RANGE_MODE_OPTIONS = [
+    "Single Day", "Last 7 Days", "Last 30 Days", "Month to Date", "Full Month", "All Time", "Custom",
+]
+
+# Dashboard performance pass: "All Time" was the previous default, which
+# means every first visit to Overview/Reports/Transits paid the cost of
+# filtering/transforming the entire history table in pandas (a
+# significant, measured cost -- see the dashboard-date-range performance
+# report) before the user had asked for anything beyond a normal
+# reporting window. "Last 30 Days" is a much lighter default; "All Time"
+# remains fully available as an explicit choice, just no longer the
+# unconditional first thing every session pays for.
+DEFAULT_DATE_RANGE_MODE = "Last 30 Days"
+
+# The widget's own key -- shared across Overview/Reports/Transits, since
+# resolve_date_filters renders this same radio from the same call site
+# regardless of which of the three is active (see app.py). This alone is
+# NOT enough to survive a detour through Live Today, though: Streamlit
+# clears a widget's session_state entry for any script run where that
+# widget isn't instantiated at all, and Live Today never renders this
+# radio. Confirmed with an AppTest-based check during development --
+# switching Overview -> Live Today -> Reports reset an explicit "All
+# Time" choice back to the default despite the key, because the key's
+# entry had been cleared out from under it during the Live Today run.
+DATE_RANGE_MODE_STATE_KEY = "dashboard_date_range_mode"
+
+# A second, plain (non-widget) session_state slot that is never tied to
+# whether this widget rendered on a given run, so it survives a detour
+# through Live Today intact. It's used to re-seed the widget's own key
+# every time the widget is about to render, and is kept in sync with the
+# widget's latest value right after. This is what actually delivers "an
+# explicit user choice is respected until they change it again" -- the
+# widget key alone only covers navigating directly between Overview/
+# Reports/Transits, not a round trip through a view that never renders
+# the widget at all.
+DATE_RANGE_MODE_PERSISTED_KEY = "dashboard_date_range_mode_persisted"
+
+
 def resolve_date_filters(selected_view, min_date, max_date, local_today):
     # Default to the full available range, capped at the current local date.
     start_date = min_date
@@ -45,12 +83,28 @@ def resolve_date_filters(selected_view, min_date, max_date, local_today):
         # Prevent filters from selecting dates beyond the current local day.
         max_allowed_date = min(max_date, local_today)
 
-        # Let the user choose a preset or custom reporting range.
+        # Re-seed the widget's key from the durable, non-widget slot every
+        # time this radio is about to render -- covers both "never chosen
+        # anything yet this session" (durable slot also absent -> use the
+        # default) and "chose something, then took a detour through a
+        # view that doesn't render this widget" (durable slot has the
+        # real value; the widget's own key was cleared in between).
+        if DATE_RANGE_MODE_STATE_KEY not in st.session_state:
+            st.session_state[DATE_RANGE_MODE_STATE_KEY] = st.session_state.get(
+                DATE_RANGE_MODE_PERSISTED_KEY, DEFAULT_DATE_RANGE_MODE
+            )
+
+        # No index/value is passed here -- the widget's value is driven
+        # entirely by session_state, seeded just above.
         range_mode = st.sidebar.radio(
             "Date Range",
-            ["Single Day", "Last 7 Days", "Last 30 Days", "Month to Date", "Full Month", "All Time", "Custom"],
-            index=5
+            DATE_RANGE_MODE_OPTIONS,
+            key=DATE_RANGE_MODE_STATE_KEY,
         )
+
+        # Mirror the current choice into the durable slot immediately, so
+        # it's available to re-seed the widget the next time it renders.
+        st.session_state[DATE_RANGE_MODE_PERSISTED_KEY] = range_mode
 
         # Filter to one selected day.
         if range_mode == "Single Day":
