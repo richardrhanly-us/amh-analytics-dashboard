@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+import streamlit as st
 from sqlalchemy import text
 
 from database import get_engine
+
+# get_branch_readiness previously ran on every Streamlit rerun -- every
+# auto-refresh tick, every nav click -- to answer a question (is this
+# branch onboarded/active/mapped) that only changes on an admin/
+# onboarding action. ttl=120 keeps it feeling live for anyone actively
+# completing onboarding while eliminating repeat round trips otherwise.
+# Cache key is (org_slug, branch_slug), so this is naturally tenant- and
+# branch-scoped.
+_READINESS_CACHE_TTL_SECONDS = 120
 
 DEFAULT_MESSAGES = {
     "pending": "This branch is still being onboarded.",
@@ -15,6 +25,7 @@ DEFAULT_MESSAGES = {
 }
 
 
+@st.cache_data(ttl=_READINESS_CACHE_TTL_SECONDS, show_spinner=False)
 def get_branch_readiness(org_slug: str, branch_slug: str) -> dict:
     engine = get_engine()
 

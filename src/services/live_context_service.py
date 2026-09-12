@@ -13,6 +13,7 @@
 
 
 import pandas as pd
+import streamlit as st
 
 from alerts import get_system_alerts
 from metrics import (
@@ -20,6 +21,116 @@ from metrics import (
     get_historical_reject_baseline,
     get_today_metrics,
 )
+
+#***************************************************************
+#
+#  Function:     _build_historical_baseline
+#
+#  Description: Computes the historical baselines Live Today compares
+#               today's activity against: the highest observed hourly
+#               throughput, historical transit-destination percentages,
+#               and the historical average daily reject rate. Each of
+#               these is a full-history scan/groupby, so this is cached
+#               and keyed only on the historical inputs (df_history_raw,
+#               rejects_history_raw, today, transit_labels) -- NOT on
+#               refresh_count. df_history_raw/rejects_history_raw are
+#               themselves only refreshed every 900s by their own
+#               loaders (see data_loader.py), so recomputing this from
+#               scratch on every ~10s auto-refresh tick was pure waste:
+#               the answer cannot have changed since the last successful
+#               cache hit on the underlying history loaders.
+#
+#  Parameters:  df_history_raw - Historical checkin dataframe.
+#               rejects_history_raw - Historical reject dataframe.
+#               today - Current local date.
+#               transit_labels - Tuple of configured transit destination
+#                                labels (a tuple, not a list, so it's
+#                                unambiguous as a cache key).
+#
+#  Returns:     dict - max_observed_hourly_throughput,
+#                      historical_transit_pct_map,
+#                      historical_daily_avg_reject.
+#
+#***************************************************************
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _build_historical_baseline(df_history_raw, rejects_history_raw, today, transit_labels):
+    # Calculate the highest observed hourly throughput from historical data.
+    max_observed_hourly_throughput = 1
+    if len(df_history_raw) > 0 and "datetime" in df_history_raw.columns:
+        hourly_baseline_df = df_history_raw.copy()
+        hourly_baseline_df["datetime"] = pd.to_datetime(hourly_baseline_df["datetime"], errors="coerce")
+        hourly_baseline_df = hourly_baseline_df.dropna(subset=["datetime"])
+
+        if len(hourly_baseline_df) > 0:
+            hourly_baseline_df["date"] = hourly_baseline_df["datetime"].dt.date
+            hourly_baseline_df["hour"] = hourly_baseline_df["datetime"].dt.hour
+
+            hourly_counts = (
+                hourly_baseline_df.groupby(["date", "hour"])
+                .size()
+                .reset_index(name="checkins")
+            )
+
+            if len(hourly_counts) > 0:
+                max_observed_hourly_throughput = int(hourly_counts["checkins"].max())
+
+    max_observed_hourly_throughput = max(max_observed_hourly_throughput, 1)
+
+    # Build historical transit percentages using data before today.
+    historical_checkins_df = df_history_raw[df_history_raw["datetime"].dt.date < today].copy()
+    historical_transit_pct_map = {}
+
+    if len(historical_checkins_df) > 0:
+        historical_checkins_df["destination_clean"] = historical_checkins_df["destination"].astype(str).str.strip()
+        historical_checkins_df["destination_upper"] = historical_checkins_df["destination_clean"].str.upper()
+        historical_checkins_df["transit_destination"] = None
+
+        for transit_label in transit_labels:
+            label_upper = transit_label.upper()
+            match_mask = historical_checkins_df["destination_upper"] == label_upper
+            historical_checkins_df.loc[match_mask, "transit_destination"] = transit_label
+
+        for transit_label in transit_labels:
+            historical_transit_pct_map[transit_label] = (
+                (historical_checkins_df["transit_destination"] == transit_label).sum()
+                / len(historical_checkins_df)
+            ) * 100
+
+    # Build the historical reject baseline used to judge today's reject rate.
+    historical_baseline = get_historical_reject_baseline(df_history_raw, rejects_history_raw, today)
+    historical_daily_avg_reject = historical_baseline.get("historical_daily_avg_reject")
+
+    # Recalculate the reject baseline if the helper returns no usable average.
+    if historical_daily_avg_reject is None or historical_daily_avg_reject == 0:
+        historical_df = df_history_raw[df_history_raw["datetime"].dt.date < today]
+
+        if len(historical_df) > 0:
+            daily_checkins = historical_df["datetime"].dt.date.value_counts()
+            daily_rejects = rejects_history_raw[
+                rejects_history_raw["datetime"].dt.date < today
+            ]["datetime"].dt.date.value_counts()
+
+            combined = pd.DataFrame({
+                "checkins": daily_checkins,
+                "rejects": daily_rejects,
+            }).fillna(0)
+
+            combined = combined[combined["checkins"] > 0]
+
+            if len(combined) > 0:
+                combined["reject_rate"] = (combined["rejects"] / combined["checkins"]) * 100
+                historical_daily_avg_reject = combined["reject_rate"].mean()
+            else:
+                historical_daily_avg_reject = 0
+        else:
+            historical_daily_avg_reject = 0
+
+    return {
+        "max_observed_hourly_throughput": max_observed_hourly_throughput,
+        "historical_transit_pct_map": historical_transit_pct_map,
+        "historical_daily_avg_reject": historical_daily_avg_reject,
+    }
 
 #***************************************************************
 #
@@ -81,7 +192,6 @@ def build_live_context(
     # Prepare current-speed defaults.
     current_speed = 0
     current_speed_fill_pct = 0
-    max_observed_hourly_throughput = 1
 
     # Calculate the current processing speed from the latest activity hour in today's data.
     if len(today_metrics["today_df"]) > 0 and "datetime" in today_metrics["today_df"].columns:
@@ -93,27 +203,19 @@ def build_live_context(
             latest_activity_hour = today_df_for_speed["datetime"].max().hour
             current_speed = int((today_df_for_speed["datetime"].dt.hour == latest_activity_hour).sum())
 
-    # Calculate the highest observed hourly throughput from historical data.
-    if len(df_history_raw) > 0 and "datetime" in df_history_raw.columns:
-        hourly_baseline_df = df_history_raw.copy()
-        hourly_baseline_df["datetime"] = pd.to_datetime(hourly_baseline_df["datetime"], errors="coerce")
-        hourly_baseline_df = hourly_baseline_df.dropna(subset=["datetime"])
+    # Historical baselines (highest observed hourly throughput, historical
+    # transit percentages, historical average daily reject rate) are all
+    # full-history scans -- cached and decoupled from refresh_count/the
+    # auto-refresh cadence, since they can't change faster than
+    # df_history_raw/rejects_history_raw themselves do. See
+    # _build_historical_baseline's docstring.
+    historical_baseline_values = _build_historical_baseline(
+        df_history_raw, rejects_history_raw, today, tuple(transit_labels)
+    )
+    max_observed_hourly_throughput = historical_baseline_values["max_observed_hourly_throughput"]
+    historical_transit_pct_map = historical_baseline_values["historical_transit_pct_map"]
+    historical_daily_avg_reject = historical_baseline_values["historical_daily_avg_reject"]
 
-        if len(hourly_baseline_df) > 0:
-            hourly_baseline_df["date"] = hourly_baseline_df["datetime"].dt.date
-            hourly_baseline_df["hour"] = hourly_baseline_df["datetime"].dt.hour
-
-            hourly_counts = (
-                hourly_baseline_df.groupby(["date", "hour"])
-                .size()
-                .reset_index(name="checkins")
-            )
-
-            if len(hourly_counts) > 0:
-                max_observed_hourly_throughput = int(hourly_counts["checkins"].max())
-
-    # Keep the baseline above zero so fill percentage calculations are safe.
-    max_observed_hourly_throughput = max(max_observed_hourly_throughput, 1)
     current_speed_fill_pct = current_speed / max_observed_hourly_throughput
 
     # Add current-speed values back into the today metrics dictionary.
@@ -131,26 +233,6 @@ def build_live_context(
     today_peak_hour_count = today_metrics["today_peak_hour_count"]
     today_peak_hour_pct = today_metrics["today_peak_hour_pct"]
     today_reject_rate = today_metrics["today_reject_rate"]
-
-    # Build historical transit percentages using data before today.
-    historical_checkins_df = df_history_raw[df_history_raw["datetime"].dt.date < today].copy()
-    historical_transit_pct_map = {}
-
-    if len(historical_checkins_df) > 0:
-        historical_checkins_df["destination_clean"] = historical_checkins_df["destination"].astype(str).str.strip()
-        historical_checkins_df["destination_upper"] = historical_checkins_df["destination_clean"].str.upper()
-        historical_checkins_df["transit_destination"] = None
-
-        for transit_label in transit_labels:
-            label_upper = transit_label.upper()
-            match_mask = historical_checkins_df["destination_upper"] == label_upper
-            historical_checkins_df.loc[match_mask, "transit_destination"] = transit_label
-
-        for transit_label in transit_labels:
-            historical_transit_pct_map[transit_label] = (
-                (historical_checkins_df["transit_destination"] == transit_label).sum()
-                / len(historical_checkins_df)
-            ) * 100
 
     # Count today's transit activity for each configured transit destination.
     today_transit_counts_map = {}
@@ -227,36 +309,9 @@ def build_live_context(
     today_collection_services_df = acs_summary_today["collection_services_df"]
     today_public_holds_df = acs_summary_today["holds_df"]
 
-    # Build the historical reject baseline used to judge today's reject rate.
-    historical_baseline = get_historical_reject_baseline(df_history_raw, rejects_history_raw, today)
-    historical_daily_avg_reject = historical_baseline.get("historical_daily_avg_reject")
-
-    # Recalculate the reject baseline if the helper returns no usable average.
-    if historical_daily_avg_reject is None or historical_daily_avg_reject == 0:
-        historical_df = df_history_raw[df_history_raw["datetime"].dt.date < today]
-
-        if len(historical_df) > 0:
-            daily_checkins = historical_df["datetime"].dt.date.value_counts()
-            daily_rejects = rejects_history_raw[
-                rejects_history_raw["datetime"].dt.date < today
-            ]["datetime"].dt.date.value_counts()
-
-            combined = pd.DataFrame({
-                "checkins": daily_checkins,
-                "rejects": daily_rejects,
-            }).fillna(0)
-
-            combined = combined[combined["checkins"] > 0]
-
-            if len(combined) > 0:
-                combined["reject_rate"] = (combined["rejects"] / combined["checkins"]) * 100
-                historical_daily_avg_reject = combined["reject_rate"].mean()
-            else:
-                historical_daily_avg_reject = 0
-        else:
-            historical_daily_avg_reject = 0
-
-    # Compare today's reject rate against the historical baseline.
+    # Compare today's reject rate against the historical baseline
+    # (historical_daily_avg_reject was already computed above by
+    # _build_historical_baseline).
     live_reject_deviation = today_reject_rate - historical_daily_avg_reject
 
     # Set default live reject display values.

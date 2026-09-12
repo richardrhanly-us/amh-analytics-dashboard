@@ -18,8 +18,8 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pandas as pd
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 
 from dashboard_context import build_dashboard_context
 from data_loader import (
@@ -557,27 +557,19 @@ if selected_customer_id is None or selected_branch_id is None:
 
 
 #***************************************************************
-# Auto Refresh Handling
+# Auto Refresh Interval
 #
-# Enables automatic dashboard refresh during operating hours. The
-# refresh_count value is passed into the live-facing cached data loaders
-# below (today's checkins/rejects/ACS, pipeline/heartbeat status) as part
-# of their cache key, so each auto-refresh cycle naturally picks up fresh
-# data without needing to wipe the shared cache. A manual
-# st.cache_data.clear() used to run here on every cycle, but that
-# clears cached data for every tenant/session on the server, not just
-# this one -- with more than one active session, that made the shared
-# cache get wiped far more often than once per refresh interval.
+# Resolves how often Live Today's own live section refreshes itself.
 #
-# Continuous Ingestion Phase 4: the interval is now configurable
-# (SORTVIEW_DASHBOARD_REFRESH_SECONDS, default 10s) so the dashboard can
-# reflect live ingestion/heartbeat changes quickly. The three historical
-# loaders (load_checkins_history_df / load_rejects_history_df /
-# load_acs_history_df) deliberately do NOT take refresh_count -- an
-# all-time, unbounded history query re-running every 10 seconds would be
-# a large, unnecessary jump in database load for data that doesn't need
-# sub-minute freshness. They rely solely on their own 900s TTL instead;
-# see data_loader.py.
+# Dashboard performance pass: this used to drive st_autorefresh, which
+# reruns the ENTIRE script (auth, entitlements, settings, schema
+# validation, readiness, every data loader) on every tick, regardless of
+# which section actually needed fresh data -- the direct cause of "the
+# whole app feels like it's constantly reloading." It's replaced below
+# (see the Live Today branch of view routing) with an st.fragment(
+# run_every=...) scoped to only Live Today's live section: the rest of
+# the page (sidebar, chrome, historical views) now reruns only on a
+# genuine user interaction, never on a timer.
 #***************************************************************
 
 now_ct = datetime.now(APP_TZ)
@@ -588,73 +580,26 @@ refresh_interval_seconds, refresh_interval_warning = resolve_refresh_interval_se
 if refresh_interval_warning:
     logger.warning(refresh_interval_warning)
 
-refresh_count = 0
-if is_operating_hours(now_ct):
-    refresh_count = st_autorefresh(
-        interval=refresh_interval_seconds * 1000,
-        key="sortview_auto_refresh"
-    )
-
 
 #***************************************************************
-# Pipeline Status Loading
+# Historical Data Loading
 #
-# Loads the most recent SortView agent pipeline status for the
-# selected tenant and branch. The status timestamp is later used to
-# help invalidate cached data when new uploads arrive.
+# Loads historical checkin, reject, and ACS activity for the selected
+# tenant/branch. These are cheap to load on every rerun regardless of
+# which section is active: each loader has its own 900s TTL and does not
+# depend on any auto-refresh cadence (see data_loader.py), so this never
+# re-queries the database more often than once every 15 minutes no
+# matter how many times the script reruns in between.
 #***************************************************************
-
-pipeline_status = load_pipeline_status(
-    org_slug=selected_customer_id,
-    branch_slug=selected_branch_id,
-    mtime=None,
-    refresh_count=refresh_count,
-)
-
-status_mtime = "0"
-if pipeline_status:
-    status_updated_at = pipeline_status.get("updated_at")
-    if status_updated_at:
-        status_mtime = str(status_updated_at)
-
-
-#***************************************************************
-# Dashboard Data Loading
-#
-# Loads live and historical data for checkins, rejects, and ACS
-# activity. These dataframes provide the raw input for the dashboard
-# context and individual dashboard views.
-#***************************************************************
-
-df_live_raw = load_checkins_df(
-    org_slug=selected_customer_id,
-    branch_slug=selected_branch_id,
-    mtime=status_mtime,
-    refresh_count=refresh_count,
-)
 
 df_history_raw = load_checkins_history_df(
     org_slug=selected_customer_id,
     branch_slug=selected_branch_id,
 )
 
-rejects_live_raw = load_rejects_df(
-    org_slug=selected_customer_id,
-    branch_slug=selected_branch_id,
-    mtime=status_mtime,
-    refresh_count=refresh_count,
-)
-
 rejects_history_raw = load_rejects_history_df(
     org_slug=selected_customer_id,
     branch_slug=selected_branch_id,
-)
-
-acs_live_raw = load_acs_df(
-    org_slug=selected_customer_id,
-    branch_slug=selected_branch_id,
-    mtime=status_mtime,
-    refresh_count=refresh_count,
 )
 
 acs_history_raw = load_acs_history_df(
@@ -742,82 +687,161 @@ today = now_ct.date()
 
 
 #***************************************************************
-# Dashboard Context Creation
-#
-# Combines raw data, pipeline status, date filters, runtime settings,
-# display settings, and timezone information into the context object
-# used by the dashboard views.
-#***************************************************************
-
-context = build_dashboard_context(
-    df_live_raw=df_live_raw,
-    df_history_raw=df_history_raw,
-    rejects_live_raw=rejects_live_raw,
-    rejects_history_raw=rejects_history_raw,
-    acs_live_raw=acs_live_raw,
-    acs_history_raw=acs_history_raw,
-    pipeline_status=pipeline_status,
-    refresh_count=refresh_count,
-    start_date=start_date,
-    end_date=end_date,
-    today=today,
-    now_ct=now_ct,
-    app_tz=APP_TZ,
-    transit_labels=TRANSIT_LABELS,
-    transit_home_label=TRANSIT_HOME_LABEL,
-    branch_services_names=BRANCH_SERVICES_NAMES,
-    collection_services_names=COLLECTION_SERVICES_NAMES,
-    branch_services_da_patterns=BRANCH_SERVICES_DA_PATTERNS,
-    collection_services_da_patterns=COLLECTION_SERVICES_DA_PATTERNS,
-    library_name=LIBRARY_NAME,
-    branch_name=BRANCH_NAME,
-    system_name=SYSTEM_NAME,
-    theme_base=theme_base,
-    selected_view=selected_view,
-)
-
-
-#***************************************************************
-# View Permission Injection
-#
-# Adds user permission flags to the argument dictionaries that are
-# passed into each dashboard view.
-#***************************************************************
-
-context["reports_args"]["can_export"] = reports_can_export
-context["reports_args"]["can_advanced_reports"] = reports_can_advanced
-context["live_today_args"]["can_view_internal_workflow"] = show_internal_workflow
-context["live_today_args"]["can_view_transits"] = show_transits_tab
-context["overview_args"]["can_view_internal_workflow"] = show_internal_workflow
-context["transits_args"]["can_view_transits"] = show_transits_tab
-
-
-#***************************************************************
-# No Today Data Notice
-#
-# Informs the user when the live dashboard has no checkin data for
-# the current day.
-#***************************************************************
-
-if context["no_today_data"]:
-    st.info("No checkins have been ingested yet for today. Live dashboard is showing the current day only.")
-
-
-#***************************************************************
 # View Rendering
 #
-# Routes the user to the selected dashboard section by calling the
-# matching view renderer with the prepared context arguments.
+# Routes the user to the selected dashboard section. Live Today is the
+# only section whose numbers need to move every few seconds, so it is
+# the only section wrapped in an auto-refreshing st.fragment -- see the
+# comment on _render_live_today for exactly what that buys.
+# Overview/Reports/Transits build their context once per genuine
+# interaction (nav click, filter/date/branch change) and never rerun on
+# a timer at all: an all-time-history report gains nothing from
+# recomputing itself every 10 seconds while nobody is even looking at it,
+# and every dashboard section shares the same underlying data anyway
+# once a real rerun does happen.
 #***************************************************************
 
+@st.fragment(run_every=refresh_interval_seconds if is_operating_hours(now_ct) else None)
+def _render_live_today():
+    # This is the ONLY part of the dashboard that reruns on a timer.
+    # Everything above (auth, entitlements, settings, schema validation,
+    # readiness, sidebar, historical data loading) runs once per genuine
+    # interaction, not once per tick -- replacing the old
+    # st_autorefresh-driven full-script rerun, which re-ran all of that
+    # every ~10 seconds regardless of which section was even visible.
+    #
+    # live_tick is this fragment's own local, monotonically increasing
+    # counter (distinct from any outer refresh_count) used purely to bust
+    # the live loaders' cache key each time this fragment reruns -- the
+    # loaders themselves are still ttl=900, but a fresh tick forces a real
+    # read on every fragment rerun instead of serving a stale cache hit.
+    tick_key = "_live_today_fragment_tick"
+    st.session_state[tick_key] = st.session_state.get(tick_key, 0) + 1
+    live_tick = st.session_state[tick_key]
+
+    pipeline_status = load_pipeline_status(
+        org_slug=selected_customer_id,
+        branch_slug=selected_branch_id,
+        mtime=None,
+        refresh_count=live_tick,
+    )
+
+    status_mtime = "0"
+    if pipeline_status:
+        status_updated_at = pipeline_status.get("updated_at")
+        if status_updated_at:
+            status_mtime = str(status_updated_at)
+
+    df_live_raw = load_checkins_df(
+        org_slug=selected_customer_id,
+        branch_slug=selected_branch_id,
+        mtime=status_mtime,
+        refresh_count=live_tick,
+    )
+    rejects_live_raw = load_rejects_df(
+        org_slug=selected_customer_id,
+        branch_slug=selected_branch_id,
+        mtime=status_mtime,
+        refresh_count=live_tick,
+    )
+    acs_live_raw = load_acs_df(
+        org_slug=selected_customer_id,
+        branch_slug=selected_branch_id,
+        mtime=status_mtime,
+        refresh_count=live_tick,
+    )
+
+    live_view_context = build_dashboard_context(
+        df_live_raw=df_live_raw,
+        df_history_raw=df_history_raw,
+        rejects_live_raw=rejects_live_raw,
+        rejects_history_raw=rejects_history_raw,
+        acs_live_raw=acs_live_raw,
+        acs_history_raw=acs_history_raw,
+        pipeline_status=pipeline_status,
+        refresh_count=live_tick,
+        start_date=start_date,
+        end_date=end_date,
+        today=today,
+        now_ct=now_ct,
+        app_tz=APP_TZ,
+        transit_labels=TRANSIT_LABELS,
+        transit_home_label=TRANSIT_HOME_LABEL,
+        branch_services_names=BRANCH_SERVICES_NAMES,
+        collection_services_names=COLLECTION_SERVICES_NAMES,
+        branch_services_da_patterns=BRANCH_SERVICES_DA_PATTERNS,
+        collection_services_da_patterns=COLLECTION_SERVICES_DA_PATTERNS,
+        library_name=LIBRARY_NAME,
+        branch_name=BRANCH_NAME,
+        system_name=SYSTEM_NAME,
+        theme_base=theme_base,
+        selected_view="Live Today",
+    )
+
+    live_view_context["live_today_args"]["can_view_internal_workflow"] = show_internal_workflow
+    live_view_context["live_today_args"]["can_view_transits"] = show_transits_tab
+
+    if live_view_context["no_today_data"]:
+        st.info("No checkins have been ingested yet for today. Live dashboard is showing the current day only.")
+
+    render_live_today(**live_view_context["live_today_args"])
+
+
 if selected_view == "Live Today":
-    render_live_today(**context["live_today_args"])
+    _render_live_today()
+else:
+    # Overview/Reports/Transits never need sub-minute-fresh live data --
+    # a plain, undecorated call (no refresh_count/mtime) relies solely on
+    # these loaders' own 900s TTL, same as the historical loaders above.
+    df_live_raw = load_checkins_df(
+        org_slug=selected_customer_id,
+        branch_slug=selected_branch_id,
+    )
+    rejects_live_raw = load_rejects_df(
+        org_slug=selected_customer_id,
+        branch_slug=selected_branch_id,
+    )
 
-if selected_view == "Overview":
-    render_overview(**context["overview_args"])
+    context = build_dashboard_context(
+        df_live_raw=df_live_raw,
+        df_history_raw=df_history_raw,
+        rejects_live_raw=rejects_live_raw,
+        rejects_history_raw=rejects_history_raw,
+        acs_live_raw=pd.DataFrame(),
+        acs_history_raw=acs_history_raw,
+        pipeline_status={},
+        refresh_count=0,
+        start_date=start_date,
+        end_date=end_date,
+        today=today,
+        now_ct=now_ct,
+        app_tz=APP_TZ,
+        transit_labels=TRANSIT_LABELS,
+        transit_home_label=TRANSIT_HOME_LABEL,
+        branch_services_names=BRANCH_SERVICES_NAMES,
+        collection_services_names=COLLECTION_SERVICES_NAMES,
+        branch_services_da_patterns=BRANCH_SERVICES_DA_PATTERNS,
+        collection_services_da_patterns=COLLECTION_SERVICES_DA_PATTERNS,
+        library_name=LIBRARY_NAME,
+        branch_name=BRANCH_NAME,
+        system_name=SYSTEM_NAME,
+        theme_base=theme_base,
+        selected_view=selected_view,
+    )
 
-if selected_view == "Reports":
-    render_reports(**context["reports_args"])
+    context["reports_args"]["can_export"] = reports_can_export
+    context["reports_args"]["can_advanced_reports"] = reports_can_advanced
+    context["overview_args"]["can_view_internal_workflow"] = show_internal_workflow
+    context["transits_args"]["can_view_transits"] = show_transits_tab
 
-if selected_view == "Transits":
-    render_transits(**context["transits_args"])
+    if context["no_today_data"]:
+        st.info("No checkins have been ingested yet for today. Live dashboard is showing the current day only.")
+
+    if selected_view == "Overview":
+        render_overview(**context["overview_args"])
+
+    if selected_view == "Reports":
+        render_reports(**context["reports_args"])
+
+    if selected_view == "Transits":
+        render_transits(**context["transits_args"])

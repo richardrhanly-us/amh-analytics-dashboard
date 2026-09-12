@@ -1,6 +1,20 @@
+import pytest
 from db_fakes import FakeEngine, FakeQueryResult
 
 from src.services import entitlement_service
+
+
+@pytest.fixture(autouse=True)
+def _clear_entitlement_cache():
+    # build_entitlement_context is now st.cache_data-wrapped (dashboard
+    # performance pass); several tests below call it with identical
+    # (user_id, org_slug) args against different monkeypatched fakes, so
+    # this must be cleared before/after every test or later tests would
+    # silently see an earlier test's cached result.
+    entitlement_service.build_entitlement_context.clear()
+    yield
+    entitlement_service.build_entitlement_context.clear()
+
 
 # --- get_org_role_for_user ---------------------------------------------------
 
@@ -133,6 +147,47 @@ def test_build_entitlement_context_no_role_means_no_membership(monkeypatch):
     context = entitlement_service.build_entitlement_context(user_id=99, org_slug="someone-elses-org")
 
     assert context["role"] is None
+
+
+# --- cache scoping (dashboard performance pass) ------------------------------
+
+
+def test_build_entitlement_context_cache_hits_on_repeated_call_same_args(monkeypatch):
+    calls = []
+
+    def counting_role(user_id, org_slug):
+        calls.append(1)
+        return "manager"
+
+    monkeypatch.setattr(entitlement_service, "get_org_role_for_user", counting_role)
+    monkeypatch.setattr(entitlement_service, "get_org_subscription", lambda org_slug: None)
+
+    for _ in range(5):
+        entitlement_service.build_entitlement_context(user_id=1, org_slug="acme")
+
+    assert len(calls) == 1
+
+
+def test_build_entitlement_context_cache_is_scoped_per_user_and_org(monkeypatch):
+    # Two different (user_id, org_slug) pairs must never share a cache
+    # entry -- one user's role/entitlements can never leak into another
+    # user's or another org's context.
+    call_args = []
+
+    def role_for(user_id, org_slug):
+        call_args.append((user_id, org_slug))
+        return f"role-for-{user_id}-{org_slug}"
+
+    monkeypatch.setattr(entitlement_service, "get_org_role_for_user", role_for)
+    monkeypatch.setattr(entitlement_service, "get_org_subscription", lambda org_slug: None)
+
+    ctx_1 = entitlement_service.build_entitlement_context(user_id=1, org_slug="acme")
+    ctx_2 = entitlement_service.build_entitlement_context(user_id=2, org_slug="acme")
+    ctx_3 = entitlement_service.build_entitlement_context(user_id=1, org_slug="other-org")
+
+    assert len(call_args) == 3
+    assert ctx_1["role"] != ctx_2["role"]
+    assert ctx_1["role"] != ctx_3["role"]
 
 
 # --- feature_enabled / feature_limit (module-local copies) --------------------

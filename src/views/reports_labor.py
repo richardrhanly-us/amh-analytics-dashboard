@@ -944,43 +944,67 @@ def render_labor_efficiency_section(
             peak_day = staff_df.loc[staff_df["hours_saved"].idxmax()]
             labor_value_saved = total_saved * HOURLY_COST
     
-            try:
-                from report_export import build_director_report_pdf
-    
-                director_pdf = build_director_report_pdf(
-                    start_date=start_date,
-                    end_date=end_date,
-                    df=df,
-                    rejects_df=rejects_df,
-                    overall_metrics=overall_metrics,
-                    top_issue=top_issue,
-                    attention_text=attention_text,
-                    avg_hours_saved=avg_saved,
-                    total_hours_saved=total_saved,
-                    peak_day_saved=float(peak_day["hours_saved"]),
-                    peak_day_saved_date=pd.to_datetime(peak_day["date"]).strftime("%b %d, %Y"),
-                    manual_rate=MANUAL_RATE,
-                    amh_rate=AMH_RATE,
-                    library_name=LIBRARY_NAME,
-                    branch_name=BRANCH_NAME,
-                    system_name=SYSTEM_NAME,
-                    report_title="AMH Director Report",
-                    hourly_cost=HOURLY_COST,
-                    roi_mode=roi_mode,
-                    annual_cost=annual_operating_cost if roi_payload else None,
-                    yearly_savings_after_cost=net_roi_value if roi_payload and roi_mode == "Annualized Projection" else None,
-                    payback_months=payback_months if roi_payload and roi_mode == "Annualized Projection" else None,
-                    since_install_net_value=since_install_net_value if roi_payload else None,
-                    install_date=pd.to_datetime(INSTALL_DATE).strftime("%b %d, %Y") if roi_payload else None,
-                )
-    
+            # Building the director PDF is a full weasyprint HTML->PDF
+            # render -- expensive enough that it must never run as a side
+            # effect of just opening/viewing this expander (which happens
+            # on every Reports render, including every auto-refresh tick).
+            # st.download_button needs its bytes ready up front, so the
+            # only way to make this lazy is a plain st.button that builds
+            # the PDF once, on an explicit click, and stashes it in
+            # session_state for the real download button to use.
+            pdf_cache_key = (start_date, end_date)
+            if st.session_state.get("_director_pdf_cache_key") != pdf_cache_key:
+                st.session_state.pop("_director_pdf_ready", None)
+                st.session_state["_director_pdf_cache_key"] = pdf_cache_key
+
+            if st.button("Prepare Director PDF", key="prepare_director_pdf"):
+                try:
+                    from report_export import build_director_report_pdf
+
+                    director_pdf = build_director_report_pdf(
+                        start_date=start_date,
+                        end_date=end_date,
+                        df=df,
+                        rejects_df=rejects_df,
+                        overall_metrics=overall_metrics,
+                        top_issue=top_issue,
+                        attention_text=attention_text,
+                        avg_hours_saved=avg_saved,
+                        total_hours_saved=total_saved,
+                        peak_day_saved=float(peak_day["hours_saved"]),
+                        peak_day_saved_date=pd.to_datetime(peak_day["date"]).strftime("%b %d, %Y"),
+                        manual_rate=MANUAL_RATE,
+                        amh_rate=AMH_RATE,
+                        library_name=LIBRARY_NAME,
+                        branch_name=BRANCH_NAME,
+                        system_name=SYSTEM_NAME,
+                        report_title="AMH Director Report",
+                        hourly_cost=HOURLY_COST,
+                        roi_mode=roi_mode,
+                        annual_cost=annual_operating_cost if roi_payload else None,
+                        yearly_savings_after_cost=net_roi_value if roi_payload and roi_mode == "Annualized Projection" else None,
+                        payback_months=payback_months if roi_payload and roi_mode == "Annualized Projection" else None,
+                        since_install_net_value=since_install_net_value if roi_payload else None,
+                        install_date=pd.to_datetime(INSTALL_DATE).strftime("%b %d, %Y") if roi_payload else None,
+                    )
+                    st.session_state["_director_pdf_ready"] = {
+                        "bytes": director_pdf,
+                        "file_name": (
+                            f"amh_director_report_{pd.to_datetime(start_date).strftime('%Y%m%d')}"
+                            f"_{pd.to_datetime(end_date).strftime('%Y%m%d')}.pdf"
+                        ),
+                    }
+                except Exception as e:
+                    st.session_state.pop("_director_pdf_ready", None)
+                    pdf_button_placeholder.warning(f"Director PDF export is temporarily unavailable: {e}")
+
+            director_pdf_ready = st.session_state.get("_director_pdf_ready")
+            if director_pdf_ready is not None:
                 gated_pdf_download(
-                    director_pdf,
-                    f"amh_director_report_{pd.to_datetime(start_date).strftime('%Y%m%d')}_{pd.to_datetime(end_date).strftime('%Y%m%d')}.pdf",
+                    director_pdf_ready["bytes"],
+                    director_pdf_ready["file_name"],
                     key="director_pdf_download"
                 )
-            except Exception as e:
-                pdf_button_placeholder.warning(f"Director PDF export is temporarily unavailable: {e}")
     
             st.markdown(
                 f"""
