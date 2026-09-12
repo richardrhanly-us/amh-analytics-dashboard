@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import os
 
-from agent import spool, state
+from agent import discovery, spool, state
+from agent.discovery import SourceIdentity
 from agent.runtime.collector import SourceCollector
 from agent.runtime.config import BootstrapMode, SourceConfig
 
@@ -44,6 +45,41 @@ def _pending_records(tmp_path, source="checkins"):
     for b in batches:
         records.extend(spool.read_batch(b))
     return records
+
+
+_SENTINEL_ROTATED_IDENTITY = SourceIdentity(token=(-1, -1))
+
+
+def _simulate_rotation(monkeypatch, path):
+    """Deterministically simulates Tech Logic rotating `path`: writes new
+    content at the same path (as a real rotation would leave behind) and
+    forces discovery.identify(path) to report a different SourceIdentity
+    for it, regardless of what the OS actually does to the underlying
+    inode/file-id for a delete+recreate at this path.
+
+    This exists because the OS does NOT guarantee a delete+recreate at
+    the same path gets a new inode/file-id -- POSIX only guarantees
+    identity uniqueness among currently-existing files, not across a
+    delete+recreate, and some filesystems (observed on Linux CI's ext4
+    /tmp) can immediately reuse the just-freed inode for the new file.
+    Relying on `path.unlink(); path.write_text(...)` to reliably trigger
+    rotated=True is therefore a non-portable test assumption, not a
+    guaranteed OS contract -- this simulates the condition the collector
+    actually branches on (a changed SourceIdentity) directly, via the
+    same abstraction agent/tailer.py itself uses, instead of via
+    incidental OS allocator timing. See
+    test_rotation_real_os_delete_recreate_matches_discovery_identify for
+    a companion test against real OS behavior.
+    """
+    real_identify = discovery.identify
+    path_str = str(path)
+
+    def fake_identify(p):
+        if p == path_str:
+            return _SENTINEL_ROTATED_IDENTITY
+        return real_identify(p)
+
+    monkeypatch.setattr(discovery, "identify", fake_identify)
 
 
 # --- bootstrap ---------------------------------------------------------
@@ -454,7 +490,7 @@ def test_restart_after_crash_with_unflushed_buffer_rereads_exactly_once(tmp_path
 # --- rotation / truncation increment generation -----------------------------
 
 
-def test_rotation_flushes_old_generation_buffer_then_bumps_generation(tmp_path):
+def test_rotation_flushes_old_generation_buffer_then_bumps_generation(tmp_path, monkeypatch):
     path = tmp_path / "Checkins.txt"
     path.write_text("", encoding="utf-8")
 
@@ -465,10 +501,11 @@ def test_rotation_flushes_old_generation_buffer_then_bumps_generation(tmp_path):
         f.write(CHECKIN_LINE.format(barcode="PRE1"))
     collector.poll_once()  # buffered, not yet flushed (below threshold)
 
-    # Rotate: delete and recreate the file (new inode/identity on POSIX;
-    # on Windows this also produces a new identity via discovery.identify).
-    path.unlink()
+    # Rotate: new content at the same path, with identity forced to
+    # change deterministically -- see _simulate_rotation for why this
+    # doesn't rely on the OS actually allocating a new inode.
     path.write_text(CHECKIN_LINE.format(barcode="POST1"), encoding="utf-8")
+    _simulate_rotation(monkeypatch, path)
 
     report = collector.poll_once()
     collector.force_flush()  # flush the new-generation buffer too, for inspection
@@ -504,7 +541,7 @@ def test_truncation_bumps_generation_same_as_rotation(tmp_path):
     assert loaded.generation == 1
 
 
-def test_rotation_with_unflushed_buffer_present_flushes_old_generation_exactly_once(tmp_path):
+def test_rotation_with_unflushed_buffer_present_flushes_old_generation_exactly_once(tmp_path, monkeypatch):
     path = tmp_path / "Checkins.txt"
     path.write_text("", encoding="utf-8")
 
@@ -522,8 +559,11 @@ def test_rotation_with_unflushed_buffer_present_flushes_old_generation_exactly_o
     collector.poll_once()
     assert len(collector._buffer) == 1
 
-    path.unlink()
+    # See _simulate_rotation: forces a changed SourceIdentity
+    # deterministically rather than relying on the OS reallocating a new
+    # inode for a same-path delete+recreate.
     path.write_text(CHECKIN_LINE.format(barcode="POST_ROTATE"), encoding="utf-8")
+    _simulate_rotation(monkeypatch, path)
 
     collector.poll_once()
     collector.force_flush()
@@ -536,6 +576,49 @@ def test_rotation_with_unflushed_buffer_present_flushes_old_generation_exactly_o
     batches = spool.list_pending_batches(tmp_path / "spool", "checkins")
     generations = sorted(spool.parse_batch_filename(b).generation for b in batches)
     assert generations == [0, 1]
+
+
+def test_rotation_real_os_delete_recreate_matches_discovery_identify(tmp_path):
+    """Integration-style companion to the synthetic-identity rotation
+    tests above: exercises a REAL path.unlink() + path.write_text() at
+    the OS level (no monkeypatching) and asserts the collector's
+    `rotated` flag always agrees with whatever discovery.identify()
+    itself actually observed for this delete+recreate on this OS/
+    filesystem -- rather than assuming any particular inode-allocation
+    behavior.
+
+    This intentionally does NOT assert `rotated is True` unconditionally:
+    a Linux CI investigation found that some filesystems (observed on
+    ubuntu-latest's ext4 /tmp) can immediately reuse the just-freed inode
+    for the recreated file, so a real delete+recreate does not always
+    change SourceIdentity. That is a known, narrow limitation of a
+    pure-identity rotation strategy (see agent/discovery.py's module
+    docstring) -- not something this test should paper over by forcing
+    an OS-dependent outcome. What this test guards against is a wiring
+    regression: the collector must never disagree with discovery.identify
+    about whether identity actually changed.
+    """
+    path = tmp_path / "Checkins.txt"
+    path.write_text(CHECKIN_LINE.format(barcode="PRE1"), encoding="utf-8")
+
+    collector = _make_collector(tmp_path, path=path, batch_max_events=100, batch_max_seconds=1000.0)
+    collector.poll_once()
+    collector.force_flush()
+
+    identity_before = discovery.identify(str(path))
+    path.unlink()
+    path.write_text(CHECKIN_LINE.format(barcode="POST1"), encoding="utf-8")
+    identity_after = discovery.identify(str(path))
+    identity_changed = identity_before != identity_after
+
+    report = collector.poll_once()
+
+    assert report.rotated is identity_changed
+
+    if identity_changed:
+        collector.force_flush()
+        records = _pending_records(tmp_path)
+        assert any(r["barcode"] == "POST1" for r in records)
 
 
 def test_truncation_with_unflushed_buffer_present_preserves_generation_and_cursor(tmp_path):
