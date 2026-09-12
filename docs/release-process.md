@@ -186,21 +186,37 @@ If the dashboard looks blank or stale, compare dashboard loader table names to t
 
 ## part 4: AMH agent deployment
 
-Use this section when agent code changes are included.
+**This section describes the CURRENTLY-DEPLOYED production agent only** --
+the archived snapshot under
+`agent/SortViewAgent - What is currently sitting on the AMH computer/`,
+not the top-level `agent/` package. A new canonical continuous agent
+(`agent/main.py` + `agent/runtime/*`) has been built and tested in this
+repo but has **not been deployed to or validated on the real AMH
+machine** -- see `agent/README.md` for its status and remaining gates.
+Do not use this section to deploy that new agent; that is a separate,
+later, explicit cutover decision.
+
+Use this section when changes to the *currently deployed* agent logic
+are included.
 
 ### important boundary
 
-The `agent/` folder in the repo is the source-of-truth.
+The archived snapshot folder above is the source-of-truth reference for
+what is actually running on the AMH machine today -- it is preserved
+read-only in the repo specifically so there's never ambiguity about what
+production behavior looked like. `agent/run_pipeline.py` (top-level, no
+archive path) is a separate, legacy/validation-only local mirror kept for
+side-by-side comparison during later validation; it is not what's
+deployed.
 
-The live AMH agent runs on the AMH-attached Windows machine and is manually updated from the approved repo copy.
+The live AMH agent runs on the AMH-attached Windows machine and is manually updated from the approved archived-snapshot copy.
 
 ### deployment steps
 
-1. validate source changes in `agent/`
-2. copy the approved `agent/` folder to the deployed AMH install root,
+1. validate source changes against the archived snapshot folder
+2. copy the approved agent folder to the deployed AMH install root,
    keeping it as an `agent/` subfolder there (not flattened) -- every
-   module under `agent/` uses package-relative imports, so it only runs
-   as a package
+   module uses package-relative imports, so it only runs as a package
 3. confirm `agent_config.json` is still correct
 4. open Command Prompt on the AMH machine, in the install root (the
    parent of the deployed `agent/` folder -- not inside `agent/` itself)
@@ -235,8 +251,11 @@ After deployment, verify:
 ### agent deployment rules
 
 - do not run Alembic from the AMH machine
-- do not treat the deployed AMH copy as the long-term source-of-truth
-- reconcile changes back to `agent/` in the repo
+- if the deployed AMH copy and the archived snapshot folder in the repo
+  ever diverge, treat the archived snapshot as the version to reconcile
+  against
+- do not edit the archived snapshot folder directly -- it is preserved
+  read-only historical evidence, not a working copy (see its own README)
 - do not commit runtime output files as part of normal code release workflow
 
 ---

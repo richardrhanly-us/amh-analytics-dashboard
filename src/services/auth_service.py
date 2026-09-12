@@ -875,6 +875,9 @@ def create_user(email: str, password: str, full_name: str = "") -> dict[str, Any
             },
         ).mappings().first()
 
+    if row is None:
+        raise RuntimeError("User insert did not return a row")
+
     created_user = dict(row)
 
     log_auth_event(

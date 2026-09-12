@@ -1,80 +1,29 @@
-import re
 from pathlib import Path
 
 import pandas as pd
 
 from .config import load_config
 from .logger_config import get_logger
+from .parser.acs import EMPTY_COLUMNS, extract_fields, parse_lines, parse_timestamp
 
 logger = get_logger("parse_acs")
 
-TAG_PATTERN = re.compile(r"([A-Z]{2})([^|]*)")
+# Parsing logic (extract_fields, parse_timestamp, the line parser) now
+# lives in agent/parser/acs.py -- this module is a thin, behavior-preserving
+# wrapper kept for existing callers (agent/run_pipeline.py -- LEGACY /
+# VALIDATION-ONLY, see its docstring -- and this module's own legacy-
+# import-path tests). See agent/parser/__init__.py. The canonical
+# continuous runtime (agent/runtime/*) imports agent.parser directly and
+# never goes through this wrapper.
+__all__ = [
+    "extract_fields",
+    "load_acs",
+    "load_acs_incremental",
+    "parse_timestamp",
+    "save_acs_csv",
+]
 
-
-def parse_timestamp(date_str, time_str):
-    return pd.to_datetime(
-        f"{date_str} {time_str}",
-        format="%m/%d/%Y %I:%M:%S %p",
-        errors="coerce"
-    )
-
-
-def extract_fields(message):
-    fields = {}
-    for tag, value in TAG_PATTERN.findall(message):
-        fields[tag] = value.strip()
-    return fields
-
-
-def _parse_lines(lines):
-    rows = []
-
-    for line in lines:
-        line = line.replace("\x01", "").strip()
-
-        if not line:
-            continue
-
-        parts = line.split("\x02")
-
-        if len(parts) < 3:
-            continue
-
-        date = parts[0].strip()
-        time = parts[1].strip()
-        message = parts[2].strip()
-
-        fields = extract_fields(message)
-
-        rows.append({
-            "date": date,
-            "time": time,
-            "datetime": parse_timestamp(date, time),
-            "message_code": message[:2],
-            "barcode": fields.get("AB"),
-            "title": fields.get("AJ"),
-            "patron_id": fields.get("AA"),
-            "destination": fields.get("CT"),
-            "raw_message": message,
-        })
-
-    df = pd.DataFrame(rows)
-
-    if df.empty:
-        df = pd.DataFrame(columns=[
-            "date",
-            "time",
-            "datetime",
-            "message_code",
-            "barcode",
-            "title",
-            "patron_id",
-            "destination",
-            "raw_message",
-        ])
-
-    logger.info("Parsed ACS rows=%s", len(df))
-    return df
+_parse_lines = parse_lines
 
 
 def load_acs(filepath=None):
@@ -95,17 +44,7 @@ def load_acs_incremental(filepath=None, start_offset=0):
 
     if not file_path.exists():
         logger.warning("ACS file not found: %s", filepath)
-        return pd.DataFrame(columns=[
-            "date",
-            "time",
-            "datetime",
-            "message_code",
-            "barcode",
-            "title",
-            "patron_id",
-            "destination",
-            "raw_message",
-        ]), 0
+        return pd.DataFrame(columns=EMPTY_COLUMNS), 0
 
     file_size = file_path.stat().st_size
 

@@ -146,6 +146,19 @@ engine = create_engine(
 # generated OpenAPI docs instead of accepting raw dicts.
 #***************************************************************
 
+# Continuous Ingestion Phase E: an optional deterministic transport/
+# source-idempotency identifier -- see agent/event_identity.py (the
+# canonical source of this format; duplicated here rather than imported
+# because main.py/the backend and agent/ are independently deployed, the
+# same reason the DB CHECK constraint in alembic revision 45ba2e7befbc
+# duplicates it again at the schema layer). None (the field's default)
+# is exactly what the currently deployed legacy scheduled agent sends
+# today (it doesn't know this field exists at all, and Pydantic simply
+# fills in the default) -- see main.py's upload() and the Phase E report
+# for how a None here differs from a present-but-duplicate value.
+SOURCE_EVENT_ID_PATTERN = r"^[0-9a-f]{64}$"
+
+
 class CheckinRow(BaseModel):
     customer_id: int
     branch_id: int
@@ -163,6 +176,7 @@ class CheckinRow(BaseModel):
     flag_2: str | None = None
     flag_3: str | None = None
     source_file: str | None = None
+    source_event_id: str | None = Field(default=None, pattern=SOURCE_EVENT_ID_PATTERN)
 
 
 class RejectRow(BaseModel):
@@ -172,6 +186,7 @@ class RejectRow(BaseModel):
     barcode: str | None = None
     message: str | None = None
     source_file: str | None = None
+    source_event_id: str | None = Field(default=None, pattern=SOURCE_EVENT_ID_PATTERN)
 
 
 class AcsRow(BaseModel):
@@ -185,6 +200,7 @@ class AcsRow(BaseModel):
     destination: str | None = None
     raw_message: str | None = None
     source_file: str | None = None
+    source_event_id: str | None = Field(default=None, pattern=SOURCE_EVENT_ID_PATTERN)
 
 
 class UploadRequest(BaseModel):
@@ -445,21 +461,37 @@ def upload(request: Request, data: UploadRequest, authorization: str | None = He
                 branch_id=first_branch_id,
             )
 
+            # Phase E: ON CONFLICT DO NOTHING below is deliberately BARE
+            # (no conflict target) on all three tables now, not just
+            # acs_events (which already worked this way). A bare DO
+            # NOTHING suppresses a violation of ANY unique/exclusion
+            # constraint on the table, not just one named index -- so one
+            # INSERT now transparently absorbs BOTH the pre-existing
+            # semantic unique index (barcode/event_time[/error_message]
+            # etc. -- unaffected, still authoritative) AND the new
+            # source_event_id partial unique index (45ba2e7befbc), with
+            # no way to tell from the SQL alone which one fired. That's
+            # intentional: see the Phase E report's "double protection"
+            # section for why callers only need "was a new row inserted,"
+            # never which constraint stopped a duplicate. A legacy row
+            # (source_event_id always NULL) is invisible to the partial
+            # index entirely, so this is a no-op behavior change for the
+            # currently deployed legacy scheduled agent.
             for row in checkins:
                 result = conn.execute(text("""
                     INSERT INTO checkins (
                         customer_id, branch_id, event_time, title, barcode,
                         collection_code, call_number, shelf_code,
                         destination, bin, is_problem, message,
-                        flag_1, flag_2, flag_3, source_file
+                        flag_1, flag_2, flag_3, source_file, source_event_id
                     )
                     VALUES (
                         :customer_id, :branch_id, :event_time, :title, :barcode,
                         :collection_code, :call_number, :shelf_code,
                         :destination, :bin, :is_problem, :message,
-                        :flag_1, :flag_2, :flag_3, :source_file
+                        :flag_1, :flag_2, :flag_3, :source_file, :source_event_id
                     )
-                    ON CONFLICT (barcode, event_time) DO NOTHING
+                    ON CONFLICT DO NOTHING
                 """), row)
 
                 inserted_checkins += result.rowcount
@@ -472,18 +504,19 @@ def upload(request: Request, data: UploadRequest, authorization: str | None = He
                     "barcode": row["barcode"] or "",
                     "error_message": row["message"],
                     "source_file": row["source_file"],
+                    "source_event_id": row["source_event_id"],
                 }
 
                 result = conn.execute(text("""
                     INSERT INTO rejects (
                         customer_id, branch_id, event_time,
-                        barcode, error_message, source_file
+                        barcode, error_message, source_file, source_event_id
                     )
                     VALUES (
                         :customer_id, :branch_id, :event_time,
-                        :barcode, :error_message, :source_file
+                        :barcode, :error_message, :source_file, :source_event_id
                     )
-                    ON CONFLICT (barcode, event_time, error_message) DO NOTHING
+                    ON CONFLICT DO NOTHING
                 """), reject_row)
 
                 inserted_rejects += result.rowcount
@@ -501,18 +534,21 @@ def upload(request: Request, data: UploadRequest, authorization: str | None = He
                     "destination": row["destination"],
                     "raw_message": row["raw_message"],
                     "source_file": row["source_file"],
+                    "source_event_id": row["source_event_id"],
                 }
 
                 result = conn.execute(text("""
                     INSERT INTO acs_events (
                         customer_id, branch_id, event_time,
                         message_code, barcode, barcode_key, title,
-                        patron_id, destination, raw_message, source_file
+                        patron_id, destination, raw_message, source_file,
+                        source_event_id
                     )
                     VALUES (
                         :customer_id, :branch_id, :event_time,
                         :message_code, :barcode, :barcode_key, :title,
-                        :patron_id, :destination, :raw_message, :source_file
+                        :patron_id, :destination, :raw_message, :source_file,
+                        :source_event_id
                     )
                     ON CONFLICT DO NOTHING
                 """), acs_row)

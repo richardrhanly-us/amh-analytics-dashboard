@@ -1,6 +1,10 @@
 [tool.ruff]
 target-version = "py311"
-extend-exclude = [".venv", ".venv_old"]
+# "SortViewAgent - What is currently sitting..." is an archived, read-only
+# snapshot of the real deployed production agent (Continuous Ingestion
+# Phase A baseline) -- excluded rather than lint-fixed so it stays an
+# untouched historical reference, not live source.
+extend-exclude = [".venv", ".venv_old", "agent/SortViewAgent - What is currently sitting on the AMH computer"]
 
 [tool.ruff.lint]
 # Everything else in ruff's default rule set runs as a blocking CI check.
@@ -24,3 +28,9 @@ ignore = [
 [tool.mypy]
 python_version = "3.11"
 ignore_missing_imports = true
+
+[tool.bandit]
+# Same archived-baseline exclusion as [tool.ruff] above, plus its bundled
+# .venv (thousands of vendored files -- excluding it also keeps this scan
+# fast, not just correct).
+exclude_dirs = ["agent/SortViewAgent - What is currently sitting on the AMH computer"]
