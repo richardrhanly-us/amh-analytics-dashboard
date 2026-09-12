@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 from starlette.requests import Request
@@ -88,6 +90,140 @@ def use_fake_engine(monkeypatch, token_row=VALID_TOKEN_ROW):
     return fake_engine
 
 
+# --- uniqueness-simulating fake DB (Phase E double-protection tests) -------
+#
+# FakeConnection above always returns rowcount=1 -- it never actually
+# models a unique constraint, so it cannot exercise "does a duplicate
+# upload actually get skipped." UniquenessSimulatingConnection below
+# reimplements, in plain Python, the specific unique constraints
+# checkins/rejects/acs_events declare (see alembic/versions/
+# 26397a3947b1's baseline schema and 45ba2e7befbc's new partial index)
+# and simulates a bare `ON CONFLICT DO NOTHING` against them.
+#
+# IMPORTANT: this proves main.py's OWN call sequencing under Postgres's
+# documented, standard ON CONFLICT / partial-unique-index semantics --
+# it is NOT a substitute for verifying against a real Postgres instance,
+# and must never be read as "Postgres uniqueness behavior was tested
+# here." No Docker/Postgres was available in the environment this was
+# written in -- see the Phase E report's Remaining Risks section. This
+# exists specifically so the "legacy upload X, then new-agent upload of
+# the same logical X" family of scenarios can be expressed as real
+# assertions instead of being skipped entirely.
+#
+# Semantic keys below include (customer_id, branch_id) as leading
+# columns -- see alembic revision c53c1b536c71's docstring for why the
+# original global (barcode, event_time)-shaped indexes were a real
+# multi-tenant bug and why (customer_id, branch_id) is the correct scope
+# (the same pair src/data_loader.py's _scoped_query and main.py's
+# authenticate_agent already use). source_event_id uniqueness is
+# likewise scoped by (customer_id, branch_id) -- see 45ba2e7befbc's
+# revised docstring for why global source_event_id uniqueness was itself
+# a latent cross-tenant risk (an operator copying agent_identity.json
+# between installations).
+
+_SEMANTIC_KEYS = {
+    "checkins": ("customer_id", "branch_id", "barcode", "event_time"),
+    "rejects": ("customer_id", "branch_id", "barcode", "event_time", "error_message"),
+    "acs_events": ("customer_id", "branch_id", "event_time", "message_code", "barcode_key"),
+}
+
+_SOURCE_EVENT_ID_SCOPE = ("customer_id", "branch_id", "source_event_id")
+
+
+class UniquenessSimulatingConnection:
+    """tokens_by_bearer maps a raw bearer token string -> its token_row,
+    so a single shared engine/connection (one simulated database) can
+    authenticate MULTIPLE distinct agents/tenants within the same test --
+    required for the cross-tenant non-collision tests below, where two
+    different (customer_id, branch_id) scopes must write into the same
+    simulated `tables` dict through two separately-authenticated
+    requests. Unlike FakeConnection (which always returns one fixed
+    token_row regardless of which token was actually sent), this reads
+    the real bound :token param authenticate_agent() sends."""
+
+    def __init__(self, tokens_by_bearer):
+        self.tokens_by_bearer = tokens_by_bearer
+        self.tables = {name: [] for name in _SEMANTIC_KEYS}
+        self.executed = []
+
+    def execute(self, stmt, params=None):
+        sql = str(stmt)
+        self.executed.append((sql, params))
+
+        if "FROM agent_tokens" in sql:
+            bearer_token = (params or {}).get("token")
+            return FakeResult(mapping=self.tokens_by_bearer.get(bearer_token))
+        if "UPDATE agent_tokens" in sql:
+            return FakeResult(rowcount=1)
+
+        match = re.search(r"INSERT INTO (\w+)", sql)
+        if not match:
+            return FakeResult(rowcount=1)
+
+        table = match.group(1)
+        row = dict(params or {})
+
+        if self._conflicts(table, row):
+            return FakeResult(rowcount=0)
+
+        self.tables[table].append(row)
+        return FakeResult(rowcount=1)
+
+    def _conflicts(self, table, row):
+        semantic_keys = _SEMANTIC_KEYS[table]
+        source_event_id = row.get("source_event_id")
+
+        for existing in self.tables[table]:
+            if all(existing.get(k) == row.get(k) for k in semantic_keys):
+                return True
+            if source_event_id is not None and all(
+                existing.get(k) == row.get(k) for k in _SOURCE_EVENT_ID_SCOPE
+            ):
+                return True
+
+        return False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class UniquenessSimulatingEngine:
+    def __init__(self, tokens_by_bearer):
+        self.tokens_by_bearer = tokens_by_bearer
+        self.conn = UniquenessSimulatingConnection(tokens_by_bearer)
+
+    def begin(self):
+        # Same underlying `conn.tables` across every `with engine.begin()`
+        # block, exactly like separate real requests sharing one durable
+        # database -- unlike FakeEngine, which hands back state that
+        # doesn't need to persist across calls.
+        return self.conn
+
+
+def use_uniqueness_engine(monkeypatch, tokens_by_bearer=None):
+    fake_engine = UniquenessSimulatingEngine(
+        tokens_by_bearer=tokens_by_bearer or {"good-token": VALID_TOKEN_ROW}
+    )
+    monkeypatch.setattr(main, "engine", fake_engine)
+    return fake_engine
+
+
+SECOND_BRANCH_TOKEN_ROW = {
+    "id": 2,
+    "customer_id": 200,
+    "branch_id": 9,
+    "is_active": True,
+    "description": "second branch test agent",
+}
+
+
+SOURCE_EVENT_ID_A = "a" * 64
+SOURCE_EVENT_ID_B = "b" * 64
+
+
 def auth_headers(token="good-token"):
     return {"Authorization": f"Bearer {token}"}
 
@@ -96,6 +232,17 @@ def base_checkin_row(**overrides):
     row = {
         "customer_id": VALID_TOKEN_ROW["customer_id"],
         "branch_id": VALID_TOKEN_ROW["branch_id"],
+        "event_time": "2026-07-27T09:00:00",
+        "barcode": "12345",
+    }
+    row.update(overrides)
+    return row
+
+
+def second_branch_checkin_row(**overrides):
+    row = {
+        "customer_id": SECOND_BRANCH_TOKEN_ROW["customer_id"],
+        "branch_id": SECOND_BRANCH_TOKEN_ROW["branch_id"],
         "event_time": "2026-07-27T09:00:00",
         "barcode": "12345",
     }
@@ -450,3 +597,338 @@ def test_rate_limit_isolated_per_token_not_shared_across_agents():
         "/upload", json=empty_payload, headers=auth_headers(token="agent-b-token")
     )
     assert response_b.status_code != 429
+
+
+# --- source_event_id validation (Phase E) -----------------------------------
+
+
+def test_upload_accepts_row_with_valid_source_event_id(monkeypatch):
+    use_fake_engine(monkeypatch)
+    payload = {"checkins": [base_checkin_row(source_event_id=SOURCE_EVENT_ID_A)]}
+
+    response = client.post("/upload", json=payload, headers=auth_headers())
+
+    assert response.status_code == 200
+    assert response.json()["checkins_inserted"] == 1
+
+
+def test_upload_rejects_malformed_source_event_id():
+    payload = {"checkins": [base_checkin_row(source_event_id="not-a-valid-hash")]}
+
+    response = client.post("/upload", json=payload, headers=auth_headers())
+
+    assert response.status_code == 422
+
+
+def test_upload_rejects_short_source_event_id():
+    payload = {"checkins": [base_checkin_row(source_event_id="a" * 63)]}
+
+    response = client.post("/upload", json=payload, headers=auth_headers())
+
+    assert response.status_code == 422
+
+
+def test_upload_rejects_uppercase_source_event_id():
+    # The canonical format is lowercase hex (hashlib.hexdigest()'s own
+    # output casing) -- uppercase is deliberately not normalized/accepted
+    # silently, to keep exactly one canonical representation.
+    payload = {"checkins": [base_checkin_row(source_event_id="A" * 64)]}
+
+    response = client.post("/upload", json=payload, headers=auth_headers())
+
+    assert response.status_code == 422
+
+
+def test_legacy_upload_without_source_event_id_still_works(monkeypatch):
+    # The currently deployed legacy scheduled agent never sends this
+    # field at all -- Pydantic must default it to None with no error.
+    use_fake_engine(monkeypatch)
+    payload = {"checkins": [base_checkin_row()]}
+
+    response = client.post("/upload", json=payload, headers=auth_headers())
+
+    assert response.status_code == 200
+    assert response.json()["checkins_inserted"] == 1
+
+
+# --- double-protection / transport + semantic dedup coexistence (Phase E) --
+#
+# See the UniquenessSimulatingConnection docstring above: these exercise
+# main.py's call sequencing under Postgres's DOCUMENTED unique-index/
+# ON CONFLICT semantics, simulated in Python -- not a live Postgres
+# instance. Kept as a distinct, clearly-labeled section so this
+# limitation is never lost track of.
+
+
+def test_same_source_event_id_uploaded_twice_stores_once(monkeypatch):
+    use_uniqueness_engine(monkeypatch)
+    payload = {"checkins": [base_checkin_row(barcode="111", source_event_id=SOURCE_EVENT_ID_A)]}
+
+    first = client.post("/upload", json=payload, headers=auth_headers())
+    second = client.post("/upload", json=payload, headers=auth_headers())
+
+    assert first.json()["checkins_inserted"] == 1
+    assert second.json()["checkins_inserted"] == 0
+
+
+def test_ack_lost_style_resend_stores_once(monkeypatch):
+    # Simulates the agent believing the upload failed (ACK never arrived)
+    # and resending the exact same spooled batch -- same source_event_id,
+    # same row content, a plain retry rather than a deliberate re-upload.
+    use_uniqueness_engine(monkeypatch)
+    payload = {"checkins": [base_checkin_row(barcode="222", source_event_id=SOURCE_EVENT_ID_B)]}
+
+    responses = [client.post("/upload", json=payload, headers=auth_headers()) for _ in range(3)]
+
+    assert [r.json()["checkins_inserted"] for r in responses] == [1, 0, 0]
+
+
+def test_semantic_duplicate_with_different_source_event_id_still_stores_once(monkeypatch):
+    # Same logical transaction (barcode + event_time), but two DIFFERENT
+    # source_event_id values -- e.g. reparsed under a different
+    # generation. The existing semantic unique index must still catch
+    # this even though the new transport identity does not.
+    use_uniqueness_engine(monkeypatch)
+    first_payload = {"checkins": [base_checkin_row(barcode="333", source_event_id=SOURCE_EVENT_ID_A)]}
+    second_payload = {"checkins": [base_checkin_row(barcode="333", source_event_id=SOURCE_EVENT_ID_B)]}
+
+    first = client.post("/upload", json=first_payload, headers=auth_headers())
+    second = client.post("/upload", json=second_payload, headers=auth_headers())
+
+    assert first.json()["checkins_inserted"] == 1
+    assert second.json()["checkins_inserted"] == 0
+
+
+def test_semantic_duplicate_with_no_source_event_id_still_stores_once_under_existing_rules(monkeypatch):
+    # Two purely legacy uploads (no source_event_id at all) of the same
+    # logical transaction -- the pre-existing semantic dedup, completely
+    # untouched by this phase, must still be authoritative.
+    use_uniqueness_engine(monkeypatch)
+    payload = {"checkins": [base_checkin_row(barcode="444")]}
+
+    first = client.post("/upload", json=payload, headers=auth_headers())
+    second = client.post("/upload", json=payload, headers=auth_headers())
+
+    assert first.json()["checkins_inserted"] == 1
+    assert second.json()["checkins_inserted"] == 0
+
+
+def test_legacy_first_then_new_agent_same_logical_event_does_not_duplicate(monkeypatch):
+    # The hard parallel-validation requirement: the legacy scheduled
+    # pipeline stays authoritative while the new agent is validated, so a
+    # new-agent upload of something the legacy agent already delivered
+    # must not create a second row, even though only the new upload
+    # carries a source_event_id at all.
+    use_uniqueness_engine(monkeypatch)
+    legacy_payload = {"checkins": [base_checkin_row(barcode="555")]}
+    new_agent_payload = {"checkins": [base_checkin_row(barcode="555", source_event_id=SOURCE_EVENT_ID_A)]}
+
+    legacy = client.post("/upload", json=legacy_payload, headers=auth_headers())
+    new_agent = client.post("/upload", json=new_agent_payload, headers=auth_headers())
+
+    assert legacy.json()["checkins_inserted"] == 1
+    assert new_agent.json()["checkins_inserted"] == 0
+
+
+def test_new_agent_first_then_legacy_same_logical_event_does_not_duplicate(monkeypatch):
+    # The inverse ordering -- e.g. the new agent races ahead and delivers
+    # first during coexistence, then the legacy pipeline's own scheduled
+    # run uploads the same logical transaction with no source_event_id.
+    use_uniqueness_engine(monkeypatch)
+    new_agent_payload = {"checkins": [base_checkin_row(barcode="666", source_event_id=SOURCE_EVENT_ID_A)]}
+    legacy_payload = {"checkins": [base_checkin_row(barcode="666")]}
+
+    new_agent = client.post("/upload", json=new_agent_payload, headers=auth_headers())
+    legacy = client.post("/upload", json=legacy_payload, headers=auth_headers())
+
+    assert new_agent.json()["checkins_inserted"] == 1
+    assert legacy.json()["checkins_inserted"] == 0
+
+
+def test_two_different_legacy_rows_with_null_source_event_id_both_insert(monkeypatch):
+    # NULL must never collide with another NULL under the partial unique
+    # index -- two DIFFERENT logical legacy transactions (different
+    # barcodes) must both insert normally, proving the transport-identity
+    # layer never interferes with ordinary legacy traffic.
+    use_uniqueness_engine(monkeypatch)
+    payload = {
+        "checkins": [
+            base_checkin_row(barcode="777"),
+            base_checkin_row(barcode="888"),
+        ]
+    }
+
+    response = client.post("/upload", json=payload, headers=auth_headers())
+
+    assert response.json()["checkins_inserted"] == 2
+
+
+def test_rejects_double_protection_same_source_event_id(monkeypatch):
+    use_uniqueness_engine(monkeypatch)
+    payload = {
+        "rejects": [
+            {
+                "customer_id": VALID_TOKEN_ROW["customer_id"],
+                "branch_id": VALID_TOKEN_ROW["branch_id"],
+                "event_time": "2026-07-27T09:00:00",
+                "barcode": "999",
+                "message": "Item Not Found",
+                "source_event_id": SOURCE_EVENT_ID_A,
+            }
+        ]
+    }
+
+    first = client.post("/upload", json=payload, headers=auth_headers())
+    second = client.post("/upload", json=payload, headers=auth_headers())
+
+    assert first.json()["rejects_inserted"] == 1
+    assert second.json()["rejects_inserted"] == 0
+
+
+def test_acs_double_protection_same_source_event_id(monkeypatch):
+    use_uniqueness_engine(monkeypatch)
+    payload = {
+        "acs": [
+            {
+                "customer_id": VALID_TOKEN_ROW["customer_id"],
+                "branch_id": VALID_TOKEN_ROW["branch_id"],
+                "event_time": "2026-07-27T09:00:00",
+                "message_code": "CK",
+                "barcode": "12345",
+                "source_event_id": SOURCE_EVENT_ID_A,
+            }
+        ]
+    }
+
+    first = client.post("/upload", json=payload, headers=auth_headers())
+    second = client.post("/upload", json=payload, headers=auth_headers())
+
+    assert first.json()["acs_inserted"] == 1
+    assert second.json()["acs_inserted"] == 0
+
+
+# --- cross-tenant non-collision (multi-tenant scoping correction) --------
+#
+# Mandatory per the multi-tenant audit: the original global semantic
+# indexes ((barcode, event_time) etc., no tenant column) would have
+# silently merged these into one row. After alembic revision
+# c53c1b536c71 scopes them by (customer_id, branch_id), they must not.
+
+
+def test_same_barcode_event_time_different_customer_creates_two_rows(monkeypatch):
+    use_uniqueness_engine(
+        monkeypatch, tokens_by_bearer={"good-token": VALID_TOKEN_ROW, "other-token": SECOND_BRANCH_TOKEN_ROW}
+    )
+    library_a_payload = {"checkins": [base_checkin_row()]}
+    library_b_payload = {"checkins": [second_branch_checkin_row()]}
+
+    library_a = client.post("/upload", json=library_a_payload, headers=auth_headers("good-token"))
+    library_b = client.post("/upload", json=library_b_payload, headers=auth_headers("other-token"))
+
+    assert library_a.json()["checkins_inserted"] == 1
+    assert library_b.json()["checkins_inserted"] == 1  # NOT treated as a duplicate of library A's row
+
+
+def test_same_barcode_event_time_different_branch_same_customer_creates_two_rows(monkeypatch):
+    # Two branches of the SAME customer_id -- branch_id alone must also
+    # be part of the scope, not just customer_id.
+    branch_two_token = dict(SECOND_BRANCH_TOKEN_ROW, customer_id=VALID_TOKEN_ROW["customer_id"], branch_id=77)
+    use_uniqueness_engine(
+        monkeypatch, tokens_by_bearer={"good-token": VALID_TOKEN_ROW, "branch-two-token": branch_two_token}
+    )
+    branch_one_payload = {"checkins": [base_checkin_row()]}
+    branch_two_payload = {
+        "checkins": [base_checkin_row(branch_id=branch_two_token["branch_id"])]
+    }
+
+    branch_one = client.post("/upload", json=branch_one_payload, headers=auth_headers("good-token"))
+    branch_two = client.post("/upload", json=branch_two_payload, headers=auth_headers("branch-two-token"))
+
+    assert branch_one.json()["checkins_inserted"] == 1
+    assert branch_two.json()["checkins_inserted"] == 1
+
+
+def test_copied_agent_identity_across_tenants_does_not_collide(monkeypatch):
+    # Simulates the exact risk that drove scoping source_event_id by
+    # (customer_id, branch_id) in 45ba2e7befbc: an operator accidentally
+    # reuses the same agent_id (e.g. a copied agent_identity.json) across
+    # two DIFFERENT installations. The resulting source_event_id can
+    # legitimately collide as a raw string, but the two uploads belong to
+    # two different tenants and must both be stored.
+    use_uniqueness_engine(
+        monkeypatch, tokens_by_bearer={"good-token": VALID_TOKEN_ROW, "other-token": SECOND_BRANCH_TOKEN_ROW}
+    )
+    library_a_payload = {"checkins": [base_checkin_row(source_event_id=SOURCE_EVENT_ID_A)]}
+    library_b_payload = {
+        "checkins": [second_branch_checkin_row(barcode="99999", source_event_id=SOURCE_EVENT_ID_A)]
+    }
+
+    library_a = client.post("/upload", json=library_a_payload, headers=auth_headers("good-token"))
+    library_b = client.post("/upload", json=library_b_payload, headers=auth_headers("other-token"))
+
+    assert library_a.json()["checkins_inserted"] == 1
+    assert library_b.json()["checkins_inserted"] == 1
+
+
+def test_unrelated_events_across_branches_never_accidentally_collide(monkeypatch):
+    # General coexistence sanity check: a batch of otherwise-unrelated
+    # legitimate events from two different branches, mixing legacy
+    # (no source_event_id) and new-agent (source_event_id present) rows,
+    # must all land as independent rows.
+    use_uniqueness_engine(
+        monkeypatch, tokens_by_bearer={"good-token": VALID_TOKEN_ROW, "other-token": SECOND_BRANCH_TOKEN_ROW}
+    )
+    library_a_payload = {
+        "checkins": [
+            base_checkin_row(barcode="AAA", source_event_id=SOURCE_EVENT_ID_A),
+            base_checkin_row(barcode="BBB"),
+        ]
+    }
+    library_b_payload = {
+        "checkins": [
+            second_branch_checkin_row(barcode="AAA", source_event_id=SOURCE_EVENT_ID_B),
+            second_branch_checkin_row(barcode="BBB"),
+        ]
+    }
+
+    library_a = client.post("/upload", json=library_a_payload, headers=auth_headers("good-token"))
+    library_b = client.post("/upload", json=library_b_payload, headers=auth_headers("other-token"))
+
+    assert library_a.json()["checkins_inserted"] == 2
+    assert library_b.json()["checkins_inserted"] == 2
+
+
+def test_upload_sql_uses_bare_on_conflict_do_nothing_for_all_three_tables(monkeypatch):
+    # Guards the specific mechanism the double-protection design depends
+    # on: a bare `ON CONFLICT DO NOTHING` (no target), which is what lets
+    # one INSERT absorb either the semantic OR the source_event_id
+    # unique index without the caller needing to know which one applies.
+    fake_engine = use_fake_engine(monkeypatch)
+    payload = {
+        "checkins": [base_checkin_row(source_event_id=SOURCE_EVENT_ID_A)],
+        "rejects": [
+            {
+                "customer_id": VALID_TOKEN_ROW["customer_id"],
+                "branch_id": VALID_TOKEN_ROW["branch_id"],
+                "barcode": "1",
+                "message": "Item Not Found",
+            }
+        ],
+        "acs": [
+            {
+                "customer_id": VALID_TOKEN_ROW["customer_id"],
+                "branch_id": VALID_TOKEN_ROW["branch_id"],
+                "barcode": "1",
+            }
+        ],
+    }
+
+    client.post("/upload", json=payload, headers=auth_headers())
+
+    conn = fake_engine.connections[-1]
+    insert_statements = [sql for sql, _params in conn.executed if "INSERT INTO" in sql]
+    assert len(insert_statements) == 3
+    for sql in insert_statements:
+        assert "ON CONFLICT DO NOTHING" in sql
+        assert "ON CONFLICT (" not in sql
+        assert "source_event_id" in sql

@@ -73,84 +73,29 @@ After dashboard deployment, verify:
 
 The AMH agent is the Windows-side process that runs near the sorter and uploads data to the API.
 
-The repo stores the source-of-truth code in `agent/`, but the live deployed copy runs on the AMH-attached Windows machine.
+**This section describes the currently-deployed production process only.** The actual, running-today production agent is the archived snapshot under
+`agent/SortViewAgent - What is currently sitting on the AMH computer/` --
+a separate, self-contained copy with its own `run_pipeline.py`,
+`config.py`, etc., installed at `C:\SortViewAgent` on the AMH machine and
+invoked by a 15-minute Task Scheduler entry. It has not been touched by
+this repo's continuous-ingestion redesign work and is not affected by
+anything below.
 
-The agent runs as a Python package (`python -m agent.run_pipeline`), not a
-standalone script -- every module under `agent/` uses package-relative
-imports (`from .config import ...`), so it only works invoked that way.
+A new canonical continuous agent (`agent/main.py` + `agent/runtime/*`)
+has since been built and tested in this repo, and will eventually replace
+the process above -- but it has **not yet been deployed or validated on
+the real AMH machine**. See `agent/README.md` for what it is, how to run
+it locally, and exactly what pre-production validation remains before
+that cutover can happen. Do not deploy it to the AMH machine, disable the
+existing Scheduled Task, or otherwise change the real machine based on
+this document -- that is a separate, later, explicit decision.
 
-Typical AMH deployment flow:
-
-1. update and validate source in `agent/`
-2. copy the approved `agent/` folder to the AMH machine, keeping it as a
-   subfolder of whatever install root you're deploying to (e.g.
-   `C:\SortViewAgent\agent\`) -- not flattened into that root directly,
-   since the package import needs `agent/` to still be a package
-   directory, not a pile of loose top-level scripts
-3. confirm local config (`agent/agent_config.json`) is still correct
-4. from the install root (`C:\SortViewAgent\`, the parent of `agent/` --
-   never from inside the `agent/` folder itself), run:
-
-       python -m agent.run_pipeline
-
-5. review logs for:
-   - successful start status upload
-   - successful batch upload
-   - successful completed status upload
-   - state file update
-6. re-enable normal scheduled execution
-
-## Local outbox maintenance (Continuous Ingestion Phase 5: Sustain)
-
-`agent/maintenance.py` is a separate, independent component from the
-uploader -- its own interval, its own connection, no HTTP calls. It keeps
-the local SQLite outbox (`agent/outbox.py`) safe for long-term unattended
-operation:
-
-- **Retention**: delivered rows (`uploaded_at` set) older than
-  `SORTVIEW_OUTBOX_DELIVERED_RETENTION_DAYS` (default 7) become eligible
-  for deletion. Age is measured from `uploaded_at` (actual delivery time),
-  not `created_at` (when the watcher first captured it).
-- **Quarantined rows are never auto-pruned**, regardless of age. There is
-  no operator-facing tool to review or clear them yet (out of scope for
-  Phase 5) -- they simply accumulate in `local_events` until a human looks
-  at them directly in the database.
-- **Pending rows are never auto-pruned**, regardless of age -- deleting an
-  undelivered row would be data loss.
-- **Batched, bounded deletes**: `SORTVIEW_OUTBOX_PRUNE_BATCH_SIZE` (default
-  1000) rows per transaction, oldest-first, committed between batches;
-  `SORTVIEW_OUTBOX_MAINTENANCE_MAX_BATCHES_PER_CYCLE` (default 10) caps how
-  many batches one cycle may run, so a very large backlog drains gradually
-  across cycles instead of monopolizing SQLite in one long-running cycle.
-- **Cadence**: `SORTVIEW_OUTBOX_MAINTENANCE_INTERVAL_SECONDS` (default
-  3600 -- once an hour), deliberately independent of the uploader's 2-5s
-  poll cadence.
-- **WAL checkpointing**: `PRAGMA wal_checkpoint(TRUNCATE)` once per cycle,
-  after pruning -- the only checkpoint mode that actually shrinks the
-  `-wal` file's on-disk size (PASSIVE/RESTART checkpoint the WAL's content
-  into the main file but leave the file's current size unchanged). A
-  checkpoint under contention (another connection still needs some WAL
-  frames) blocks the calling thread for up to that connection's own
-  busy-wait timeout before giving up -- not an instant return. The
-  maintenance component uses a short, dedicated timeout for this reason
-  (`SORTVIEW_OUTBOX_MAINTENANCE_BUSY_TIMEOUT_SECONDS`, default 5s, vs. the
-  other components' 30s), so a contended checkpoint blocks for at most a
-  few seconds, then simply retries on the next hourly cycle.
-- **Space reclamation is limited on existing databases.** A brand-new
-  agent database (created after this deployment) is created with
-  `auto_vacuum=INCREMENTAL`, so `PRAGMA incremental_vacuum` can actually
-  shrink its file over time as rows are pruned
-  (`SORTVIEW_OUTBOX_MAX_INCREMENTAL_VACUUM_PAGES` bounds how much one
-  cycle reclaims). An **existing** database (anything that has already run
-  through Phases 1-4) was created with `auto_vacuum=NONE`, and there is no
-  way to change that retroactively without a full `VACUUM` (a full file
-  rebuild) -- which Phase 5 deliberately does not perform, on a running
-  agent or otherwise. On an existing database, pruned rows' pages are
-  still freed onto SQLite's internal freelist and reused by future
-  inserts (so the file doesn't grow unbounded from normal churn), but the
-  `.db` file itself will not shrink back down to reflect that reuse -- it
-  stays at its current high-water mark. A one-time rebuild/compaction path
-  for existing databases is intentionally deferred to later work.
+`agent/run_pipeline.py` (top-level, inside this repo's `agent/` package)
+is a legacy/validation-only local mirror of the archived baseline's
+logic, kept only as a runnable comparison point for later side-by-side
+validation -- it is not what's deployed today and not the canonical
+replacement either. See `agent/README.md` for the full picture of what's
+what.
 
 ## AMH validation checklist
 

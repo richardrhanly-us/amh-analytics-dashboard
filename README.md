@@ -278,21 +278,15 @@ Production deployment may use a platform-specific startup command or process man
 
 ### AMH Agent
 
-Run the complete pipeline:
+The canonical continuous agent (built and tested in this repo, not yet deployed to the real AMH machine -- see `agent/README.md`):
 
 ```bash
-python -m agent.run_pipeline
+python -m agent.main --config <path-to-runtime-config.json>
 ```
 
-Run individual parsers:
+`python -m agent.run_pipeline` also exists, but is a legacy/validation-only scheduled-style mirror, not canonical -- see `agent/README.md` for what each entry point actually is.
 
-```bash
-python -m agent.parse_checkins
-python -m agent.parse_rejects
-python -m agent.parse_acs
-```
-
-The production agent runs from a deployed copy on the AMH-attached Windows machine rather than directly from the repository.
+The currently-deployed production agent runs from a separate, archived snapshot on the AMH-attached Windows machine (`agent/SortViewAgent - What is currently sitting on the AMH computer/` in this repo), unaffected by either command above.
 
 ---
 

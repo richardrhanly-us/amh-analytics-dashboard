@@ -21,13 +21,15 @@ for path in (ROOT_DIR, SRC_DIR):
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost/test")
 
 # agent/uploader.py reads SORTVIEW_API_TOKEN eagerly at import time (it's
-# a real uploader -- genuinely needs a token, unlike Phase 1's watcher,
-# which deliberately doesn't import uploader.py at all). Anything that
-# imports agent.outbox_uploader transitively imports agent.uploader, so
-# this placeholder keeps that import from failing. Tests that assert the
-# real token value is never logged/stored read it back via
-# agent.uploader.API_TOKEN rather than hardcoding a second copy of this
-# string, so the two can't drift apart.
+# a real uploader -- genuinely needs a token). agent/run_pipeline.py (kept
+# as a LEGACY/VALIDATION-ONLY scheduled path, see agent/README.md) and its
+# own tests import it transitively, so this placeholder keeps that import
+# from failing. The canonical continuous runtime (agent/runtime/*) reads
+# this same env var too, but lazily inside load_runtime_config() rather
+# than at import time, so it has no such import-time dependency itself.
+# Tests that assert the real token value is never logged/stored read it
+# back via agent.uploader.API_TOKEN rather than hardcoding a second copy
+# of this string, so the two can't drift apart.
 os.environ.setdefault("SORTVIEW_API_TOKEN", "test-agent-token-placeholder")
 
 # Never initialize Sentry during tests, even if the developer's shell

@@ -1,3 +1,25 @@
+"""LEGACY / VALIDATION-ONLY scheduled-style pipeline -- NOT the canonical
+production agent.
+
+This is a local, top-level-package mirror of the ACTUAL deployed
+production pipeline's logic (see
+"agent/SortViewAgent - What is currently sitting on the AMH computer/"
+for that real, running-on-the-AMH-machine snapshot, which this module
+does not replace and has never run in place of). It was written early in
+this engagement, before the continuous-ingestion redesign, and predates
+agent/main.py + agent/runtime/* -- the canonical continuous agent (see
+agent/README.md).
+
+Kept, not deleted, for exactly one purpose: a runnable, one-shot,
+scheduled-style comparison point during the later side-by-side
+legacy/new-agent validation phase (running the real deployed baseline
+alongside the new canonical continuous agent). It is not wired into
+Task Scheduler anywhere, not imported by agent/main.py or agent/runtime/*,
+and must not be treated as equally supported -- `python -m agent.main` is
+the one canonical way to run the production-track agent from this
+repository.
+"""
+
 import json
 from datetime import datetime
 from pathlib import Path

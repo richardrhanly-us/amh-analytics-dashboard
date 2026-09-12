@@ -1,3 +1,10 @@
+"""LEGACY / VALIDATION-ONLY config loader for agent/run_pipeline.py and
+agent/uploader.py -- reads agent_config.json (this directory). NOT used
+by the canonical continuous runtime, which reads its own JSON config
+shape via agent/runtime/config.py's load_runtime_config() instead. Two
+independent config surfaces, deliberately -- see that module's docstring.
+"""
+
 import json
 import os
 from pathlib import Path

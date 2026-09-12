@@ -1,3 +1,12 @@
+"""LEGACY / VALIDATION-ONLY HTTP client -- used only by agent/run_pipeline.py
+(see that module's docstring). NOT used by the canonical continuous
+runtime (agent/runtime/*), which has its own independent HTTP client
+(agent/runtime/http_client.py) and its own config surface
+(agent/runtime/config.py) specifically so the two paths never share
+import-time side effects or config schemas -- see agent/runtime/config.py's
+docstring for why.
+"""
+
 import math
 import os
 

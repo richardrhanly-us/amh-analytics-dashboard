@@ -1,137 +1,31 @@
 from pathlib import Path
 
-import pandas as pd
-
 from .config import load_config
 from .logger_config import get_logger
+from .parser.checkins import COLUMNS, empty_df, normalize_destination, parse_lines
 
 logger = get_logger("parse_checkins")
 
-COLUMNS = [
-    "title",
-    "barcode",
-    "collection_code",
-    "call_number",
-    "shelf_code",
-    "destination_raw",
-    "is_problem",
-    "message",
-    "bin",
-    "flag_1",
-    "flag_2",
-    "flag_3",
-    "date",
-    "time",
+# Parsing logic (COLUMNS, normalize_destination, the line parser) now lives
+# in agent/parser/checkins.py -- this module is a thin, behavior-preserving
+# wrapper kept for existing callers (agent/run_pipeline.py -- LEGACY /
+# VALIDATION-ONLY, see its docstring -- and this module's own legacy-
+# import-path tests). See agent/parser/__init__.py. The canonical
+# continuous runtime (agent/runtime/*) imports agent.parser directly and
+# never goes through this wrapper.
+# __all__ marks COLUMNS/normalize_destination as a deliberate re-export, not
+# dead imports -- they're part of this module's existing public surface.
+__all__ = [
+    "COLUMNS",
+    "load_checkins",
+    "load_checkins_incremental",
+    "normalize_destination",
+    "save_checkins_csv",
 ]
 
+_empty_checkins_df = empty_df
+_parse_checkins_lines = parse_lines
 
-def normalize_destination(value):
-    if pd.isna(value):
-        return ""
-
-    text = str(value).strip()
-    upper_text = text.upper()
-
-    if not text:
-        return ""
-
-    if upper_text in {"1", "LOCAL", "MAIN"}:
-        return "Main"
-
-    if "WESTSIDE" in upper_text:
-        return "Westside"
-
-    if "LIBRARY EXPRESS" in upper_text:
-        return "Library Express"
-
-    if "NO AGENCY DESTINATION" in upper_text:
-        return "No Agency Destination"
-
-    return text
-
-
-def _empty_checkins_df():
-    df = pd.DataFrame(columns=COLUMNS)
-
-    df["destination"] = pd.Series(dtype="object")
-    df["datetime"] = pd.Series(dtype="datetime64[ns]")
-    df["date_only"] = pd.Series(dtype="object")
-    df["hour"] = pd.Series(dtype="float")
-    df["day_of_week"] = pd.Series(dtype="object")
-    df["is_transit"] = pd.Series(dtype="bool")
-    df["is_problem"] = pd.Series(dtype="bool")
-
-    return df
-
-
-def _parse_checkins_lines(lines):
-    rows = []
-    skipped_short_rows = 0
-
-    for line in lines:
-        line = line.strip()
-
-        if not line:
-            continue
-
-        parts = line.split("|")
-
-        if len(parts) < len(COLUMNS):
-            skipped_short_rows += 1
-            continue
-
-        parts = parts[:len(COLUMNS)]
-        rows.append(parts)
-
-    if not rows:
-        df = _empty_checkins_df()
-        logger.info(
-            "Parsed checkins | rows=0 skipped_short_rows=%s bad_datetime=0 transit_items=0 problem_items=0",
-            skipped_short_rows,
-        )
-        return df
-
-    df = pd.DataFrame(rows, columns=COLUMNS)
-
-    for col in df.columns:
-        df[col] = df[col].astype(str).str.strip()
-
-    df["destination"] = df["destination_raw"].apply(normalize_destination)
-
-    df["datetime"] = pd.to_datetime(
-        df["date"] + " " + df["time"],
-        format="%m/%d/%Y %I:%M:%S %p",
-        errors="coerce"
-    )
-
-    df["date_only"] = df["datetime"].dt.date
-    df["hour"] = df["datetime"].dt.hour
-    df["day_of_week"] = df["datetime"].dt.day_name()
-    df["is_transit"] = df["destination"].isin(["Westside", "Library Express"])
-    df["is_problem"] = (
-        df["is_problem"]
-        .fillna("")
-        .astype(str)
-        .str.strip()
-        .str.upper()
-        == "TRUE"
-    )
-
-    logger.info(
-        "Parsed checkins | rows=%s skipped_short_rows=%s bad_datetime=%s transit_items=%s problem_items=%s",
-        len(df),
-        skipped_short_rows,
-        int(df["datetime"].isna().sum()),
-        int(df["is_transit"].sum()),
-        int(df["is_problem"].sum()),
-    )
-
-    logger.info(
-        "Checkins destination breakdown: %s",
-        df["destination"].value_counts(dropna=False).to_dict()
-    )
-
-    return df
 
 def load_checkins(filepath=None):
     if filepath is None:
