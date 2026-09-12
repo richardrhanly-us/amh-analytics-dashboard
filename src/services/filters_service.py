@@ -37,15 +37,19 @@ DATE_RANGE_MODE_OPTIONS = [
     "Single Day", "Last 7 Days", "Last 30 Days", "Month to Date", "Full Month", "All Time", "Custom",
 ]
 
-# Dashboard performance pass: "All Time" was the previous default, which
+# Dashboard performance pass: "All Time" was the original default, which
 # means every first visit to Overview/Reports/Transits paid the cost of
 # filtering/transforming the entire history table in pandas (a
 # significant, measured cost -- see the dashboard-date-range performance
 # report) before the user had asked for anything beyond a normal
-# reporting window. "Last 30 Days" is a much lighter default; "All Time"
-# remains fully available as an explicit choice, just no longer the
-# unconditional first thing every session pays for.
-DEFAULT_DATE_RANGE_MODE = "Last 30 Days"
+# reporting window. The lightest practical default is a single day, since
+# these reporting views are secondary/on-demand relative to Live Today
+# (the app's primary experience) -- so the default mode is "Single Day",
+# which (with no day explicitly chosen yet) seeds its own date_input at
+# today, i.e. "Today" -- see the "Single Day" branch below. Every other
+# option, including "All Time", remains fully available as an explicit
+# choice; only the unconditional first-visit cost changed.
+DEFAULT_DATE_RANGE_MODE = "Single Day"
 
 # The widget's own key -- shared across Overview/Reports/Transits, since
 # resolve_date_filters renders this same radio from the same call site
