@@ -141,6 +141,25 @@ previous identity, current identity, prior offset, current file size,
 rotated vs. truncated) to diagnose a future real-machine recurrence
 directly from agent.log, which this shadow run's own logs could not do --
 see the module docstring's note on why that gap itself was a problem.
+
+RELATIONSHIP TO THE OFFSET-REPRESENTATION FIX (agent/tailer.py, schema
+v3): this confirmation logic and that later fix address two genuinely
+different failure modes, and this one is KEPT, unweakened, after the
+other was found -- not replaced. A second real-machine shadow run's own
+logging (added by this module's confirmation fix) is exactly what
+diagnosed the offset bug: the logs showed the SAME "truncated" verdict
+CONFIRMING cleanly on two consecutive polls every time, with an
+unmistakably wrong (52-digit) prior_offset value -- proving the problem
+was a deterministically wrong CALCULATION (an invalid comparison between
+an opaque text-mode cookie and a true byte count), not a flaky SIGNAL.
+Two-cycle confirmation is the correct defense against the latter (a
+single bad stat()/identity read) and was never intended to catch the
+former (tailer.py now guarantees cursor.offset is always a true byte
+count, so the truncation comparison itself is valid every time it's
+made -- there is nothing left for confirmation to filter out on THIS
+failure mode, but real single-sample identity/size flakiness, whatever
+its cause, remains exactly as possible on the real AMH machine as before,
+and confirmation still defends against exactly that).
 """
 
 from __future__ import annotations

@@ -35,6 +35,55 @@ and only the second one is what this document covers.
 
 ---
 
+## Schema v3 transition (one-time, before Stage 0)
+
+Do this once, the first time a v3-or-later canonical agent build runs
+against this AMH install after a pre-v3 (schema v1/v2) shadow run on it --
+skip entirely if this install has never run a pre-v3 build. See
+`agent/README.md`'s "Schema v3 compatibility boundary" section for why
+this is required: v3 changed what `cursor.offset` means (a true physical
+byte offset, not an opaque text-mode cookie -- see `agent/tailer.py`'s
+OFFSET REPRESENTATION docstring section for the incident that forced
+this), so pre-v3 state and spool content cannot be resumed from or merged
+into v3 runtime state.
+
+- [ ] Confirm every prior shadow run's evidence (state, spool, logs,
+      diagnostics) is preserved under its own untouched, clearly-labeled
+      folder, separate from the active runtime directories -- e.g.
+      `C:\ProgramData\SortView.shadow-evidence-2026-09-14-run2` for the
+      most recent run. If a prior run's evidence has already been moved
+      out of the active `C:\ProgramData\SortView\` directories, this box
+      is already checked -- do not move it again. If it has NOT yet been
+      moved out, move it aside now (rename/relocate, never delete)
+      before proceeding.
+- [ ] Never delete any preserved evidence folder, at any point, for any
+      reason -- this applies to every prior run's folder, not just the
+      most recent one.
+- [ ] Confirm `C:\SortViewAgent` (the legacy production agent and its
+      Scheduled Task) has not been touched and is not part of this
+      transition in any way.
+- [ ] Confirm the active `C:\ProgramData\SortView\` `state`, `spool`,
+      `logs`, and `diagnostics` directories contain no carried-over
+      content from any pre-v3 run -- create them fresh and empty for
+      this v3 shadow run if they don't already exist in that state.
+- [ ] Do NOT copy, merge, or otherwise reuse any v1/v2 `state.json` or
+      spool batch into the new v3 directories -- v3 refuses to load a
+      v1/v2 `state.json` outright (`UnsupportedSchemaVersionError`), and
+      old spool content's `source_event_id` values are not compatible
+      with v3's offset representation regardless of that check.
+- [ ] Verify the runtime config for this run has `upload_enabled: false`
+      and `heartbeat_enabled: false` set explicitly, read from the file
+      itself -- the same requirement as Stage 0 below, called out again
+      here since this transition is a natural point to double-check it
+      before the agent ever starts.
+
+**Only proceed to Stage 0 once every box above is checked.** This
+transition step does not itself grant approval for production cutover --
+that remains a separate, later, explicit decision as described in
+Stage 7.
+
+---
+
 ## STAGE 0 -- Safety check
 
 Before starting the new agent at all, confirm:

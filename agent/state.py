@@ -43,6 +43,33 @@ the tailer's own rotated/truncated signals, so downstream consumers
 counter, never OS filesystem identity. See advance_generation's docstring
 for the exact, explicit rule for every case (bootstrap, append, restart,
 rotation, truncation, path change).
+
+OFFSET REPRESENTATION (schema v3, real-AMH-machine correction): prior to
+v3, `cursor.offset` was whatever agent/tailer.py's text-mode
+`f.tell()`/`f.seek()` produced -- documented at the time as an "opaque
+token, not a true byte count," believed safe in practice, until a second
+live shadow-validation run on the real Tech Logic machine captured a
+persisted ACS offset of 52 DIGITS for a ~7MB file (see agent/tailer.py's
+OFFSET REPRESENTATION section for the exact CPython mechanism). v3
+switches the tailer to binary-mode reading, so `cursor.offset` is now
+ALWAYS a true, physical byte count -- safe for direct numeric comparison
+(this is what makes the truncation check in agent/tailer.py's
+read_new_lines valid again), arithmetic, and ordering.
+
+This is why v1/v2 documents are NOT auto-migrated to v3 the way v1 was
+auto-migrated to v2 (see _MIGRATABLE_SCHEMA_VERSIONS below): the v1->v2
+change only ADDED a field (generation, safely defaulted) without changing
+what any existing field MEANT. v2->v3 changes what the EXISTING `offset`
+field means -- an old opaque cookie value is not safely reinterpretable
+as a byte count (that reinterpretation is the exact bug this schema bump
+exists to prevent), so a v1 or v2 document now raises
+UnsupportedSchemaVersionError on load, same as any other unrecognized
+version, requiring an explicit operator decision (quarantine_corrupt_state
+or an equivalent manual reset) rather than a silent, unsafe migration.
+Every offset value is additionally bounds-checked (see
+_MAX_PLAUSIBLE_OFFSET) so a similarly-corrupted value can never again be
+silently accepted, serialized, or handed to agent/spool.py's fixed-width
+filename encoding.
 """
 
 from __future__ import annotations
@@ -59,7 +86,17 @@ from typing import Any
 from .discovery import SourceIdentity
 from .tailer import FileCursor
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+
+# No real file on any AMH-scale deployment will ever be anywhere close to
+# this many bytes (10**18 is an exabyte) -- this exists purely as a sanity
+# backstop against a corrupted/non-byte-count value ever being accepted as
+# a real offset again (see the module docstring's OFFSET REPRESENTATION
+# section for the incident that motivates this). Chosen well below
+# agent/spool.py's _OFFSET_WIDTH (20 digits) so a value that would corrupt
+# that module's fixed-width filename sort ordering is rejected here first,
+# at the point it would be persisted.
+_MAX_PLAUSIBLE_OFFSET = 10**18
 
 # The three independent sources this agent has ever watched. Phase D/E/F
 # are free to iterate this; state.py itself doesn't hardcode assumptions
@@ -115,6 +152,15 @@ class SourceState:
         if self.cursor.offset < 0:
             raise CorruptStateError(
                 f"offset must be non-negative, got {self.cursor.offset!r} for path {self.path!r}"
+            )
+        if self.cursor.offset > _MAX_PLAUSIBLE_OFFSET:
+            # See the module docstring's OFFSET REPRESENTATION section --
+            # a value this large cannot be a real byte offset and is the
+            # exact shape of the pre-v3 opaque-text-cookie corruption this
+            # bound exists to catch, wherever it might otherwise slip in.
+            raise CorruptStateError(
+                f"offset {self.cursor.offset!r} for path {self.path!r} exceeds the maximum "
+                f"plausible byte offset ({_MAX_PLAUSIBLE_OFFSET!r}) -- not a real byte count"
             )
         if self.generation < 0:
             raise CorruptStateError(
@@ -323,29 +369,33 @@ def to_json_dict(state: AgentState) -> dict[str, Any]:
     }
 
 
-_MIGRATABLE_SCHEMA_VERSIONS = (1,)
+_MIGRATABLE_SCHEMA_VERSIONS: tuple[int, ...] = ()
 
 
 def from_json_dict(raw: Any) -> AgentState:
     """The single place schema migration branches on schema_version.
 
-    Two versions are accepted on read:
+    Only SCHEMA_VERSION (3) is accepted on read, loaded as-is.
 
-      - SCHEMA_VERSION (2): the current shape, including per-source
-        'generation'. Loaded as-is.
-      - 1: the pre-generation shape (Phase C). Every source in a v1
-        document predates the generation concept entirely, so each is
-        migrated in-memory by defaulting its generation to 0 -- the same
-        value advance_generation() would produce for a source that has
-        never seen a rotation or truncation. The returned AgentState
-        always carries schema_version=SCHEMA_VERSION (2), never the
-        original document's version, so the very next save_state() call
-        persists the upgraded shape and this migration only ever runs
-        once per state file.
+    v1 (pre-generation, Phase C) and v2 (opaque text-mode-cookie offsets,
+    Phase B/pre-Phase-B-correction) were both previously auto-migratable
+    to the then-current version -- v1->v2 safely (it only added a field),
+    but that precedent does NOT extend to v3: v2's `offset` values are
+    opaque text-mode cookies, not true byte counts (see this module's
+    OFFSET REPRESENTATION docstring section), and are not safely
+    reinterpretable as the byte offsets v3 requires. So neither v1 nor v2
+    is in _MIGRATABLE_SCHEMA_VERSIONS anymore -- both now hit the "any
+    other version" branch below, exactly like a v1/v2 document already
+    did before THIS correction for any version this code has never heard
+    of. This is a deliberate, one-time narrowing of what "migratable"
+    means, not a general policy against ever migrating anything again.
 
-    Any other version is a hard, explicit error -- never silently
+    Any unsupported version is a hard, explicit error -- never silently
     reinterpreted as the current version, and never a reason to fabricate
-    an empty state.
+    an empty state. A v1/v2 document must be explicitly reset by an
+    operator (e.g. via quarantine_corrupt_state) before this code can
+    resume progress for that source -- see agent/README.md and
+    docs/amh-live-validation-runbook.md for the onsite procedure.
     """
     if not isinstance(raw, dict):
         raise CorruptStateError(f"state document root must be an object, got {type(raw).__name__}")
@@ -361,10 +411,14 @@ def from_json_dict(raw: Any) -> AgentState:
     if not isinstance(sources_raw, dict):
         raise CorruptStateError(f"state document 'sources' must be an object, got {sources_raw!r}")
 
-    # A v1 document never had 'generation' at all; default it to 0 for
-    # every source it contains. A v2 document must already have it on
-    # each source, so default_generation stays None and a missing field
-    # is treated as corruption, not silently migrated.
+    # _MIGRATABLE_SCHEMA_VERSIONS is currently empty (see this function's
+    # docstring), so this always evaluates to None -- schema_version is
+    # already guaranteed to equal SCHEMA_VERSION by the gate above (any
+    # other value already raised). The mechanism itself is kept generic
+    # (not deleted) so a FUTURE purely-additive migration (one that, like
+    # v1->v2, only adds a field without changing what an existing one
+    # means) can reuse it the same way v1->v2 did, without requiring a
+    # missing field to be treated as corruption on the current version.
     default_generation = 0 if schema_version in _MIGRATABLE_SCHEMA_VERSIONS else None
 
     sources = {

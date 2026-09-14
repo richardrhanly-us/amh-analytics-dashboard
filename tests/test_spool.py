@@ -84,6 +84,37 @@ def test_write_batch_rejects_negative_generation():
         )
 
 
+def test_write_batch_rejects_offset_too_large_for_fixed_width_filename():
+    # Regression test for the real-AMH-machine incident (see
+    # agent/tailer.py and agent/state.py's OFFSET REPRESENTATION
+    # sections): the actual corrupted "offset" value a pre-fix opaque
+    # text-mode cookie produced for a ~7MB ACS file was 52 digits -- far
+    # beyond _OFFSET_WIDTH (20). A value like that must never be silently
+    # accepted here, since it would overflow the fixed-width zero-padded
+    # filename encoding and corrupt this module's generation-then-offset
+    # lexicographic sort ordering without raising anywhere.
+    huge_cookie_like_value = 1461501637671185285124623296198104371161417405207
+    with pytest.raises(ValueError):
+        spool.write_batch(
+            "irrelevant", SOURCE, [{"a": 1}],
+            source_generation=0, start_offset=0, end_offset=huge_cookie_like_value,
+        )
+
+
+def test_write_batch_accepts_offset_at_the_fixed_width_boundary(tmp_path):
+    root = _spool_root(tmp_path)
+    max_offset = 10**spool._OFFSET_WIDTH - 1
+
+    path = spool.write_batch(
+        root, SOURCE, [{"a": 1}],
+        source_generation=0, start_offset=max_offset - 1, end_offset=max_offset,
+    )
+
+    metadata = spool.parse_batch_filename(path)
+    assert metadata.start_offset == max_offset - 1
+    assert metadata.end_offset == max_offset
+
+
 def test_write_batch_serializes_one_json_object_per_line(tmp_path):
     root = _spool_root(tmp_path)
     path = _write(root, [{"a": 1}, {"b": 2}])

@@ -213,7 +213,7 @@ def test_non_object_root_raises_corrupt_state_error(tmp_path):
 
 def test_missing_sources_key_raises_corrupt_state_error(tmp_path):
     path = tmp_path / "agent_state.json"
-    path.write_text(json.dumps({"schema_version": 1}), encoding="utf-8")
+    path.write_text(json.dumps({"schema_version": state.SCHEMA_VERSION}), encoding="utf-8")
 
     with pytest.raises(state.CorruptStateError):
         state.load_state(path)
@@ -230,8 +230,8 @@ def test_unsupported_schema_version_raises(tmp_path):
 def test_negative_offset_in_file_raises_corrupt_state_error(tmp_path):
     path = tmp_path / "agent_state.json"
     path.write_text(json.dumps({
-        "schema_version": 1,
-        "sources": {"checkins": {"path": "Checkins.txt", "identity": None, "offset": -5, "updated_at": None}},
+        "schema_version": state.SCHEMA_VERSION,
+        "sources": {"checkins": {"path": "Checkins.txt", "identity": None, "offset": -5, "generation": 0, "updated_at": None}},
     }), encoding="utf-8")
 
     with pytest.raises(state.CorruptStateError):
@@ -241,12 +241,54 @@ def test_negative_offset_in_file_raises_corrupt_state_error(tmp_path):
 def test_non_integer_offset_in_file_raises_corrupt_state_error(tmp_path):
     path = tmp_path / "agent_state.json"
     path.write_text(json.dumps({
-        "schema_version": 1,
-        "sources": {"checkins": {"path": "Checkins.txt", "identity": None, "offset": "129987", "updated_at": None}},
+        "schema_version": state.SCHEMA_VERSION,
+        "sources": {"checkins": {"path": "Checkins.txt", "identity": None, "offset": "129987", "generation": 0, "updated_at": None}},
     }), encoding="utf-8")
 
     with pytest.raises(state.CorruptStateError):
         state.load_state(path)
+
+
+def test_offset_exceeding_max_plausible_byte_count_raises_corrupt_state_error(tmp_path):
+    # Regression test for the real-AMH-machine incident (see agent/tailer.py
+    # and agent/state.py's OFFSET REPRESENTATION sections): a persisted
+    # 52-digit "offset" -- the actual value a pre-fix opaque text-mode
+    # cookie produced for a ~7MB ACS file -- must never be silently
+    # accepted as a real byte count again, whatever schema version wrote
+    # it or however it ended up in the file.
+    path = tmp_path / "agent_state.json"
+    huge_cookie_like_value = 1461501637671185285124623296198104371161417405207
+    path.write_text(json.dumps({
+        "schema_version": state.SCHEMA_VERSION,
+        "sources": {
+            "acs": {
+                "path": "ACS Log.txt", "identity": [1, 1], "offset": huge_cookie_like_value,
+                "generation": 0, "updated_at": None,
+            }
+        },
+    }), encoding="utf-8")
+
+    with pytest.raises(state.CorruptStateError):
+        state.load_state(path)
+
+
+def test_offset_at_max_plausible_boundary_is_accepted(tmp_path):
+    path = tmp_path / "agent_state.json"
+    s = state.update_source(
+        state.empty_state(), "checkins", path="Checkins.txt",
+        cursor=FileCursor(None, state._MAX_PLAUSIBLE_OFFSET), generation=0,
+    )
+    state.save_state(path, s)
+
+    loaded = state.load_state(path)
+    assert state.get_source(loaded, "checkins").cursor.offset == state._MAX_PLAUSIBLE_OFFSET
+
+
+def test_offset_one_past_max_plausible_boundary_is_rejected_at_construction_time():
+    with pytest.raises(state.CorruptStateError):
+        state.SourceState(
+            path="Checkins.txt", cursor=FileCursor(None, state._MAX_PLAUSIBLE_OFFSET + 1)
+        )
 
 
 def test_negative_offset_rejected_at_construction_time():
@@ -257,8 +299,8 @@ def test_negative_offset_rejected_at_construction_time():
 def test_malformed_identity_raises_corrupt_state_error(tmp_path):
     path = tmp_path / "agent_state.json"
     path.write_text(json.dumps({
-        "schema_version": 1,
-        "sources": {"checkins": {"path": "Checkins.txt", "identity": "not-a-list", "offset": 0, "updated_at": None}},
+        "schema_version": state.SCHEMA_VERSION,
+        "sources": {"checkins": {"path": "Checkins.txt", "identity": "not-a-list", "offset": 0, "generation": 0, "updated_at": None}},
     }), encoding="utf-8")
 
     with pytest.raises(state.CorruptStateError):
@@ -489,56 +531,59 @@ def test_advance_generation_treats_a_path_change_via_rotation_detection_as_a_bum
     assert state.advance_generation(prior, rotated=True, truncated=False) == 3
 
 
-# --- schema v1 -> v2 migration (generation defaults to 0) ------------------
+# --- schema version support (v3: true byte-offset representation) ---------
+#
+# v1->v2 auto-migration existed and was safe (purely additive: a missing
+# `generation` field defaulted to 0). v2->v3 is NOT auto-migrated -- see
+# agent/state.py's OFFSET REPRESENTATION docstring section: a v2 document's
+# `offset` values are opaque text-mode cookies, not true byte counts, and
+# are not safely reinterpretable as the byte offsets v3 requires. Both v1
+# and v2 documents now hit the same "unsupported version" path as any
+# other unrecognized version.
 
 
-def test_v1_document_migrates_with_generation_defaulted_to_zero(tmp_path):
+def test_v1_document_no_longer_loads(tmp_path):
     path = tmp_path / "agent_state.json"
     path.write_text(json.dumps({
         "schema_version": 1,
         "sources": {
             "checkins": {"path": "Checkins.txt", "identity": [1, 1], "offset": 12345, "updated_at": "2026-01-01T00:00:00.000000Z"},
-            "rejects": {"path": "Rejects.txt", "identity": None, "offset": 0, "updated_at": None},
         },
     }), encoding="utf-8")
 
-    loaded = state.load_state(path)
-
-    assert loaded.schema_version == state.SCHEMA_VERSION
-    checkins = state.get_source(loaded, "checkins")
-    assert checkins.generation == 0
-    assert checkins.cursor.offset == 12345
-    assert checkins.cursor.identity == SourceIdentity((1, 1))
-    assert state.get_source(loaded, "rejects").generation == 0
+    with pytest.raises(state.UnsupportedSchemaVersionError):
+        state.load_state(path)
 
 
-def test_v1_document_upgrades_to_v2_on_next_save(tmp_path):
-    path = tmp_path / "agent_state.json"
-    path.write_text(json.dumps({
-        "schema_version": 1,
-        "sources": {
-            "checkins": {"path": "Checkins.txt", "identity": None, "offset": 500, "updated_at": None},
-        },
-    }), encoding="utf-8")
-
-    loaded = state.load_state(path)
-    state.save_state(path, loaded)
-
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    assert raw["schema_version"] == state.SCHEMA_VERSION
-    assert raw["sources"]["checkins"]["generation"] == 0
-
-    # And it now loads straight through the v2 path on a subsequent read.
-    reloaded = state.load_state(path)
-    assert state.get_source(reloaded, "checkins").generation == 0
-
-
-def test_v2_document_requires_generation_field_on_each_source(tmp_path):
-    # Unlike a v1 document, a v2 document is not migrated -- a missing
-    # generation field on it is corruption, not something to default.
+def test_v2_document_no_longer_loads(tmp_path):
+    # Even a structurally well-formed v2 document (generation present,
+    # offset non-negative and small) must not load -- the offset's MEANING
+    # changed, not just its schema shape, so no v2 document can be assumed
+    # safe to reinterpret regardless of its actual field values.
     path = tmp_path / "agent_state.json"
     path.write_text(json.dumps({
         "schema_version": 2,
+        "sources": {
+            "checkins": {"path": "Checkins.txt", "identity": None, "offset": 500, "generation": 0, "updated_at": None},
+        },
+    }), encoding="utf-8")
+
+    with pytest.raises(state.UnsupportedSchemaVersionError):
+        state.load_state(path)
+
+
+def test_v1_and_v2_are_not_in_migratable_versions():
+    assert 1 not in state._MIGRATABLE_SCHEMA_VERSIONS
+    assert 2 not in state._MIGRATABLE_SCHEMA_VERSIONS
+
+
+def test_current_schema_version_document_requires_generation_field_on_each_source(tmp_path):
+    # A document at the current schema version is never migrated -- a
+    # missing generation field on it is corruption, not something to
+    # default.
+    path = tmp_path / "agent_state.json"
+    path.write_text(json.dumps({
+        "schema_version": state.SCHEMA_VERSION,
         "sources": {
             "checkins": {"path": "Checkins.txt", "identity": None, "offset": 0, "updated_at": None},
         },
@@ -551,7 +596,7 @@ def test_v2_document_requires_generation_field_on_each_source(tmp_path):
 def test_negative_generation_in_file_raises_corrupt_state_error(tmp_path):
     path = tmp_path / "agent_state.json"
     path.write_text(json.dumps({
-        "schema_version": 2,
+        "schema_version": state.SCHEMA_VERSION,
         "sources": {
             "checkins": {"path": "Checkins.txt", "identity": None, "offset": 0, "generation": -1, "updated_at": None},
         },
@@ -564,7 +609,7 @@ def test_negative_generation_in_file_raises_corrupt_state_error(tmp_path):
 def test_non_integer_generation_in_file_raises_corrupt_state_error(tmp_path):
     path = tmp_path / "agent_state.json"
     path.write_text(json.dumps({
-        "schema_version": 2,
+        "schema_version": state.SCHEMA_VERSION,
         "sources": {
             "checkins": {"path": "Checkins.txt", "identity": None, "offset": 0, "generation": "12", "updated_at": None},
         },

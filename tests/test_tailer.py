@@ -249,3 +249,176 @@ def test_line_offsets_restart_from_zero_after_rotation(tmp_path):
     assert result.rotated is True
     assert result.line_offsets[0] == 0
     assert len(result.line_offsets) == len(result.lines) == 5
+
+
+# --- offset representation: true byte counts, not opaque text cookies ----
+#
+# Regression coverage for the real-AMH-machine incident: a second live
+# shadow-validation run on the actual Tech Logic machine captured a
+# persisted ACS `cursor.offset` of 52 digits for a ~7MB file, produced by
+# the PREVIOUS text-mode implementation's f.tell() cookie once ACS's raw
+# SIP control-character content (genuinely invalid UTF-8 in spots, which
+# is why errors="replace" was needed at all) put CPython's incremental
+# decoder into non-trivial internal state. That cookie, compared against
+# os.path.getsize() via `<`, produced a false but perfectly REPEATABLE
+# "truncated" verdict -- not a one-off flaky read, which is why the
+# earlier two-cycle discontinuity-confirmation fix could not catch it.
+# These tests prove the binary-mode tailer cannot produce that class of
+# value in the first place, not merely that one specific 52-digit number
+# is now rejected somewhere downstream.
+
+
+def _write_bytes(path, data: bytes):
+    path.write_bytes(data)
+
+
+def test_offset_is_a_true_byte_count_for_content_with_invalid_utf8(tmp_path):
+    path = tmp_path / "ACS Log.txt"
+    # \x80\x81 are not valid standalone UTF-8 bytes -- exactly the shape
+    # of raw SIP/control-character content the onsite recon documented for
+    # the real ACS Log.txt, and exactly what forces errors="replace" to
+    # fire during decode.
+    _write_bytes(path, b"line one\n" + b"line two with bad byte \x80\x81 inside\n" + b"line three\n")
+
+    result = read_new_lines(str(path), cursor=None)
+
+    assert len(result.lines) == 3
+    assert result.cursor.offset == os.path.getsize(path)
+    # Every recorded per-line offset is a real, seekable byte position
+    # into the raw file -- reading raw bytes from that exact position
+    # reproduces the same line's raw bytes, which is only meaningful if
+    # the offset is a true byte count (an opaque text-mode cookie would
+    # not support this at all).
+    raw = path.read_bytes()
+    for offset, expected_line in zip(result.line_offsets, result.lines):
+        # expected_line has already had a trailing "\r\n" normalized to
+        # "\n" (not present here) and been decoded with errors="replace";
+        # re-slicing the raw bytes and decoding the same way must match.
+        line_end = raw.index(b"\n", offset) + 1
+        assert raw[offset:line_end].decode("utf-8", errors="replace") == expected_line
+
+
+def test_offset_stays_a_true_byte_count_across_many_incremental_cycles_through_invalid_utf8(tmp_path):
+    """Directly mirrors the real failure's shape: a file re-opened fresh
+    on every poll cycle (as agent/runtime/collector.py does), growing
+    over many cycles, repeatedly writing invalid-UTF-8 content -- the
+    exact pattern that produced a 52-digit cookie under the old text-mode
+    implementation. Under binary mode, cursor.offset must equal
+    os.path.getsize() after every single cycle, with no growth
+    possible beyond real bytes written.
+    """
+    path = tmp_path / "ACS Log.txt"
+    _write_bytes(path, b"")
+
+    cursor = None
+    for cycle in range(30):
+        with open(path, "ab") as f:
+            f.write(f"normal line {cycle} ".encode() + b"\x80\x81\x82" + b" with bad bytes\n")
+
+        result = read_new_lines(str(path), cursor=cursor)
+        cursor = result.cursor
+
+        assert result.truncated is False  # never a false truncation while genuinely growing
+        assert cursor.offset == os.path.getsize(path)
+        # The exact class of corruption from the incident: an offset that
+        # could never be a real byte count for this file.
+        assert cursor.offset < 10**6
+
+
+def test_growing_file_with_invalid_utf8_never_falsely_reports_truncated(tmp_path):
+    """The precise failure reproduced end-to-end: a healthy, continuously
+    GROWING file containing invalid-UTF-8 content must never be reported
+    as truncated, cycle after cycle -- the second shadow run's log showed
+    exactly this (current_size legitimately increasing every cycle:
+    7099671 -> 7100183 -> ... -- while still being compared as "less
+    than" an astronomically large stale offset)."""
+    path = tmp_path / "ACS Log.txt"
+    _write_bytes(path, b"seed\n")
+    cursor = read_new_lines(str(path), cursor=None).cursor
+
+    sizes_seen = []
+    for cycle in range(20):
+        with open(path, "ab") as f:
+            f.write(f"acs record {cycle} ".encode() + bytes([0x80 + (cycle % 10)]) + b" tail\n")
+
+        result = read_new_lines(str(path), cursor=cursor)
+        assert result.truncated is False
+        assert result.rotated is False
+        cursor = result.cursor
+        sizes_seen.append(os.path.getsize(path))
+
+    assert sizes_seen == sorted(sizes_seen)  # file only ever grew
+    assert cursor.offset == os.path.getsize(path)
+
+
+def test_crlf_is_normalized_to_lf_same_as_previous_text_mode_behavior(tmp_path):
+    path = tmp_path / "checkins.txt"
+    _write_bytes(path, b"line one\r\nline two\r\n")
+
+    result = read_new_lines(str(path), cursor=None)
+
+    assert result.lines == ["line one\n", "line two\n"]
+
+
+def test_bare_cr_not_followed_by_lf_is_not_treated_as_a_line_terminator(tmp_path):
+    """Deliberate, documented narrowing vs. full text-mode universal
+    newlines (see agent/tailer.py's OFFSET REPRESENTATION docstring
+    section): only b"\\n" ends a line. A stray b"\\r" with no following
+    b"\\n" (plausible as raw SIP/control-character content, not an
+    intended line break) must stay part of the line's content, and the
+    line must not be considered complete until an actual b"\\n" arrives.
+    """
+    path = tmp_path / "ACS Log.txt"
+    _write_bytes(path, b"before\rafter\n")
+
+    result = read_new_lines(str(path), cursor=None)
+
+    assert result.lines == ["before\rafter\n"]
+
+
+def test_replay_of_content_never_happens_across_repeated_reads_with_binary_offsets(tmp_path):
+    """A direct 'binary byte-offset path must not replay' check: reading
+    repeatedly with no new data must never return already-seen lines
+    again, and the cursor must never move backward."""
+    path = tmp_path / "checkins.txt"
+    _write_bytes(path, b"line one\n")
+
+    first = read_new_lines(str(path), cursor=None)
+    assert first.lines == ["line one\n"]
+
+    for _ in range(5):
+        again = read_new_lines(str(path), cursor=first.cursor)
+        assert again.lines == []
+        assert again.cursor.offset == first.cursor.offset
+
+    with open(path, "ab") as f:
+        f.write(b"line two\n")
+
+    second = read_new_lines(str(path), cursor=first.cursor)
+    assert second.lines == ["line two\n"]  # never re-includes "line one"
+    assert second.cursor.offset > first.cursor.offset
+
+
+def test_restart_style_reread_from_persisted_true_byte_offset_resumes_without_replay(tmp_path):
+    """End-to-end restart simulation using only the tailer + a plain
+    dict standing in for persisted state (agent/state.py's own restart
+    tests cover the real persistence layer) -- proves a fresh call with
+    the previous cursor's true byte offset picks up exactly where the
+    last one left off, never re-reading already-captured content."""
+    path = tmp_path / "checkins.txt"
+    _write_bytes(path, b"line one\nline two\n")
+
+    before_restart = read_new_lines(str(path), cursor=None)
+    assert before_restart.lines == ["line one\n", "line two\n"]
+    persisted_cursor = before_restart.cursor  # what agent/state.py would have saved
+
+    with open(path, "ab") as f:
+        f.write(b"line three\n")
+
+    # "Restart": a brand new call, no in-memory state carried over except
+    # the persisted cursor.
+    after_restart = read_new_lines(str(path), cursor=persisted_cursor)
+
+    assert after_restart.lines == ["line three\n"]
+    assert after_restart.rotated is False
+    assert after_restart.truncated is False
