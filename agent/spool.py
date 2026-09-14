@@ -374,6 +374,21 @@ def write_batch(
         raise ValueError(f"source_generation must be non-negative, got {source_generation}")
     if end_offset <= start_offset:
         raise ValueError(f"end_offset ({end_offset}) must be greater than start_offset ({start_offset})")
+    # A real-machine bug (see agent/tailer.py and agent/state.py's OFFSET
+    # REPRESENTATION sections) once produced a 52-digit "offset" that
+    # wasn't a real byte count at all -- a value that size would silently
+    # overflow _OFFSET_WIDTH's fixed-width zero-padding below and corrupt
+    # this module's generation-then-offset lexicographic sort ordering
+    # (see the module docstring's ORDERING section) without raising
+    # anywhere. Reject it here, at the point it would be encoded into a
+    # filename, rather than only upstream in agent/state.py -- this
+    # module has its own callers/tests independent of state.py.
+    _max_offset = 10**_OFFSET_WIDTH - 1
+    if start_offset > _max_offset or end_offset > _max_offset:
+        raise ValueError(
+            f"start_offset/end_offset ({start_offset}, {end_offset}) exceed the maximum value "
+            f"representable in the fixed-width batch filename ({_max_offset}) -- not a real byte offset"
+        )
 
     final_path = _pending_dir(spool_root, source_name) / _new_batch_filename(
         source_generation, start_offset, end_offset

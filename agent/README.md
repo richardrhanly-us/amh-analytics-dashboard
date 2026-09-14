@@ -65,6 +65,19 @@ Nothing is lost. `RETRYABLE_INFRA` (connection errors, timeouts, 429, 5xx) and `
 
 The collector reloads persisted state and resumes from the exact durable cursor; any spool batches already on disk are picked up by the uploader exactly as before. If the process died with events sitting in memory but not yet flushed to the spool, nothing is lost or duplicated in the sense that matters: a fresh read simply reproduces the same bytes and the same deterministic `source_event_id`, which the backend's transport-idempotency index recognizes as the same event.
 
+### Schema v3 compatibility boundary (offset representation change)
+
+`agent/state.py`'s `SCHEMA_VERSION` is 3. This is a **one-time compatibility boundary**, not an ordinary version bump -- it exists because `agent/tailer.py`'s v3 correction changed what `cursor.offset` actually MEANS: v3 offsets are true, physical byte counts (binary-mode `f.tell()`), where v1/v2 offsets were opaque text-mode `f.tell()` cookies that were not always safely comparable to a real byte count (see `agent/tailer.py`'s OFFSET REPRESENTATION docstring section for the real-AMH-machine incident that forced this correction -- a persisted ACS offset that came out 52 digits long for a ~7MB file). Unlike the earlier, purely-additive v1->v2 migration (which only defaulted a new field), a v1/v2 document's *existing* `offset` field cannot be safely reinterpreted as a v3 byte offset -- so it isn't. Loading a v1 or v2 state file now raises `UnsupportedSchemaVersionError`, exactly like any other unrecognized schema version, never silently migrated.
+
+What this means operationally, for anyone bringing an agent (or an existing shadow install) up to date across this boundary:
+
+- **v1/v2 state files must not be resumed.** They will not load. This is intentional, not a bug to work around by patching the version number.
+- **Old v1/v2 state and spool content must be preserved, not merged.** Move the existing `state`, `spool`, `logs`, and `diagnostics` directories aside (rename/relocate, never delete) before starting a v3 agent against that install root -- they remain valid forensic evidence of prior behavior, but their offsets are not compatible with v3's representation and must never be copied into or merged with v3 runtime state.
+- **The v3 runtime must start from a clean state/spool.** Point `state_path`/`spool_root`/`log_dir`/`diagnostics_dir` at fresh, empty locations (or a freshly created directory tree) the first time a v3 agent runs against an install that previously ran a pre-v3 version. Bootstrap then proceeds exactly as documented above (NORMAL/REPLAY/OFFSET) as if this were a first-ever run for each source.
+- This boundary is crossed exactly once per install, at the pre-v3 -> v3 upgrade point. It has no bearing on ordinary restarts of an already-v3 agent, which resume normally from persisted v3 state (see "What happens after a restart" above).
+
+See `docs/amh-live-validation-runbook.md`'s "Schema v3 transition" step for the exact onsite checklist to follow when bringing the AMH-machine shadow install across this boundary.
+
 ### Shadow / capture-only validation mode
 
 Two config keys, both defaulting to `true` (production-safe by default -- a config that never mentions them behaves exactly like normal production):
