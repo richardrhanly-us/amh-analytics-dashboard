@@ -92,6 +92,55 @@ requirement not to leave any of these implicit):
     separate mechanism needed beyond that, because pointing a source at
     a genuinely different file produces a different identity the next
     time it's stat'd, which is already the rotation path above.
+
+DISCONTINUITY CONFIRMATION (real-AMH-machine correction, added after
+2026-09-14 shadow validation): a single tailer.read_new_lines call
+reporting rotated=True or truncated=True is NOT, by itself, treated as a
+confirmed discontinuity anymore. agent/discovery.py's own module docstring
+already flagged (st_dev, st_ino) identity as "proven safe on one dev
+machine, real-machine semantics not yet validated" -- shadow validation on
+the actual Tech Logic AMH machine exposed exactly that gap: ACS Log.txt's
+identity (and/or apparent size) was observed to disagree with the
+persisted cursor on a single stat(), while checkins/rejects never did and
+a later 60s/250ms sample showed all three identities stable. Whatever the
+underlying platform cause (this module does not assume or diagnose it --
+see the logging this correction adds), a SINGLE inconsistent read must
+never by itself throw away and destructively re-read an entire multi-MB
+source file, because tailer.read_new_lines has no memory between calls --
+each call re-derives rotated/truncated fresh from whatever cursor it's
+given, so a repeated false-positive against an UNCHANGED persisted cursor
+would otherwise re-trigger every single poll cycle, forever (exactly what
+was observed: ACS climbed from generation 0 to 7, replaying the same ~7MB
+~6 times, while the spool grew from 9 files/17KB to 4,228 files/171MB).
+
+The fix: a candidate discontinuity (rotated or truncated) is only ACTED
+ON (buffer flushed under the old generation, generation bumped, cursor
+advanced past the reset) once the SAME kind of discontinuity is reported
+on two CONSECUTIVE poll cycles against the SAME still-untouched persisted
+cursor -- see _pending_discontinuity_kind and poll_once below. The first
+sighting is withheld: self._read_cursor is deliberately left unchanged
+(never advanced to the candidate's post-reset cursor), so the very next
+cycle calls tailer.read_new_lines with the IDENTICAL old cursor and
+independently re-derives the comparison from scratch:
+
+  - genuine, persistent rotation/truncation -> the same discontinuity is
+    reported again next cycle (the old file/identity is genuinely gone,
+    or genuinely still smaller) -> CONFIRMED, handled exactly as before,
+    just one poll cycle (default ~1s) later. Detection is not weakened.
+  - a transient/spurious single-sample inconsistency -> the very next
+    stat() most likely sees the true, unchanged file again, matching the
+    still-untrusted old cursor -> tailer reports no discontinuity at all
+    -> SELF-RESOLVED: the candidate is discarded, nothing is reset, no
+    replay happens, and this cycle's (legitimate) read is processed
+    normally.
+
+Normal appends (the overwhelming common case) never enter this path at
+all -- zero added latency, zero behavior change. Every decision point
+(withhold / confirm / self-resolve) is logged with enough detail (source,
+previous identity, current identity, prior offset, current file size,
+rotated vs. truncated) to diagnose a future real-machine recurrence
+directly from agent.log, which this shadow run's own logs could not do --
+see the module docstring's note on why that gap itself was a problem.
 """
 
 from __future__ import annotations
@@ -108,12 +157,39 @@ from ..parser import checkins as checkins_parser
 from ..parser import rejects as rejects_parser
 from .config import BootstrapMode, SourceConfig
 from .events import build_event
+from .logging_setup import get_component_logger
 
 _PARSERS = {
     "checkins": checkins_parser,
     "rejects": rejects_parser,
     "acs": acs_parser,
 }
+
+
+@dataclass(frozen=True)
+class _PendingDiscontinuity:
+    """An unconfirmed rotation/truncation candidate, held in memory only
+    (never persisted -- see the module docstring's DISCONTINUITY
+    CONFIRMATION section).
+
+    signature is what must match on the NEXT cycle for confirmation, not
+    just `kind` alone -- a bare kind-only check ("rotated" == "rotated")
+    would wrongly confirm a genuinely flaky identity read that reports a
+    DIFFERENT bogus identity on every single call, since every one of
+    those calls is independently labeled "rotated". For kind="rotated",
+    signature is the candidate's new SourceIdentity.token -- two
+    consecutive reads must agree on the SAME new identity, which a truly
+    random/never-repeating flake never will, while a genuine new file
+    (whose identity is not going to change again a poll cycle later)
+    always will. For kind="truncated" (identity unchanged by
+    definition), signature is left None -- confirmation is kind-only,
+    re-derived fresh both times against the same still-untouched
+    persisted cursor.offset, which is itself already a stable reference
+    point (see poll_once).
+    """
+
+    kind: str
+    signature: tuple[int, ...] | None
 
 
 @dataclass(frozen=True)
@@ -127,6 +203,13 @@ class CollectorCycleReport:
     spool_batches_written: int
     state_persisted: bool
     source_missing: bool = False
+    # True when this cycle saw a first-sighting (not yet confirmed)
+    # rotation/truncation candidate and deliberately took no action --
+    # see the module docstring's DISCONTINUITY CONFIRMATION section.
+    # rotated/truncated above stay False for such a cycle; the actual
+    # generation bump (if any) is reported on whichever LATER cycle
+    # confirms it.
+    pending_discontinuity: bool = False
 
 
 class SourceCollector:
@@ -165,6 +248,11 @@ class SourceCollector:
         self._buffer_started_at: float | None = None
         self._pending_cursor: tailer.FileCursor | None = None
         self._bootstrapped = False
+        # First-sighting-not-yet-confirmed rotation/truncation candidate,
+        # or None if none is currently pending. See the module
+        # docstring's DISCONTINUITY CONFIRMATION section.
+        self._pending_discontinuity: _PendingDiscontinuity | None = None
+        self.logger = get_component_logger("collector")
 
     # --- bootstrap -----------------------------------------------------
 
@@ -181,9 +269,7 @@ class SourceCollector:
 
         if prior is not None:
             if state.path_changed(prior, self.source_cfg.path):
-                from ..logger_config import get_logger
-
-                get_logger("runtime.collector").warning(
+                self.logger.warning(
                     "Source %s: configured path changed (%s -> %s) -- "
                     "will be handled as a rotation the next time this path is read",
                     self.source_cfg.name,
@@ -300,6 +386,65 @@ class SourceCollector:
 
         return events_flushed, batches_written, persisted
 
+    # --- discontinuity confirmation / logging ---------------------------
+
+    def _current_file_size(self) -> int | None:
+        """Best-effort fresh byte size for diagnostic logging only --
+        never load-bearing for a correctness decision (tailer.py already
+        made its rotated/truncated call using its own reads). Returns
+        None rather than raising if the file is momentarily unreadable,
+        so a logging call can never itself crash a poll cycle."""
+        try:
+            return os.path.getsize(self.source_cfg.path)
+        except OSError:
+            return None
+
+    def _log_discontinuity(
+        self, *, kind: str, confirmed: bool, result: tailer.TailResult
+    ) -> None:
+        prior_identity = self._read_cursor.identity if self._read_cursor is not None else None
+        prior_offset = self._read_cursor.offset if self._read_cursor is not None else 0
+        current_size = self._current_file_size()
+
+        if confirmed:
+            self.logger.warning(
+                "Source %s: %s CONFIRMED (seen on 2 consecutive poll cycles against the "
+                "same persisted cursor) | previous_identity=%s current_identity=%s "
+                "prior_offset=%s current_size=%s -- flushing generation %s and advancing "
+                "to generation %s",
+                self.source_cfg.name,
+                kind,
+                prior_identity,
+                result.cursor.identity,
+                prior_offset,
+                current_size,
+                self._generation,
+                self._generation + 1,
+            )
+        else:
+            self.logger.warning(
+                "Source %s: %s candidate detected (UNCONFIRMED, 1st sighting) | "
+                "previous_identity=%s current_identity=%s prior_offset=%s current_size=%s "
+                "-- withholding generation bump for one poll cycle to confirm; persisted "
+                "cursor and buffer left unchanged, this cycle's read is discarded",
+                self.source_cfg.name,
+                kind,
+                prior_identity,
+                result.cursor.identity,
+                prior_offset,
+                current_size,
+            )
+
+    def _log_discontinuity_self_resolved(self) -> None:
+        self.logger.info(
+            "Source %s: previously-candidate %s discontinuity did NOT repeat on the next "
+            "poll cycle -- treating as a transient/spurious identity or size read, no "
+            "generation bump, no data replay, resuming normal read from the unchanged "
+            "persisted cursor",
+            self.source_cfg.name,
+            self._pending_discontinuity.kind if self._pending_discontinuity is not None else "?",
+        )
+
     # --- main entry point --------------------------------------------------
 
     def poll_once(self) -> CollectorCycleReport:
@@ -319,7 +464,65 @@ class SourceCollector:
                 source_missing=True,
             )
 
-        if result.rotated or result.truncated:
+        candidate_kind = "rotated" if result.rotated else "truncated" if result.truncated else None
+        # result.cursor.identity is only ever None when the source doesn't
+        # exist (result.existed is False), already handled/returned above
+        # -- a rotated=True result always carries a real identity here.
+        candidate_signature = (
+            result.cursor.identity.token
+            if candidate_kind == "rotated" and result.cursor.identity is not None
+            else None
+        )
+
+        is_confirmation_of_pending = (
+            candidate_kind is not None
+            and self._pending_discontinuity is not None
+            and self._pending_discontinuity.kind == candidate_kind
+            and self._pending_discontinuity.signature == candidate_signature
+        )
+
+        if candidate_kind is not None and not is_confirmation_of_pending:
+            # First sighting of this exact discontinuity (or one that
+            # doesn't match whatever was already pending -- e.g. a
+            # rotation candidate whose new identity differs from the
+            # previous cycle's candidate identity, which is itself a sign
+            # of a genuinely flaky read, not a genuine stable rotation)
+            # -- withhold. Deliberately do NOT touch
+            # self._read_cursor/_pending_cursor or the buffer: leaving
+            # the cursor exactly as it was means the NEXT poll_once call
+            # re-derives rotated/truncated from scratch against the same
+            # still-trusted cursor, which is what lets a transient false
+            # positive self-resolve instead of compounding. This cycle's
+            # read (already reset to offset 0 by tailer.py) is discarded
+            # entirely -- see module docstring's DISCONTINUITY
+            # CONFIRMATION section.
+            self._log_discontinuity(kind=candidate_kind, confirmed=False, result=result)
+            self._pending_discontinuity = _PendingDiscontinuity(
+                kind=candidate_kind, signature=candidate_signature
+            )
+
+            events_flushed, batches_written, persisted = (0, 0, False)
+            if self._should_flush():
+                events_flushed, batches_written, persisted = self._flush()
+
+            return CollectorCycleReport(
+                self.source_cfg.name,
+                True,
+                False,
+                False,
+                0,
+                events_flushed,
+                batches_written,
+                persisted,
+                pending_discontinuity=True,
+            )
+
+        if candidate_kind is not None and is_confirmation_of_pending:
+            # Second consecutive cycle reporting the SAME discontinuity
+            # (same kind, and for rotation, the SAME new identity) against
+            # the same untouched cursor -- confirmed.
+            self._log_discontinuity(kind=candidate_kind, confirmed=True, result=result)
+            self._pending_discontinuity = None
             self._flush()
             prior_for_generation = state.SourceState(
                 path=self.source_cfg.path,
@@ -329,6 +532,11 @@ class SourceCollector:
             self._generation = state.advance_generation(
                 prior_for_generation, rotated=result.rotated, truncated=result.truncated
             )
+        elif self._pending_discontinuity is not None:
+            # This cycle shows a clean read against the old cursor after
+            # all -- the previously-pending candidate was transient.
+            self._log_discontinuity_self_resolved()
+            self._pending_discontinuity = None
 
         events_read = 0
         if result.lines:

@@ -507,6 +507,17 @@ def test_rotation_flushes_old_generation_buffer_then_bumps_generation(tmp_path, 
     path.write_text(CHECKIN_LINE.format(barcode="POST1"), encoding="utf-8")
     _simulate_rotation(monkeypatch, path)
 
+    # First sighting is withheld (discontinuity confirmation -- see
+    # agent/runtime/collector.py's module docstring): a single stat()
+    # mismatch alone must not trigger a destructive reset, since real-AMH
+    # shadow validation found a single sample can be a false positive.
+    first_report = collector.poll_once()
+    assert first_report.rotated is False
+    assert first_report.pending_discontinuity is True
+    assert collector.generation == 0
+
+    # Same discontinuity reported again on the very next cycle (identity
+    # is still forced to the sentinel value) -- now confirmed.
     report = collector.poll_once()
     collector.force_flush()  # flush the new-generation buffer too, for inspection
 
@@ -533,6 +544,12 @@ def test_truncation_bumps_generation_same_as_rotation(tmp_path):
     # Truncate in place (same identity, smaller size).
     path.write_text(CHECKIN_LINE.format(barcode="B"), encoding="utf-8")
 
+    # First sighting withheld -- see discontinuity confirmation.
+    first_report = collector.poll_once()
+    assert first_report.truncated is False
+    assert first_report.pending_discontinuity is True
+
+    # File is still (genuinely) truncated on the next cycle -- confirmed.
     report = collector.poll_once()
     collector.force_flush()
 
@@ -565,7 +582,8 @@ def test_rotation_with_unflushed_buffer_present_flushes_old_generation_exactly_o
     path.write_text(CHECKIN_LINE.format(barcode="POST_ROTATE"), encoding="utf-8")
     _simulate_rotation(monkeypatch, path)
 
-    collector.poll_once()
+    collector.poll_once()  # first sighting -- withheld, not yet confirmed
+    collector.poll_once()  # confirmed on the second consecutive cycle
     collector.force_flush()
 
     records = _pending_records(tmp_path)
@@ -611,14 +629,25 @@ def test_rotation_real_os_delete_recreate_matches_discovery_identify(tmp_path):
     identity_after = discovery.identify(str(path))
     identity_changed = identity_before != identity_after
 
+    first_report = collector.poll_once()
+
+    if not identity_changed:
+        assert first_report.rotated is False
+        return
+
+    # Identity genuinely changed -- first sighting is withheld (see
+    # discontinuity confirmation), then confirmed on the next cycle since
+    # a real delete+recreate's new identity is stable across both stat()
+    # calls (nothing recreates the file again in between).
+    assert first_report.rotated is False
+    assert first_report.pending_discontinuity is True
+
     report = collector.poll_once()
+    assert report.rotated is True
 
-    assert report.rotated is identity_changed
-
-    if identity_changed:
-        collector.force_flush()
-        records = _pending_records(tmp_path)
-        assert any(r["barcode"] == "POST1" for r in records)
+    collector.force_flush()
+    records = _pending_records(tmp_path)
+    assert any(r["barcode"] == "POST1" for r in records)
 
 
 def test_truncation_with_unflushed_buffer_present_preserves_generation_and_cursor(tmp_path):
@@ -639,7 +668,12 @@ def test_truncation_with_unflushed_buffer_present_preserves_generation_and_curso
 
     path.write_text(CHECKIN_LINE.format(barcode="POST_TRUNC"), encoding="utf-8")
 
-    report = collector.poll_once()
+    first_report = collector.poll_once()  # first sighting -- withheld
+    assert first_report.truncated is False
+    assert first_report.pending_discontinuity is True
+    assert len(collector._buffer) == 5  # untouched while unconfirmed
+
+    report = collector.poll_once()  # confirmed on the second consecutive cycle
     collector.force_flush()
 
     assert report.truncated is True
@@ -651,6 +685,161 @@ def test_truncation_with_unflushed_buffer_present_preserves_generation_and_curso
     loaded = state.get_source(state.load_state(tmp_path / "state" / "agent_state.json"), "checkins")
     assert loaded.generation == 1
     assert loaded.cursor.offset == os.path.getsize(path)
+
+
+# --- discontinuity confirmation (2026-09-14 real-AMH shadow validation) -----
+#
+# Regression coverage for the ACS replay failure found during shadow
+# validation on the real Tech Logic machine: ACS Log.txt's identity
+# disagreed with the persisted cursor on individual stat() calls (while
+# checkins/rejects never did), and the old single-sample rotation check
+# amplified this into generation climbing 0 -> 7 and the spool exploding
+# from 9 files / 17KB to 4,228 files / 171MB by destructively re-reading
+# the entire ~7MB file from byte 0 on every falsely-triggered cycle. These
+# tests do not assume or reproduce a specific OS-level cause (the shadow
+# report is explicit that transient identity instability is plausible but
+# unproven) -- they instead prove the CODE no longer amplifies an
+# inconsistent identity/size read into a destructive replay, regardless of
+# why the read was inconsistent, while still confirming a genuine,
+# persistent rotation/truncation exactly as before.
+#
+# The confirmation logic in poll_once() is entirely source-name-agnostic
+# (it never branches on self.source_cfg.name), so these tests use the
+# default "checkins" source + CHECKIN_LINE fixture like every other test
+# in this file, rather than the real ACS SIP wire format -- what failed on
+# the real machine and is reproduced here is agent/discovery.py's identity
+# signal feeding agent/runtime/collector.py's rotation/truncation
+# decision, not anything specific to the ACS parser.
+
+
+def test_single_transient_identity_flap_self_resolves_without_bump_or_replay(tmp_path, monkeypatch):
+    path = tmp_path / "Checkins.txt"
+    path.write_text(CHECKIN_LINE.format(barcode="PRE1"), encoding="utf-8")
+
+    collector = _make_collector(tmp_path, path=path, batch_max_events=100, batch_max_seconds=1000.0)
+    collector.poll_once()  # bootstrap at EOF
+    collector.force_flush()
+
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(CHECKIN_LINE.format(barcode="AFTER1"))
+
+    real_identify = discovery.identify
+    path_str = str(path)
+    monkeypatch.setattr(
+        discovery, "identify", lambda p: _SENTINEL_ROTATED_IDENTITY if p == path_str else real_identify(p)
+    )
+
+    # Exactly one poll cycle observes a bogus identity...
+    first_report = collector.poll_once()
+    assert first_report.rotated is False  # withheld, not acted on
+    assert first_report.pending_discontinuity is True
+    assert collector.generation == 0
+
+    # ...then the very next cycle sees the real, unchanged identity again
+    # -- exactly the pattern the post-failure 60s/250ms sample showed
+    # (stable once sampled outside the failure window). Must self-resolve:
+    # no generation bump, and the pre-existing content is never replayed.
+    monkeypatch.setattr(discovery, "identify", real_identify)
+    second_report = collector.poll_once()
+    collector.force_flush()
+
+    assert second_report.rotated is False
+    assert second_report.pending_discontinuity is False
+    assert collector.generation == 0
+
+    records = _pending_records(tmp_path)
+    assert [r["barcode"] for r in records] == ["AFTER1"]  # exactly once, never replayed
+
+
+def test_never_repeating_identity_never_confirms_a_rotation_or_replays(tmp_path, monkeypatch):
+    """Reproduces the worst case from the shadow-validation failure: an
+    identity read that disagrees with the persisted cursor on EVERY poll
+    cycle, never reporting the same "new" identity twice in a row (the
+    old code's generation climbed 0 -> 7 with a full ~7MB replay each
+    time under this exact pattern). A kind-only confirmation ("rotated"
+    == "rotated") would wrongly confirm this after just 2 cycles despite
+    the identity never actually being stable -- the fix compares the
+    candidate identity itself, not just the rotated/truncated label, so a
+    signal this unstable can never confirm and the source file's original
+    content is never replayed into the spool, no matter how many cycles
+    it flaps for.
+    """
+    path = tmp_path / "Checkins.txt"
+    path.write_text(CHECKIN_LINE.format(barcode="STABLE") * 20, encoding="utf-8")
+
+    collector = _make_collector(tmp_path, path=path, batch_max_events=100, batch_max_seconds=1000.0)
+    collector.poll_once()
+    collector.force_flush()
+
+    real_identify = discovery.identify
+    path_str = str(path)
+    counter = [0]
+
+    def never_repeating_identify(p):
+        if p != path_str:
+            return real_identify(p)
+        counter[0] += 1
+        real = real_identify(p)
+        # A fresh, distinct fake identity on every single call.
+        return SourceIdentity(token=(real.token[0], real.token[1] + counter[0]))
+
+    monkeypatch.setattr(discovery, "identify", never_repeating_identify)
+
+    for _ in range(8):
+        report = collector.poll_once()
+        assert report.rotated is False  # never confirmed
+        assert collector.generation == 0  # never bumped
+
+    assert spool.list_pending_batches(tmp_path / "spool", "checkins") == []  # no replay ever spooled
+
+    # Once the flakiness stops, normal operation resumes cleanly with no
+    # accumulated damage from the flapping window.
+    monkeypatch.setattr(discovery, "identify", real_identify)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(CHECKIN_LINE.format(barcode="RECOVERED"))
+    final_report = collector.poll_once()
+    collector.force_flush()
+
+    assert final_report.rotated is False
+    assert collector.generation == 0
+    records = _pending_records(tmp_path)
+    assert any(r["barcode"] == "RECOVERED" for r in records)
+    # None of the original 20 STABLE lines were ever replayed during the
+    # 8-cycle flapping window.
+    assert all(r["barcode"] != "STABLE" for r in records)
+
+
+def test_alternating_between_two_identities_never_confirms(tmp_path, monkeypatch):
+    """A narrower variant of the never-repeating case: identity alternates
+    between exactly two values (X, Y, X, Y, ...) every cycle rather than a
+    fresh value each time. Still must never confirm, since no two
+    CONSECUTIVE cycles ever report the same candidate identity."""
+    path = tmp_path / "Checkins.txt"
+    path.write_text(CHECKIN_LINE.format(barcode="STABLE"), encoding="utf-8")
+
+    collector = _make_collector(tmp_path, path=path, batch_max_events=100, batch_max_seconds=1000.0)
+    collector.poll_once()
+    collector.force_flush()
+
+    real_identify = discovery.identify
+    path_str = str(path)
+    identity_y = SourceIdentity(token=(-2, -2))
+    toggle = [False]
+
+    def alternating_identify(p):
+        if p != path_str:
+            return real_identify(p)
+        toggle[0] = not toggle[0]
+        return _SENTINEL_ROTATED_IDENTITY if toggle[0] else identity_y
+
+    monkeypatch.setattr(discovery, "identify", alternating_identify)
+
+    for _ in range(6):
+        report = collector.poll_once()
+        assert report.rotated is False
+        assert collector.generation == 0
+
+    assert spool.list_pending_batches(tmp_path / "spool", "checkins") == []
 
 
 # --- malformed lines still advance the cursor -------------------------------
