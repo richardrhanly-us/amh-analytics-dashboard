@@ -22,7 +22,7 @@ full unattended commercial deployment (see "What this is NOT" below).
   productization work" section at the bottom for what still separates
   this from a customer-installable product.
 - Not a decision to leave the canonical agent unattended for weeks
-  without a human checking on it. The observation window in Stage 12
+  without a human checking on it. The observation window in Stage 13
   below is deliberately active monitoring, not "set and forget."
 - Not permission to skip any step below because shadow validation
   already passed. Shadow mode proved capture; it did not prove upload.
@@ -31,7 +31,7 @@ full unattended commercial deployment (see "What this is NOT" below).
 
 - `C:\SortViewAgent` (the legacy production agent) and its Scheduled
   Task are the production system of record until this runbook's
-  acceptance criteria (Stage 14) are explicitly met. Nothing below edits
+  acceptance criteria (Stage 15) are explicitly met. Nothing below edits
   files inside `C:\SortViewAgent`.
 - No forensic evidence directory is ever deleted: the first failed
   shadow run's evidence, `...shadow-evidence-2026-09-14-run2`, and
@@ -88,20 +88,28 @@ Use `agent/deploy/register-sortview-task.ps1` (Stage 3). It explicitly
 disables Task Scheduler's default 3-day execution time limit (a common
 gotcha for long-running tasks) and configures automatic restart.
 
-**Known gap, not closed by this runbook:** the canonical runtime's own
-supervisor (`agent/runtime/supervisor.py`) does not yet exit the process
-when an internal component thread crashes -- it stays alive, visibly
-"degraded" (see that module's own `PRODUCTION SUPERVISION POLICY`
-docstring section, which already specifies the fix: log + stop siblings
-+ process exit non-zero, so Task Scheduler's restart-on-failure can act
-on it). Until that's implemented, Task Scheduler's restart-on-failure
-will NOT fire for an internal thread death that leaves the process
-itself running -- the detection net for that case, during and after this
-cutover, is: the deliberately active observation window below (Stage
-12), the backend's own heartbeat-staleness monitoring
-(`docs/monitoring.md`), and `agent.log`/`diagnostics.json`. This is
-flagged as the top follow-up item after cutover, not something this
-runbook works around silently.
+**Fail-fast worker supervision: implemented and tested, not an open gap.**
+The canonical runtime's own supervisor (`agent/runtime/supervisor.py`)
+now exits the process when an internal component thread crashes: the
+crashing worker's exception is caught, the failure is recorded as this
+run's first-failure root cause (thread-safe under concurrent crashes),
+`stop_event` is set immediately, every sibling winds down via the same
+stop semantics a clean shutdown already uses, and `agent/main.py` exits
+with code 1 once shutdown finishes -- see that module's own
+`PRODUCTION SUPERVISION POLICY` docstring section for the full design,
+and `tests/test_runtime_supervisor.py` /
+`tests/test_agent_main_smoke.py::test_worker_crash_causes_main_to_exit_nonzero`
+for the coverage (per-component crash triggers, concurrent-crash root-
+cause preservation, bounded shutdown even with an uncooperative sibling,
+diagnostics reflecting the crash, and the real exit-code path end to
+end). This is what makes Task Scheduler's restart-on-failure setting
+(`RestartCount`/`RestartInterval`, see `register-sortview-task.ps1`)
+meaningful for an internal thread death, not only for the process never
+starting at all. **What remains unverified is the Task Scheduler side of
+this, not the agent side:** whether the configured restart-on-failure
+policy actually fires on *this* AMH machine has not yet been observed
+directly -- see the new Stage 12 below, which validates exactly that,
+safely.
 
 ### Secret handling: `SORTVIEW_API_TOKEN`
 
@@ -333,20 +341,88 @@ Reasoning, addressing each option explicitly:
 - [ ] Confirm CPU usage stays modest and log file rotation is engaging
       normally (bounded, not unbounded growth).
 
-### Stage 12 -- Observation window
+### Stage 12 -- Task Scheduler restart-on-failure validation
+
+**Purpose:** fail-fast worker supervision (agent-side) is implemented
+and covered by `tests/test_runtime_supervisor.py` /
+`test_agent_main_smoke.py` -- see the architecture section above. What
+those tests cannot prove is whether *this specific machine's* Task
+Scheduler configuration actually restarts the process when it exits
+non-zero. That is an OS-level configuration fact, not something a unit
+test can verify, and it has not yet been directly observed. This stage
+closes that gap with a safe, fully reversible procedure -- **no runtime
+test hooks were added for this**; it deliberately reuses an existing,
+already-tested code path instead of fabricating a crash mechanism (see
+the note at the end of this stage for why).
+
+- [ ] Confirm the canonical Scheduled Task is currently running
+      normally. Record a "before" baseline from `diagnostics.json`: each
+      source's `generation`/`offset`, and `pending_batch_count` per
+      source.
+- [ ] Confirm the legacy agent's Scheduled Task remains disabled
+      throughout this test (per Stage 2) -- do not re-enable it "just in
+      case" for this test.
+- [ ] Rename `C:\ProgramData\SortView\config\agent_runtime_config.json`
+      aside (e.g. to `agent_runtime_config.json.disabled-for-restart-test`).
+      This forces a real, deterministic non-zero exit the safest way
+      available: `agent/main.py` treats a missing/invalid `--config`
+      path as a `ConfigError` and returns exit code 2 *before*
+      constructing an `AgentRunner` or starting any worker thread -- zero
+      risk to state/spool/identity, and already covered by
+      `tests/test_agent_main_smoke.py::test_invalid_config_path_returns_exit_code_2`.
+- [ ] Restart the Scheduled Task (`Stop-ScheduledTask` then
+      `Start-ScheduledTask`, or start it if it isn't already running) and
+      confirm in Task Scheduler's History that this run ends with a
+      non-zero result.
+- [ ] Wait `RestartIntervalMinutes` (the value `register-sortview-task.ps1`
+      was given) and confirm Task Scheduler's History shows a SECOND
+      launch attempt firing on its own, with no manual intervention --
+      this is the actual fact under test.
+- [ ] Once at least one automatic restart attempt has been observed
+      (still failing, since the config is still renamed), rename the
+      config file back to its real name.
+- [ ] Confirm the next automatic restart attempt (or a manual
+      `Start-ScheduledTask` if you don't want to wait for the next
+      interval) starts successfully -- `agent.log` shows the normal
+      startup banner and `MODE: NORMAL PRODUCTION MODE`.
+- [ ] Confirm state/spool durability: `diagnostics.json`'s per-source
+      `generation`/`offset` and `pending_batch_count` match the "before"
+      baseline recorded above -- nothing was lost or reset by the failed
+      attempts or the restart.
+- [ ] Confirm normal operation resumes: the next real Tech Logic event
+      after this point is captured and uploaded as usual.
+
+**Why exit code 2 (config error) instead of forcing an actual worker
+crash:** Task Scheduler's restart-on-failure setting fires on any
+non-zero exit code, not specifically on exit code 1 -- so this exercises
+the same OS-level mechanism a real fail-fast crash would trigger. A
+genuine worker-thread crash is deliberately hard to induce safely: every
+individual operation in this runtime (per-source collector polls,
+upload cycles) is already isolated/retried/quarantined at a finer grain
+specifically so ordinary error conditions never escalate into a
+fail-fast crash (see `agent/runtime/supervisor.py`'s per-source
+try/except in the collector loop, and `agent/runtime/uploader.py`'s
+retry/quarantine classification). Reaching exit code 1 safely would
+require either a contrived condition unrepresentative of anything that
+happens for real, or adding a runtime hook whose only job is to crash on
+command -- which this stage deliberately does not do. If a genuine
+fail-fast crash is ever observed naturally in production, treat that as
+additional confirmation, not a prerequisite this stage is waiting for.
+
+### Stage 13 -- Observation window
 
 - [ ] Keep both the canonical agent and active human monitoring running
       for a deliberately limited window (recommend: one full business
       day, during hours a person can respond) before considering this
       more than a smoke test. Do not walk away and call it done after
-      Stage 6-11 pass once.
+      Stage 6-12 pass once.
 - [ ] During this window, the LEGACY agent stays disabled (not
       re-enabled "just in case") -- this is the actual test: can
       canonical alone carry production for NBPL.
 
-### Stage 13 -- Rollback trigger criteria
+### Stage 14 -- Rollback trigger criteria
 
-Any ONE of the following during Stages 4-12 triggers rollback (below),
+Any ONE of the following during Stages 4-13 triggers rollback (below),
 not "wait and see":
 
 - Stage 5's authentication check fails and is not resolved within the
@@ -367,21 +443,23 @@ not "wait and see":
 - Any unhandled exception/crash in `agent.log` during the observation
   window that isn't immediately, confidently explained.
 
-### Stage 14 -- Final acceptance criteria
+### Stage 15 -- Final acceptance criteria
 
 All of the following, not any subset:
 
-- [ ] Stages 5-11 all passed with no rollback-trigger condition
-      observed during Stage 12's full observation window.
+- [ ] Stages 5-12 all passed with no rollback-trigger condition
+      observed during Stage 13's full observation window.
 - [ ] No data loss or duplication found on inspection (Stage 9).
 - [ ] The team is willing to leave legacy disabled going into the next
       business day without an active human watching continuously.
-- [ ] The fail-fast supervision gap (see architecture section above) is
-      either closed, or explicitly accepted as a known residual risk
-      with the heartbeat-staleness monitoring net understood by whoever
-      is on call.
+- [ ] Task Scheduler's restart-on-failure policy has been directly
+      observed restarting the canonical agent on this machine (Stage
+      12) -- fail-fast worker supervision itself is implemented and
+      unit-tested (see the architecture section above), but this
+      confirms the OS-level half of that mechanism actually works here,
+      not just in the test suite.
 
-Only once Stage 14 is fully met should `C:\SortViewAgent`'s Scheduled
+Only once Stage 15 is fully met should `C:\SortViewAgent`'s Scheduled
 Task be considered for actual removal/decommission -- that is a
 SEPARATE, later, explicit decision this runbook does not make on its
 own, consistent with `docs/release-process.md`'s existing "AMH agent
@@ -391,7 +469,7 @@ deployment" boundary language.
 
 ## Rollback procedure
 
-Can be executed at any point in Stages 4-13, and is designed to be
+Can be executed at any point in Stages 4-14, and is designed to be
 low-drama:
 
 1. **Stop the canonical agent cleanly.**
