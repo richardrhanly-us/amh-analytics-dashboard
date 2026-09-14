@@ -106,7 +106,16 @@ class RuntimeConfig:
     http_transport_retry_total: int = 2
     http_transport_backoff_factor: float = 0.5
 
-    agent_version: str = "0.0.0-phase-f"
+    # Simple semver. 0.1.0 is the first canonical build considered a real
+    # NBPL production-cutover candidate (real-AMH-machine shadow
+    # validation passed on schema v3 -- see agent/README.md and
+    # docs/amh-production-cutover-runbook.md) -- staying below 1.0.0
+    # deliberately, since production UPLOADING itself has not yet been
+    # validated end-to-end (see docs/amh-production-cutover-runbook.md's
+    # Proven vs. Unproven section). Bump to 1.0.0 once a full controlled
+    # production cutover completes successfully and the canonical agent
+    # is the sole production ingestion path for at least one branch.
+    agent_version: str = "0.1.0"
 
     # SHADOW / CAPTURE-ONLY VALIDATION MODE (Continuous Ingestion
     # preparation phase). Both default to True -- NORMAL PRODUCTION MODE
