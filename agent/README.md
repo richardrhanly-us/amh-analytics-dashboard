@@ -95,16 +95,49 @@ Because shadow mode never drains the spool, pending batches accumulate for as lo
 
 An experimental SQLite-backed continuous-ingestion path (`agent/outbox.py`, `agent/outbox_uploader.py`, `agent/watcher.py`, `agent/maintenance.py`, and a SQLite-aware `agent/heartbeat.py`) was built earlier in this engagement, proved out the real reliability requirements (crash-safe restart, retry/backoff, poison-event isolation, disk-aware housekeeping, health reporting), and has since been deleted now that the canonical runtime above covers every one of those requirements with file-based durability instead of a local database. See git history for the removed files; every requirement they encoded has an equivalent canonical test (state/spool/uploader/heartbeat/housekeeping test suites) -- SQLite was not a design goal to preserve, and the canonical runtime has none.
 
-## Remaining pre-production gates
+## Path to production cutover
 
-Not done yet, in no particular order beyond roughly "closest to done first":
+**Real-machine shadow validation is complete and passed** (schema v3,
+binary-mode byte offsets, restart/resume, resource stability -- see
+`docs/amh-live-validation-runbook.md` and its preserved evidence
+folders). That proved the CAPTURE side end-to-end on the real Tech Logic
+machine; it did not prove the canonical agent can perform real production
+`/upload`/`/upload-pipeline-status` calls, since shadow mode never sends
+either. Closing that gap -- a small, deliberately limited, reversible
+first production test, not a full unattended commercial rollout -- is
+what `docs/amh-production-cutover-runbook.md` covers: install layout,
+unattended execution (Scheduled Task), secret handling, the exact
+legacy-to-canonical state-initialization decision (and why), a staged
+cutover procedure with explicit rollback triggers, and rollback steps.
+Supporting scripts live under `agent/deploy/`.
 
-- **Live validation of the new canonical agent on the already-inspected AMH machine** -- continuous read behavior while Tech Logic actively writes, real file-locking behavior, real rotation/truncation behavior, actual CPU/memory/disk footprint, reboot/recovery behavior, and side-by-side parity against the legacy production pipeline over sustained real-world operation. Nothing above can be proven from this repo's tests alone. A staged runbook for this specific visit is ready: `docs/amh-live-validation-runbook.md` (shadow mode, Stages 0-7, stops before any real upload is enabled).
-- Production database schema verification/migration (the Phase E migrations have been run and proven against a disposable Postgres instance, never against production).
-- An audit of any pre-existing NULL `customer_id`/`branch_id` rows in `acs_events` before the tenant-scoped unique index change reaches production (see the Phase E report's known caveat).
-- Windows Service fail-fast supervision behavior (recorded as a design decision in `agent/runtime/supervisor.py`; not yet implemented).
-- Windows Service packaging and an installer.
-- The side-by-side legacy/new-agent validation run itself.
-- Production cutover.
+Status of the items previously tracked here:
 
-None of the above have been started as part of this cleanup phase.
+- ~~Live validation of the new canonical agent~~ -- **done**, passed on
+  schema v3 (see above).
+- ~~Production database schema verification/migration~~ -- **done**
+  (production Neon migrated through `c53c1b536c71`; legacy uploads
+  confirmed working against the current schema).
+- An audit of any pre-existing NULL `customer_id`/`branch_id` rows in
+  `acs_events` (see `c53c1b536c71`'s own caveat) -- **not confirmed as
+  part of this engagement**; added to
+  `docs/amh-production-cutover-runbook.md`'s Stage 1 pre-cutover
+  checklist rather than assumed either way.
+- Windows Service fail-fast supervision (recorded as a design decision
+  in `agent/runtime/supervisor.py`'s `PRODUCTION SUPERVISION POLICY`
+  section) -- **still not implemented**. Flagged as the top follow-up
+  item after cutover in the production runbook; not a blocker for the
+  deliberately-observed first cutover, since Task Scheduler's own
+  restart-on-failure plus active human monitoring cover the gap for
+  that limited window, but it does need to land before longer
+  unattended operation.
+- Windows Service packaging and a real installer -- **deferred**, see
+  the production runbook's "Commercialization / productization work"
+  section. Not needed for a single-branch NBPL cutover on this specific
+  machine.
+- Side-by-side legacy/canonical validation over sustained REAL
+  production traffic -- shadow validation covered parser parity against
+  real files; validating this against real uploads is exactly what the
+  production runbook's staged procedure and observation window (its
+  Stages 6-12) now provide, not yet executed.
+- Production cutover itself -- **not yet performed**; see the runbook.

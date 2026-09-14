@@ -1,0 +1,27 @@
+{
+  "_comment": "Template only -- copy to C:\\ProgramData\\SortView\\config\\agent_runtime_config.json and fill in real values before use. Never commit a copy of this file with real customer_id/branch_id/api_url filled in alongside a real token (the token itself never belongs in this file at all -- see SORTVIEW_API_TOKEN below). See docs/amh-production-cutover-runbook.md for the full cutover procedure this config is one part of.",
+
+  "customer_id": 0,
+  "branch_id": 0,
+  "api_url": "https://sortview-app-2p336.ondigitalocean.app",
+
+  "sources": [
+    { "name": "checkins", "path": "C:\\TLCFinalDlls\\Checkins.txt", "bootstrap_mode": "normal" },
+    { "name": "rejects", "path": "C:\\TLCFinalDlls\\Rejects.txt", "bootstrap_mode": "normal" },
+    { "name": "acs", "path": "C:\\TLCFinalDlls\\ACS Log.txt", "bootstrap_mode": "normal" }
+  ],
+
+  "state_path": "C:\\ProgramData\\SortView\\state\\agent_state.json",
+  "spool_root": "C:\\ProgramData\\SortView\\spool",
+  "agent_identity_path": "C:\\ProgramData\\SortView\\identity\\agent_identity.json",
+  "log_dir": "C:\\ProgramData\\SortView\\logs",
+  "diagnostics_dir": "C:\\ProgramData\\SortView\\diagnostics",
+
+  "agent_version": "0.1.0",
+
+  "_comment_bootstrap": "bootstrap_mode 'normal' seeds each source at ITS CURRENT end-of-file the first time this state_path has no persisted entry for it -- no historical content is ever read. This is deliberate for cutover: do NOT set 'replay' here (see docs/amh-production-cutover-runbook.md's bootstrap analysis for why). This block only takes effect once, the very first time this state_path is used for each source -- irrelevant on every later restart.",
+
+  "_comment_shadow_mode": "REMOVE upload_enabled/heartbeat_enabled entirely for a normal production run (the default, when omitted, is true/true = NORMAL PRODUCTION MODE). Keep both explicitly set to false ONLY while still validating this exact config file in shadow mode one more time before the real cutover.",
+
+  "_comment_token": "SORTVIEW_API_TOKEN is READ FROM THE ENVIRONMENT ONLY -- it must never appear in this file. Set it as a Machine-scope environment variable via agent/deploy/set-sortview-api-token.ps1 before starting the agent."
+}
