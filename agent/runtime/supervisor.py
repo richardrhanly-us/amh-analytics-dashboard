@@ -21,72 +21,72 @@ stop Event is the simplest model that satisfies "one component failure
 does not silently kill unrelated work" without building a supervision
 framework -- deliberately not a goal here.
 
-FAILURE ISOLATION: every component's loop runs inside _run_guarded,
-which catches any exception escaping it, logs it, and records it on
-RuntimeStatus -- then lets that ONE thread end. It never calls
-os._exit/sys.exit and never touches sibling threads. A crashed component
-is visible (health(), and reflected in diagnostics.json via
-Housekeeping) but does not stop already-running siblings.
+FAILURE ISOLATION -> FAIL-FAST (production-cutover correction, replacing
+the policy below): every component's loop still runs inside
+_run_guarded, which catches any exception escaping it and logs it -- but
+now, instead of merely recording the failure and letting that ONE thread
+quietly end while siblings keep going, _run_guarded calls
+_handle_worker_crash, which:
 
-Deliberately does NOT auto-restart a crashed component. Restart-with-
-backoff/flapping-detection is real complexity "keep it boring" argues
-against for this phase -- a crashed component is a visible, actionable
-signal (checked EXPLICITLY by agent.runtime.heartbeat.compute_health_snapshot,
-which folds any dead component into health_status="degraded" -- see that
-module's docstring for why a dead collector in particular would otherwise
-be invisible from spool/state content alone -- and always reflected in
-diagnostics.json), not something silently papered over by respawning.
+  1. records the failure on RuntimeStatus (unchanged -- this is what
+     heartbeat.compute_health_snapshot already folds into
+     health_status="degraded", and what diagnostics.json already
+     reflects via Housekeeping's normal cycle, if it gets one first);
+  2. records WHICH component failed and its error message as this
+     AgentRunner's _first_failure, exactly once -- a second/third
+     component failing (e.g. during the shutdown this first failure
+     itself triggers) is still individually recorded on RuntimeStatus,
+     but never overwrites the original root cause;
+  3. makes a best-effort, exception-swallowed attempt to write ONE
+     diagnostics.json snapshot reflecting the failure immediately -- a
+     local, synchronous file write, not a network call, so there is no
+     shutdown-delay or backend-availability risk in attempting it (see
+     agent/runtime/heartbeat.py's docstring and this module's own SHUTDOWN
+     section below for why a HEARTBEAT is deliberately NOT given the same
+     guarantee);
+  4. sets self.stop_event.
 
-PRODUCTION SUPERVISION POLICY -- recorded now, NOT implemented in this
-pass; this process (agent/main.py) still just waits on stop_event
-indefinitely regardless of component deaths, exactly as before this
-correction. The problem: today, if a critical worker thread (most
-importantly the collector) dies, the three siblings keep running, the
-process keeps running, and nothing here makes the OS-level process exit.
-If this is ever wrapped in a Windows Service, Service Recovery can only
-act on the PROCESS dying -- a process that stays alive forever with one
-permanently-dead internal thread would never trigger a restart, even
-though it has silently stopped doing its job (a dead collector, for
-example, means new AMH events are never captured again, indefinitely,
-with only the heartbeat's health_status="degraded" as the outward signal
--- and if it's the heartbeat thread itself that dies, not even that).
+Setting stop_event is the entire fail-fast trigger: every sibling loop
+already checks it every iteration (see SHUTDOWN below) and returns
+cleanly on its own -- _handle_worker_crash never calls AgentRunner.stop()
+itself (that would try to join the very thread calling it, from inside
+itself) and never calls os._exit/sys.exit directly (see agent/main.py:
+the single call site that owns process exit is main(), not a worker
+thread, so a crash on any worker propagates through the SAME
+stop_event.wait() / AgentRunner.stop() path an operator-requested
+shutdown already uses -- the two cases are only told apart afterward, by
+whether first_failure() is None).
 
-Two policies were evaluated for what should happen next, once this is
-actually implemented ahead of Windows Service packaging:
+Deliberately does NOT auto-restart a crashed component itself.
+Restart-with-backoff/flapping-detection for an INDIVIDUAL thread is real
+complexity "keep it boring" argues against for this phase -- recovery is
+now the WHOLE PROCESS restarting (see PRODUCTION SUPERVISION POLICY
+below), which reuses machinery already proven in this phase's own tests
+(test_restart_resumes_from_persisted_state_and_pending_spool) rather than
+inventing a second, thread-level recovery mechanism alongside it.
 
-  1. FAIL-FAST (RECOMMENDED): an unexpected critical worker death ->
-     log it and record diagnostics (already happens today) -> stop the
-     sibling workers cleanly (AgentRunner.stop(), already implemented)
-     -> the process exits with a non-zero code -> Windows Service
-     Recovery restarts the ENTIRE agent process, which re-bootstraps
-     every component from durably persisted state/spool, exactly like
-     any other clean restart already proven in this phase's tests
-     (test_restart_resumes_from_persisted_state_and_pending_spool).
-     Simple, well-understood, and reuses a recovery mechanism (process
-     restart) that already exists and is already exercised -- Windows
-     Service Recovery options (restart after N seconds, with a reset-
-     failure-count window) are exactly designed for this shape of
-     failure and need no new code here to work correctly.
-  2. BOUNDED WORKER AUTO-RESTART: catch a component death and restart
-     just that one thread, with a capped retry count and backoff.
-     Rejected for this phase: it adds real complexity (flapping
-     detection, a restart budget, deciding whether restarting a
-     collector mid-generation is even safe without re-deriving
-     Supervisor state) for a failure mode that should be RARE in
-     practice (these loops are simple and already extensively tested) --
-     and even a working bounded-restart policy still needs a fallback
-     "give up and exit" path once the budget is exhausted, which is
-     just policy 1 with extra steps in between.
+PRODUCTION SUPERVISION POLICY -- IMPLEMENTED (previously recorded here as
+a decision deferred until Windows Service/Scheduled Task packaging;
+implemented now that that packaging exists -- see
+docs/amh-production-cutover-runbook.md). Policy chosen: FAIL-FAST. An
+unexpected critical worker death -> log it and record diagnostics (see
+FAILURE ISOLATION above) -> stop_event set -> sibling workers wind down
+via their own existing stop_event checks -> AgentRunner.stop() (called
+from agent/main.py's main(), already implemented, already bounded by a
+timeout) joins everyone -> main() observes runner.first_failure() is not
+None -> the PROCESS exits with a non-zero code -> Windows Task
+Scheduler's restart-on-failure (or, later, Windows Service Recovery)
+restarts the ENTIRE agent process, which re-bootstraps every component
+from durably persisted state/spool, exactly like any other clean restart.
 
-RECOMMENDATION: fail-fast (policy 1) is the simplest reliable choice and
-should be implemented as a small, explicit change (each component's
-crash path calls a Supervisor method that stops siblings and calls
-sys.exit(1) instead of merely recording the failure) BEFORE this runtime
-is packaged as a Windows Service -- not before, since without a Service
-Recovery policy configured, a bare process exit is strictly worse than
-the current "stays up, visibly degraded" behavior for a human operator
-watching it run interactively. Tracked here explicitly so this analysis
-doesn't need to be redone at packaging time.
+A BOUNDED WORKER AUTO-RESTART policy (catch a component death and retry
+just that one thread, with a capped budget) was considered and rejected
+for the same reason recorded here previously: real added complexity
+(flapping detection, a restart budget, whether restarting a collector
+mid-generation is even safe without re-deriving Supervisor state) for a
+failure mode expected to be rare, when a working bounded-restart policy
+still needs a "give up and exit" fallback once its budget is exhausted --
+which is just fail-fast with extra steps in between.
 
 SHUTDOWN: stop() sets the shared Event. Every loop's sleep is
 stop_event.wait(delay), which returns immediately once the event is set,
@@ -112,7 +112,7 @@ from .. import identity
 from .collector import CollectorCycleReport, SourceCollector
 from .config import RuntimeConfig
 from .heartbeat import Heartbeat
-from .housekeeping import Housekeeping
+from .housekeeping import Housekeeping, write_diagnostics_snapshot
 from .http_client import build_session
 from .logging_setup import configure_logging, get_component_logger
 from .status import RuntimeStatus
@@ -165,6 +165,15 @@ class AgentRunner:
 
         self._threads: list[threading.Thread] = []
 
+        # Fail-fast root cause: the FIRST component crash's (name, error)
+        # pair, set at most once -- see _handle_worker_crash and this
+        # module's docstring's FAILURE ISOLATION section. None means no
+        # component has crashed (which is also true after a normal,
+        # intentionally-requested shutdown -- a clean stop_event.wait()
+        # return never touches this).
+        self._first_failure: tuple[str, str] | None = None
+        self._failure_lock = threading.Lock()
+
     # --- guarded loop wrapper -------------------------------------------
 
     def _run_guarded(self, name: str, loop_fn: Any) -> None:
@@ -172,8 +181,65 @@ class AgentRunner:
         try:
             loop_fn()
         except Exception as exc:
-            self.logger.exception("Component %s crashed", name)
-            self.status.record_component_failed(name, str(exc))
+            self._handle_worker_crash(name, exc)
+
+    def _handle_worker_crash(self, name: str, exc: Exception) -> None:
+        """Called synchronously from _run_guarded's except block (so
+        sys.exc_info() -- and therefore self.logger.exception's traceback
+        -- is still valid here) for exactly one worker's crash.
+
+        Ordered by EXPLICIT priority, not just program convenience: (1)
+        fail correctly / let siblings start stopping, (2) record local
+        diagnostics, (3) [never: a forced final heartbeat -- see
+        agent/runtime/heartbeat.py's docstring]. Recording status and
+        setting stop_event happen FIRST and are never delayed by, or
+        allowed to fail because of, the diagnostics write below -- that
+        write is wrapped in its own try/except specifically so a local
+        I/O failure there can never prevent (or even delay) the fail-fast
+        trigger.
+        """
+        error_text = str(exc)
+        self.logger.exception("Component %s crashed", name)
+        self.status.record_component_failed(name, error_text)
+
+        with self._failure_lock:
+            if self._first_failure is None:
+                self._first_failure = (name, error_text)
+
+        # THE fail-fast trigger -- set BEFORE the diagnostics write below,
+        # so siblings start winding down immediately rather than waiting
+        # on a local file write first. Thread-safe from any thread
+        # (that's the whole contract of threading.Event); never calls
+        # self.stop() or sys.exit/os._exit directly from here -- see this
+        # module's docstring for why (self-join risk; main() owns process
+        # exit).
+        self.stop_event.set()
+
+        try:
+            write_diagnostics_snapshot(
+                self.cfg,
+                self.status,
+                agent_id=self.agent_id,
+                agent_version=self.cfg.agent_version,
+                started_at=self.started_at,
+            )
+        except Exception:
+            # Best-effort only -- see this method's docstring. A failure
+            # writing diagnostics must never prevent fail-fast shutdown,
+            # which has already been triggered by this point regardless.
+            self.logger.exception(
+                "Failed to write diagnostics snapshot while handling %s crash", name
+            )
+
+    def first_failure(self) -> tuple[str, str] | None:
+        """(component_name, error_message) for the first component that
+        crashed this run, or None if none has (including after a normal,
+        intentionally-requested shutdown). This is what agent/main.py's
+        main() checks, AFTER AgentRunner.stop() has finished joining
+        every thread, to decide the process's exit code -- see this
+        module's docstring's PRODUCTION SUPERVISION POLICY section."""
+        with self._failure_lock:
+            return self._first_failure
 
     # --- collector loop --------------------------------------------------
 

@@ -26,6 +26,27 @@ minimal and safe to run inside a signal handler); the actual shutdown
 sequence (joining every component thread, bounded by a timeout) runs on
 the main thread after it wakes from waiting on that event -- never inside
 the handler itself.
+
+EXIT CODE CONTRACT (fail-fast production-supervision correction):
+  0  -- clean run: either a config/argument error was never reached
+        (normal case), or the process ran and shut down because
+        stop_event was set by an intentional SIGINT/SIGTERM.
+  1  -- an unhandled exception escaped one of the four worker threads
+        (collector/uploader/heartbeat/housekeeping) during this run --
+        see AgentRunner._handle_worker_crash in
+        agent/runtime/supervisor.py. The crashing worker's own
+        stop_event.set() call is what wakes THIS wait() below; main()
+        distinguishes crash from clean shutdown by checking
+        AgentRunner.first_failure() (never set on a clean shutdown), not
+        by stop_event's state, since both cases set the same Event.
+  2  -- config error (--config missing/invalid, SORTVIEW_API_TOKEN
+        unset, etc.) -- caught before AgentRunner is even constructed.
+
+This is what lets an external process supervisor (Windows Task
+Scheduler's "restart if the task fails" setting, or later Windows
+Service Recovery) detect a worker crash and restart the whole process --
+it depends on the PROCESS actually exiting non-zero, not merely on an
+internal log line.
 """
 
 from __future__ import annotations
@@ -64,6 +85,23 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     runner.stop_event.wait()
     runner.stop(timeout=args.shutdown_timeout)
+
+    # runner.stop_event is set either by the signal handler above (an
+    # intentional, operator-requested shutdown) or by a worker crash (see
+    # agent/runtime/supervisor.py's AgentRunner._handle_worker_crash) --
+    # the two are indistinguishable from stop_event alone, which is why
+    # AgentRunner.first_failure() (set ONLY on a real crash, never on a
+    # clean stop_event.wait() return) is the exit-code decision, not
+    # stop_event's own state.
+    failure = runner.first_failure()
+    if failure is not None:
+        component, error = failure
+        print(
+            f"SortView agent exiting non-zero -- component {component!r} crashed: {error}",
+            file=sys.stderr,
+        )
+        return 1
+
     return 0
 
 

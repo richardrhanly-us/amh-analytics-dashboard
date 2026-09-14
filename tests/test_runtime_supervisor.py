@@ -159,7 +159,78 @@ def test_clean_shutdown_leaves_unacknowledged_spool_data_intact(tmp_path):
     assert spool.read_batch(path) == [{"barcode": "1", "source_event_id": "b" * 64}]
 
 
-def test_one_component_failure_is_surfaced_without_stopping_siblings(tmp_path):
+# --- fail-fast worker supervision -------------------------------------
+#
+# Central property under test: ComponentHealth.alive is NEVER a reliable
+# signal for "did this thread stop" -- it only ever flips to False on a
+# CRASH (RuntimeStatus.record_component_failed); a clean, intentional
+# thread exit never touches it, so it stays True forever even after the
+# thread has genuinely stopped. That's WHY the old versions of these
+# tests (asserting "collector.alive is True" to mean "collector is still
+# running") were never actually proving what their names claimed, and
+# why two of them happened to keep passing by an unrelated timing race
+# even after fail-fast was implemented, while the other two failed
+# outright -- see git history for the previous, pre-fail-fast versions.
+# The two RELIABLE signals used throughout below are:
+#   - runner.first_failure() -- set exactly once, only on a real crash.
+#   - real OS thread liveness (t.is_alive() for t in runner._threads)
+#     -- the only trustworthy way to prove a sibling actually stopped.
+
+
+def _crash_report(runner, name: str, message: str) -> dict:
+    """Common assertions for 'component `name` crashed with `message`'."""
+    health = runner.health()
+    assert health[name].alive is False
+    assert message in (health[name].last_error or "")
+    return health
+
+
+def test_collector_crash_triggers_fail_fast_shutdown(tmp_path):
+    cfg = _cfg(tmp_path)
+    runner, _session = _make_runner(tmp_path, cfg=cfg)
+
+    def boom():
+        raise RuntimeError("simulated collector crash")
+
+    runner._collector_loop = boom  # type: ignore[method-assign]
+
+    runner.start()
+    try:
+        assert _wait_until(lambda: runner.first_failure() is not None, timeout=3.0)
+        assert runner.first_failure() == ("collector", "simulated collector crash")
+        _crash_report(runner, "collector", "simulated collector crash")
+
+        # Fail-fast: the crash must make EVERY thread (not just the
+        # crashed one) wind down on its own, via the shared stop_event --
+        # this is the actual proof siblings were told to stop.
+        assert runner.stop_event.is_set()
+        assert _wait_until(lambda: all(not t.is_alive() for t in runner._threads), timeout=5.0)
+    finally:
+        runner.stop(timeout=5.0)
+
+
+def test_uploader_crash_triggers_fail_fast_shutdown(tmp_path):
+    cfg = _cfg(tmp_path)
+    runner, _session = _make_runner(tmp_path, cfg=cfg)
+
+    def boom():
+        raise RuntimeError("simulated uploader crash")
+
+    runner._uploader_run_forever_with_status = boom  # type: ignore[method-assign]
+
+    runner.start()
+    try:
+        assert _wait_until(lambda: runner.first_failure() is not None, timeout=3.0)
+        assert runner.first_failure() == ("uploader", "simulated uploader crash")
+        _crash_report(runner, "uploader", "simulated uploader crash")
+
+        assert runner.stop_event.is_set()
+        assert _wait_until(lambda: all(not t.is_alive() for t in runner._threads), timeout=5.0)
+    finally:
+        runner.stop(timeout=5.0)
+
+
+def test_heartbeat_crash_triggers_fail_fast_shutdown(tmp_path):
     cfg = _cfg(tmp_path)
     runner, _session = _make_runner(tmp_path, cfg=cfg)
 
@@ -170,69 +241,22 @@ def test_one_component_failure_is_surfaced_without_stopping_siblings(tmp_path):
 
     runner.start()
     try:
-        assert _wait_until(lambda: not runner.health().get("heartbeat", type("x", (), {"alive": True})()).alive)
-        health = runner.health()
-        assert health["heartbeat"].alive is False
-        assert "simulated heartbeat crash" in (health["heartbeat"].last_error or "")
-        # Siblings must still be running.
-        assert _wait_until(lambda: runner.health().get("collector") is not None and runner.health()["collector"].alive)
+        assert _wait_until(lambda: runner.first_failure() is not None, timeout=3.0)
+        assert runner.first_failure() == ("heartbeat", "simulated heartbeat crash")
+        _crash_report(runner, "heartbeat", "simulated heartbeat crash")
+
+        # Explicitly the regression case this whole correction targets:
+        # a dead heartbeat can never report its own death over the wire
+        # (see agent/runtime/heartbeat.py's own CAVEAT docstring section)
+        # -- fail-fast is what makes that failure visible at all, via the
+        # process itself exiting, not via one more heartbeat call.
+        assert runner.stop_event.is_set()
+        assert _wait_until(lambda: all(not t.is_alive() for t in runner._threads), timeout=5.0)
     finally:
         runner.stop(timeout=5.0)
 
 
-def test_collector_thread_death_makes_heartbeat_report_degraded_not_healthy(tmp_path):
-    # The exact regression scenario: a dead collector produces no new
-    # pending batches, no quarantine activity, nothing that would
-    # otherwise move any other health signal -- before the fix, this
-    # heartbeat would have kept reporting "healthy" forever.
-    cfg = _cfg(tmp_path)
-    runner, session = _make_runner(tmp_path, cfg=cfg)
-
-    def boom():
-        raise RuntimeError("simulated collector crash")
-
-    runner._collector_loop = boom  # type: ignore[method-assign]
-
-    runner.start()
-    try:
-        assert _wait_until(lambda: not runner.health().get("collector", type("x", (), {"alive": True})()).alive)
-        assert _wait_until(lambda: len(session.status_calls) >= 1, timeout=3.0)
-
-        # Every heartbeat sent AFTER the collector died must report degraded.
-        assert _wait_until(
-            lambda: session.status_calls and session.status_calls[-1][1]["health_status"] == "degraded",
-            timeout=3.0,
-        )
-        last_payload = session.status_calls[-1][1]
-        assert "collector" in (last_payload["last_error"] or "")
-    finally:
-        runner.stop(timeout=5.0)
-
-
-def test_uploader_thread_death_makes_heartbeat_report_degraded(tmp_path):
-    cfg = _cfg(tmp_path)
-    runner, session = _make_runner(tmp_path, cfg=cfg)
-
-    def boom():
-        raise RuntimeError("simulated uploader crash")
-
-    runner._uploader_run_forever_with_status = boom  # type: ignore[method-assign]
-
-    runner.start()
-    try:
-        assert _wait_until(lambda: not runner.health().get("uploader", type("x", (), {"alive": True})()).alive)
-        assert _wait_until(
-            lambda: session.status_calls and session.status_calls[-1][1]["health_status"] == "degraded",
-            timeout=3.0,
-        )
-    finally:
-        runner.stop(timeout=5.0)
-
-
-def test_housekeeping_thread_death_marks_component_dead_but_pipeline_keeps_running(tmp_path):
-    # housekeeping death still degrades the OVERALL health computation
-    # (per the uniform policy adopted in heartbeat.py), but must not stop
-    # collection/upload from continuing to function.
+def test_housekeeping_crash_triggers_fail_fast_shutdown(tmp_path):
     cfg = _cfg(tmp_path)
     runner, session = _make_runner(tmp_path, cfg=cfg)
 
@@ -243,17 +267,134 @@ def test_housekeeping_thread_death_marks_component_dead_but_pipeline_keeps_runni
 
     runner.start()
     try:
-        assert _wait_until(lambda: not runner.health().get("housekeeping", type("x", (), {"alive": True})()).alive)
+        assert _wait_until(lambda: runner.first_failure() is not None, timeout=3.0)
+        assert runner.first_failure() == ("housekeeping", "simulated housekeeping crash")
+        _crash_report(runner, "housekeeping", "simulated housekeeping crash")
 
+        assert runner.stop_event.is_set()
+        assert _wait_until(lambda: all(not t.is_alive() for t in runner._threads), timeout=5.0)
+
+        # The old behavior this replaces let collection/upload keep going
+        # after housekeeping died ("pipeline keeps running"). Fail-fast
+        # means that is no longer true -- a new checkin written AFTER the
+        # crash must never be uploaded, because the collector has already
+        # stopped too.
         with open(tmp_path / "Checkins.txt", "a", encoding="utf-8") as f:
-            f.write(CHECKIN_LINE.format(barcode="STILLWORKS1"))
-        assert _wait_until(lambda: len(session.upload_calls) >= 1, timeout=5.0)
-        assert session.upload_calls[0][1]["checkins"][0]["barcode"] == "STILLWORKS1"
+            f.write(CHECKIN_LINE.format(barcode="NEVER_UPLOADED"))
+        time.sleep(0.3)
+        assert session.upload_calls == []
+    finally:
+        runner.stop(timeout=5.0)
 
-        assert _wait_until(
-            lambda: session.status_calls and session.status_calls[-1][1]["health_status"] == "degraded",
-            timeout=3.0,
-        )
+
+def test_intentional_shutdown_reports_no_failure(tmp_path):
+    """Requirement E: stop_event set intentionally (as agent/main.py's
+    signal handler does) must never be mistaken for a crash."""
+    cfg = _cfg(tmp_path)
+    runner, _session = _make_runner(tmp_path, cfg=cfg)
+
+    runner.start()
+    _wait_until(lambda: len(runner.health()) == 4)
+
+    runner.stop_event.set()  # exactly what the SIGINT/SIGTERM handler does
+    runner.stop(timeout=5.0)
+
+    assert runner.first_failure() is None
+    assert all(h.alive for h in runner.health().values())
+    assert all(not t.is_alive() for t in runner._threads)
+
+
+def test_simultaneous_crashes_preserve_a_single_root_cause_without_deadlock(tmp_path):
+    """Requirement F: two workers crashing at effectively the same time
+    must not corrupt/lose the root cause, and must not deadlock."""
+    cfg = _cfg(tmp_path)
+    runner, _session = _make_runner(tmp_path, cfg=cfg)
+
+    def boom_collector():
+        raise RuntimeError("simulated collector crash")
+
+    def boom_uploader():
+        raise RuntimeError("simulated uploader crash")
+
+    runner._collector_loop = boom_collector  # type: ignore[method-assign]
+    runner._uploader_run_forever_with_status = boom_uploader  # type: ignore[method-assign]
+
+    runner.start()
+    try:
+        assert _wait_until(lambda: all(not t.is_alive() for t in runner._threads), timeout=5.0)
+
+        # Exactly one root cause is recorded, and it's one of the two
+        # real crashes -- never None, never corrupted, never a mix.
+        failure = runner.first_failure()
+        assert failure is not None
+        assert failure[0] in ("collector", "uploader")
+        assert failure[1] in ("simulated collector crash", "simulated uploader crash")
+
+        # BOTH crashes are still independently visible on RuntimeStatus --
+        # losing the second one just because it didn't win the
+        # first-failure race would be a real data loss, not just a
+        # reporting nuance.
+        health = runner.health()
+        assert health["collector"].alive is False
+        assert health["uploader"].alive is False
+    finally:
+        runner.stop(timeout=5.0)
+
+
+def test_hung_sibling_does_not_block_bounded_shutdown_after_a_crash(tmp_path):
+    """Requirement G: if a sibling ignores stop_event (doesn't cooperate
+    with shutdown promptly), AgentRunner.stop()'s pre-existing bounded
+    join must still return within its timeout, not hang. This is the
+    property that keeps a crash-triggered shutdown safe for
+    agent/main.py to wait on with a finite --shutdown-timeout."""
+    cfg = _cfg(tmp_path)
+    runner, _session = _make_runner(tmp_path, cfg=cfg)
+
+    def boom():
+        raise RuntimeError("simulated collector crash")
+
+    def stuck(*, stop_event, **kwargs):
+        # Deliberately never checks stop_event -- simulates a sibling
+        # that doesn't cooperate with shutdown.
+        time.sleep(10.0)
+
+    runner._collector_loop = boom  # type: ignore[method-assign]
+    runner.housekeeping.run_forever = stuck  # type: ignore[method-assign]
+
+    runner.start()
+    assert _wait_until(lambda: runner.first_failure() is not None, timeout=3.0)
+
+    start = time.monotonic()
+    runner.stop(timeout=2.0)
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 5.0  # bounded -- nowhere near the stuck thread's 10s sleep
+    assert runner.first_failure() == ("collector", "simulated collector crash")
+
+
+def test_diagnostics_snapshot_reflects_crashed_component(tmp_path):
+    """Requirement H: the failed component and its root exception must be
+    observable locally (diagnostics.json), not only inferable from the
+    process having exited."""
+    cfg = _cfg(tmp_path)
+    runner, _session = _make_runner(tmp_path, cfg=cfg)
+
+    def boom():
+        raise RuntimeError("simulated collector crash for diagnostics")
+
+    runner._collector_loop = boom  # type: ignore[method-assign]
+
+    runner.start()
+    try:
+        assert _wait_until(lambda: runner.first_failure() is not None, timeout=3.0)
+
+        diagnostics_path = cfg.diagnostics_dir / "diagnostics.json"
+        assert _wait_until(lambda: diagnostics_path.exists(), timeout=3.0)
+
+        document = json.loads(diagnostics_path.read_text(encoding="utf-8"))
+        collector_entry = document["components"]["collector"]
+        assert collector_entry["alive"] is False
+        assert "simulated collector crash for diagnostics" in (collector_entry["last_error"] or "")
     finally:
         runner.stop(timeout=5.0)
 
