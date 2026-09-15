@@ -37,6 +37,7 @@
 param(
     [string]$InstallRoot = "C:\SortView\Collector",
     [string]$ConfigPath = "C:\ProgramData\SortViewCollector\config\collector_config.json",
+    [string]$TaskName = "SortView Collector",
     [string]$Principal = "SYSTEM",
     [int]$CadenceMinutes = 15,
     [int]$RestartCount = 3,
@@ -47,7 +48,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$TaskName = "SortView Collector"
+if ($TaskName -eq "sortview-scheduler") {
+    throw "Refusing to register under the legacy continuous-agent task name 'sortview-scheduler'."
+}
 
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -76,16 +79,26 @@ if ($existing -and $Force) {
 
 $xmlPath = Join-Path $env:TEMP "sortview-collector-task-$([guid]::NewGuid().ToString('N')).xml"
 try {
-    & $VenvPython -m collector.task_settings `
-        --python-exe $VenvPython `
-        --config-path $ConfigPath `
-        --working-dir $InstallRoot `
-        --output $xmlPath `
-        --principal $Principal `
-        --cadence-minutes $CadenceMinutes `
-        --restart-count $RestartCount `
-        --restart-interval-minutes $RestartIntervalMinutes `
-        --execution-time-limit-hours $ExecutionTimeLimitHours
+    # -m collector.task_settings resolves the `collector` package via the
+    # PROCESS'S OWN working directory, not this script's -- install-collector.ps1
+    # copies collector\*.py under -InstallRoot, so the child process must be
+    # started there (not wherever this script happens to be invoked from), or
+    # ModuleNotFoundError: No module named 'collector' results.
+    Push-Location $InstallRoot
+    try {
+        & $VenvPython -m collector.task_settings `
+            --python-exe $VenvPython `
+            --config-path $ConfigPath `
+            --working-dir $InstallRoot `
+            --output $xmlPath `
+            --principal $Principal `
+            --cadence-minutes $CadenceMinutes `
+            --restart-count $RestartCount `
+            --restart-interval-minutes $RestartIntervalMinutes `
+            --execution-time-limit-hours $ExecutionTimeLimitHours
+    } finally {
+        Pop-Location
+    }
     if ($LASTEXITCODE -ne 0) { throw "XML generation failed (exit $LASTEXITCODE)" }
 
     schtasks /create /xml $xmlPath /tn $TaskName

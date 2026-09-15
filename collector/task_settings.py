@@ -115,10 +115,17 @@ def build_task_xml(definition: TaskDefinition) -> str:
         when the next trigger fires, the new one is skipped rather than
         running concurrently -- matches the overlap policy already
         proven safe in live production for the legacy task.
-      - RestartOnFailure: the mechanism that makes collector/run.py's
-        fatal-exit-nonzero contract meaningful -- a failed run (exit
-        code 1 or 2) gets retried automatically before falling back to
-        the next normal 15-minute cycle.
+      - RestartOnFailure: configured to match the legacy task's own
+        value (3 attempts, 5 minutes apart), kept because there is no
+        harm in leaving it set -- but NOT relied on for resilience.
+        Phase 4d Section H live-tested this in isolation on LIB-L26 (a
+        trivial process exiting 1, and separately exiting 2, under this
+        exact RestartOnFailure config) and no restart ever fired for
+        either. Recovery instead comes from collector/run.py's own
+        design: a nonzero exit never persists state, so the next normal
+        15-minute scheduled run simply re-reads and re-sends the same
+        uncommitted work. See collector/run.py's module docstring
+        (RECOVERY MODEL) for the full explanation.
       - ExecutionTimeLimit: a bound on a single run, matching the
         proven-live legacy value. Unlike the (frozen, unused)
         continuous agent's task, this is NOT set to unlimited -- the

@@ -47,11 +47,11 @@
 param(
     [string]$InstallRoot = "C:\SortView\Collector",
     [string]$ConfigPath = "C:\ProgramData\SortViewCollector\config\collector_config.json",
+    [string]$TaskName = "SortView Collector",
     [string]$PythonExe = "python"
 )
 
 $ErrorActionPreference = "Stop"
-$TaskName = "SortView Collector"
 
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -114,8 +114,17 @@ Set-Content -Path $hashMarkerPath -Value $newHash -Encoding utf8
 
 Write-Host "=== 4. Verify the new runtime ===" -ForegroundColor Cyan
 $VenvPython = Join-Path $InstallRoot ".venv\Scripts\python.exe"
-& $VenvPython -m collector.preflight --config $ConfigPath
-$preflightExitCode = $LASTEXITCODE
+# Same fix as register-collector-task.ps1: -m collector.preflight resolves
+# the `collector` package via the PROCESS'S OWN working directory, which
+# must be -InstallRoot (where the collector\*.py package actually lives),
+# not wherever this script was invoked from.
+Push-Location $InstallRoot
+try {
+    & $VenvPython -m collector.preflight --config $ConfigPath
+    $preflightExitCode = $LASTEXITCODE
+} finally {
+    Pop-Location
+}
 
 if ($preflightExitCode -ne 0) {
     Write-Host ""

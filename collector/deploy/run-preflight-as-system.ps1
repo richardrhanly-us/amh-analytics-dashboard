@@ -65,7 +65,7 @@ if (-not (Test-Path $VenvPython)) {
 }
 
 $ResultPath = Join-Path $env:TEMP "sortview-collector-preflight-system-$([guid]::NewGuid().ToString('N')).json"
-$Arguments = "-m collector.preflight --config `"$ConfigPath`" --output `"$ResultPath`""
+$PreflightArgs = "-m collector.preflight --config `"$ConfigPath`" --output `"$ResultPath`""
 
 $cleanupDone = $false
 function Remove-TempTask {
@@ -80,9 +80,71 @@ function Remove-TempTask {
     $script:cleanupDone = $true
 }
 
+$taskXmlPath = Join-Path $env:TEMP "sortview-collector-preflight-system-task-$([guid]::NewGuid().ToString('N')).xml"
 try {
     Write-Host "Registering temporary task '$TempTaskName' (principal: $Principal)..."
-    schtasks /create /tn $TempTaskName /tr "`"$VenvPython`" $Arguments" /sc once /st 00:00 /ru $Principal /f | Out-Null
+
+    # Built as XML rather than `schtasks /create /tr "..."`, for two
+    # reasons found by actually running this script against the
+    # validation paths (not by inspection alone):
+    #   1. `/tr` has an undocumented-until-you-hit-it 261-character limit
+    #      on the whole command string -- the full venv python path plus
+    #      --config/--output arguments (each an absolute path) exceeded
+    #      it under Phase 4d's longer, deliberately-distinct validation
+    #      paths (schtasks error: "Value for '/tr' option cannot be more
+    #      than 261 character(s)"). XML has no such limit.
+    #   2. A task created via plain `/tr` has no working directory of its
+    #      own -- `python -m collector.preflight` then can't resolve the
+    #      `collector` package (ModuleNotFoundError), since the package
+    #      lives under -InstallRoot, not wherever Task Scheduler defaults
+    #      an unset "start in" to. <WorkingDirectory> below fixes this the
+    #      same way register-collector-task.ps1's real task XML already
+    #      does.
+    function Escape-TaskXml([string]$text) {
+        return $text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace('"', "&quot;")
+    }
+    $escapedCommand = Escape-TaskXml($VenvPython)
+    $escapedArgs = Escape-TaskXml($PreflightArgs)
+    $escapedWorkingDir = Escape-TaskXml($InstallRoot)
+    $escapedPrincipal = Escape-TaskXml($Principal)
+
+    $taskXml = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Temporary SortView Collector SYSTEM-context preflight validation task. Self-removing. Never confused with the real production task or C:\SortViewAgent.</Description>
+  </RegistrationInfo>
+  <Triggers />
+  <Principals>
+    <Principal id="Author">
+      <UserId>$escapedPrincipal</UserId>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <ExecutionTimeLimit>PT10M</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>$escapedCommand</Command>
+      <Arguments>$escapedArgs</Arguments>
+      <WorkingDirectory>$escapedWorkingDir</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
+"@
+    [System.IO.File]::WriteAllText($taskXmlPath, $taskXml, [System.Text.Encoding]::Unicode)
+
+    schtasks /create /xml $taskXmlPath /tn $TempTaskName /f | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "schtasks /create failed (exit $LASTEXITCODE)" }
 
     Write-Host "Starting it now (not waiting for the placeholder scheduled time)..."
@@ -132,5 +194,6 @@ try {
 } finally {
     Remove-TempTask
     Remove-Item $ResultPath -ErrorAction SilentlyContinue
+    Remove-Item $taskXmlPath -ErrorAction SilentlyContinue
     Write-Host "Temporary validation task and result file cleaned up."
 }
