@@ -23,12 +23,30 @@ or left unmaintained later. Where a docstring says "mirrors" a continuous-
 agent module, that means the CONCEPT was reused deliberately, per the
 approved Phase 2 architecture -- not that any code was copied or imported.
 
-Scope of what lives here (Phase 4a): incremental reading, state/status
-persistence, config loading, and the upload client -- one bounded,
-one-shot run: read new records, parse (via the existing, UNCHANGED
-agent/parser/* modules -- parser behavior is explicitly out of scope for
-this phase), upload, persist state, log status, exit. No spool, no
-daemon, no supervisor, no long-running threads.
+Scope of what lives here:
+  - Phase 4a: incremental reading, state/status persistence, config
+    loading, and the upload client -- one bounded, one-shot run: read
+    new records, parse (via the existing, UNCHANGED agent/parser/*
+    modules -- parser behavior is explicitly out of scope for this
+    phase), upload, persist state, log status, exit. No spool, no
+    daemon, no supervisor, no long-running threads.
+  - Phase 4c: install/preflight/Scheduled Task productization
+    (collector/preflight.py, collector/task_settings.py,
+    collector/support_info.py, collector/deploy/*.ps1) -- makes the
+    Phase 4a runtime installable, verifiable under the real Scheduled
+    Task identity, and operable by a library IT administrator. The
+    production parser wiring gate from Phase 4a is unchanged and
+    unbypassed: the registered task runs, and fails closed, exactly as
+    Phase 4a left it, until a separate, later parser-parity phase wires
+    in the real Tech Logic parser.
 """
 
 from __future__ import annotations
+
+# Simple semver, same reasoning as agent_version's (agent/runtime/config.py):
+# staying below 1.0.0 deliberately, since production parser wiring, real
+# SYSTEM-context validation, and onsite reboot/proxy validation are all
+# still pending -- see docs/collector-v1-admin-guide.md's validation
+# checklist. Bump to 1.0.0 once those are complete and this has actually
+# run a real production cutover.
+__version__ = "0.1.0"

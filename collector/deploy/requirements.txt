@@ -1,0 +1,23 @@
+# SortView Collector v1 runtime dependencies -- deliberately MINIMAL,
+# matching what collector/*.py actually imports today (stdlib + requests,
+# which itself depends on urllib3/certifi/idna/charset-normalizer). This
+# is NOT the repository's own requirements.txt (that file is for the
+# Streamlit dashboard + FastAPI backend, which the collector must never
+# need -- see collector/preflight.py's no_direct_database_dependency
+# check, which exists specifically because the live AMH machine's agent
+# venv was once found with psycopg2-binary/SQLAlchemy installed despite
+# never using them, most likely from installing the full repo requirements
+# file instead of a minimal one like this).
+#
+# Versions pinned to what was directly verified running in live NBPL
+# production during the Phase 1 AMH machine audit (Python 3.14.3,
+# requests 2.33.1, urllib3 2.6.3) -- not merely what happens to resolve
+# in this repo's own development virtual environment, which is a
+# separate, unrelated install.
+#
+# When the parser-parity phase wires in the real Tech Logic parser, it
+# will need pandas -- deliberately NOT added here yet, since this file
+# should only ever list what the CURRENT collector code actually imports.
+
+requests==2.33.1
+urllib3==2.6.3
