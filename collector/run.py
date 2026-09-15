@@ -47,13 +47,26 @@ FATAL FAILURES EXIT NONZERO: main() is the single place that decides the
 process exit code. A config error exits 2 (matches the continuous
 agent's own convention, agent/main.py). Anything else that prevents a
 normal "completed" or "failed-cleanly" run -- including a bug this
-module didn't anticipate -- is caught at the top of main() and exits 1,
-so Task Scheduler's RestartOnFailure policy (confirmed live: 3 attempts,
-5 minutes apart) actually activates. A cleanly-detected upload failure
-(run_once returning exit_code=1 on its own, having already logged and
-written status) is not treated any differently from an unexpected crash
-at this level -- both must produce the same nonzero signal to Task
-Scheduler, which is the whole point.
+module didn't anticipate -- is caught at the top of main() and exits 1.
+A cleanly-detected upload failure (run_once returning exit_code=1 on its
+own, having already logged and written status) is not treated any
+differently from an unexpected crash at this level -- both produce the
+same nonzero signal.
+
+RECOVERY MODEL (corrected, Phase 4d Section H -- live-tested on LIB-L26,
+not assumed): a nonzero exit here does NOT get retried by Task
+Scheduler's RestartOnFailure setting -- isolated live testing proved
+that setting does not activate for a process that starts and exits
+cleanly with a nonzero code (tested for both exit 1 and exit 2; no
+restart fired within its configured 5-minute interval in either case).
+The setting is left configured (harmless, matches legacy production's
+own value) but is NOT relied on for resilience. The actual recovery
+mechanism is simpler and already correct without it: state is only
+persisted on a fully successful run (see MULTI-BATCH STATE SEMANTICS
+above), so a nonzero exit leaves the prior committed offsets untouched,
+and the NEXT NORMAL 15-MINUTE SCHEDULED RUN re-reads and re-sends the
+same uncommitted work -- no custom retry wrapper, supervisor, or daemon
+is needed or planned for this.
 """
 
 from __future__ import annotations

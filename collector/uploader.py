@@ -7,15 +7,20 @@ an oversight):
      requests.Session): a few bounded retries for a brief network-level
      blip WITHIN one logical attempt -- a connection reset, one 429/5xx
      that clears immediately.
-  2. THE NEXT SCHEDULED RUN, 15 minutes later, or Task Scheduler's own
-     confirmed-live RestartOnFailure policy (3 attempts, 5 minutes apart)
-     for a failure that crashes the whole process. There is deliberately
-     NO third, application-level exponential-backoff-across-cycles loop
-     here (unlike the continuous agent's uploader) -- Task Scheduler
-     already IS that mechanism for a one-shot batch script, confirmed
-     configured in live production. Building a second one would be
-     exactly the kind of unrequested persistent-agent-style complexity
-     this phase is explicitly scoped to avoid.
+  2. THE NEXT SCHEDULED RUN, 15 minutes later, for a failure that ends
+     the whole process. Task Scheduler's RestartOnFailure setting (3
+     attempts, 5 minutes apart) is configured on the registered task but
+     is NOT this layer -- Phase 4d Section H live-tested it in isolation
+     on LIB-L26 (a trivial process exiting 1, and separately exiting 2,
+     with the identical RestartOnFailure config) and it did not restart
+     either one. The 15-minute cadence, not RestartOnFailure, is what
+     actually provides recovery here. There is deliberately NO third,
+     application-level exponential-backoff-across-cycles loop (unlike the
+     continuous agent's uploader) -- building one would be exactly the
+     kind of unrequested persistent-agent-style complexity this phase is
+     explicitly scoped to avoid; the next normal scheduled run already
+     re-sends any uncommitted work safely, per collector/run.py's
+     MULTI-BATCH STATE SEMANTICS.
 
 BATCHING: records are split into batches of at most
 cfg.max_records_per_batch, each batch's checkins/rejects/acs interleaved

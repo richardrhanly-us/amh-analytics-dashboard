@@ -1,9 +1,12 @@
 """Tests for collector/run.py::main() -- the CLI entry point's exit-code
-contract (Phase 4a). This is the exact signal Task Scheduler's
-RestartOnFailure policy (confirmed live: 3 attempts, 5 minutes apart)
-depends on -- a cleanly-detected failure and an unanticipated crash must
-both produce the same nonzero exit, and a normal/failed-but-handled run
-must never be confused with each other.
+contract (Phase 4a). A cleanly-detected failure and an unanticipated
+crash must both produce the same nonzero exit, and a normal/failed-but-
+handled run must never be confused with each other -- this is what lets
+the next normal 15-minute scheduled run recognize uncommitted work and
+retry it (see collector/run.py's module docstring, RECOVERY MODEL).
+Task Scheduler's RestartOnFailure setting is NOT this mechanism -- Phase
+4d Section H live-tested it on LIB-L26 and found it does not activate
+for a clean nonzero exit.
 """
 
 from __future__ import annotations

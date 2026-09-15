@@ -35,11 +35,11 @@
 param(
     [string]$InstallRoot = "C:\SortView\Collector",
     [string]$DataRoot = "C:\ProgramData\SortViewCollector",
+    [string]$TaskName = "SortView Collector",
     [switch]$PurgeData
 )
 
 $ErrorActionPreference = "Stop"
-$TaskName = "SortView Collector"
 
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {

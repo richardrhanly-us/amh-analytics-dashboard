@@ -197,7 +197,9 @@ def test_partial_batch_failure_leaves_state_untouched_and_retry_resends_everythi
     upload_calls_a = [c for c in session_a.calls if c[0].endswith("/upload")]
     assert len(upload_calls_a) == 2  # both batches were attempted
 
-    # Run B (retry, e.g. Task Scheduler's RestartOnFailure firing): a
+    # Run B (retry -- in production, the next normal 15-minute scheduled
+    # run; NOT a Task Scheduler RestartOnFailure firing, which Phase 4d
+    # Section H proved does not activate for a clean nonzero exit): a
     # fresh session that succeeds this time. The file on disk is
     # unchanged (still 15 lines) -- the retry must re-read and re-send
     # ALL 15 records, including the 10 that were already delivered in

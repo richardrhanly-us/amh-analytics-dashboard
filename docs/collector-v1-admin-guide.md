@@ -152,6 +152,17 @@ Get-ScheduledTask -TaskName "SortView Collector" | Get-ScheduledTaskInfo
 `LastTaskResult` `0` = success; `2` = config/parser-not-wired (expected
 for now); `1` = a genuine run failure -- check the log.
 
+**Recovery from a failed run (`1` or `2`):** the collector never persists
+state on a nonzero exit, so the next normal 15-minute scheduled run just
+re-reads and re-sends the same uncommitted work -- nothing needs to be
+manually retried. Do not expect the registered `RestartOnFailure` setting
+(3 attempts, 5 minutes apart) to do this sooner: Phase 4d Section H
+live-tested it in isolation on LIB-L26 and found it does not activate for
+a process that exits cleanly with a nonzero code, for either exit `1` or
+`2`. The setting is left configured (it matches legacy production and is
+harmless), but recovery timing in practice is "next 15-minute cycle," not
+"within 5 minutes."
+
 ## Manual run
 
 ```powershell
