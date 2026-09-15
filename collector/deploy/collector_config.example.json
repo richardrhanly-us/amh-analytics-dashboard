@@ -1,0 +1,26 @@
+{
+  "_comment": "Template only -- copy to C:\\ProgramData\\SortViewCollector\\config\\collector_config.json and fill in real values. Never commit a filled-in copy anywhere (Git, a support ticket, a screenshot) alongside a real API token -- the token itself never belongs in this file at all, see _comment_token below.",
+
+  "customer_id": 0,
+  "branch_id": 0,
+  "api_url": "https://sortview-app-2p336.ondigitalocean.app",
+
+  "sources": [
+    { "name": "checkins", "path": "C:\\TLCFinalDlls\\Checkins.txt" },
+    { "name": "rejects", "path": "C:\\TLCFinalDlls\\Rejects.txt" },
+    { "name": "acs", "path": "C:\\TLCFinalDlls\\ACS Log.txt" }
+  ],
+
+  "state_path": "C:\\ProgramData\\SortViewCollector\\data\\state.json",
+  "status_path": "C:\\ProgramData\\SortViewCollector\\data\\status.json",
+  "log_path": "C:\\ProgramData\\SortViewCollector\\logs\\collector.log",
+
+  "_comment_batching": "Optional, shown here at their defaults -- omit entirely to use the same values. max_records_per_batch matches the value already proven in months of live production use.",
+  "max_records_per_batch": 1000,
+  "http_connect_timeout": 10.0,
+  "http_read_timeout": 60.0,
+
+  "_comment_token": "SORTVIEW_API_TOKEN is READ FROM THE ENVIRONMENT ONLY -- it must never appear in this file. Set it as a Machine-scope environment variable via collector/deploy/install-collector.ps1's token step (or set-sortview-api-token.ps1, reused from the continuous-agent deployment tooling) before running the collector or its preflight check.",
+
+  "_comment_parser": "The production parser is NOT wired in yet in this phase (Phase 4c) -- the collector fails closed (exit code 2) and refuses to upload unparsed data until a later, separate parser-parity phase completes. Registering the Scheduled Task now is safe and structurally correct, but do not expect real data uploads until that phase is done -- see docs/collector-v1-admin-guide.md."
+}
