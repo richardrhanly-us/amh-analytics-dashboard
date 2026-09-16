@@ -50,6 +50,14 @@ DEFAULT_RESTART_COUNT = 3
 DEFAULT_RESTART_INTERVAL_MINUTES = 5
 DEFAULT_EXECUTION_TIME_LIMIT_HOURS = 1
 DEFAULT_PRINCIPAL = "SYSTEM"
+# Real production finding: registering a task with an enabled recurring
+# TimeTrigger arms it immediately -- Start-ScheduledTask (an on-demand
+# single run) is unrelated to whether the trigger itself is live, and
+# Task Scheduler does not wait for that call before firing at the next
+# StartBoundary/Repetition. Defaulting to DISABLED is what actually
+# prevents an automatic run before an operator has verified preflight
+# and explicitly opted in -- see build_task_xml's own docstring.
+DEFAULT_ENABLED = False
 
 
 @dataclass(frozen=True)
@@ -67,6 +75,12 @@ class TaskDefinition:
     restart_count: int = DEFAULT_RESTART_COUNT
     restart_interval_minutes: int = DEFAULT_RESTART_INTERVAL_MINUTES
     execution_time_limit_hours: int = DEFAULT_EXECUTION_TIME_LIMIT_HOURS
+    # False by default -- see DEFAULT_ENABLED's own comment. Controls the
+    # task-level <Settings><Enabled> master switch, which is what actually
+    # gates every trigger firing; True is a deliberate, explicit opt-in
+    # (never implied by -Force or any other flag), matching the exact
+    # operational sequence: register (disabled) -> preflight -> enable.
+    enabled: bool = DEFAULT_ENABLED
     # ISO 8601, e.g. "2026-09-15T00:00:00". None means build_task_xml()
     # fills in "now" at generation time -- kept as an explicit, optional
     # override (not baked into this dataclass's own default, since
@@ -150,6 +164,16 @@ def build_task_xml(definition: TaskDefinition) -> str:
         the approved Phase 3 recommendation. See this module's own
         docstring for why this deliberately differs from the currently
         observed live production configuration.
+      - Settings/Enabled: DISABLED by default (real production finding --
+        see DEFAULT_ENABLED). This is the task-level master switch; a
+        disabled task's triggers do not fire, regardless of the
+        Trigger's own <Enabled> value (left true -- it only takes effect
+        once the task itself is enabled) and regardless of whether
+        Start-ScheduledTask was ever called (that starts one run right
+        now, on demand -- it has no bearing on the recurring schedule).
+        An operator must explicitly enable the task (e.g.
+        Enable-ScheduledTask) after registering it and confirming
+        preflight passes, before the 15-minute cadence becomes live.
     """
     cadence_iso = f"PT{definition.cadence_minutes}M"
     restart_interval_iso = f"PT{definition.restart_interval_minutes}M"
@@ -165,6 +189,7 @@ def build_task_xml(definition: TaskDefinition) -> str:
     working_dir = _xml_escape(definition.working_dir)
     principal = _xml_escape(definition.principal)
     arguments = _xml_escape(f'-m collector.run --config "{definition.config_path}"')
+    enabled_xml = "true" if definition.enabled else "false"
 
     return f"""<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -194,7 +219,7 @@ def build_task_xml(definition: TaskDefinition) -> str:
     <AllowHardTerminate>true</AllowHardTerminate>
     <StartWhenAvailable>true</StartWhenAvailable>
     <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
-    <Enabled>true</Enabled>
+    <Enabled>{enabled_xml}</Enabled>
     <Hidden>false</Hidden>
     <ExecutionTimeLimit>{execution_limit_iso}</ExecutionTimeLimit>
     <Priority>7</Priority>
@@ -231,6 +256,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--restart-count", type=int, default=DEFAULT_RESTART_COUNT)
     parser.add_argument("--restart-interval-minutes", type=int, default=DEFAULT_RESTART_INTERVAL_MINUTES)
     parser.add_argument("--execution-time-limit-hours", type=int, default=DEFAULT_EXECUTION_TIME_LIMIT_HOURS)
+    parser.add_argument(
+        "--enabled", action="store_true",
+        help="Register the task already ENABLED (armed, will fire at its next trigger). "
+        "Default is disabled -- an explicit, deliberate opt-in is required, matching "
+        "the real production finding that registration alone arms an enabled trigger "
+        "regardless of whether Start-ScheduledTask is ever called.",
+    )
     args = parser.parse_args(argv)
 
     definition = TaskDefinition(
@@ -242,6 +274,7 @@ def main(argv: list[str] | None = None) -> int:
         restart_count=args.restart_count,
         restart_interval_minutes=args.restart_interval_minutes,
         execution_time_limit_hours=args.execution_time_limit_hours,
+        enabled=args.enabled,
     )
     xml_text = build_task_xml(definition)
 

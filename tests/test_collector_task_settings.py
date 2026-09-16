@@ -14,6 +14,7 @@ import pytest
 
 from collector.task_settings import (
     DEFAULT_CADENCE_MINUTES,
+    DEFAULT_ENABLED,
     DEFAULT_EXECUTION_TIME_LIMIT_HOURS,
     DEFAULT_PRINCIPAL,
     DEFAULT_RESTART_COUNT,
@@ -56,6 +57,14 @@ def test_defaults_match_approved_phase_4c_values():
     assert DEFAULT_RESTART_INTERVAL_MINUTES == 5
     assert DEFAULT_EXECUTION_TIME_LIMIT_HOURS == 1
     assert DEFAULT_PRINCIPAL == "SYSTEM"
+
+
+def test_default_enabled_is_false():
+    # Real production finding: an enabled trigger is armed the instant
+    # registration completes, regardless of Start-ScheduledTask ever
+    # being called. Disabled-by-default is the actual safety mechanism,
+    # not just wording in a printed message.
+    assert DEFAULT_ENABLED is False
 
 
 # --- TaskDefinition validation ----------------------------------------------
@@ -118,6 +127,35 @@ def test_no_boot_trigger_present():
     xml_text = build_task_xml(_definition())
     root = _parse(xml_text)
     assert root.find(".//t:Triggers/t:BootTrigger", _NS) is None
+
+
+# --- enabled / disabled (real production finding) ---------------------------
+
+
+def test_default_registration_is_disabled():
+    xml_text = build_task_xml(_definition())
+    root = _parse(xml_text)
+    enabled = root.find(".//t:Settings/t:Enabled", _NS)
+    assert enabled.text == "false"
+
+
+def test_explicit_enabled_true_is_reflected():
+    xml_text = build_task_xml(_definition(enabled=True))
+    root = _parse(xml_text)
+    enabled = root.find(".//t:Settings/t:Enabled", _NS)
+    assert enabled.text == "true"
+
+
+def test_trigger_itself_stays_enabled_regardless_of_task_level_setting():
+    # The Settings-level Enabled is the master switch (see build_task_xml's
+    # docstring) -- the TimeTrigger's own Enabled is intentionally left
+    # true either way; it only takes effect once the task itself is
+    # enabled, so there's nothing to toggle here.
+    for enabled in (True, False):
+        xml_text = build_task_xml(_definition(enabled=enabled))
+        root = _parse(xml_text)
+        trigger_enabled = root.find(".//t:Triggers/t:TimeTrigger/t:Enabled", _NS)
+        assert trigger_enabled.text == "true"
 
 
 # --- overlap policy ----------------------------------------------------------
