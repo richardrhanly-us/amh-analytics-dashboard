@@ -43,16 +43,24 @@ class FakeSession:
         return _FakeResponse(200, {"status": "success"})
 
 
-def _configure_a_parser_for_testing(monkeypatch):
-    """Simulates "the production parser HAS been wired in" for tests that
-    want to exercise behavior OTHER than the fail-closed check itself
-    (upload failure, successful run, etc.). Deliberately explicit and
-    separate from run_mod._PRODUCTION_PARSE_FNS, which tests must never
-    populate directly -- see test_ordinary_cli_invocation_fails_closed_
-    without_production_parser below, which is the one test that must run
-    against the REAL, untouched default."""
+def _configure_a_passthrough_parser_for_testing(monkeypatch):
+    """Substitutes a trivial passthrough parser for whichever source(s)
+    a test's config names, so tests about orchestration (upload failure,
+    successful run, state persistence) don't need a real 14-field
+    checkin line just to produce a non-empty record. Deliberately
+    monkeypatches collector.parsers.build_production_parse_fns itself
+    (the actual production seam, post parser-parity wiring), not
+    anything inside collector/parsers.py -- these tests are about
+    main()'s orchestration, not about parsing correctness, which
+    tests/test_collector_parsers.py already covers directly."""
     monkeypatch.setattr(
-        run_mod, "_PRODUCTION_PARSE_FNS", {"checkins": lambda lines: [{"raw_line": line} for line in lines]}
+        run_mod.parsers,
+        "build_production_parse_fns",
+        lambda **_kwargs: {
+            "checkins": lambda lines: [{"raw_line": line} for line in lines],
+            "rejects": lambda lines: [{"raw_line": line} for line in lines],
+            "acs": lambda lines: [{"raw_line": line} for line in lines],
+        },
     )
 
 
@@ -94,7 +102,7 @@ def test_clean_run_with_no_source_data_exits_zero(monkeypatch, tmp_path):
     monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     config_path = _write_config(tmp_path)
     monkeypatch.setattr(run_mod.uploader, "build_session", lambda: FakeSession())
-    _configure_a_parser_for_testing(monkeypatch)
+    _configure_a_passthrough_parser_for_testing(monkeypatch)
 
     exit_code = run_mod.main(["--config", str(config_path)])
     assert exit_code == 0
@@ -104,7 +112,7 @@ def test_upload_failure_exits_nonzero(monkeypatch, tmp_path):
     monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     config_path = _write_config(tmp_path)
     (tmp_path / "Checkins.txt").write_text("line one\n", encoding="utf-8")
-    _configure_a_parser_for_testing(monkeypatch)
+    _configure_a_passthrough_parser_for_testing(monkeypatch)
 
     monkeypatch.setattr(
         run_mod.uploader, "build_session",
@@ -116,45 +124,83 @@ def test_upload_failure_exits_nonzero(monkeypatch, tmp_path):
     assert not (tmp_path / "state.json").exists()  # state correctly not advanced
 
 
-# --- fail closed while the production parser is not wired -----------------
+# --- production parser wiring (parser-parity phase) ------------------------
+#
+# Prior to this phase, main()'s production path used a deliberately empty
+# _PRODUCTION_PARSE_FNS constant, and an ordinary CLI invocation for ANY
+# configured source (including checkins/rejects/acs) failed closed with
+# exit code 2. That constant no longer exists -- main() now calls
+# collector.parsers.build_production_parse_fns(), which provides real
+# adapters for exactly checkins/rejects/acs (see
+# tests/test_collector_parsers.py for adapter-boundary coverage). The two
+# tests below replace the old ones: one proves the wiring is genuinely
+# live end to end through main() itself (not just at the parsers.py
+# level), the other proves fail-closed still protects against a source
+# name outside the three that are actually wired.
 
 
-def test_ordinary_cli_invocation_fails_closed_without_production_parser(monkeypatch, tmp_path, capsys):
-    """THE required regression test: an ordinary `python -m collector.run
-    --config ...` invocation -- no monkeypatching of the parser, real
-    source data present, otherwise fully valid config/token/network mock
-    -- must NEVER succeed while run_mod._PRODUCTION_PARSE_FNS is empty. It
-    must exit with a distinct, actionable, nonzero code, make NO upload
-    call, and persist NO state. This is the exact failure mode an earlier
-    version of this module was vulnerable to (silently defaulting to a
-    raw-line passthrough parser and uploading {"raw_line": ...} records
-    as if they were real Tech Logic data)."""
+def test_ordinary_cli_invocation_parses_and_uploads_real_checkins_data(monkeypatch, tmp_path):
+    """THE end-to-end proof that production parser wiring is genuinely
+    live: an ordinary `python -m collector.run --config ...` invocation
+    -- no monkeypatching of collector.parsers at all -- must parse a real
+    Tech Logic checkins line via the real, unchanged
+    agent/parser/checkins.py and upload it in the exact backend row
+    shape, through main()'s own default path."""
     monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     config_path = _write_config(tmp_path)
-    (tmp_path / "Checkins.txt").write_text("line one\nline two\n", encoding="utf-8")
+    real_line = "Sunny days /|33472004192508|MLEPB|E KERBEL NATURE|000|1|False||4|N|N|N|8/31/2026|4:18:39 PM"
+    (tmp_path / "Checkins.txt").write_text(real_line + "\n", encoding="utf-8")
     fake_session = FakeSession()
     monkeypatch.setattr(run_mod.uploader, "build_session", lambda: fake_session)
-    # Deliberately NOT calling _configure_a_parser_for_testing here -- this
-    # test exercises the real, untouched default.
+    # Deliberately NOT calling _configure_a_passthrough_parser_for_testing
+    # here -- this test exercises the real, untouched production seam.
 
     exit_code = run_mod.main(["--config", str(config_path)])
 
-    assert exit_code == 2  # same family as a bad --config / missing token
+    assert exit_code == 0
+    upload_calls = [call for call in fake_session.calls if call[0].endswith("/upload")]
+    assert len(upload_calls) == 1
+    _url, payload = upload_calls[0]
+    assert len(payload["checkins"]) == 1
+    uploaded = payload["checkins"][0]
+    assert uploaded["barcode"] == "33472004192508"
+    assert uploaded["destination"] == "Main"
+    assert uploaded["customer_id"] == 1
+    assert uploaded["branch_id"] == 1
+    assert "raw_line" not in uploaded  # confirms the REAL adapter ran, not a passthrough stub
+
+
+def test_unknown_source_name_still_fails_closed(monkeypatch, tmp_path, capsys):
+    """Fail-closed remains the structural default for any source name
+    outside the three collector.parsers.build_production_parse_fns()
+    actually provides -- e.g. a config typo, or a not-yet-supported
+    fourth source. No monkeypatching of collector.parsers here either;
+    this exercises the real production seam's edge case."""
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    doc = {
+        "customer_id": 1,
+        "branch_id": 1,
+        "api_url": "https://example.invalid",
+        "sources": [{"name": "mystery_source", "path": str(tmp_path / "Mystery.txt")}],
+        "state_path": str(tmp_path / "state.json"),
+        "status_path": str(tmp_path / "status.json"),
+        "log_path": str(tmp_path / "collector.log"),
+    }
+    config_path = tmp_path / "collector_config.json"
+    config_path.write_text(json.dumps(doc), encoding="utf-8")
+    (tmp_path / "Mystery.txt").write_text("line one\n", encoding="utf-8")
+    fake_session = FakeSession()
+    monkeypatch.setattr(run_mod.uploader, "build_session", lambda: fake_session)
+
+    exit_code = run_mod.main(["--config", str(config_path)])
+
+    assert exit_code == 2
     stderr = capsys.readouterr().err
     assert "parser" in stderr.lower()
-    assert "checkins" in stderr  # names exactly which source is unconfigured
+    assert "mystery_source" in stderr
 
-    # No data was ever uploaded, and no cursor was ever advanced --
-    # fail closed means nothing happens, not "happens with fake data".
     assert fake_session.calls == []
     assert not (tmp_path / "state.json").exists()
-
-
-def test_production_parse_fns_constant_is_empty_by_default():
-    # A direct assertion on the constant itself -- if anything ever
-    # populates it as a "quick fix" without going through the
-    # parser-parity phase, this test (and the one above) will catch it.
-    assert run_mod._PRODUCTION_PARSE_FNS == {}
 
 
 def test_unanticipated_exception_still_exits_nonzero(monkeypatch, tmp_path, capsys):
@@ -180,7 +226,7 @@ def test_successful_run_exits_zero_and_persists_state(monkeypatch, tmp_path):
     config_path = _write_config(tmp_path)
     (tmp_path / "Checkins.txt").write_text("line one\n", encoding="utf-8")
     monkeypatch.setattr(run_mod.uploader, "build_session", lambda: FakeSession())
-    _configure_a_parser_for_testing(monkeypatch)
+    _configure_a_passthrough_parser_for_testing(monkeypatch)
 
     exit_code = run_mod.main(["--config", str(config_path)])
 
