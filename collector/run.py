@@ -5,31 +5,31 @@
     -> persist state ONLY IF every batch succeeded (collector/state.py)
     -> write + best-effort POST status -> exit
 
-PARSER SEAM -- explicitly NOT wired to a real parser in this phase. Per
-the approved Phase 3 sequencing ("do not combine parser refactoring with
-reader hardening -- first establish content parity against the live
-production parser, then refactor separately"), run_once() accepts
-`parse_fns` as an explicit parameter: {source_name: (lines) -> list[dict]}.
-Nothing in this module imports agent/parser/* or the live production
-parser.
+PARSER SEAM -- now wired to the real Tech Logic parsers (parser-parity
+wiring phase), via a thin adapter, not a copy. run_once() still accepts
+`parse_fns` as an explicit parameter: {source_name: (lines) -> list[dict]}
+-- that seam itself is unchanged. What changed is what main() passes for
+it: collector/parsers.py's build_production_parse_fns(customer_id=...,
+branch_id=...) returns one adapter per source, each of which calls the
+UNCHANGED agent/parser/{checkins,rejects,acs}.py modules (the same
+canonical parsers the continuous agent uses) and maps their output into
+the exact dict shape collector/uploader.py sends to POST /upload -- see
+collector/parsers.py's own module docstring for the full field mapping,
+the malformed-timestamp behavior (verified against agent/uploader.py,
+not invented), and why it does not import agent/uploader.py itself.
+This module still imports nothing from agent/parser/* or agent/uploader.py
+directly -- only collector/parsers.py does.
 
-FAIL CLOSED, NOT OPEN, while the real parser is unwired: run_once() now
-requires every configured source to have an entry in parse_fns -- if any
-is missing, it raises ParserNotConfiguredError immediately, before
-reading any source file or making any network call. main()'s production
-`_PRODUCTION_PARSE_FNS` is deliberately an EMPTY dict, so an ordinary
-`python -m collector.run --config ...` invocation always hits this check
-and exits with a clear, actionable message -- it can never silently
-process or upload {"raw_line": ...} placeholder records. This was a
-real, identified risk: an earlier version of this module defaulted a
-missing parser to _passthrough_parse, which would have let an ordinary
-production run succeed while quietly uploading raw, unparsed text instead
-of real Tech Logic fields. _passthrough_parse itself is UNCHANGED and
-still available -- explicitly, only for tests that inject it into
+FAIL CLOSED, NOT OPEN, remains the structural default for run_once()
+itself: it still requires every configured source to have an entry in
+parse_fns, and still raises ParserNotConfiguredError immediately (before
+reading any source file or making any network call) if one is missing --
+this protects against a future misconfigured/misnamed source, not just
+the now-resolved "no parser wired at all" case. _passthrough_parse
+remains UNCHANGED and still available only for tests that inject it into
 parse_fns on purpose (see tests/test_collector_run.py) -- it is never
-reachable from main()'s own default path. Wiring in the real,
-parity-checked parser (replacing the empty _PRODUCTION_PARSE_FNS) is
-later-phase work.
+reachable from main()'s own production path, which now calls
+collector.parsers.build_production_parse_fns() instead.
 
 MULTI-BATCH STATE SEMANTICS (Phase 3 item 7, tested explicitly below and
 in tests/test_collector_run.py): state for ALL sources is persisted
@@ -79,7 +79,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from . import reader, state, uploader
+from . import parsers, reader, state, uploader
 from .config import CollectorConfig, ConfigError, load_config
 
 ParseFn = Callable[[list[str]], list[dict[str, Any]]]
@@ -89,8 +89,9 @@ class ParserNotConfiguredError(Exception):
     """Raised by run_once when one or more configured sources have no
     entry in parse_fns. See module docstring's FAIL CLOSED section --
     this is what keeps an ordinary production CLI invocation from ever
-    silently processing/uploading unparsed raw lines while the real
-    parser has not been wired in yet."""
+    silently processing/uploading unparsed raw lines, e.g. if a config's
+    `sources` names something other than checkins/rejects/acs (the three
+    collector.parsers.build_production_parse_fns() actually provides)."""
 
 
 def _now_iso() -> str:
@@ -119,24 +120,14 @@ def _source_state_from_cursor(cursor: reader.SourceCursor) -> state.SourceState:
 
 
 def _passthrough_parse(lines: list[str]) -> list[dict[str, Any]]:
-    """NOT a production parser, and NEVER wired in as a default -- see
-    module docstring's FAIL CLOSED section. Exists ONLY to be explicitly
-    injected by tests that want to exercise run_once()'s orchestration
-    (batching, state semantics, exit codes) without depending on real
-    Tech Logic field parsing. main()'s production path never references
-    this function -- it uses the deliberately empty
-    _PRODUCTION_PARSE_FNS instead, which is exactly what makes an
-    ordinary CLI invocation fail closed while no real parser is wired
-    in."""
+    """NOT a production parser, and never wired in as main()'s default --
+    see module docstring's PARSER SEAM section. Exists ONLY to be
+    explicitly injected by tests that want to exercise run_once()'s
+    orchestration (batching, state semantics, exit codes) without
+    depending on real Tech Logic field parsing. main()'s production path
+    calls collector.parsers.build_production_parse_fns() instead, never
+    this function."""
     return [{"raw_line": line} for line in lines]
-
-
-# Deliberately empty. main() passes this, unmodified, to run_once() --
-# see module docstring's FAIL CLOSED section. Populate this (or replace
-# main()'s use of it) only when a real, parity-checked Tech Logic parser
-# is wired in, in a later phase. Tests must inject their OWN parse_fns
-# directly into run_once() -- never rely on or extend this constant.
-_PRODUCTION_PARSE_FNS: dict[str, ParseFn] = {}
 
 
 @dataclass(frozen=True)
@@ -338,7 +329,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         session = uploader.build_session()
-        outcome = run_once(cfg, session=session, parse_fns=_PRODUCTION_PARSE_FNS, logger=logger)
+        parse_fns = parsers.build_production_parse_fns(customer_id=cfg.customer_id, branch_id=cfg.branch_id)
+        outcome = run_once(cfg, session=session, parse_fns=parse_fns, logger=logger)
         return outcome.exit_code
     except ParserNotConfiguredError as exc:
         # Distinct from the generic crash handler below: this is an
