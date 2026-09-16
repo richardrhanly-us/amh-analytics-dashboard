@@ -14,10 +14,24 @@
     3. Does NOT start the task -- confirm preflight (including the
        SYSTEM-context run, see run-preflight-as-system.ps1) passes first.
 
+    REGISTERED DISABLED BY DEFAULT (real production finding): a task
+    registered with an enabled recurring trigger is armed the instant
+    registration completes -- Start-ScheduledTask never being called does
+    NOT prevent Task Scheduler from firing it automatically at the next
+    StartBoundary/Repetition. Pass -Enabled only if you deliberately want
+    the task armed immediately. The normal, safe sequence is: register
+    (disabled) -> run both preflight checks -> Enable-ScheduledTask.
+
     Idempotent: re-running without -Force reports the existing task and
     makes no changes. With -Force, unregisters and re-registers it (task
     run HISTORY is lost; state.json/status.json/logs under -DataRoot are
-    never touched by this script either way).
+    never touched by this script either way) -- note that a -Force
+    re-registration always applies the CURRENT -Enabled value (default
+    disabled), it does not preserve whatever enabled/disabled state the
+    task happened to be in before -- so re-running with -Force but
+    without re-passing -Enabled will disable a previously-enabled task.
+    This is deliberate: every registration is a fresh, explicit decision,
+    never an implicit carry-forward.
 
     REMINDER: the production Tech Logic parser (checkins/rejects/acs) is
     wired in -- registering and starting this task means an ordinary run
@@ -42,6 +56,12 @@ param(
     [int]$RestartCount = 3,
     [int]$RestartIntervalMinutes = 5,
     [int]$ExecutionTimeLimitHours = 1,
+    # Real production finding: registering a task with an enabled
+    # recurring trigger arms it immediately -- Start-ScheduledTask is a
+    # separate, on-demand action unrelated to whether the trigger itself
+    # is live. Default here is DISABLED (safe); pass -Enabled only when
+    # you deliberately want the task armed the instant it's registered.
+    [switch]$Enabled,
     [switch]$Force
 )
 
@@ -85,16 +105,20 @@ try {
     # ModuleNotFoundError: No module named 'collector' results.
     Push-Location $InstallRoot
     try {
-        & $VenvPython -m collector.task_settings `
-            --python-exe $VenvPython `
-            --config-path $ConfigPath `
-            --working-dir $InstallRoot `
-            --output $xmlPath `
-            --principal $Principal `
-            --cadence-minutes $CadenceMinutes `
-            --restart-count $RestartCount `
-            --restart-interval-minutes $RestartIntervalMinutes `
-            --execution-time-limit-hours $ExecutionTimeLimitHours
+        $taskSettingsArgs = @(
+            "-m", "collector.task_settings",
+            "--python-exe", $VenvPython,
+            "--config-path", $ConfigPath,
+            "--working-dir", $InstallRoot,
+            "--output", $xmlPath,
+            "--principal", $Principal,
+            "--cadence-minutes", $CadenceMinutes,
+            "--restart-count", $RestartCount,
+            "--restart-interval-minutes", $RestartIntervalMinutes,
+            "--execution-time-limit-hours", $ExecutionTimeLimitHours
+        )
+        if ($Enabled) { $taskSettingsArgs += "--enabled" }
+        & $VenvPython @taskSettingsArgs
     } finally {
         Pop-Location
     }
@@ -115,13 +139,42 @@ Write-Host "  Cadence:           every $CadenceMinutes minute(s)"
 Write-Host "  Overlap policy:    IgnoreNew"
 Write-Host "  Restart on failure: $RestartCount attempts, $RestartIntervalMinutes minute(s) apart"
 Write-Host "  Execution limit:   $ExecutionTimeLimitHours hour(s)"
+Write-Host "  Enabled:           $(if ($Enabled) { 'YES (armed -- will fire at its next trigger)' } else { 'NO (disabled -- safe default)' })"
 Write-Host ""
-Write-Host "The task has NOT been started yet. Confirm SORTVIEW_API_TOKEN is set and both" -ForegroundColor Yellow
-Write-Host "interactive AND SYSTEM-context preflight pass (run-preflight-as-system.ps1)" -ForegroundColor Yellow
-Write-Host "before starting it:" -ForegroundColor Yellow
-Write-Host "  Start-ScheduledTask -TaskName '$TaskName'"
+
+if (-not $Enabled) {
+    Write-Host "This task is REGISTERED but DISABLED. It cannot fire on its own schedule in this" -ForegroundColor Yellow
+    Write-Host "state, regardless of Start-ScheduledTask -- these are four separate things:" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  1. REGISTRATION (done)     -- the task now exists in Task Scheduler, disabled."
+    Write-Host "  2. ENABLING (not done)     -- arms the recurring schedule. Do this only after" -ForegroundColor Yellow
+    Write-Host "                                confirming BOTH interactive AND SYSTEM-context" -ForegroundColor Yellow
+    Write-Host "                                preflight pass (run-preflight-as-system.ps1):"
+    Write-Host "       Enable-ScheduledTask -TaskName '$TaskName'"
+    Write-Host "  3. MANUAL IMMEDIATE START  -- runs it once, right now, on demand. Independent of"
+    Write-Host "                                enabled/disabled state; does NOT arm the schedule:"
+    Write-Host "       Start-ScheduledTask -TaskName '$TaskName'"
+    Write-Host "  4. RECURRING EXECUTION     -- only happens once step 2 (Enable-ScheduledTask) has"
+    Write-Host "                                been run -- from then on, every $CadenceMinutes minute(s)."
+    Write-Host ""
+    Write-Host "Real production finding this default addresses: registering a task with an" -ForegroundColor Yellow
+    Write-Host "enabled trigger arms it immediately -- Start-ScheduledTask never being called does" -ForegroundColor Yellow
+    Write-Host "NOT prevent the recurring schedule from firing on its own. Pass -Enabled to this" -ForegroundColor Yellow
+    Write-Host "script only if you deliberately want the task armed the instant it's registered." -ForegroundColor Yellow
+} else {
+    Write-Host "This task was registered ENABLED (-Enabled was passed) -- its recurring schedule" -ForegroundColor Red
+    Write-Host "is ALREADY ARMED and will fire automatically at its next trigger, whether or not" -ForegroundColor Red
+    Write-Host "Start-ScheduledTask is ever called. Only use -Enabled after preflight has already" -ForegroundColor Red
+    Write-Host "passed -- there is no disable step after the fact except Disable-ScheduledTask." -ForegroundColor Red
+}
+
 Write-Host ""
 Write-Host "REMINDER: the production Tech Logic parser (checkins/rejects/acs) is wired in --" -ForegroundColor Yellow
-Write-Host "an ordinary run parses and uploads real data for those three sources. The" -ForegroundColor Yellow
+Write-Host "once enabled, a run parses and uploads real data for those three sources. The" -ForegroundColor Yellow
 Write-Host "fail-closed gate (exit code 2, 'no parser configured') still applies as a safety" -ForegroundColor Yellow
 Write-Host "net for any other source name, but is not expected to fire in normal use." -ForegroundColor Yellow
+Write-Host ""
+Write-Host "Before enabling: if this is a fresh production install (source files already" -ForegroundColor Yellow
+Write-Host "contain historical data), seed the starting cursor first, or the first run will" -ForegroundColor Yellow
+Write-Host "replay all of it:" -ForegroundColor Yellow
+Write-Host "  $VenvPython -m collector.bootstrap_state --config `"$ConfigPath`""

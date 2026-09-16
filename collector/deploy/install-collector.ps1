@@ -173,7 +173,18 @@ if (Test-Path $ConfigPath -PathType Leaf) {
         status_path = (Join-Path $DataRoot "data\status.json")
         log_path    = (Join-Path $DataRoot "logs\collector.log")
     }
-    $config | ConvertTo-Json -Depth 5 | Set-Content -Path $ConfigPath -Encoding utf8
+    # Real production finding: `Set-Content -Encoding utf8` on Windows
+    # PowerShell 5.1 writes a UTF-8 BOM -- confirmed on LIB-L26 to produce
+    # bytes EF-BB-BF before the JSON. collector/config.py reads the file
+    # with plain `encoding="utf-8"` (deliberately, not "utf-8-sig" -- see
+    # that module; the loader is not being weakened to tolerate this), so
+    # a BOM makes json.loads fail immediately: "Unexpected UTF-8 BOM
+    # (decode using utf-8-sig)". [System.Text.UTF8Encoding($false)] is the
+    # .NET way to get UTF-8 with NO BOM, matching the exact fix already
+    # applied by hand in production.
+    $jsonText = $config | ConvertTo-Json -Depth 5
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($ConfigPath, $jsonText, $utf8NoBom)
     Write-Host "Wrote $ConfigPath from -CustomerId/-BranchId/-ApiUrl. Review the 'sources' paths -- " -ForegroundColor Green
     Write-Host "they default to the standard Tech Logic locations and may need editing per-site."
 } else {
@@ -192,11 +203,16 @@ Write-Host "   (reused as-is from the continuous-agent tooling -- same mechanism
 Write-Host "3. Run preflight interactively, then as SYSTEM:"
 Write-Host "     $VenvPython -m collector.preflight --config `"$ConfigPath`""
 Write-Host "     .\run-preflight-as-system.ps1 -ConfigPath `"$ConfigPath`" -InstallRoot `"$InstallRoot`""
-Write-Host "4. Register the Scheduled Task:"
+Write-Host "4. If this is a fresh production install (source files already contain historical" -ForegroundColor Yellow
+Write-Host "   data), seed the starting cursor BEFORE the first run, or it will replay all of it:" -ForegroundColor Yellow
+Write-Host "     $VenvPython -m collector.bootstrap_state --config `"$ConfigPath`""
+Write-Host "5. Register the Scheduled Task (registers DISABLED by default -- see its own"
+Write-Host "   printed output for the register/enable/start distinction):"
 Write-Host "     .\register-collector-task.ps1 -InstallRoot `"$InstallRoot`" -ConfigPath `"$ConfigPath`""
 Write-Host ""
 Write-Host "NOTE: the production Tech Logic parser (checkins/rejects/acs) is wired in -- once" -ForegroundColor Yellow
-Write-Host "the task is registered and started, an ordinary run parses and uploads real data" -ForegroundColor Yellow
-Write-Host "for those three sources. The fail-closed gate (exit code 2, 'no parser configured')" -ForegroundColor Yellow
-Write-Host "still applies, but only as a safety net for a source name outside those three (e.g." -ForegroundColor Yellow
-Write-Host "a config typo, or a not-yet-supported source) -- it is not expected in normal use." -ForegroundColor Yellow
+Write-Host "the task is registered, bootstrapped, and ENABLED (see step 5's own output -- simply" -ForegroundColor Yellow
+Write-Host "registering it does not start the recurring schedule), an ordinary run parses and" -ForegroundColor Yellow
+Write-Host "uploads real data for those three sources. The fail-closed gate (exit code 2, 'no" -ForegroundColor Yellow
+Write-Host "parser configured') still applies, but only as a safety net for a source name outside" -ForegroundColor Yellow
+Write-Host "those three (e.g. a config typo, or a not-yet-supported source)." -ForegroundColor Yellow
