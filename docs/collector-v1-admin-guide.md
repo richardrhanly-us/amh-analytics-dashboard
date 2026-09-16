@@ -16,17 +16,17 @@ persistent process, no daemon, no spool, no live-feed requirement.
 
 ## Status of this build -- read before installing anything
 
-**The production Tech Logic parser is not wired in yet.** The collector
-fails closed by design: every run exits with code `2` and a message
-naming which source has no parser configured, and no data is ever
-uploaded. This is intentional (see `collector/run.py`'s module
-docstring's `PARSER SEAM` section) -- everything below (install,
-preflight, task registration) is safe and correct to do now, and proves
-the install/scheduling/connectivity layer works, but this is **not yet
-ready for real production data collection**. That happens in a separate,
-later phase.
+**The production Tech Logic parser is wired in.** `collector/parsers.py`
+adapts the real, unchanged `agent/parser/{checkins,rejects,acs}.py`
+modules (the same canonical parsers the continuous agent uses) into the
+exact row shape the backend expects -- an ordinary run parses real Tech
+Logic lines and uploads them. The collector still fails closed (exit
+code `2`, naming the source) if `sources` in the config names anything
+other than `checkins`/`rejects`/`acs` -- a safety net for a config typo
+or an unsupported source, not the routine condition it used to be (see
+`collector/run.py`'s module docstring's `PARSER SEAM` section).
 
-**Also not yet done, regardless of the above:** real SYSTEM-context
+**Not yet done:** real SYSTEM-context
 validation on an actual Windows machine, a real reboot test, and real
 proxy/TLS validation on a municipal network. This document tells you how
 to do all three -- doing them is a required step before any production
@@ -52,6 +52,14 @@ either with `-InstallRoot`/`-DataRoot`. Safe to re-run: if either already
 exists, it refuses to proceed without `-Force` (see the script's own
 `.DESCRIPTION`).
 
+`<InstallRoot>` contains `collector\*.py` plus the narrow canonical
+parser runtime the parser-parity phase added (`agent\__init__.py`,
+`agent\logger_config.py`, `agent\parser\*.py` -- exactly the files
+`collector/parsers.py` imports, nothing more; see
+`collector/deploy_manifest.py`, the single source of truth for this
+list) and its own self-contained `.venv` (now including `pandas`, needed
+by the canonical parsers).
+
 If you don't pass `-CustomerId`/`-BranchId`, it copies the example config
 template instead -- edit `<DataRoot>\config\collector_config.json` by
 hand before continuing, especially the three `sources` paths if this site
@@ -63,8 +71,9 @@ doesn't use the standard Tech Logic locations.
 `collector/deploy/collector_config.example.json` for every field and
 what it means. Never contains a secret. `sources` makes source **paths**
 configurable per site; it does not make the collector work with a
-different AMH vendor's file format -- the parser (not yet wired in this
-build) is still Tech Logic-specific.
+different AMH vendor's file format -- the wired-in parser
+(`collector/parsers.py`) is still Tech Logic-specific, and only
+recognizes the three source names `checkins`/`rejects`/`acs`.
 
 ## Token setup
 
@@ -140,8 +149,10 @@ the existing task and changes nothing.
 Start-ScheduledTask -TaskName "SortView Collector"
 ```
 
-Remember: every run will exit `2` (parser not configured) until that
-later phase is complete. This is expected.
+Remember: once the token is set and both preflight runs pass, an ordinary
+run parses and uploads real data for `checkins`/`rejects`/`acs`. Exit `2`
+now indicates a genuine problem (e.g. a `sources` name outside those
+three), not the routine condition it used to be.
 
 ## Checking task status
 
@@ -149,8 +160,9 @@ later phase is complete. This is expected.
 Get-ScheduledTask -TaskName "SortView Collector" | Get-ScheduledTaskInfo
 ```
 
-`LastTaskResult` `0` = success; `2` = config/parser-not-wired (expected
-for now); `1` = a genuine run failure -- check the log.
+`LastTaskResult` `0` = success; `2` = a config problem or a `sources`
+name outside `checkins`/`rejects`/`acs`; `1` = a genuine run failure --
+check the log.
 
 **Recovery from a failed run (`1` or `2`):** the collector never persists
 state on a nonzero exit, so the next normal 15-minute scheduled run just

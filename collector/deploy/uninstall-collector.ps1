@@ -11,7 +11,9 @@
 .DESCRIPTION
     1. Stops and unregisters the "SortView Collector" Scheduled Task, if
        registered. Never touches any other task.
-    2. Removes -InstallRoot (the venv and collector\*.py) entirely.
+    2. Removes -InstallRoot entirely -- the venv, collector\*.py, and the
+       canonical parser runtime (agent\*, per collector/deploy_manifest.py)
+       installed alongside it.
     3. Leaves -DataRoot (config\, data\, logs\) untouched UNLESS
        -PurgeData is passed, in which case it is removed too -- but only
        after an interactive confirmation prompt (bypassed only by also
@@ -61,7 +63,7 @@ if ($task) {
 Write-Host "=== 2. Application runtime ===" -ForegroundColor Cyan
 if (Test-Path $InstallRoot) {
     Remove-Item -Recurse -Force $InstallRoot
-    Write-Host "Removed $InstallRoot (venv + collector\*.py)."
+    Write-Host "Removed $InstallRoot (venv + collector\*.py + canonical parser runtime)."
 } else {
     Write-Host "$InstallRoot does not exist -- nothing to remove."
 }

@@ -8,10 +8,12 @@
 .DESCRIPTION
     1. Stops the production task if it's currently running (so an update
        never races a scheduled run) -- does not unregister it.
-    2. ALWAYS backs up the current collector\*.py files (fast, small) to
-       a timestamped backup folder alongside -InstallRoot. NEVER touches
-       -DataRoot (config\, data\, logs\) -- those are not part of what
-       this script replaces.
+    2. ALWAYS backs up the current runtime files (fast, small) to a
+       timestamped backup folder alongside -InstallRoot -- both
+       collector\*.py AND the canonical parser runtime (agent\*, per
+       collector/deploy_manifest.py) that collector/parsers.py depends
+       on just as much. NEVER touches -DataRoot (config\, data\, logs\)
+       -- those are not part of what this script replaces.
     3. Compares collector/deploy/requirements.txt's hash against the
        hash recorded at the last install/update
        (-InstallRoot\.deps-hash). If unchanged, only the .py files are
@@ -79,10 +81,32 @@ if ($existingTask -and $existingTask.State -eq "Running") {
     Write-Host "Task not currently running (or not registered yet)."
 }
 
-Write-Host "=== 2. Back up current .py files ===" -ForegroundColor Cyan
+Write-Host "=== 2. Back up current runtime files ===" -ForegroundColor Cyan
 New-Item -ItemType Directory -Path (Join-Path $BackupRoot "collector") -Force | Out-Null
 Copy-Item (Join-Path $InstallRoot "collector\*.py") -Destination (Join-Path $BackupRoot "collector") -Force
 Write-Host "Backed up current collector\*.py to $BackupRoot\collector"
+
+# Also back up the canonical parser runtime (agent/*, per
+# collector/deploy_manifest.py) -- collector/parsers.py depends on it
+# exactly as much as it depends on collector/*.py itself, so a rollback
+# that only restored collector/*.py would leave a broken, half-updated
+# runtime behind.
+Push-Location $RepoRoot
+try {
+    $parserRuntimeFiles = & $PythonExe -m collector.deploy_manifest
+    if ($LASTEXITCODE -ne 0) { throw "collector.deploy_manifest failed to list required parser runtime files (exit $LASTEXITCODE)" }
+} finally {
+    Pop-Location
+}
+foreach ($relativePath in $parserRuntimeFiles) {
+    $installedFile = Join-Path $InstallRoot $relativePath
+    if (Test-Path $installedFile) {
+        $backupFile = Join-Path $BackupRoot $relativePath
+        New-Item -ItemType Directory -Path (Split-Path $backupFile -Parent) -Force | Out-Null
+        Copy-Item $installedFile -Destination $backupFile -Force
+    }
+}
+Write-Host "Backed up current canonical parser runtime ($($parserRuntimeFiles.Count) file(s)) to $BackupRoot\agent"
 
 Write-Host "=== 3. Dependency check ===" -ForegroundColor Cyan
 $newHash = (Get-FileHash $SourceRequirements -Algorithm SHA256).Hash
@@ -90,18 +114,30 @@ $hashMarkerPath = Join-Path $InstallRoot ".deps-hash"
 $oldHash = if (Test-Path $hashMarkerPath) { (Get-Content $hashMarkerPath -Raw).Trim() } else { $null }
 
 if ($newHash -eq $oldHash) {
-    Write-Host "requirements.txt unchanged -- replacing .py files only, keeping the existing venv."
+    Write-Host "requirements.txt unchanged -- replacing runtime files only, keeping the existing venv."
     Copy-Item (Join-Path $SourceCollectorDir "*.py") -Destination (Join-Path $InstallRoot "collector") -Force
+    foreach ($relativePath in $parserRuntimeFiles) {
+        $sourceFile = Join-Path $RepoRoot $relativePath
+        $destFile = Join-Path $InstallRoot $relativePath
+        New-Item -ItemType Directory -Path (Split-Path $destFile -Parent) -Force | Out-Null
+        Copy-Item $sourceFile -Destination $destFile -Force
+    }
 } else {
     Write-Host "requirements.txt changed (or no prior record) -- rebuilding the runtime." -ForegroundColor Yellow
     Write-Host "Renaming the entire current install aside to $BackupRoot (not deleting)..."
-    # The .py-only backup from step 2 is now redundant with this full
-    # rename, but is harmless to leave in place -- kept simple rather
-    # than conditionally skipping it.
+    # The runtime-file-only backup from step 2 is now redundant with this
+    # full rename, but is harmless to leave in place -- kept simple
+    # rather than conditionally skipping it.
     Move-Item -Path $InstallRoot -Destination "$BackupRoot-full" -Force
 
     New-Item -ItemType Directory -Path (Join-Path $InstallRoot "collector") -Force | Out-Null
     Copy-Item (Join-Path $SourceCollectorDir "*.py") -Destination (Join-Path $InstallRoot "collector") -Force
+    foreach ($relativePath in $parserRuntimeFiles) {
+        $sourceFile = Join-Path $RepoRoot $relativePath
+        $destFile = Join-Path $InstallRoot $relativePath
+        New-Item -ItemType Directory -Path (Split-Path $destFile -Parent) -Force | Out-Null
+        Copy-Item $sourceFile -Destination $destFile -Force
+    }
 
     & $PythonExe -m venv (Join-Path $InstallRoot ".venv")
     if ($LASTEXITCODE -ne 0) { throw "venv creation failed (exit $LASTEXITCODE)" }
@@ -136,6 +172,14 @@ if ($preflightExitCode -ne 0) {
         Write-Host "  Move-Item `"$BackupRoot-full`" `"$InstallRoot`""
     } else {
         Write-Host "  Copy-Item `"$BackupRoot\collector\*.py`" `"$InstallRoot\collector`" -Force"
+        # NOTE (empirically verified, not assumed): the source path here
+        # MUST end in \agent\* -- when the destination directory already
+        # exists (it always does here), a bare "...\agent" source with
+        # -Recurse copies the whole agent FOLDER underneath the existing
+        # one (producing InstallRoot\agent\agent\..., leaving the actual
+        # imported files at InstallRoot\agent\*.py completely untouched)
+        # instead of overwriting its contents in place.
+        Write-Host "  Copy-Item `"$BackupRoot\agent\*`" `"$InstallRoot\agent`" -Recurse -Force   # canonical parser runtime"
     }
     if ($wasRegistered) {
         Write-Host "  Start-ScheduledTask -TaskName '$TaskName'   # once you're ready to resume"

@@ -34,19 +34,28 @@ Scope of what lives here:
     (collector/preflight.py, collector/task_settings.py,
     collector/support_info.py, collector/deploy/*.ps1) -- makes the
     Phase 4a runtime installable, verifiable under the real Scheduled
-    Task identity, and operable by a library IT administrator. The
-    production parser wiring gate from Phase 4a is unchanged and
-    unbypassed: the registered task runs, and fails closed, exactly as
-    Phase 4a left it, until a separate, later parser-parity phase wires
-    in the real Tech Logic parser.
+    Task identity, and operable by a library IT administrator.
+  - Parser-parity phase (PR #25): wired the production Tech Logic parser
+    in via collector/parsers.py, a thin adapter over the unchanged
+    agent/parser/{checkins,rejects,acs}.py modules (imported, not
+    copied) -- an ordinary registered-task run now parses and uploads
+    real data for those three sources. The fail-closed gate from Phase
+    4a (ParserNotConfiguredError) is unchanged and unbypassed; it now
+    only fires for a source name outside those three, not as the
+    routine condition it used to be. Deployment packaging repair (this
+    same phase) extended collector/deploy/*.ps1 to also ship the narrow
+    canonical-parser runtime slice of agent/ this adapter needs -- see
+    collector/deploy_manifest.py, the single source of truth for exactly
+    which files that is.
 """
 
 from __future__ import annotations
 
 # Simple semver, same reasoning as agent_version's (agent/runtime/config.py):
-# staying below 1.0.0 deliberately, since production parser wiring, real
-# SYSTEM-context validation, and onsite reboot/proxy validation are all
-# still pending -- see docs/collector-v1-admin-guide.md's validation
-# checklist. Bump to 1.0.0 once those are complete and this has actually
-# run a real production cutover.
+# staying below 1.0.0 deliberately -- production parser wiring is done,
+# but real SYSTEM-context validation, onsite reboot/proxy validation, and
+# an actual production cutover are still pending -- see
+# docs/collector-v1-admin-guide.md's validation checklist. Bump to 1.0.0
+# once those are complete and this has actually run a real production
+# cutover.
 __version__ = "0.1.0"
