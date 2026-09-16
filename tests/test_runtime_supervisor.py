@@ -99,6 +99,52 @@ def _wait_until(predicate, timeout=3.0, interval=0.02):
     return predicate()
 
 
+def _wait_for_source_bootstrap(cfg, name, *, timeout=3.0, interval=0.02):
+    """Polls until `name`'s persisted bootstrap cursor exists in state.json
+    -- the deterministic "the collector has actually observed this source
+    at least once" signal, used instead of health()==4 (which only proves
+    the 4 threads were launched, not that the collector's first cycle --
+    and NORMAL-mode bootstrap's EOF seed -- has run; see
+    test_end_to_end_append_parse_id_spool_upload_ack).
+
+    Tolerates a transient read failure WHILE POLLING ONLY: on Windows,
+    os.replace() can momentarily deny a concurrent reader for the instant
+    it's replacing state.json (documented directly in agent/state.py's
+    save_state docstring, verified empirically there -- not real
+    corruption, just "try again next poll"; irrelevant on the POSIX CI
+    runner, where rename is atomic with respect to readers). The FINAL
+    attempt, made once the deadline has already passed, is deliberately
+    left unguarded (same shape as _load_source_retrying's last attempt
+    below): a genuinely persistent CorruptStateError propagates with its
+    real diagnostic message intact, instead of being swallowed into a
+    bare "bootstrap never completed" timeout that would hide what
+    actually went wrong.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if state.get_source(state.load_state(cfg.state_path), name) is not None:
+                return True
+        except state.CorruptStateError:
+            pass
+        time.sleep(interval)
+    return state.get_source(state.load_state(cfg.state_path), name) is not None
+
+
+def _load_source_retrying(cfg, name, *, attempts=25, delay=0.02):
+    """Single-shot equivalent of _wait_for_source_bootstrap for call sites
+    that need the actual SourceState value, not just a readiness bool --
+    same transient-Windows-read tolerance (see _wait_for_source_bootstrap),
+    retried a bounded number of times rather than polled against a
+    deadline."""
+    for _ in range(attempts):
+        try:
+            return state.get_source(state.load_state(cfg.state_path), name)
+        except state.CorruptStateError:
+            time.sleep(delay)
+    return state.get_source(state.load_state(cfg.state_path), name)
+
+
 # --- supervisor start/stop ---------------------------------------------
 
 
@@ -408,7 +454,21 @@ def test_end_to_end_append_parse_id_spool_upload_ack(tmp_path):
 
     runner.start()
     try:
-        _wait_until(lambda: len(runner.health()) == 4)
+        # health()==4 only proves all 4 threads have been launched (see
+        # AgentRunner._run_guarded, which records "started" BEFORE the
+        # collector's first cycle ever runs) -- it does NOT prove the
+        # collector has bootstrapped this source yet. NORMAL-mode
+        # bootstrap seeds the cursor at whatever the file's size happens
+        # to be at the moment _bootstrap_if_needed's os.path.getsize()
+        # call runs; an append that lands on disk before that call is
+        # silently folded into the baseline and can never be observed
+        # afterward, no matter how long the test then waits (confirmed by
+        # reproduction during the runtime-supervisor CI investigation).
+        # Wait for the persisted bootstrap cursor to actually exist first
+        # -- the same deterministic pattern already used below by
+        # test_disk_pressure_pause_prevents_cursor_advance and
+        # test_shadow_mode_restart_works_normally.
+        assert _wait_for_source_bootstrap(cfg, "checkins", timeout=3.0)
         with open(tmp_path / "Checkins.txt", "a", encoding="utf-8") as f:
             f.write(CHECKIN_LINE.format(barcode="E2E1"))
 
@@ -644,6 +704,12 @@ def test_shadow_mode_collector_still_writes_spool_and_state_normally(tmp_path):
 
     runner.start()
     try:
+        # Same startup-bootstrap race as
+        # test_end_to_end_append_parse_id_spool_upload_ack above (this
+        # test had NO synchronization at all before its append, making it
+        # even more exposed) -- wait for the persisted bootstrap cursor
+        # before writing new data.
+        assert _wait_for_source_bootstrap(cfg, "checkins", timeout=3.0)
         with open(tmp_path / "Checkins.txt", "a", encoding="utf-8") as f:
             f.write(CHECKIN_LINE.format(barcode="SHADOW2"))
 
@@ -655,7 +721,7 @@ def test_shadow_mode_collector_still_writes_spool_and_state_normally(tmp_path):
         assert records[0]["barcode"] == "SHADOW2"
         assert "source_event_id" in records[0]  # deterministic ID generation unaffected
 
-        loaded = state.get_source(state.load_state(cfg.state_path), "checkins")
+        loaded = _load_source_retrying(cfg, "checkins")
         assert loaded is not None  # state/cursor tracking unaffected
     finally:
         runner.stop(timeout=5.0)
