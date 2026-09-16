@@ -61,7 +61,7 @@ jobs:
         run: python -m ruff check .
 
       - name: Run mypy
-        run: python -m mypy src agent main.py
+        run: python -m mypy src agent main.py collector
 
   security:
     name: Dependency and security scan
@@ -83,7 +83,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Run bandit
-        run: python -m bandit -r src agent super_admin main.py -x "agent/SortViewAgent - What is currently sitting on the AMH computer" -q
+        run: python -m bandit -r src agent super_admin main.py collector -x "agent/SortViewAgent - What is currently sitting on the AMH computer" -q
 
       # Tracked but not yet blocking: known CVEs in streamlit/weasyprint/
       # starlette are a deliberate, separate upgrade decision (they touch a
