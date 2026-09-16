@@ -4,16 +4,23 @@
     For updating an existing install, use update-collector.ps1 instead.
 
 .DESCRIPTION
-    1. Creates the install root (-InstallRoot) and copies ONLY the
-       collector/*.py runtime files into it (never agent/, never tests/,
-       never this deploy/ folder itself, never anything else from the
-       source checkout) -- a deliberately narrow copy, not a mirror of
-       the whole repository.
+    1. Creates the install root (-InstallRoot) and copies collector/*.py
+       PLUS the narrow canonical-parser runtime slice of agent/ that
+       collector/parsers.py actually imports (agent/__init__.py,
+       agent/logger_config.py, agent/parser/*.py -- see
+       collector/deploy_manifest.py, the single source of truth for
+       exactly this list). Never tests/, never this deploy/ folder
+       itself, never any other part of agent/ (no agent/runtime/*, no
+       agent/main.py, no agent/config.py, no legacy agent/run_pipeline.py
+       mirror, no archived AMH snapshot), never anything else from the
+       source checkout -- a deliberately narrow copy, not a mirror of
+       the whole repository or of agent/ itself.
     2. Creates -DataRoot's subdirectories: config\, data\, logs\.
-       data\processed\ is created lazily by the collector itself on its
-       first run (parser wiring is a later phase; nothing writes there
-       yet in Phase 4c) -- created here anyway so the layout is visible
-       up front.
+       data\processed\ is created here too even though nothing in the
+       current design writes to it -- collector/parsers.py maps parsed
+       rows straight into upload payloads in memory, it never writes a
+       cleaned CSV the way the legacy pipeline did -- kept only so the
+       layout is visible up front; harmless if it stays empty.
     3. Creates a fresh Python virtual environment under
        <InstallRoot>\.venv using -PythonExe, and installs the pinned
        dependencies from collector/deploy/requirements.txt (NOT this
@@ -107,6 +114,30 @@ Get-ChildItem -Path $SourceCollectorDir -Filter "*.py" -File | ForEach-Object {
 }
 Write-Host "Copied collector\*.py to $TargetCollectorDir"
 
+Write-Host "=== 1b. Canonical parser runtime (agent.parser.*) ===" -ForegroundColor Cyan
+# collector/parsers.py imports agent.parser.{checkins,rejects,acs} (and,
+# transitively, agent/logger_config.py) -- collector/deploy_manifest.py
+# is the single, unit-tested source of truth for exactly which files that
+# requires, so this list can never silently drift from what
+# collector/parsers.py actually imports. Deliberately NOT all of agent/
+# -- see that module's own docstring for the full excluded list and why.
+# Run via the bare -PythonExe, not a venv python -- the venv doesn't
+# exist yet at this point in the script.
+Push-Location $RepoRoot
+try {
+    $parserRuntimeFiles = & $PythonExe -m collector.deploy_manifest
+    if ($LASTEXITCODE -ne 0) { throw "collector.deploy_manifest failed to list required parser runtime files (exit $LASTEXITCODE)" }
+} finally {
+    Pop-Location
+}
+foreach ($relativePath in $parserRuntimeFiles) {
+    $sourceFile = Join-Path $RepoRoot $relativePath
+    $destFile = Join-Path $InstallRoot $relativePath
+    New-Item -ItemType Directory -Path (Split-Path $destFile -Parent) -Force | Out-Null
+    Copy-Item $sourceFile -Destination $destFile -Force
+}
+Write-Host "Copied $($parserRuntimeFiles.Count) canonical parser runtime file(s) to $InstallRoot\agent"
+
 Write-Host "=== 2. Data directories ===" -ForegroundColor Cyan
 foreach ($sub in @("config", "data", "data\processed", "logs")) {
     New-Item -ItemType Directory -Path (Join-Path $DataRoot $sub) -Force | Out-Null
@@ -164,8 +195,8 @@ Write-Host "     .\run-preflight-as-system.ps1 -ConfigPath `"$ConfigPath`" -Inst
 Write-Host "4. Register the Scheduled Task:"
 Write-Host "     .\register-collector-task.ps1 -InstallRoot `"$InstallRoot`" -ConfigPath `"$ConfigPath`""
 Write-Host ""
-Write-Host "NOTE: the collector will run every 15 minutes once the task is registered and" -ForegroundColor Yellow
-Write-Host "started, but will FAIL CLOSED (exit code 2, 'parser adapter is not yet configured')" -ForegroundColor Yellow
-Write-Host "until the production Tech Logic parser is wired in a later, separate phase. This" -ForegroundColor Yellow
-Write-Host "is expected -- registering the task now proves the install/scheduling/connectivity" -ForegroundColor Yellow
-Write-Host "layer works; it is not yet ready for production data collection." -ForegroundColor Yellow
+Write-Host "NOTE: the production Tech Logic parser (checkins/rejects/acs) is wired in -- once" -ForegroundColor Yellow
+Write-Host "the task is registered and started, an ordinary run parses and uploads real data" -ForegroundColor Yellow
+Write-Host "for those three sources. The fail-closed gate (exit code 2, 'no parser configured')" -ForegroundColor Yellow
+Write-Host "still applies, but only as a safety net for a source name outside those three (e.g." -ForegroundColor Yellow
+Write-Host "a config typo, or a not-yet-supported source) -- it is not expected in normal use." -ForegroundColor Yellow

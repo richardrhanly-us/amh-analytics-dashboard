@@ -22,5 +22,5 @@
 
   "_comment_token": "SORTVIEW_API_TOKEN is READ FROM THE ENVIRONMENT ONLY -- it must never appear in this file. Set it as a Machine-scope environment variable via collector/deploy/install-collector.ps1's token step (or set-sortview-api-token.ps1, reused from the continuous-agent deployment tooling) before running the collector or its preflight check.",
 
-  "_comment_parser": "The production parser is NOT wired in yet in this phase (Phase 4c) -- the collector fails closed (exit code 2) and refuses to upload unparsed data until a later, separate parser-parity phase completes. Registering the Scheduled Task now is safe and structurally correct, but do not expect real data uploads until that phase is done -- see docs/collector-v1-admin-guide.md."
+  "_comment_parser": "The production Tech Logic parser (checkins/rejects/acs) is wired in via collector/parsers.py -- an ordinary run parses and uploads real data for those three sources. The collector still fails closed (exit code 2) as a safety net if 'sources' names anything outside those three (e.g. a typo) -- see docs/collector-v1-admin-guide.md."
 }

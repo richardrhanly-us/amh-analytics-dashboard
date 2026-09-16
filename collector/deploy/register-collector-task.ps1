@@ -19,13 +19,12 @@
     run HISTORY is lost; state.json/status.json/logs under -DataRoot are
     never touched by this script either way).
 
-    REMINDER, not bypassed by this script: the collector fails closed
-    (exit code 2) until a production Tech Logic parser is wired in during
-    a later, separate phase. Registering and even STARTING this task is
-    safe and structurally correct -- it will not upload placeholder or
-    unparsed data -- but it is not yet doing real production data
-    collection. See the printed note at the end of this script and
-    docs/collector-v1-admin-guide.md.
+    REMINDER: the production Tech Logic parser (checkins/rejects/acs) is
+    wired in -- registering and starting this task means an ordinary run
+    parses and uploads real data for those three sources. The fail-closed
+    gate (exit code 2, still not bypassed by this script) remains as a
+    safety net for a source name outside those three. See the printed
+    note at the end of this script and docs/collector-v1-admin-guide.md.
 
 .EXAMPLE
     .\register-collector-task.ps1 `
@@ -122,7 +121,7 @@ Write-Host "interactive AND SYSTEM-context preflight pass (run-preflight-as-syst
 Write-Host "before starting it:" -ForegroundColor Yellow
 Write-Host "  Start-ScheduledTask -TaskName '$TaskName'"
 Write-Host ""
-Write-Host "REMINDER: the collector will FAIL CLOSED (exit code 2, 'parser adapter is not" -ForegroundColor Yellow
-Write-Host "yet configured') on every run until the production Tech Logic parser is wired" -ForegroundColor Yellow
-Write-Host "in during a later, separate phase. This is expected and safe -- it proves the" -ForegroundColor Yellow
-Write-Host "install/scheduling/connectivity layer, not production data collection." -ForegroundColor Yellow
+Write-Host "REMINDER: the production Tech Logic parser (checkins/rejects/acs) is wired in --" -ForegroundColor Yellow
+Write-Host "an ordinary run parses and uploads real data for those three sources. The" -ForegroundColor Yellow
+Write-Host "fail-closed gate (exit code 2, 'no parser configured') still applies as a safety" -ForegroundColor Yellow
+Write-Host "net for any other source name, but is not expected to fire in normal use." -ForegroundColor Yellow
