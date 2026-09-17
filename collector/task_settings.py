@@ -70,6 +70,15 @@ class TaskDefinition:
     python_exe: str
     config_path: str
     working_dir: str
+    # True for a frozen (PyInstaller) install: python_exe is then the path
+    # to SortViewCollector.exe itself (the field name is kept as-is for
+    # backward compatibility with existing callers/tests -- it always
+    # means "the executable Task Scheduler launches", which is python.exe
+    # in source mode and SortViewCollector.exe in frozen mode either way).
+    # Changes ONLY the generated <Arguments> below -- everything else
+    # (cadence, overlap, restart, execution limit, principal, enabled
+    # default) is identical between the two modes; see build_task_xml.
+    frozen: bool = False
     principal: str = DEFAULT_PRINCIPAL
     cadence_minutes: int = DEFAULT_CADENCE_MINUTES
     restart_count: int = DEFAULT_RESTART_COUNT
@@ -188,7 +197,15 @@ def build_task_xml(definition: TaskDefinition) -> str:
     python_exe = _xml_escape(definition.python_exe)
     working_dir = _xml_escape(definition.working_dir)
     principal = _xml_escape(definition.principal)
-    arguments = _xml_escape(f'-m collector.run --config "{definition.config_path}"')
+    # Frozen (PyInstaller) install: SortViewCollector.exe IS the
+    # executable (definition.python_exe), and its dispatcher (see
+    # collector/freeze/dispatcher.py) takes the subcommand directly --
+    # "run", never "-m collector.run" (there is no Python module system
+    # to resolve a "-m" target against in a frozen process).
+    if definition.frozen:
+        arguments = _xml_escape(f'run --config "{definition.config_path}"')
+    else:
+        arguments = _xml_escape(f'-m collector.run --config "{definition.config_path}"')
     enabled_xml = "true" if definition.enabled else "false"
 
     return f"""<?xml version="1.0" encoding="UTF-16"?>
@@ -251,6 +268,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config-path", required=True)
     parser.add_argument("--working-dir", required=True)
     parser.add_argument("--output", required=True, help="Path to write the generated XML file")
+    parser.add_argument(
+        "--frozen", action="store_true",
+        help='Generate Arguments for a frozen (PyInstaller) install -- "run --config ..." '
+        '(SortViewCollector.exe\'s own dispatcher subcommand) instead of the source-mode '
+        '"-m collector.run --config ...". --python-exe should then be the path to '
+        "SortViewCollector.exe itself.",
+    )
     parser.add_argument("--principal", default=DEFAULT_PRINCIPAL)
     parser.add_argument("--cadence-minutes", type=int, default=DEFAULT_CADENCE_MINUTES)
     parser.add_argument("--restart-count", type=int, default=DEFAULT_RESTART_COUNT)
@@ -269,6 +293,7 @@ def main(argv: list[str] | None = None) -> int:
         python_exe=args.python_exe,
         config_path=args.config_path,
         working_dir=args.working_dir,
+        frozen=args.frozen,
         principal=args.principal,
         cadence_minutes=args.cadence_minutes,
         restart_count=args.restart_count,

@@ -77,9 +77,18 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
 }
 
 $VenvPython = Join-Path $InstallRoot ".venv\Scripts\python.exe"
-if (-not (Test-Path $VenvPython)) {
-    throw "Python executable not found at '$VenvPython' -- run install-collector.ps1 first."
+$FrozenExe = Join-Path $InstallRoot "SortViewCollector.exe"
+$IsFrozen = (Test-Path $FrozenExe) -and -not (Test-Path $VenvPython)
+if (-not (Test-Path $VenvPython) -and -not (Test-Path $FrozenExe)) {
+    throw "No installed runtime found at '$InstallRoot' (neither .venv\Scripts\python.exe nor " +
+          "SortViewCollector.exe) -- run install.ps1 first."
 }
+# The executable Task Scheduler will actually launch -- python.exe for a
+# source install, SortViewCollector.exe for a frozen one. Also the
+# executable this script itself shells out to for XML generation below
+# (collector.task_settings, via -m for source or the frozen dispatcher's
+# own task-xml subcommand for frozen -- see below).
+$RunnerExe = if ($IsFrozen) { $FrozenExe } else { $VenvPython }
 if (-not (Test-Path $ConfigPath)) {
     Write-Warning "Config file '$ConfigPath' does not exist yet -- the task will fail to start until it does. Continuing to register anyway."
 }
@@ -98,16 +107,23 @@ if ($existing -and $Force) {
 
 $xmlPath = Join-Path $env:TEMP "sortview-collector-task-$([guid]::NewGuid().ToString('N')).xml"
 try {
-    # -m collector.task_settings resolves the `collector` package via the
-    # PROCESS'S OWN working directory, not this script's -- install-collector.ps1
-    # copies collector\*.py under -InstallRoot, so the child process must be
-    # started there (not wherever this script happens to be invoked from), or
-    # ModuleNotFoundError: No module named 'collector' results.
+    # SOURCE: -m collector.task_settings resolves the `collector` package
+    # via the PROCESS'S OWN working directory, not this script's --
+    # install.ps1 copies collector\*.py under -InstallRoot, so the child
+    # process must be started there, or ModuleNotFoundError results.
+    # FROZEN: SortViewCollector.exe's own dispatcher (see
+    # collector/freeze/dispatcher.py) exposes the SAME collector.task_settings
+    # module as its "task-xml" subcommand -- no Python/venv exists to run
+    # "-m collector.task_settings" against in a frozen install, so the
+    # frozen exe generates its own task XML instead, via --frozen (which
+    # makes the generated Arguments "run --config ..." rather than
+    # "-m collector.run --config ..." -- see task_settings.py's own
+    # TaskDefinition.frozen field). Push-Location is harmless either way,
+    # kept uniform for both branches rather than conditionally skipped.
     Push-Location $InstallRoot
     try {
         $taskSettingsArgs = @(
-            "-m", "collector.task_settings",
-            "--python-exe", $VenvPython,
+            "--python-exe", $RunnerExe,
             "--config-path", $ConfigPath,
             "--working-dir", $InstallRoot,
             "--output", $xmlPath,
@@ -118,7 +134,11 @@ try {
             "--execution-time-limit-hours", $ExecutionTimeLimitHours
         )
         if ($Enabled) { $taskSettingsArgs += "--enabled" }
-        & $VenvPython @taskSettingsArgs
+        if ($IsFrozen) {
+            & $RunnerExe @(@("task-xml") + $taskSettingsArgs + @("--frozen"))
+        } else {
+            & $RunnerExe @(@("-m", "collector.task_settings") + $taskSettingsArgs)
+        }
     } finally {
         Pop-Location
     }
@@ -177,4 +197,8 @@ Write-Host ""
 Write-Host "Before enabling: if this is a fresh production install (source files already" -ForegroundColor Yellow
 Write-Host "contain historical data), seed the starting cursor first, or the first run will" -ForegroundColor Yellow
 Write-Host "replay all of it:" -ForegroundColor Yellow
-Write-Host "  $VenvPython -m collector.bootstrap_state --config `"$ConfigPath`""
+if ($IsFrozen) {
+    Write-Host "  `"$RunnerExe`" bootstrap --config `"$ConfigPath`""
+} else {
+    Write-Host "  $RunnerExe -m collector.bootstrap_state --config `"$ConfigPath`""
+}

@@ -3,23 +3,26 @@
 PACKAGING-ONLY -- never imported by, or a dependency of, any real
 Collector runtime module. This is the PyInstaller entry-point script that
 produces SortViewCollector.exe (see sortview_collector.spec), letting one
-frozen executable cover all four CLI surfaces (production run, preflight,
-bootstrap, support-info) instead of four separate executables -- one
-shared PyInstaller onedir payload (pandas/numpy/etc. bundled once) rather
-than four duplicated ones.
+frozen executable cover all five CLI surfaces (production run, preflight,
+bootstrap, support-info, and task-xml -- deployment/Task-Scheduler-XML
+generation, added for the frozen release-bundle integration phase; see
+collector/deploy/register-collector-task.ps1) instead of five separate
+executables -- one shared PyInstaller onedir payload (pandas/numpy/etc.
+bundled once) rather than five duplicated ones.
 
 THIN DISPATCH ONLY, per the frozen-runtime proof's explicit constraint:
 no Collector runtime logic is duplicated or reimplemented here. Each
 subcommand below forwards straight to the SAME main(argv) -> int entry
 point collector/run.py, collector/preflight.py, collector/bootstrap_state.py,
-and collector/support_info.py already expose via `python -m collector.X`
--- unchanged, not copied. Each target module's own argparse still parses
-everything after the subcommand itself, exactly as it does today; this
-file only decides WHICH one to call and returns its exit code unchanged.
+collector/support_info.py, and collector/task_settings.py already expose
+via `python -m collector.X` -- unchanged, not copied. Each target
+module's own argparse still parses everything after the subcommand
+itself, exactly as it does today; this file only decides WHICH one to
+call and returns its exit code unchanged.
 
 Static (not dynamic/importlib) imports deliberately -- PyInstaller's
 analyzer follows ordinary `from X import Y` statements even inside
-if/elif branches, so all four subcommand targets are discovered without
+if/elif branches, so all five subcommand targets are discovered without
 needing an opaque runtime importlib.import_module(name) call. They are
 also listed explicitly in sortview_collector.spec's hiddenimports as a
 belt-and-suspenders measure -- see that file's own comment.
@@ -30,7 +33,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 
-_SUBCOMMANDS = ("run", "preflight", "bootstrap", "support-info")
+_SUBCOMMANDS = ("run", "preflight", "bootstrap", "support-info", "task-xml")
 
 
 def _usage() -> str:
@@ -62,8 +65,13 @@ def main(argv: list[str] | None = None) -> int:
         from collector.preflight import main as sub_main
     elif subcommand == "bootstrap":
         from collector.bootstrap_state import main as sub_main
-    else:  # "support-info"
+    elif subcommand == "support-info":
         from collector.support_info import main as sub_main
+    else:  # "task-xml" -- deployment tooling, not Collector ingestion;
+        # see register-collector-task.ps1, which invokes this subcommand
+        # for a frozen install instead of shelling out to a Python venv
+        # (which does not exist in a frozen install).
+        from collector.task_settings import main as sub_main
 
     return sub_main(rest)
 
