@@ -6,8 +6,17 @@
     declaring success or touching the Scheduled Task.
 
 .DESCRIPTION
-    1. Stops the production task if it's currently running (so an update
-       never races a scheduled run) -- does not unregister it.
+    1. Records whether the production task exists and whether it was
+       enabled, then DISABLES it first (if enabled) -- BEFORE touching any
+       runtime file -- so its recurring trigger cannot fire mid-update no
+       matter the timing (real production finding, fixed here: only
+       stopping an ALREADY-Running task left a live window where a
+       Ready-and-enabled task's normal 15-minute trigger could fire while
+       the runtime was partially replaced). If a run happens to already be
+       in flight at that moment, stops it and waits (bounded by
+       -StopTimeoutSeconds) for it to actually exit before proceeding --
+       aborts without touching the runtime, task left disabled, if it
+       doesn't stop in time. Does not unregister it.
     2. ALWAYS backs up the current runtime files (fast, small) to a
        timestamped backup folder alongside -InstallRoot -- both
        collector\*.py AND the canonical parser runtime (agent\*, per
@@ -25,13 +34,15 @@
     4. Runs preflight (interactively) against the NEW runtime. If it
        fails, the update stops here: the new runtime is left in place
        for inspection, the OLD runtime remains fully intact at the
-       backup path, and the task is NOT restarted -- exact rollback
-       instructions are printed. Nothing is auto-reverted; this is a
-       deliberate operator decision, not something this script decides
-       silently.
-    5. If preflight passes: the task is restarted (only if it was
-       already registered before this update began) and this is
-       reported as a successful update.
+       backup path, and the task is left DISABLED regardless of its
+       prior state -- exact rollback instructions are printed. Nothing is
+       auto-reverted; this is a deliberate operator decision, not
+       something this script decides silently.
+    5. If preflight passes: the task's PRIOR enabled/disabled state is
+       restored (Enable-ScheduledTask if it was enabled before this
+       update began; left disabled if it already was) -- never an
+       implicit Start-ScheduledTask/immediate run; pass -StartNow to
+       explicitly request one. This is reported as a successful update.
 
     Does not run the SYSTEM-context preflight automatically (that
     requires registering a temporary task, a heavier operation) -- for
@@ -50,7 +61,9 @@ param(
     [string]$InstallRoot = "C:\SortView\Collector",
     [string]$ConfigPath = "C:\ProgramData\SortViewCollector\config\collector_config.json",
     [string]$TaskName = "SortView Collector",
-    [string]$PythonExe = "python"
+    [string]$PythonExe = "python",
+    [int]$StopTimeoutSeconds = 60,
+    [switch]$StartNow
 )
 
 $ErrorActionPreference = "Stop"
@@ -71,14 +84,40 @@ if (-not (Test-Path (Join-Path $InstallRoot ".venv"))) {
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $BackupRoot = "$InstallRoot.backup-$timestamp"
 
-Write-Host "=== 1. Stop the task if running ===" -ForegroundColor Cyan
+Write-Host "=== 1. Snapshot and disable the task before touching anything ===" -ForegroundColor Cyan
 $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 $wasRegistered = $null -ne $existingTask
-if ($existingTask -and $existingTask.State -eq "Running") {
-    Stop-ScheduledTask -TaskName $TaskName
-    Write-Host "Stopped '$TaskName'."
+$wasEnabled = $false
+
+if ($wasRegistered) {
+    $wasEnabled = [bool]$existingTask.Settings.Enabled
+    if ($wasEnabled) {
+        Disable-ScheduledTask -TaskName $TaskName | Out-Null
+        Write-Host "Disabled '$TaskName' (was enabled) -- its recurring trigger cannot fire during this update, regardless of timing." -ForegroundColor Green
+    } else {
+        Write-Host "'$TaskName' was already disabled -- nothing to disable."
+    }
+
+    # Disabling does not stop an ALREADY-RUNNING instance -- only future,
+    # trigger-driven starts. Check separately and wait it out if so.
+    $currentState = (Get-ScheduledTask -TaskName $TaskName).State
+    if ($currentState -eq "Running") {
+        Write-Host "Task is currently running -- stopping and waiting (timeout: ${StopTimeoutSeconds}s)..."
+        Stop-ScheduledTask -TaskName $TaskName
+        $deadline = (Get-Date).AddSeconds($StopTimeoutSeconds)
+        do {
+            Start-Sleep -Seconds 1
+            $currentState = (Get-ScheduledTask -TaskName $TaskName).State
+        } while ($currentState -eq "Running" -and (Get-Date) -lt $deadline)
+
+        if ($currentState -eq "Running") {
+            throw "Task '$TaskName' did not stop within ${StopTimeoutSeconds}s -- aborting update WITHOUT touching the runtime. " +
+                  "The task is left DISABLED. Investigate the stuck run manually, then re-enable with Enable-ScheduledTask once resolved, and retry this update."
+        }
+        Write-Host "Task stopped."
+    }
 } else {
-    Write-Host "Task not currently running (or not registered yet)."
+    Write-Host "'$TaskName' is not registered -- nothing to disable/stop."
 }
 
 Write-Host "=== 2. Back up current runtime files ===" -ForegroundColor Cyan
@@ -165,8 +204,8 @@ try {
 if ($preflightExitCode -ne 0) {
     Write-Host ""
     Write-Host "UPDATE FAILED VERIFICATION (preflight exit code $preflightExitCode)." -ForegroundColor Red
-    Write-Host "The task was NOT restarted. The new runtime is left in place at $InstallRoot for" -ForegroundColor Red
-    Write-Host "inspection. The prior runtime is fully intact -- to roll back manually:" -ForegroundColor Red
+    Write-Host "The new runtime is left in place at $InstallRoot for inspection. The prior" -ForegroundColor Red
+    Write-Host "runtime is fully intact -- to roll back manually:" -ForegroundColor Red
     if (Test-Path "$BackupRoot-full") {
         Write-Host "  Remove-Item -Recurse -Force `"$InstallRoot`""
         Write-Host "  Move-Item `"$BackupRoot-full`" `"$InstallRoot`""
@@ -182,18 +221,28 @@ if ($preflightExitCode -ne 0) {
         Write-Host "  Copy-Item `"$BackupRoot\agent\*`" `"$InstallRoot\agent`" -Recurse -Force   # canonical parser runtime"
     }
     if ($wasRegistered) {
-        Write-Host "  Start-ScheduledTask -TaskName '$TaskName'   # once you're ready to resume"
+        Write-Host "  The task is left DISABLED (regardless of its prior state) -- re-enable manually" -ForegroundColor Red
+        Write-Host "  only once you're satisfied the runtime is in a good state:" -ForegroundColor Red
+        Write-Host "    Enable-ScheduledTask -TaskName '$TaskName'"
     }
     exit 1
 }
 
 Write-Host ""
 Write-Host "Preflight passed against the new runtime." -ForegroundColor Green
-if ($wasRegistered) {
-    Start-ScheduledTask -TaskName $TaskName
-    Write-Host "Restarted '$TaskName'." -ForegroundColor Green
+if ($wasRegistered -and $wasEnabled) {
+    Enable-ScheduledTask -TaskName $TaskName | Out-Null
+    Write-Host "Re-enabled '$TaskName' (restored its prior enabled state) -- it will resume on" -ForegroundColor Green
+    Write-Host "its normal recurring schedule, not immediately." -ForegroundColor Green
+    if ($StartNow) {
+        Start-ScheduledTask -TaskName $TaskName
+        Write-Host "Also triggered an immediate run now (-StartNow was passed)." -ForegroundColor Green
+    }
+} elseif ($wasRegistered -and -not $wasEnabled) {
+    Write-Host "'$TaskName' was already disabled before this update -- left disabled (its prior" -ForegroundColor Yellow
+    Write-Host "state); nothing to restore. Enable-ScheduledTask when you're ready." -ForegroundColor Yellow
 } else {
-    Write-Host "Task was not previously registered -- nothing to restart. Use register-collector-task.ps1 if needed."
+    Write-Host "Task was not previously registered -- nothing to restore. Use register-collector-task.ps1 if needed."
 }
 
 Write-Host ""
