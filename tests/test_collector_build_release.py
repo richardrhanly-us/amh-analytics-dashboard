@@ -339,6 +339,14 @@ def _executable_body(text: str) -> str:
     return text[idx + len(end_marker):] if idx != -1 else text
 
 
+def _code_only(text: str) -> str:
+    """Drops every line whose trimmed content starts with '#' -- for
+    asserting a string appears ONLY in explanatory inline comments
+    (legitimate, e.g. documenting what an OLD/replaced approach assumed)
+    and never in an actual executed command."""
+    return "\n".join(line for line in text.splitlines() if not line.strip().startswith("#"))
+
+
 def test_install_release_does_not_require_repo_root():
     text = _read_ps1("install-release.ps1")
     assert "$RepoRoot" not in text
@@ -574,3 +582,544 @@ def test_full_rebuild_path_still_replaces_wholesale_unaffected_by_fast_path_fix(
 def test_config_state_logs_still_never_touched_by_update_release():
     text = _read_ps1("update-release.ps1")
     assert "Never touches -DataRoot" in text
+
+
+# =========================================================================
+# FROZEN release bundle (collector-frozen-release-integration phase)
+# =========================================================================
+#
+# build_frozen_release requires an ALREADY-BUILT PyInstaller onedir output
+# (never builds PyInstaller itself -- that's collector/freeze/build_frozen.ps1's
+# job, ~25s and its own isolated venv, deliberately kept separate -- see
+# build_frozen_release's own docstring). These tests fake a minimal
+# onedir-SHAPED directory (SortViewCollector.exe + non-empty _internal\)
+# rather than running a real PyInstaller build, which would make this
+# suite slow and CI-fragile for no additional coverage -- build_release.py
+# only cares about the directory's SHAPE, never its content. Real,
+# executable proof against an ACTUAL PyInstaller build happened live on
+# LIB-L26 -- see that phase's own report, not this file.
+
+
+@pytest.fixture
+def fake_frozen_runtime_dir(tmp_path):
+    runtime_dir = tmp_path / "fake_dist" / "SortViewCollector"
+    (runtime_dir / "_internal").mkdir(parents=True)
+    (runtime_dir / "SortViewCollector.exe").write_bytes(b"fake-pe-bytes-not-a-real-exe")
+    (runtime_dir / "_internal" / "python314.dll").write_bytes(b"fake-dll-bytes")
+    return runtime_dir
+
+
+@pytest.fixture
+def built_frozen_bundle(fake_frozen_runtime_dir, tmp_path):
+    output_dir = tmp_path / "out"
+    return build_release.build_frozen_release(
+        REPO_ROOT, output_dir, "9.9.9-frozen-test", fake_frozen_runtime_dir, built_at="2026-01-01T00:00:00.000000Z"
+    )
+
+
+# --- _validate_frozen_runtime_dir / malformed runtime rejected ----------
+
+
+def test_frozen_release_rejects_nonexistent_runtime_dir(tmp_path):
+    with pytest.raises(build_release.FrozenRuntimeError):
+        build_release.build_frozen_release(
+            REPO_ROOT, tmp_path / "out", "1.0.0", tmp_path / "does-not-exist", built_at="x"
+        )
+
+
+def test_frozen_release_rejects_empty_runtime_dir(tmp_path):
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    with pytest.raises(build_release.FrozenRuntimeError):
+        build_release.build_frozen_release(REPO_ROOT, tmp_path / "out", "1.0.0", empty_dir, built_at="x")
+
+
+def test_frozen_release_rejects_missing_exe(tmp_path):
+    runtime_dir = tmp_path / "no_exe"
+    (runtime_dir / "_internal").mkdir(parents=True)
+    (runtime_dir / "_internal" / "something.dll").write_bytes(b"x")
+    with pytest.raises(build_release.FrozenRuntimeError, match="SortViewCollector.exe"):
+        build_release.build_frozen_release(REPO_ROOT, tmp_path / "out", "1.0.0", runtime_dir, built_at="x")
+
+
+def test_frozen_release_rejects_missing_internal_dir(tmp_path):
+    runtime_dir = tmp_path / "no_internal"
+    runtime_dir.mkdir(parents=True)
+    (runtime_dir / "SortViewCollector.exe").write_bytes(b"x")
+    with pytest.raises(build_release.FrozenRuntimeError, match="_internal"):
+        build_release.build_frozen_release(REPO_ROOT, tmp_path / "out", "1.0.0", runtime_dir, built_at="x")
+
+
+def test_frozen_release_writes_nothing_on_invalid_runtime(tmp_path):
+    output_dir = tmp_path / "out"
+    with pytest.raises(build_release.FrozenRuntimeError):
+        build_release.build_frozen_release(REPO_ROOT, output_dir, "1.0.0", tmp_path / "nope", built_at="x")
+    assert not output_dir.exists()
+
+
+def test_frozen_release_is_a_buildeerror_subclass():
+    # FrozenRuntimeError must still be catchable by existing BuildError
+    # handlers (e.g. build_release.py's own main()) without a separate
+    # except clause.
+    assert issubclass(build_release.FrozenRuntimeError, build_release.BuildError)
+
+
+# --- frozen bundle contents: exact layout, deterministic copy -----------
+
+
+def test_frozen_bundle_matches_target_layout(built_frozen_bundle):
+    root = built_frozen_bundle.bundle_dir
+    assert (root / "install.ps1").is_file()
+    assert (root / "MANIFEST.json").is_file()
+    assert (root / "collector_config.example.json").is_file()
+    assert (root / "runtime" / "SortViewCollector.exe").is_file()
+    assert (root / "runtime" / "_internal" / "python314.dll").is_file()
+    for tool in ("register-task.ps1", "preflight-system.ps1", "update.ps1", "uninstall.ps1", "set-api-token.ps1"):
+        assert (root / "tools" / tool).is_file(), tool
+
+
+def test_frozen_bundle_never_includes_python_source_tree(built_frozen_bundle):
+    root = built_frozen_bundle.bundle_dir
+    assert not (root / "collector").exists()
+    assert not (root / "agent").exists()
+
+
+def test_frozen_bundle_never_includes_requirements_txt(built_frozen_bundle):
+    assert not (built_frozen_bundle.bundle_dir / "requirements.txt").exists()
+
+
+def test_frozen_bundle_never_includes_build_or_dist_or_pyinstaller_venv(built_frozen_bundle):
+    root = built_frozen_bundle.bundle_dir
+    for path in root.rglob("*"):
+        assert path.name not in ("build", "dist", ".pyinstaller-venv")
+
+
+def test_frozen_bundle_never_includes_tests_backend_or_continuous_agent(built_frozen_bundle):
+    root = built_frozen_bundle.bundle_dir
+    for path in root.rglob("*"):
+        assert "tests" not in path.parts
+        assert "SortViewAgent" not in path.parts
+        assert path.name not in ("agent.runtime", "runtime.py")  # sanity: not literally shipping agent/runtime files
+
+
+def test_frozen_bundle_runtime_copy_is_exact_not_partial(built_frozen_bundle, fake_frozen_runtime_dir):
+    installed_files = {
+        p.relative_to(built_frozen_bundle.bundle_dir / "runtime").as_posix()
+        for p in (built_frozen_bundle.bundle_dir / "runtime").rglob("*")
+        if p.is_file()
+    }
+    source_files = {
+        p.relative_to(fake_frozen_runtime_dir).as_posix()
+        for p in fake_frozen_runtime_dir.rglob("*")
+        if p.is_file()
+    }
+    assert installed_files == source_files
+
+
+def test_frozen_bundle_config_template_no_secrets_or_prefilled_values(built_frozen_bundle):
+    text = (built_frozen_bundle.bundle_dir / "collector_config.example.json").read_text(encoding="utf-8")
+    doc = json.loads(text)
+    assert doc["customer_id"] == 0
+    assert doc["branch_id"] == 0
+    assert "token" not in json.dumps({k: v for k, v in doc.items() if not k.startswith("_comment")}).lower()
+
+
+def test_frozen_bundle_never_ships_a_token_file(built_frozen_bundle):
+    for path in built_frozen_bundle.bundle_dir.rglob("*"):
+        assert "token" not in path.name.lower() or path.name == "set-api-token.ps1"
+
+
+# --- MANIFEST.json covers the frozen runtime too -------------------------
+
+
+def test_frozen_manifest_includes_runtime_files_with_correct_hashes(built_frozen_bundle):
+    manifest = json.loads(built_frozen_bundle.manifest_path.read_text(encoding="utf-8"))
+    manifest_paths = {entry["path"] for entry in manifest["files"]}
+    assert "runtime/SortViewCollector.exe" in manifest_paths
+    assert "runtime/_internal/python314.dll" in manifest_paths
+
+    import hashlib
+
+    for entry in manifest["files"]:
+        actual = (built_frozen_bundle.bundle_dir / entry["path"]).read_bytes()
+        assert entry["sha256"] == hashlib.sha256(actual).hexdigest()
+        assert entry["size_bytes"] == len(actual)
+
+
+def test_frozen_manifest_matches_every_file_on_disk_exactly(built_frozen_bundle):
+    manifest = json.loads(built_frozen_bundle.manifest_path.read_text(encoding="utf-8"))
+    manifest_paths = {entry["path"] for entry in manifest["files"]}
+    on_disk = {
+        p.relative_to(built_frozen_bundle.bundle_dir).as_posix()
+        for p in built_frozen_bundle.bundle_dir.rglob("*")
+        if p.is_file() and p.name != "MANIFEST.json"
+    }
+    assert manifest_paths == on_disk
+
+
+# --- CLI: --frozen-runtime ------------------------------------------------
+
+
+def test_cli_frozen_runtime_flag_builds_frozen_bundle(fake_frozen_runtime_dir, tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "collector.build_release",
+            "--output", str(tmp_path / "out"), "--version", "3.0.0",
+            "--frozen-runtime", str(fake_frozen_runtime_dir),
+        ],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+    )
+    assert "Built release bundle" in result.stdout
+    bundle = tmp_path / "out" / "SortViewCollector-3.0.0"
+    assert (bundle / "runtime" / "SortViewCollector.exe").is_file()
+    assert not (bundle / "collector").exists()
+
+
+def test_cli_without_frozen_runtime_still_builds_source_bundle(tmp_path):
+    # Regression guard: the default (no --frozen-runtime) CLI path must
+    # remain completely unchanged -- source-mode is still supported.
+    result = subprocess.run(
+        [sys.executable, "-m", "collector.build_release", "--output", str(tmp_path), "--version", "4.0.0"],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+    )
+    assert "Built release bundle" in result.stdout
+    bundle = tmp_path / "SortViewCollector-4.0.0"
+    assert (bundle / "collector" / "run.py").is_file()
+    assert not (bundle / "runtime").exists()
+
+
+# --- source-mode build_release remains fully intact (regression guard) --
+
+
+def test_source_release_still_works_unaffected_by_frozen_addition(built_bundle):
+    # built_bundle is the pre-existing source-mode fixture (see above) --
+    # this just re-asserts its two most structurally significant
+    # properties still hold after the frozen-mode refactor touched shared
+    # helpers (_copy_required_files, _write_manifest, _new_bundle_dir).
+    assert (built_bundle.bundle_dir / "collector" / "run.py").is_file()
+    assert (built_bundle.bundle_dir / "requirements.txt").is_file()
+    assert not (built_bundle.bundle_dir / "runtime").exists()
+
+
+# --- static checks on install.ps1's frozen branch (CI cannot run PowerShell) --
+
+
+def test_install_release_detects_bundle_kind_from_contents():
+    text = _read_ps1("install-release.ps1")
+    assert "$isSourceBundle" in text
+    assert "$isFrozenBundle" in text
+    assert "ambiguous" in text.lower()
+
+
+def test_install_release_frozen_path_skips_venv_and_pip():
+    body = _executable_body(_read_ps1("install-release.ps1"))
+    # The frozen branch of "=== 1. Application runtime ===" must never
+    # invoke venv/pip -- find that branch specifically (between the
+    # isFrozenBundle if and its matching else).
+    frozen_section = body[body.index("=== 1. Application runtime ===") : body.index("=== 2. Data directories ===")]
+    assert "python -m venv" not in frozen_section
+    assert "pip install" not in frozen_section
+    assert "SKIPPED (frozen bundle" in body
+
+
+def test_install_release_verifies_manifest_before_any_mutation():
+    body = _executable_body(_read_ps1("install-release.ps1"))
+    manifest_call_idx = body.index("Test-ReleaseManifest -BundleRoot")
+    first_mutation_idx = body.index('=== 1. Application runtime ===')
+    assert manifest_call_idx < first_mutation_idx
+
+
+def test_install_release_runs_frozen_preflight_and_bootstrap_via_exe_subcommands():
+    text = _read_ps1("install-release.ps1")
+    assert 'RunnerExe`" preflight --config' in text
+    assert 'RunnerExe`" bootstrap --config' in text
+
+
+# --- static checks on update.ps1's frozen branch --------------------------
+
+
+def test_update_release_detects_bundle_and_install_kind():
+    text = _read_ps1("update-release.ps1")
+    assert "$bundleIsSource" in text
+    assert "$bundleIsFrozen" in text
+    assert "$installIsSource" in text
+    assert "$installIsFrozen" in text
+
+
+def test_update_release_refuses_mismatched_bundle_and_install_kind():
+    text = _read_ps1("update-release.ps1")
+    assert "Refusing to update across kinds" in text
+    # Both directions must be covered, not just one.
+    assert text.count("Refusing to update across kinds") >= 2
+
+
+def test_update_release_frozen_replacement_is_remove_then_copy():
+    body = _executable_body(_read_ps1("update-release.ps1"))
+    # Ends at "=== 3. Dependency check ===" (the SOURCE branch's own step
+    # 3 header) -- NOT "=== 4. ..." which comes after both branches and
+    # would wrongly include the source branch's pip/venv logic too.
+    frozen_section = body[body.index("Replace frozen runtime"):body.index("=== 3. Dependency check ===")]
+    # Whole-InstallRoot replacement (not exe+_internal-specific) -- see
+    # test_update_release_frozen_replaces_whole_installroot below for the
+    # dedicated coverage of that property; this test keeps the original
+    # remove-before-copy ordering check.
+    remove_idx = frozen_section.index("Remove-Item -Recurse -Force $InstallRoot")
+    copy_idx = frozen_section.index('Copy-Item (Join-Path $FrozenRuntimeDir "*")')
+    assert remove_idx < copy_idx
+    assert "pip install" not in frozen_section
+    assert "python -m venv" not in frozen_section
+    assert ".deps-hash" not in frozen_section
+
+
+def test_update_release_frozen_replaces_whole_installroot_not_just_exe_and_internal():
+    # Regression guard for the exact fragility flagged in review: the
+    # frozen contract must not assume the runtime is only
+    # SortViewCollector.exe + _internal\ -- it must treat -InstallRoot as
+    # the whole replaceable unit, so a future build adding any other
+    # top-level file/folder is still covered without this script changing.
+    body = _executable_body(_read_ps1("update-release.ps1"))
+    frozen_section = body[body.index("Replace frozen runtime"):body.index("=== 3. Dependency check ===")]
+    assert "Remove-Item -Recurse -Force $InstallRoot" in frozen_section
+    code_only = _code_only(frozen_section)
+    assert "SortViewCollector.exe" not in code_only
+    assert "_internal" not in code_only
+
+
+def test_update_release_frozen_preflight_uses_exe_subcommand():
+    body = _executable_body(_read_ps1("update-release.ps1"))
+    assert "& $InstalledFrozenExe preflight --config $ConfigPath" in body
+
+
+def test_update_release_frozen_rollback_is_remove_then_copy():
+    body = _executable_body(_read_ps1("update-release.ps1"))
+    rollback_section = body[body.index("UPDATE FAILED VERIFICATION"):body.index("Restore-DisabledTaskAndFail", body.index("UPDATE FAILED VERIFICATION"))]
+    frozen_rollback = rollback_section[rollback_section.index("elseif ($isFrozen)"):]
+    # Whole-InstallRoot rollback (not exe+_internal-specific) -- $BackupRoot
+    # is a full copy of the prior InstallRoot (see the backup step), so
+    # restoring it in full is what covers ANY file the failed update added.
+    remove_idx = frozen_rollback.index('Remove-Item -Recurse -Force `"$InstallRoot`"')
+    copy_idx = frozen_rollback.index('Copy-Item `"$BackupRoot`" `"$InstallRoot`" -Recurse -Force')
+    assert remove_idx < copy_idx
+    code_only = _code_only(frozen_rollback)
+    assert "SortViewCollector.exe" not in code_only
+    assert "_internal" not in code_only
+
+
+def test_update_release_manifest_verified_before_task_disable():
+    body = _executable_body(_read_ps1("update-release.ps1"))
+    manifest_idx = body.index("Test-ReleaseManifest -BundleRoot")
+    disable_section_idx = body.index("Snapshot and disable the task")
+    assert manifest_idx < disable_section_idx
+
+
+def test_update_release_task_disabled_before_frozen_mutation_too():
+    body = _executable_body(_read_ps1("update-release.ps1"))
+    disable_idx = body.index("Disable-ScheduledTask")
+    backup_idx = body.index("Back up current runtime files")
+    frozen_replace_idx = body.index("Replace frozen runtime")
+    assert disable_idx < backup_idx < frozen_replace_idx
+
+
+def test_update_release_frozen_backup_happens_before_replacement():
+    body = _executable_body(_read_ps1("update-release.ps1"))
+    backup_idx = body.index('Copy-Item $InstallRoot -Destination $BackupRoot -Recurse -Force')
+    replace_idx = body.index('Remove-Item -Recurse -Force $InstallRoot')
+    assert backup_idx < replace_idx
+
+
+# --- static checks on register-task.ps1's frozen branch -------------------
+
+
+def test_register_task_detects_frozen_install():
+    text = _read_ps1("register-collector-task.ps1")
+    assert "$IsFrozen" in text
+    assert "SortViewCollector.exe" in text
+
+
+def test_register_task_frozen_uses_task_xml_subcommand_not_python_module():
+    body = _executable_body(_read_ps1("register-collector-task.ps1"))
+    assert '@("task-xml")' in body
+    assert '"--frozen"' in body
+
+
+def test_register_task_source_path_still_uses_python_module():
+    body = _executable_body(_read_ps1("register-collector-task.ps1"))
+    assert '@("-m", "collector.task_settings")' in body
+
+
+# --- static checks on preflight-system.ps1's frozen branch -----------------
+
+
+def test_preflight_system_detects_frozen_install():
+    text = _read_ps1("run-preflight-as-system.ps1")
+    assert "$IsFrozen" in text
+
+
+def test_preflight_system_frozen_arguments_omit_python_module_flag():
+    body = _executable_body(_read_ps1("run-preflight-as-system.ps1"))
+    frozen_args_section = body[body.index('$PreflightArgs = if ($IsFrozen)'):body.index("$escapedCommand")]
+    assert '"preflight --config' in frozen_args_section
+    assert "-m collector.preflight" not in frozen_args_section.split("} else {")[0]
+
+
+# --- uninstall / set-api-token: verified unchanged-logic, mode-agnostic ---
+
+
+def test_uninstall_removes_installroot_unconditionally_regardless_of_kind():
+    text = _read_ps1("uninstall-collector.ps1")
+    assert "Remove-Item -Recurse -Force $InstallRoot" in text
+
+
+def test_set_api_token_has_no_installed_runtime_awareness():
+    # This script must remain completely mode-agnostic -- it only ever
+    # touches the Machine-scope env var, never inspects -InstallRoot at all.
+    text = _read_ps1("set-collector-api-token.ps1")
+    assert "InstallRoot" not in text
+    assert "SortViewCollector.exe" not in text
+
+
+# =========================================================================
+# Post-review hardening (manifest completeness, -Force determinism,
+# ambiguous install, whole-runtime frozen update/rollback)
+# =========================================================================
+#
+# The manifest function's new logic (unsafe-path/duplicate/extra-file
+# detection) and the -Force/whole-InstallRoot behavior are genuine NEW
+# runtime behavior, not just wiring -- static text checks below lock in
+# the STRUCTURE (the right checks exist, in the right order), but the
+# actual PowerShell execution proof (tamper/traversal/duplicate/extra-file
+# rejection, -Force determinism, ambiguous-install refusal, whole-runtime
+# update/rollback) was performed live on LIB-L26 -- see that phase's own
+# report, not this file, for the executed evidence (this project's CI
+# cannot run PowerShell, same reasoning as every other .ps1 static check
+# in this file).
+
+
+def _manifest_function_body(script_name: str) -> str:
+    text = _read_ps1(script_name)
+    start = text.index("function Test-ReleaseManifest")
+    end = text.index("\n}\n", start) + 3
+    return text[start:end]
+
+
+# --- manifest: unsafe paths / duplicates / extra files (structure checks) --
+
+
+def test_manifest_function_rejects_traversal_and_rooted_paths():
+    for script in ("install-release.ps1", "update-release.ps1"):
+        body = _manifest_function_body(script)
+        assert "UNSAFE MANIFEST PATH" in body
+        assert r"\.\." in body  # the traversal-segment regex pattern
+        assert "^[\\\\/]" in body or "^[\\/]" in body  # rooted-path pattern
+
+
+def test_manifest_function_rejects_duplicate_paths():
+    for script in ("install-release.ps1", "update-release.ps1"):
+        body = _manifest_function_body(script)
+        assert "DUPLICATE MANIFEST PATH" in body
+        assert "manifestKeys.ContainsKey" in body
+
+
+def test_manifest_function_rejects_unlisted_extra_files():
+    for script in ("install-release.ps1", "update-release.ps1"):
+        body = _manifest_function_body(script)
+        assert "UNEXPECTED FILE" in body
+        assert "Get-ChildItem -Path $BundleRoot -Recurse -File" in body
+
+
+def test_manifest_function_excludes_manifest_json_itself_from_extra_file_check():
+    for script in ("install-release.ps1", "update-release.ps1"):
+        body = _manifest_function_body(script)
+        assert 'if ($relative -eq "MANIFEST.json") { continue }' in body
+
+
+def test_manifest_function_still_checks_missing_and_hash_mismatch():
+    # Regression guard: the new checks must be ADDITIVE, not a replacement
+    # for the original missing-file/hash-mismatch checks.
+    for script in ("install-release.ps1", "update-release.ps1"):
+        body = _manifest_function_body(script)
+        assert "MISSING:" in body
+        assert "HASH MISMATCH:" in body
+
+
+def test_manifest_wording_does_not_claim_cryptographic_authenticity():
+    # Human-review correction: SHA-256-against-an-unsigned-manifest is an
+    # INTEGRITY check, not an authenticated signature. Neither script may
+    # claim otherwise, and both must say so explicitly.
+    for script in ("install-release.ps1", "update-release.ps1"):
+        text = _read_ps1(script)
+        assert "tampered with" not in text.lower() or "not an authenticated signature" in text.lower()
+        assert "not an authenticated signature" in text.lower() or "not signed" in text.lower()
+        assert "code signing" in text.lower()
+
+
+def test_manifest_verification_runs_before_any_installroot_mutation_both_scripts():
+    for script in ("install-release.ps1", "update-release.ps1"):
+        body = _executable_body(_read_ps1(script))
+        manifest_idx = body.index("Test-ReleaseManifest -BundleRoot")
+        # The first real mutation in either script is either the -Force
+        # InstallRoot removal (install.ps1) or the task-disable section
+        # (update.ps1) -- whichever marker exists, it must come after.
+        if "Removing existing InstallRoot before forced reinstall" in body:
+            mutation_idx = body.index("Removing existing InstallRoot before forced reinstall")
+        else:
+            mutation_idx = body.index("Snapshot and disable the task")
+        assert manifest_idx < mutation_idx
+
+
+# --- install.ps1: -Force determinism -------------------------------------
+
+
+def test_install_release_force_removes_installroot_before_any_copy():
+    body = _executable_body(_read_ps1("install-release.ps1"))
+    force_remove_idx = body.index("Removing existing InstallRoot before forced reinstall")
+    first_copy_idx = body.index('=== 1. Application runtime ===')
+    assert force_remove_idx < first_copy_idx
+
+
+def test_install_release_force_removal_gated_strictly_on_force_switch():
+    body = _executable_body(_read_ps1("install-release.ps1"))
+    assert "if ($Force -and (Test-Path $InstallRoot))" in body
+
+
+def test_install_release_force_removal_never_touches_dataroot():
+    body = _executable_body(_read_ps1("install-release.ps1"))
+    force_section_start = body.index("if ($Force -and (Test-Path $InstallRoot))")
+    force_section = body[force_section_start:body.index('=== 1. Application runtime ===')]
+    assert "DataRoot" not in _code_only(force_section)
+
+
+# --- update.ps1: ambiguous installed runtime ------------------------------
+
+
+def test_update_release_rejects_ambiguous_installed_runtime():
+    body = _executable_body(_read_ps1("update-release.ps1"))
+    assert "if ($installIsSource -and $installIsFrozen)" in body
+    assert "ambiguous/malformed" in body
+
+
+def test_update_release_ambiguous_check_before_task_or_runtime_mutation():
+    body = _executable_body(_read_ps1("update-release.ps1"))
+    ambiguous_idx = body.index("if ($installIsSource -and $installIsFrozen)")
+    task_mutation_idx = body.index("Snapshot and disable the task")
+    assert ambiguous_idx < task_mutation_idx
+
+
+def test_update_release_ambiguous_check_precedes_no_install_found_check():
+    # Ordering sanity: ambiguous (both present) must be distinguished from
+    # "neither present" -- checked first, not folded into the same branch.
+    body = _executable_body(_read_ps1("update-release.ps1"))
+    ambiguous_idx = body.index("if ($installIsSource -and $installIsFrozen)")
+    no_install_idx = body.index("No existing install found")
+    assert ambiguous_idx < no_install_idx
+
+
+# --- update.ps1: whole-InstallRoot frozen update/rollback -----------------
+
+
+def test_update_release_frozen_backup_covers_whole_installroot():
+    body = _executable_body(_read_ps1("update-release.ps1"))
+    backup_section = body[body.index("=== 2. Back up current runtime files ==="):body.index("function Restore-DisabledTaskAndFail")]
+    frozen_backup = backup_section[:backup_section.index("} else {")]
+    assert 'Copy-Item $InstallRoot -Destination $BackupRoot -Recurse -Force' in frozen_backup
+    assert "BackupRoot must NOT already exist" in frozen_backup  # documents the nesting-avoidance precondition

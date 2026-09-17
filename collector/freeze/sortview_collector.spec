@@ -52,7 +52,7 @@ a = Analysis(  # noqa: F821 (Analysis/PYZ/EXE/COLLECT are injected by PyInstalle
     pathex=[str(REPO_ROOT)],
     binaries=[],
     datas=[],
-    # Belt-and-suspenders for the four subcommand targets -- see
+    # Belt-and-suspenders for the five subcommand targets -- see
     # dispatcher.py's own docstring for why these are expected to be
     # auto-discovered anyway (static from-imports, even inside if/elif).
     hiddenimports=[
@@ -60,6 +60,7 @@ a = Analysis(  # noqa: F821 (Analysis/PYZ/EXE/COLLECT are injected by PyInstalle
         "collector.preflight",
         "collector.bootstrap_state",
         "collector.support_info",
+        "collector.task_settings",
     ],
     hookspath=[],
     hooksconfig={},

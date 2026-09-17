@@ -60,12 +60,26 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
 }
 
 $VenvPython = Join-Path $InstallRoot ".venv\Scripts\python.exe"
-if (-not (Test-Path $VenvPython)) {
-    throw "Python executable not found at '$VenvPython' -- run install-collector.ps1 first."
+$FrozenExe = Join-Path $InstallRoot "SortViewCollector.exe"
+$IsFrozen = (Test-Path $FrozenExe) -and -not (Test-Path $VenvPython)
+if (-not (Test-Path $VenvPython) -and -not (Test-Path $FrozenExe)) {
+    throw "No installed runtime found at '$InstallRoot' (neither .venv\Scripts\python.exe nor " +
+          "SortViewCollector.exe) -- run install.ps1 first."
 }
+$RunnerExe = if ($IsFrozen) { $FrozenExe } else { $VenvPython }
 
 $ResultPath = Join-Path $env:TEMP "sortview-collector-preflight-system-$([guid]::NewGuid().ToString('N')).json"
-$PreflightArgs = "-m collector.preflight --config `"$ConfigPath`" --output `"$ResultPath`""
+# FROZEN: SortViewCollector.exe's own "preflight" dispatcher subcommand --
+# no "-m collector.preflight" (there is no Python module system in a
+# frozen process). SOURCE: unchanged. Everything else below (temporary
+# task XML registration/start/wait/cleanup) is invocation-agnostic -- it
+# just runs whatever $RunnerExe/$PreflightArgs resolve to, under the same
+# real SYSTEM identity either way.
+$PreflightArgs = if ($IsFrozen) {
+    "preflight --config `"$ConfigPath`" --output `"$ResultPath`""
+} else {
+    "-m collector.preflight --config `"$ConfigPath`" --output `"$ResultPath`""
+}
 
 $cleanupDone = $false
 function Remove-TempTask {
@@ -103,7 +117,7 @@ try {
     function Escape-TaskXml([string]$text) {
         return $text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace('"', "&quot;")
     }
-    $escapedCommand = Escape-TaskXml($VenvPython)
+    $escapedCommand = Escape-TaskXml($RunnerExe)
     $escapedArgs = Escape-TaskXml($PreflightArgs)
     $escapedWorkingDir = Escape-TaskXml($InstallRoot)
     $escapedPrincipal = Escape-TaskXml($Principal)

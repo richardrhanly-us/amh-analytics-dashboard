@@ -290,3 +290,86 @@ def test_special_characters_in_config_path_are_escaped():
     root = _parse(xml_text)  # would raise on unescaped "&" if broken
     arguments = root.find(".//t:Actions/t:Exec/t:Arguments", _NS)
     assert "path with & spaces" in arguments.text
+
+
+# --- frozen (PyInstaller) install: Arguments must not reference -m collector.run ---
+
+
+def test_frozen_defaults_to_false_source_mode_arguments_unchanged():
+    xml_text = build_task_xml(_definition())
+    root = _parse(xml_text)
+    arguments = root.find(".//t:Actions/t:Exec/t:Arguments", _NS)
+    assert arguments.text == (
+        '-m collector.run --config "C:\\ProgramData\\SortViewCollector\\config\\collector_config.json"'
+    )
+
+
+def test_frozen_true_uses_dispatcher_subcommand_not_python_module():
+    xml_text = build_task_xml(_definition(frozen=True))
+    root = _parse(xml_text)
+    arguments = root.find(".//t:Actions/t:Exec/t:Arguments", _NS)
+    assert arguments.text == (
+        'run --config "C:\\ProgramData\\SortViewCollector\\config\\collector_config.json"'
+    )
+    assert "-m collector.run" not in arguments.text
+
+
+def test_frozen_true_command_is_whatever_python_exe_was_given():
+    # python_exe's field NAME is unchanged (backward compatible) -- for a
+    # frozen install the caller passes SortViewCollector.exe's own path
+    # through it; build_task_xml doesn't care, it only decides Arguments.
+    xml_text = build_task_xml(_definition(frozen=True, python_exe=r"C:\SortView\Collector\SortViewCollector.exe"))
+    root = _parse(xml_text)
+    command = root.find(".//t:Actions/t:Exec/t:Command", _NS)
+    assert command.text == r"C:\SortView\Collector\SortViewCollector.exe"
+
+
+def test_frozen_true_everything_else_unchanged():
+    # Cadence/overlap/restart/execution-limit/principal/enabled-default
+    # are identical regardless of frozen -- only Arguments differs.
+    source_xml = _parse(build_task_xml(_definition(frozen=False)))
+    frozen_xml = _parse(build_task_xml(_definition(frozen=True, start_boundary="2026-09-15T00:00:00")))
+    for xpath in (
+        ".//t:Triggers/t:TimeTrigger/t:Repetition/t:Interval",
+        ".//t:Settings/t:MultipleInstancesPolicy",
+        ".//t:Settings/t:RestartOnFailure/t:Count",
+        ".//t:Settings/t:RestartOnFailure/t:Interval",
+        ".//t:Settings/t:ExecutionTimeLimit",
+        ".//t:Settings/t:Enabled",
+        ".//t:Principals/t:Principal/t:UserId",
+        ".//t:Principals/t:Principal/t:RunLevel",
+    ):
+        assert source_xml.find(xpath, _NS).text == frozen_xml.find(xpath, _NS).text, xpath
+
+
+def test_cli_frozen_flag_produces_dispatcher_style_arguments(tmp_path):
+    from collector.task_settings import main
+
+    output_path = tmp_path / "task.xml"
+    exit_code = main([
+        "--python-exe", r"C:\SortView\Collector\SortViewCollector.exe",
+        "--config-path", r"C:\ProgramData\SortViewCollector\config\collector_config.json",
+        "--working-dir", r"C:\SortView\Collector",
+        "--output", str(output_path),
+        "--frozen",
+    ])
+    assert exit_code == 0
+    root = ET.fromstring(output_path.read_text(encoding="utf-16"))
+    arguments = root.find(".//t:Actions/t:Exec/t:Arguments", _NS)
+    assert arguments.text.startswith("run --config ")
+
+
+def test_cli_without_frozen_flag_keeps_python_module_arguments(tmp_path):
+    from collector.task_settings import main
+
+    output_path = tmp_path / "task.xml"
+    exit_code = main([
+        "--python-exe", r"C:\SortView\Collector\.venv\Scripts\python.exe",
+        "--config-path", r"C:\ProgramData\SortViewCollector\config\collector_config.json",
+        "--working-dir", r"C:\SortView\Collector",
+        "--output", str(output_path),
+    ])
+    assert exit_code == 0
+    root = ET.fromstring(output_path.read_text(encoding="utf-16"))
+    arguments = root.find(".//t:Actions/t:Exec/t:Arguments", _NS)
+    assert arguments.text.startswith("-m collector.run --config ")

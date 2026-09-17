@@ -118,12 +118,40 @@ SUPPORT_FILES: tuple[tuple[str, str], ...] = (
 CONFIG_TEMPLATE_SOURCE = "collector/deploy/collector_config.example.json"
 CONFIG_TEMPLATE_DEST = "collector_config.example.json"
 
+# --- frozen (PyInstaller) bundle mode ---------------------------------
+#
+# A frozen bundle reuses DEPLOY_TOOL_FILES and CONFIG_TEMPLATE_* verbatim
+# (the SAME install/update/register/preflight/uninstall/token scripts --
+# each auto-detects source vs. frozen at runtime from what it finds under
+# -InstallRoot/the bundle root, rather than this module shipping a second
+# parallel set of scripts) -- only the Python source tree and
+# requirements.txt are replaced with a copy of an already-built PyInstaller
+# onedir output. See build_frozen_release below.
+FROZEN_RUNTIME_DEST = "runtime"
+FROZEN_EXE_NAME = "SortViewCollector.exe"
+FROZEN_INTERNAL_DIR_NAME = "_internal"
+
+# SUPPORT_FILES minus requirements.txt -- a frozen bundle ships no
+# requirements to install (there is no venv/pip step at all), but still
+# needs install.ps1 itself. Derived from SUPPORT_FILES (not a separately
+# maintained tuple) so it can never silently drift from it.
+FROZEN_SUPPORT_FILES: tuple[tuple[str, str], ...] = tuple(
+    (source_rel, dest_rel) for source_rel, dest_rel in SUPPORT_FILES if dest_rel != "requirements.txt"
+)
+
 
 class BuildError(Exception):
     """Raised for any build-time problem -- a missing required source
     file, an existing non-empty output directory without -Force, etc.
     Never partially writes a bundle: every source file's existence is
     verified BEFORE any copy begins (see build_release)."""
+
+
+class FrozenRuntimeError(BuildError):
+    """Raised when --frozen-runtime does not point at a valid PyInstaller
+    onedir output directory -- see _validate_frozen_runtime_dir. A
+    subclass of BuildError (not a separate exception hierarchy) so
+    existing callers that only catch BuildError still catch this too."""
 
 
 @dataclass(frozen=True)
@@ -206,6 +234,68 @@ def _required_source_files(repo_root: Path) -> list[tuple[Path, str | None]]:
     return pairs
 
 
+def _copy_required_files(required: list[tuple[Path, str | None]], bundle_dir: Path) -> list[ManifestEntry]:
+    """Shared copy-loop used by both build_release and build_frozen_release:
+    copies every (src, dest_rel) pair verbatim except dest_rel is None
+    entries (existence-only, written separately -- see CONFIG_TEMPLATE_SOURCE),
+    returning one ManifestEntry per file actually copied."""
+    entries: list[ManifestEntry] = []
+    for src, dest_rel in required:
+        if dest_rel is None:
+            continue
+        dest = bundle_dir / dest_rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dest)
+        entries.append(ManifestEntry(dest_rel, _sha256_file(dest), dest.stat().st_size))
+    return entries
+
+
+def _write_config_template(bundle_dir: Path, repo_root: Path) -> ManifestEntry:
+    """Writes collector_config.example.json (rewritten comment, not a
+    byte-for-byte copy -- see _release_facing_example_config) and returns
+    its ManifestEntry. Shared by both build_release and build_frozen_release
+    -- every bundle, source or frozen, carries the same config template."""
+    config_dest = bundle_dir / CONFIG_TEMPLATE_DEST
+    config_text = _release_facing_example_config(repo_root / CONFIG_TEMPLATE_SOURCE)
+    config_dest.write_text(config_text, encoding="utf-8", newline="\n")
+    config_bytes = config_text.encode("utf-8")
+    return ManifestEntry(CONFIG_TEMPLATE_DEST, hashlib.sha256(config_bytes).hexdigest(), len(config_bytes))
+
+
+def _write_manifest(
+    bundle_dir: Path, version: str, entries: list[ManifestEntry], built_at: str | None
+) -> Path:
+    """Sorts entries and writes MANIFEST.json -- shared final step for
+    both build_release and build_frozen_release, so the manifest's own
+    shape (and how `built_at` is defaulted) can never drift between the
+    two bundle kinds."""
+    entries.sort(key=lambda e: e.path)
+    manifest = {
+        "product": PRODUCT_NAME,
+        "version": version,
+        "built_at": built_at or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        "files": [{"path": e.path, "sha256": e.sha256, "size_bytes": e.size_bytes} for e in entries],
+    }
+    manifest_path = bundle_dir / "MANIFEST.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
+    return manifest_path
+
+
+def _new_bundle_dir(output_dir: Path, version: str, *, force: bool) -> Path:
+    """Resolves and prepares <output_dir>/SortViewCollector-<version>/,
+    refusing (BuildError) if it already exists unless `force` -- shared by
+    both build_release and build_frozen_release."""
+    bundle_dir = output_dir / f"SortViewCollector-{version}"
+    if bundle_dir.exists():
+        if not force:
+            raise BuildError(
+                f"Output directory already exists: {bundle_dir} -- pass force=True / --force to rebuild it."
+            )
+        shutil.rmtree(bundle_dir)
+    bundle_dir.mkdir(parents=True)
+    return bundle_dir
+
+
 def build_release(
     repo_root: Path,
     output_dir: Path,
@@ -214,8 +304,10 @@ def build_release(
     force: bool = False,
     built_at: str | None = None,
 ) -> BuildResult:
-    """Builds a standalone release bundle at
-    <output_dir>/SortViewCollector-<version>/.
+    """Builds a standalone SOURCE release bundle at
+    <output_dir>/SortViewCollector-<version>/ -- a Python source tree
+    plus requirements.txt, installed by install.ps1 into a fresh venv. See
+    build_frozen_release for the PyInstaller (no-Python-required) bundle kind.
 
     Fails loudly (BuildError) and writes NOTHING if any required source
     file is missing -- every source file's existence is checked up front,
@@ -234,44 +326,131 @@ def build_release(
             "Refusing to build -- required source file(s) missing:\n" + "\n".join(f"  {m}" for m in missing)
         )
 
-    bundle_dir = output_dir / f"SortViewCollector-{version}"
-    if bundle_dir.exists():
-        if not force:
-            raise BuildError(
-                f"Output directory already exists: {bundle_dir} -- pass force=True / --force to rebuild it."
-            )
-        shutil.rmtree(bundle_dir)
+    bundle_dir = _new_bundle_dir(output_dir, version, force=force)
 
-    bundle_dir.mkdir(parents=True)
+    entries = _copy_required_files(required, bundle_dir)
+    entries.append(_write_config_template(bundle_dir, repo_root))
+
+    manifest_path = _write_manifest(bundle_dir, version, entries, built_at)
+
+    return BuildResult(bundle_dir=bundle_dir, manifest_path=manifest_path, entries=tuple(entries))
+
+
+def _validate_frozen_runtime_dir(frozen_runtime_dir: Path) -> None:
+    """Fails loudly (FrozenRuntimeError) unless frozen_runtime_dir looks
+    like a real PyInstaller onedir output directory -- checked BEFORE any
+    bundle output directory is created, same fail-closed contract as
+    build_release's own missing-source check. Deliberately does NOT
+    build PyInstaller itself (see build_frozen_release's own docstring for
+    why) -- this only validates an ALREADY-built runtime."""
+    if not frozen_runtime_dir.is_dir():
+        raise FrozenRuntimeError(f"--frozen-runtime is not a directory: {frozen_runtime_dir}")
+    if not any(frozen_runtime_dir.iterdir()):
+        raise FrozenRuntimeError(f"--frozen-runtime directory is empty: {frozen_runtime_dir}")
+    exe_path = frozen_runtime_dir / FROZEN_EXE_NAME
+    if not exe_path.is_file():
+        raise FrozenRuntimeError(
+            f"--frozen-runtime does not contain {FROZEN_EXE_NAME}: {frozen_runtime_dir} -- "
+            "build it first with collector/freeze/build_frozen.ps1, then pass its dist\\SortViewCollector\\ "
+            "output directory here."
+        )
+    internal_dir = frozen_runtime_dir / FROZEN_INTERNAL_DIR_NAME
+    if not internal_dir.is_dir():
+        raise FrozenRuntimeError(
+            f"--frozen-runtime does not contain a {FROZEN_INTERNAL_DIR_NAME}\\ directory: {frozen_runtime_dir} -- "
+            "this does not look like a real PyInstaller onedir output."
+        )
+
+
+def _copy_frozen_runtime(frozen_runtime_dir: Path, bundle_dir: Path) -> list[ManifestEntry]:
+    """Copies the already-validated frozen runtime directory's ENTIRE
+    contents into <bundle_dir>/runtime/, deterministically (shutil.copytree
+    onto a destination that does not yet exist -- no overlay, no stale
+    files possible since bundle_dir was just freshly created), and returns
+    one ManifestEntry per file, hashed from the COPIED destination (not
+    the source) so the manifest reflects exactly what shipped."""
+    dest_runtime_dir = bundle_dir / FROZEN_RUNTIME_DEST
+    shutil.copytree(frozen_runtime_dir, dest_runtime_dir)
 
     entries: list[ManifestEntry] = []
-    for src, dest_rel in required:
-        if dest_rel is None:
-            # collector_config.example.json's source -- existence already
-            # verified above; written separately below, never copied verbatim.
-            continue
-        dest = bundle_dir / dest_rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(src, dest)
-        entries.append(ManifestEntry(dest_rel, _sha256_file(dest), dest.stat().st_size))
+    for path in sorted(dest_runtime_dir.rglob("*")):
+        if path.is_file():
+            rel = path.relative_to(bundle_dir).as_posix()
+            entries.append(ManifestEntry(rel, _sha256_file(path), path.stat().st_size))
+    return entries
 
-    # collector_config.example.json is written separately (rewritten
-    # comment, not a byte-for-byte copy) -- see _release_facing_example_config.
-    config_dest = bundle_dir / CONFIG_TEMPLATE_DEST
-    config_text = _release_facing_example_config(repo_root / CONFIG_TEMPLATE_SOURCE)
-    config_dest.write_text(config_text, encoding="utf-8", newline="\n")
-    entries.append(ManifestEntry(CONFIG_TEMPLATE_DEST, hashlib.sha256(config_text.encode("utf-8")).hexdigest(), len(config_text.encode("utf-8"))))
 
-    entries.sort(key=lambda e: e.path)
+def _required_frozen_deploy_files(repo_root: Path) -> list[tuple[Path, str | None]]:
+    """Same shape as _required_source_files, but for a FROZEN bundle's
+    non-runtime files only: the same deploy tool scripts (DEPLOY_TOOL_FILES
+    -- each one auto-detects source vs. frozen at runtime, see this
+    module's own docstring), install.ps1 but NOT requirements.txt
+    (FROZEN_SUPPORT_FILES), and the config template. Deliberately does NOT
+    include COLLECTOR_RUNTIME_FILES or deploy_manifest.PARSER_RUNTIME_FILES
+    -- a frozen bundle never ships the Python source tree at all."""
+    pairs: list[tuple[Path, str | None]] = []
 
-    manifest = {
-        "product": PRODUCT_NAME,
-        "version": version,
-        "built_at": built_at or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-        "files": [{"path": e.path, "sha256": e.sha256, "size_bytes": e.size_bytes} for e in entries],
-    }
-    manifest_path = bundle_dir / "MANIFEST.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
+    for source_rel, dest_rel in DEPLOY_TOOL_FILES:
+        pairs.append((repo_root / source_rel, dest_rel))
+
+    for source_rel, dest_rel in FROZEN_SUPPORT_FILES:
+        pairs.append((repo_root / source_rel, dest_rel))
+
+    pairs.append((repo_root / CONFIG_TEMPLATE_SOURCE, None))
+
+    return pairs
+
+
+def build_frozen_release(
+    repo_root: Path,
+    output_dir: Path,
+    version: str,
+    frozen_runtime_dir: Path,
+    *,
+    force: bool = False,
+    built_at: str | None = None,
+) -> BuildResult:
+    """Builds a standalone FROZEN release bundle at
+    <output_dir>/SortViewCollector-<version>/ -- a PyInstaller onedir
+    runtime (no Python/pip/venv required on the target machine at all)
+    plus the same deploy tooling as build_release.
+
+    REQUIRES an already-built PyInstaller onedir output (frozen_runtime_dir,
+    e.g. dist\\SortViewCollector\\ produced by collector/freeze/build_frozen.ps1)
+    -- this function deliberately never invokes PyInstaller itself. Building
+    PyInstaller takes ~25s, needs its own isolated packaging venv (built
+    from collector/deploy/requirements.txt, never this repo's dev .venv --
+    see collector/freeze/build_frozen.ps1's own docstring), and is a
+    distinct, independently-verifiable step; collapsing it into this
+    function would make a release build silently depend on whichever
+    Python happens to be on THIS machine's PATH at build_release.py
+    invocation time, exactly the kind of hidden environment coupling the
+    isolated packaging venv exists to avoid.
+
+    Fails loudly and writes NOTHING if frozen_runtime_dir is invalid (see
+    _validate_frozen_runtime_dir) or any deploy-tool source file is
+    missing -- checked before any output directory is created, same
+    fail-closed contract as build_release.
+    """
+    if not version.strip():
+        raise BuildError("version must not be empty")
+
+    _validate_frozen_runtime_dir(frozen_runtime_dir)
+
+    required = _required_frozen_deploy_files(repo_root)
+    missing = [str(src) for src, _dest in required if not src.is_file()]
+    if missing:
+        raise BuildError(
+            "Refusing to build -- required source file(s) missing:\n" + "\n".join(f"  {m}" for m in missing)
+        )
+
+    bundle_dir = _new_bundle_dir(output_dir, version, force=force)
+
+    entries = _copy_required_files(required, bundle_dir)
+    entries.extend(_copy_frozen_runtime(frozen_runtime_dir, bundle_dir))
+    entries.append(_write_config_template(bundle_dir, repo_root))
+
+    manifest_path = _write_manifest(bundle_dir, version, entries, built_at)
 
     return BuildResult(bundle_dir=bundle_dir, manifest_path=manifest_path, entries=tuple(entries))
 
@@ -290,12 +469,25 @@ def main(argv: list[str] | None = None) -> int:
         help="Repository root (defaults to two levels up from this file)",
     )
     parser.add_argument("--force", action="store_true", help="Remove and rebuild an existing output directory")
+    parser.add_argument(
+        "--frozen-runtime",
+        help="Path to an ALREADY-BUILT PyInstaller onedir output directory (e.g. "
+        "dist\\SortViewCollector\\, produced separately by collector/freeze/build_frozen.ps1) -- "
+        "if given, builds a FROZEN bundle (no Python/pip/venv required on the target machine) "
+        "instead of the default source bundle. This flag never triggers a PyInstaller build itself.",
+    )
     args = parser.parse_args(argv)
 
     try:
-        result = build_release(
-            Path(args.repo_root), Path(args.output), args.version, force=args.force
-        )
+        if args.frozen_runtime:
+            result = build_frozen_release(
+                Path(args.repo_root), Path(args.output), args.version,
+                Path(args.frozen_runtime), force=args.force,
+            )
+        else:
+            result = build_release(
+                Path(args.repo_root), Path(args.output), args.version, force=args.force
+            )
     except BuildError as exc:
         print(f"Build failed: {exc}", file=sys.stderr)
         return 1

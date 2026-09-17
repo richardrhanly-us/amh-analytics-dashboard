@@ -1,19 +1,27 @@
 <#
 .SYNOPSIS
     Uninstalls the SortView Collector: unregisters the Scheduled Task and
-    removes the application runtime (-InstallRoot, including its venv).
-    By default, config/state/status/logs under -DataRoot are PRESERVED --
-    exactly like the continuous-agent tooling's own uninstall behavior,
-    never auto-deleted. Never touches C:\SortViewAgent, its Scheduled
-    Task, or any Python installation outside -InstallRoot\.venv (which
-    is entirely self-contained and safe to remove on its own).
+    removes the application runtime (-InstallRoot entirely) -- works
+    identically for BOTH a SOURCE install (venv + collector\*.py + agent\*)
+    and a FROZEN install (SortViewCollector.exe + _internal\), since it
+    simply removes everything under -InstallRoot regardless of which kind
+    is there; no mode detection is needed here. By default,
+    config/state/status/logs under -DataRoot are PRESERVED -- exactly
+    like the continuous-agent tooling's own uninstall behavior, never
+    auto-deleted. Never touches C:\SortViewAgent, its Scheduled Task, or
+    any Python installation outside -InstallRoot\.venv (which is entirely
+    self-contained and safe to remove on its own; not applicable at all
+    for a frozen install, which has no venv).
 
 .DESCRIPTION
     1. Stops and unregisters the "SortView Collector" Scheduled Task, if
        registered. Never touches any other task.
-    2. Removes -InstallRoot entirely -- the venv, collector\*.py, and the
-       canonical parser runtime (agent\*, per collector/deploy_manifest.py)
-       installed alongside it.
+    2. Removes -InstallRoot entirely -- for a source install: the venv,
+       collector\*.py, and the canonical parser runtime (agent\*, per
+       collector/deploy_manifest.py) installed alongside it. For a frozen
+       install: SortViewCollector.exe and its _internal\ payload. Both
+       simply fall out of one unconditional Remove-Item -Recurse -Force
+       against -InstallRoot below -- no per-file-kind logic needed.
     3. Leaves -DataRoot (config\, data\, logs\) untouched UNLESS
        -PurgeData is passed, in which case it is removed too -- but only
        after an interactive confirmation prompt (bypassed only by also
@@ -62,8 +70,15 @@ if ($task) {
 
 Write-Host "=== 2. Application runtime ===" -ForegroundColor Cyan
 if (Test-Path $InstallRoot) {
+    # Detected only for an accurate printed message below -- the actual
+    # removal itself (Remove-Item -Recurse) needs no mode distinction at all.
+    $wasFrozen = Test-Path (Join-Path $InstallRoot "SortViewCollector.exe")
     Remove-Item -Recurse -Force $InstallRoot
-    Write-Host "Removed $InstallRoot (venv + collector\*.py + canonical parser runtime)."
+    if ($wasFrozen) {
+        Write-Host "Removed $InstallRoot (frozen runtime: SortViewCollector.exe + _internal\)."
+    } else {
+        Write-Host "Removed $InstallRoot (venv + collector\*.py + canonical parser runtime)."
+    }
 } else {
     Write-Host "$InstallRoot does not exist -- nothing to remove."
 }

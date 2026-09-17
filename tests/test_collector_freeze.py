@@ -74,8 +74,26 @@ def test_dispatcher_default_argv_uses_sys_argv(monkeypatch):
     assert dispatcher.main() == 2
 
 
-def test_dispatcher_contains_all_four_subcommands():
-    assert set(dispatcher._SUBCOMMANDS) == {"run", "preflight", "bootstrap", "support-info"}
+def test_dispatcher_contains_all_five_subcommands():
+    # task-xml added for the frozen release-bundle integration phase --
+    # deployment/Task-Scheduler-XML generation, not Collector ingestion.
+    assert set(dispatcher._SUBCOMMANDS) == {"run", "preflight", "bootstrap", "support-info", "task-xml"}
+
+
+def test_dispatcher_task_xml_forwards_to_collector_task_settings_main(tmp_path):
+    output_path = tmp_path / "task.xml"
+    exit_code = dispatcher.main([
+        "task-xml",
+        "--python-exe", r"C:\SortView\Collector\SortViewCollector.exe",
+        "--config-path", r"C:\ProgramData\SortViewCollector\config\collector_config.json",
+        "--working-dir", r"C:\SortView\Collector",
+        "--output", str(output_path),
+        "--frozen",
+    ])
+    assert exit_code == 0
+    xml_text = output_path.read_text(encoding="utf-16")
+    assert "run --config " in xml_text
+    assert "-m collector.run" not in xml_text
 
 
 def test_dispatcher_source_never_references_agent_runtime_or_sortviewagent():
@@ -98,6 +116,7 @@ def test_dispatcher_imports_are_static_not_dynamic_importlib():
     assert "from collector.preflight import main" in full_text
     assert "from collector.bootstrap_state import main" in full_text
     assert "from collector.support_info import main" in full_text
+    assert "from collector.task_settings import main" in full_text
 
 
 # --- static checks on the PyInstaller spec (CI does not build PyInstaller) --
@@ -131,9 +150,12 @@ def test_spec_is_onedir_not_onefile():
     assert "COLLECT(" in text
 
 
-def test_spec_hiddenimports_cover_all_four_subcommand_targets():
+def test_spec_hiddenimports_cover_all_five_subcommand_targets():
     text = _spec_text()
-    for module in ("collector.run", "collector.preflight", "collector.bootstrap_state", "collector.support_info"):
+    for module in (
+        "collector.run", "collector.preflight", "collector.bootstrap_state",
+        "collector.support_info", "collector.task_settings",
+    ):
         assert f'"{module}"' in text
 
 
