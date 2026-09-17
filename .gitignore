@@ -34,3 +34,8 @@ data/local/
 data/sample/
 sortview-agent/agent_config.json
 agent/SortViewAgent - What is currently sitting on the AMH computer/
+
+# PyInstaller packaging environment / build artifacts
+.pyinstaller-venv/
+build/
+dist/
