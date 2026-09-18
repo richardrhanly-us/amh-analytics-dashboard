@@ -164,18 +164,19 @@ Write-Host ""
 
 if (-not $Enabled) {
     Write-Host "This task is REGISTERED but DISABLED. It cannot fire on its own schedule in this" -ForegroundColor Yellow
-    Write-Host "state, regardless of Start-ScheduledTask -- these are four separate things:" -ForegroundColor Yellow
+    Write-Host "state, and Windows will not allow Start-ScheduledTask while it remains disabled." -ForegroundColor Yellow
     Write-Host ""
     Write-Host "  1. REGISTRATION (done)     -- the task now exists in Task Scheduler, disabled."
     Write-Host "  2. ENABLING (not done)     -- arms the recurring schedule. Do this only after" -ForegroundColor Yellow
     Write-Host "                                confirming BOTH interactive AND SYSTEM-context" -ForegroundColor Yellow
     Write-Host "                                preflight pass (run-preflight-as-system.ps1):"
     Write-Host "       Enable-ScheduledTask -TaskName '$TaskName'"
-    Write-Host "  3. MANUAL IMMEDIATE START  -- runs it once, right now, on demand. Independent of"
-    Write-Host "                                enabled/disabled state; does NOT arm the schedule:"
+    Write-Host "  3. MANUAL IMMEDIATE START  -- once enabled, run it immediately on demand:"
     Write-Host "       Start-ScheduledTask -TaskName '$TaskName'"
-    Write-Host "  4. RECURRING EXECUTION     -- only happens once step 2 (Enable-ScheduledTask) has"
-    Write-Host "                                been run -- from then on, every $CadenceMinutes minute(s)."
+    Write-Host "     If this is only a controlled test, disable it again after the run:"
+    Write-Host "       Disable-ScheduledTask -TaskName '$TaskName'"
+    Write-Host "  4. RECURRING EXECUTION     -- while enabled, Task Scheduler runs it every"
+    Write-Host "                                $CadenceMinutes minute(s)."
     Write-Host ""
     Write-Host "Real production finding this default addresses: registering a task with an" -ForegroundColor Yellow
     Write-Host "enabled trigger arms it immediately -- Start-ScheduledTask never being called does" -ForegroundColor Yellow
