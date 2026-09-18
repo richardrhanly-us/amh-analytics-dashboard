@@ -101,6 +101,11 @@ DEPLOY_TOOL_FILES: tuple[tuple[str, str], ...] = (
     ("collector/deploy/update-release.ps1", "tools/update.ps1"),
     ("collector/deploy/uninstall-collector.ps1", "tools/uninstall.ps1"),
     ("collector/deploy/set-collector-api-token.ps1", "tools/set-api-token.ps1"),
+    # Guided first-install finish (token -> both preflights -> bootstrap ->
+    # task registered DISABLED). Pure orchestration of the other tools in
+    # this list plus SortViewCollector.exe's own subcommands; frozen
+    # installs only. Copied verbatim like the rest.
+    ("collector/deploy/finish-collector-install.ps1", "tools/finish-install.ps1"),
 )
 
 # (repo-relative source, bundle-relative destination) for files that land
