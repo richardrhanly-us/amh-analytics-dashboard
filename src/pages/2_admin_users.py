@@ -113,7 +113,7 @@ user_map = {u["user_id"]: u for u in users}
 st.subheader("Organization users")
 if users:
     users_df = pd.DataFrame(users)
-    st.dataframe(users_df, use_container_width=True, hide_index=True)
+    st.dataframe(users_df, width="stretch", hide_index=True)
 else:
     st.info("No users found for this organization yet.")
 
@@ -188,6 +188,6 @@ st.subheader("Recent auth activity")
 events = list_recent_org_auth_events(selected_org_slug, limit=25)
 if events:
     events_df = pd.DataFrame(events)
-    st.dataframe(events_df, use_container_width=True, hide_index=True)
+    st.dataframe(events_df, width="stretch", hide_index=True)
 else:
     st.info("No auth activity found yet for this organization.")
