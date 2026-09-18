@@ -43,10 +43,10 @@
        is skipped entirely -- no venv is created, pip is never invoked,
        -PythonExe is never used, and a frozen bundle does not even contain
        a requirements.txt to install from.
-    4. Writes collector_config.json from the -CustomerId/-BranchId/
-       -ApiUrl parameters (or copies the bundle's own
-       collector_config.example.json verbatim if none are given, for
-       manual editing afterward). NEVER writes a token into this file --
+    4. Writes collector_config.json from the required -CustomerId/
+       -BranchId/-ApiUrl/-CheckinsPath/-RejectsPath/-AcsPath parameters.
+       There is no template fallback and no default for any of them --
+       see REQUIRED INPUT below. NEVER writes a token into this file --
        SORTVIEW_API_TOKEN is handled entirely separately; see TOKEN SETUP
        below. Written UTF-8 with NO byte-order mark (see the BOM comment
        inline below -- a real production finding, identical for both
@@ -56,17 +56,36 @@
        bundle kind was detected -- does NOT register the Scheduled Task,
        bootstrap state, or start anything itself.
 
+    REQUIRED INPUT: -CustomerId and -BranchId (positive integers), -ApiUrl
+    (must begin with https://), and -CheckinsPath, -RejectsPath, -AcsPath
+    (absolute paths to the three Tech Logic files). Nothing is defaulted:
+    a missing or invalid value stops the script, before anything is
+    touched, with a non-zero exit code. The source files themselves do not
+    have to exist yet -- preflight checks that later.
+
+    ADMINISTRATOR REQUIRED: the script refuses to run from a non-elevated
+    session (every other script in this bundle already does).
+
+    EXIT CODES: 0 = installed. 1 = not elevated, invalid/missing input, or
+    an unexpected error (bundle failed verification, a copy failed, ...).
+    2 = refused because something already exists: an existing install
+    (without -Force), or -Force while the "SortView Collector" Scheduled
+    Task is registered. A refusal never modifies anything.
+
     SAFE TO RE-RUN: if -DataRoot\config\collector_config.json OR an
     existing runtime is detected under -InstallRoot (.venv for a source
     install, SortViewCollector.exe for a frozen one) already exist, this
-    script refuses to proceed (no partial/silent overwrite of an existing
-    install) unless -Force is passed -- and even with -Force,
-    state.json/status.json/logs under -DataRoot\data and -DataRoot\logs
-    are NEVER touched, only the application runtime (-InstallRoot) and
-    config template are replaced. For a real in-place update of an
-    already-running install, use tools\update.ps1, which additionally
-    preserves a rollback copy, disables the Scheduled Task before
-    touching anything, and re-validates before declaring success.
+    script refuses (exit code 2, nothing modified) unless -Force is passed
+    -- and even with -Force, state.json/status.json/logs under
+    -DataRoot\data and -DataRoot\logs are NEVER touched, only the
+    application runtime (-InstallRoot) is replaced; an existing
+    collector_config.json is left exactly as it is (the supplied values are
+    NOT applied to it). -Force also refuses (exit code 2) whenever the
+    "SortView Collector" Scheduled Task is registered, without changing the
+    task: an install that a task points at must be updated with
+    tools\update.ps1 (which preserves a rollback copy, disables the task
+    before touching anything, and re-validates before declaring success),
+    or removed with tools\uninstall.ps1 first.
 
 .PARAMETER TOKEN SETUP
     This script does not set SORTVIEW_API_TOKEN. Run tools\set-api-token.ps1
@@ -77,7 +96,10 @@
 .EXAMPLE
     .\install.ps1 `
         -CustomerId 1 -BranchId 1 `
-        -ApiUrl "https://sortview-app-2p336.ondigitalocean.app"
+        -ApiUrl "https://<your-sortview-api-host>" `
+        -CheckinsPath "C:\TLCFinalDlls\Checkins.txt" `
+        -RejectsPath "C:\TLCFinalDlls\Rejects.txt" `
+        -AcsPath "C:\TLCFinalDlls\ACS Log.txt"
 #>
 
 [CmdletBinding()]
@@ -87,11 +109,104 @@ param(
     [string]$PythonExe = "python",
     [Nullable[int]]$CustomerId,
     [Nullable[int]]$BranchId,
-    [string]$ApiUrl = "https://sortview-app-2p336.ondigitalocean.app",
+    [string]$ApiUrl,
+    [string]$CheckinsPath,
+    [string]$RejectsPath,
+    [string]$AcsPath,
     [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
+
+# The Scheduled Task registered by tools\register-task.ps1. This script
+# only ever LOOKS FOR it (see the -Force guard below) -- it never
+# registers, changes, disables, or removes it.
+$TaskName = "SortView Collector"
+
+function Stop-Install {
+    # One place for every deliberate refusal, so each one prints a clear
+    # message and exits NON-ZERO (exit, not a bare return -- a bare return
+    # leaves the exit code 0, which automation reads as success).
+    param([Parameter(Mandatory)][string]$Message, [int]$ExitCode = 1)
+    Write-Host ""
+    Write-Host "INSTALL REFUSED: $Message" -ForegroundColor Red
+    exit $ExitCode
+}
+
+# --- elevation ---------------------------------------------------------
+# Checked before anything else, including input validation and bundle
+# verification: nothing below can succeed without administrator rights.
+$currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Stop-Install "This script must be run from an elevated (Administrator) PowerShell session." 1
+}
+
+function Get-InstallInputProblems {
+    # Pure validation of the required site inputs -- returns a list of
+    # problems (empty = valid); touches nothing on the machine. Kept as a
+    # function so tests can run exactly this code without an installer run.
+    param($CustomerId, $BranchId, $ApiUrl, $CheckinsPath, $RejectsPath, $AcsPath)
+
+    $problems = @()
+
+    if ($null -eq $CustomerId -or $CustomerId -lt 1) {
+        $problems += "-CustomerId is required and must be a positive integer."
+    }
+    if ($null -eq $BranchId -or $BranchId -lt 1) {
+        $problems += "-BranchId is required and must be a positive integer."
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ApiUrl)) {
+        $problems += "-ApiUrl is required (there is no default), e.g. https://<your-sortview-api-host>."
+    } elseif ($ApiUrl.Trim() -notmatch '^https://[^/\s]+') {
+        $problems += "-ApiUrl must begin with https:// and include a host name (got '$ApiUrl')."
+    }
+
+    $sources = [ordered]@{ "-CheckinsPath" = $CheckinsPath; "-RejectsPath" = $RejectsPath; "-AcsPath" = $AcsPath }
+    foreach ($name in $sources.Keys) {
+        $value = $sources[$name]
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            $problems += "$name is required (there is no default)."
+        } elseif ($value.Trim() -notmatch '^([A-Za-z]:[\\/]|\\\\[^\\/])') {
+            $problems += "$name must be an absolute path such as C:\<folder>\Checkins.txt or a \\server\share path (got '$value')."
+        }
+    }
+
+    return $problems
+}
+
+function New-CollectorConfigJson {
+    # Builds collector_config.json's text from the supplied values -- pure,
+    # writes nothing. Never includes a token (SORTVIEW_API_TOKEN is read
+    # from the environment only). state/status/log paths sit under -DataRoot.
+    param($CustomerId, $BranchId, $ApiUrl, $CheckinsPath, $RejectsPath, $AcsPath, $DataRoot)
+
+    $dataRootTrimmed = $DataRoot.TrimEnd('\', '/')
+    $config = [ordered]@{
+        customer_id = [int]$CustomerId
+        branch_id   = [int]$BranchId
+        api_url     = $ApiUrl.Trim()
+        sources     = @(
+            [ordered]@{ name = "checkins"; path = $CheckinsPath.Trim() }
+            [ordered]@{ name = "rejects"; path = $RejectsPath.Trim() }
+            [ordered]@{ name = "acs"; path = $AcsPath.Trim() }
+        )
+        state_path  = "$dataRootTrimmed\data\state.json"
+        status_path = "$dataRootTrimmed\data\status.json"
+        log_path    = "$dataRootTrimmed\logs\collector.log"
+    }
+    return ($config | ConvertTo-Json -Depth 5)
+}
+
+# --- required input ----------------------------------------------------
+# Validated before the bundle is verified or anything is touched.
+$inputProblems = @(Get-InstallInputProblems -CustomerId $CustomerId -BranchId $BranchId -ApiUrl $ApiUrl `
+        -CheckinsPath $CheckinsPath -RejectsPath $RejectsPath -AcsPath $AcsPath)
+if ($inputProblems.Count -gt 0) {
+    Write-Host "Missing or invalid required input:" -ForegroundColor Red
+    foreach ($problem in $inputProblems) { Write-Host "  $problem" -ForegroundColor Red }
+    Stop-Install "$($inputProblems.Count) required input problem(s) -- nothing was installed or modified." 1
+}
 
 function Test-ReleaseManifest {
     <#
@@ -241,9 +356,31 @@ if ($alreadyInstalled -and -not $Force) {
     Write-Host "install.ps1 is for FRESH installs only. To update an existing install, use" -ForegroundColor Yellow
     Write-Host "tools\update.ps1 instead -- it preserves config/state/logs and validates the" -ForegroundColor Yellow
     Write-Host "new runtime before declaring success. Pass -Force here only if you specifically" -ForegroundColor Yellow
-    Write-Host "intend to replace the runtime/config from scratch (state.json/status.json/logs" -ForegroundColor Yellow
-    Write-Host "are still never touched)."
-    return
+    Write-Host "intend to replace the runtime from scratch (state.json/status.json/logs and an" -ForegroundColor Yellow
+    Write-Host "existing config are still never touched)." -ForegroundColor Yellow
+    Stop-Install "An existing SortView Collector install was found. Nothing was modified." 2
+}
+
+# --- -Force safety: never replace an install a Scheduled Task points at ---
+# Looked up BEFORE the destructive InstallRoot removal below. This only
+# READS the task list -- it never disables, stops, changes, or removes the
+# task (that is tools\update.ps1's job, which does it safely, in order).
+# If the lookup itself fails, that is treated as "cannot prove it is safe"
+# and refused, rather than assumed absent.
+if ($Force) {
+    $existingTask = $null
+    try {
+        $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    } catch {
+        Stop-Install "Could not check whether the '$TaskName' Scheduled Task exists ($($_.Exception.Message)), so -Force cannot be proven safe. Nothing was modified." 2
+    }
+    if ($existingTask) {
+        Write-Host "The '$TaskName' Scheduled Task is registered (state: $($existingTask.State))." -ForegroundColor Yellow
+        Write-Host "-Force would delete the install root that task runs from." -ForegroundColor Yellow
+        Write-Host "To update this install, use tools\update.ps1 instead. (To start over from" -ForegroundColor Yellow
+        Write-Host "scratch, remove it first with tools\uninstall.ps1.) The task was not changed." -ForegroundColor Yellow
+        Stop-Install "The '$TaskName' Scheduled Task exists -- use tools\update.ps1 rather than install.ps1 -Force. Nothing was modified." 2
+    }
 }
 
 if ($Force -and (Test-Path $InstallRoot)) {
@@ -333,40 +470,25 @@ Write-Host "=== 4. Configuration ===" -ForegroundColor Cyan
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 if (Test-Path $ConfigPath -PathType Leaf) {
     Write-Host "Config already exists at $ConfigPath -- left untouched." -ForegroundColor Yellow
-} elseif ($CustomerId -and $BranchId) {
-    $config = [ordered]@{
-        customer_id = $CustomerId
-        branch_id   = $BranchId
-        api_url     = $ApiUrl
-        sources     = @(
-            @{ name = "checkins"; path = "C:\TLCFinalDlls\Checkins.txt" }
-            @{ name = "rejects"; path = "C:\TLCFinalDlls\Rejects.txt" }
-            @{ name = "acs"; path = "C:\TLCFinalDlls\ACS Log.txt" }
-        )
-        state_path  = (Join-Path $DataRoot "data\state.json")
-        status_path = (Join-Path $DataRoot "data\status.json")
-        log_path    = (Join-Path $DataRoot "logs\collector.log")
-    }
+    Write-Host "The -CustomerId/-BranchId/-ApiUrl/-*Path values you supplied were NOT applied to it;" -ForegroundColor Yellow
+    Write-Host "review the existing file yourself before continuing." -ForegroundColor Yellow
+} else {
     # Real production finding (unchanged from install-collector.ps1):
     # `Set-Content -Encoding utf8` on Windows PowerShell 5.1 writes a
     # UTF-8 BOM -- collector/config.py reads with strict `encoding="utf-8"`
     # (deliberately not "utf-8-sig"), so a BOM makes json.loads fail
     # immediately. [System.Text.UTF8Encoding($false)] writes UTF-8 with NO
     # BOM. Identical for both bundle kinds.
-    $jsonText = $config | ConvertTo-Json -Depth 5
+    $jsonText = New-CollectorConfigJson -CustomerId $CustomerId -BranchId $BranchId -ApiUrl $ApiUrl `
+        -CheckinsPath $CheckinsPath -RejectsPath $RejectsPath -AcsPath $AcsPath -DataRoot $DataRoot
     [System.IO.File]::WriteAllText($ConfigPath, $jsonText, $utf8NoBom)
-    Write-Host "Wrote $ConfigPath from -CustomerId/-BranchId/-ApiUrl. Review the 'sources' paths -- " -ForegroundColor Green
-    Write-Host "they default to the standard Tech Logic locations and may need editing per-site."
-} else {
-    Copy-Item $SourceExampleConfig -Destination $ConfigPath -Force
-    Write-Host "No -CustomerId/-BranchId given -- copied the example template to $ConfigPath." -ForegroundColor Yellow
-    Write-Host "Edit it by hand before continuing (customer_id, branch_id, source paths)." -ForegroundColor Yellow
+    Write-Host "Wrote $ConfigPath from the supplied -CustomerId/-BranchId/-ApiUrl/-CheckinsPath/-RejectsPath/-AcsPath." -ForegroundColor Green
 }
 Write-Host "Config never contains the API token -- see TOKEN SETUP below."
 
 Write-Host ""
 Write-Host "=== Install complete. Next steps: ===" -ForegroundColor Green
-Write-Host "1. Review/edit $ConfigPath if it was copied from the template."
+Write-Host "1. Review $ConfigPath (written from the values you supplied)."
 Write-Host "2. Set the API token (Machine-scope env var, not stored in any file):"
 Write-Host "     $(Join-Path $BundleRoot 'tools\set-api-token.ps1')"
 Write-Host "3. Run preflight interactively, then as SYSTEM:"
