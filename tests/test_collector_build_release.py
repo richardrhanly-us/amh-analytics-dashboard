@@ -2326,3 +2326,99 @@ def test_finish_comparable_path_helper(finish_helper_results):
     assert finish_helper_results["path:a"] == r"c:\foo\bar"
     assert finish_helper_results["path:b"] == ""
     assert finish_helper_results["path:c"] == ""
+
+
+# --- cross-edition JSON integer typing ----------------------------------------
+#
+# ConvertFrom-Json types a JSON integer as Int32 in Windows PowerShell 5.1 but
+# as Int64 in PowerShell 7 (pwsh -- what Linux CI runs). The state helper must
+# accept a whole number of EITHER type, and must still refuse a string.
+
+
+def test_finish_state_helper_integer_checks_accept_both_int32_and_int64():
+    text = _extract_ps_function("Get-FinishStateProblems", FINISH_SCRIPT)
+    integer_checks = re.findall(r"\$[\w.]+ -isnot \[(int|long)\]", text)
+
+    # schema_version, offset, and each identity element -- every one tests BOTH types.
+    assert integer_checks.count("int") == integer_checks.count("long") == 3
+    version_check = next(line for line in text.splitlines() if "$versionProperty.Value -isnot" in line)
+    assert "$versionProperty.Value -isnot [int] -and $versionProperty.Value -isnot [long]" in version_check
+
+
+POWERSHELL_7_JSON_TYPING = r"""
+# Makes ConvertFrom-Json type every JSON integer as Int64, exactly as PowerShell 7
+# does. Under PowerShell 7 itself this is a no-op, so the same test is valid there.
+function Convert-ToInt64Typing {
+    param($Value)
+    if ($Value -is [int]) { return [long]$Value }
+    if ($Value -is [System.Management.Automation.PSCustomObject]) {
+        foreach ($property in @($Value.PSObject.Properties)) { $property.Value = Convert-ToInt64Typing $property.Value }
+        return $Value
+    }
+    if ($Value -is [System.Array]) { return , @($Value | ForEach-Object { Convert-ToInt64Typing $_ }) }
+    return $Value
+}
+function ConvertFrom-Json {
+    param([Parameter(Mandatory, ValueFromPipeline)][string]$InputObject)
+    process { Convert-ToInt64Typing (Microsoft.PowerShell.Utility\ConvertFrom-Json -InputObject $InputObject) }
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def finish_state_results_with_int64_json():
+    lines = [POWERSHELL_7_JSON_TYPING, _extract_ps_function("Get-FinishStateProblems", FINISH_SCRIPT)]
+    lines.append("$results = [ordered]@{}")
+    # Proof the emulation is real: an integer really does arrive as Int64.
+    lines.append("$results['probe'] = (('{\"n\":1,\"a\":[2,3]}' | ConvertFrom-Json).n.GetType().Name) + "
+                 "'/' + (('{\"n\":1,\"a\":[2,3]}' | ConvertFrom-Json).a[0].GetType().Name)")
+    sources = "@(" + ",".join(_ps_literal(name) for name in FINISH_SOURCES) + ")"
+    for name, text in FINISH_STATE_CASES.items():
+        lines.append(
+            f"$results['state:{name}'] = @(Get-FinishStateProblems -StateText {_ps_literal(text)} "
+            f"-SourceNames {sources} -ExpectedSchemaVersion {_ps_literal(collector_state.STATE_SCHEMA_VERSION)})"
+        )
+    lines.append("ConvertTo-Json -InputObject $results -Depth 4 -Compress")
+
+    raw = json.loads(_run_powershell("\n".join(lines)))
+    return {
+        key: (value if isinstance(value, list) else ([] if value is None else [value])) if key.startswith("state:") else value
+        for key, value in raw.items()
+    }
+
+
+@needs_powershell
+def test_finish_state_helper_int64_emulation_is_real(finish_state_results_with_int64_json):
+    assert finish_state_results_with_int64_json["probe"] == "Int64/Int64"
+
+
+@needs_powershell
+def test_finish_state_helper_accepts_valid_states_when_json_integers_are_int64(finish_state_results_with_int64_json):
+    for case in FINISH_VALID_STATE_CASES:
+        assert finish_state_results_with_int64_json[f"state:{case}"] == [], case
+
+
+@needs_powershell
+def test_finish_state_helper_still_rejects_bad_schema_versions_when_json_integers_are_int64(
+    finish_state_results_with_int64_json,
+):
+    for case in ("schema_0", "schema_2", "schema_missing", "schema_string"):
+        problems = finish_state_results_with_int64_json[f"state:{case}"]
+        assert any("'schema_version' must be 1" in problem for problem in problems), case
+
+
+@needs_powershell
+def test_finish_state_helper_agrees_with_the_collectors_parser_on_every_case_when_json_integers_are_int64(
+    finish_state_results_with_int64_json,
+):
+    for case, text in FINISH_STATE_CASES.items():
+        powershell_says_valid = finish_state_results_with_int64_json[f"state:{case}"] == []
+        assert powershell_says_valid == _reference_state_verdict(text), case
+
+
+@needs_powershell
+def test_finish_state_verdicts_do_not_depend_on_how_the_edition_types_json_integers(
+    finish_helper_results, finish_state_results_with_int64_json
+):
+    for case in FINISH_STATE_CASES:
+        assert (finish_helper_results[f"state:{case}"] == []) == (finish_state_results_with_int64_json[f"state:{case}"] == []), case

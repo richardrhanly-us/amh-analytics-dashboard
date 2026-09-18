@@ -220,7 +220,9 @@ function Get-FinishStateProblems {
     $problems = @()
 
     $versionProperty = $document.PSObject.Properties["schema_version"]
-    if ($null -eq $versionProperty -or $versionProperty.Value -isnot [int] -or $versionProperty.Value -ne $ExpectedSchemaVersion) {
+    # int OR long, like the offset and identity checks below: Windows PowerShell 5.1 parses a JSON
+    # integer as Int32 but PowerShell 7 (pwsh, Linux CI) parses it as Int64. A string "1" is neither.
+    if ($null -eq $versionProperty -or ($versionProperty.Value -isnot [int] -and $versionProperty.Value -isnot [long]) -or $versionProperty.Value -ne $ExpectedSchemaVersion) {
         $problems += "'schema_version' must be $ExpectedSchemaVersion (the only version this Collector supports)."
     }
 
