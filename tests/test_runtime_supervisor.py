@@ -491,7 +491,10 @@ def test_restart_resumes_from_persisted_state_and_pending_spool(tmp_path):
     runner1.uploader.session = session1
     runner1.heartbeat.session = session1
     runner1.start()
-    _wait_until(lambda: len(runner1.health()) == 4)
+    # health()==4 only proves the threads were launched. NORMAL bootstrap seeds the cursor at EOF on
+    # the collector's first cycle, so wait for the persisted cursor before appending (see
+    # _wait_for_source_bootstrap).
+    assert _wait_for_source_bootstrap(cfg, "checkins", timeout=3.0)
 
     with open(tmp_path / "Checkins.txt", "a", encoding="utf-8") as f:
         f.write(CHECKIN_LINE.format(barcode="RESTART1"))
@@ -634,6 +637,10 @@ def test_disk_pressure_resume_allows_collection_to_continue(tmp_path):
 
     runner.start()
     try:
+        # NORMAL bootstrap seeds the cursor at EOF on the collector's first cycle, so an
+        # append before that is folded into the baseline and never ingested. Wait for the
+        # persisted cursor first (see _wait_for_source_bootstrap).
+        assert _wait_for_source_bootstrap(cfg, "checkins", timeout=3.0)
         assert _wait_until(lambda: not runner.status.is_disk_pressure_paused(), timeout=3.0)
 
         with open(tmp_path / "Checkins.txt", "a", encoding="utf-8") as f:
@@ -670,6 +677,10 @@ def test_shadow_mode_makes_zero_event_upload_http_calls(tmp_path):
 
     runner.start()
     try:
+        # NORMAL bootstrap seeds the cursor at EOF on the collector's first cycle, so an
+        # append before that is folded into the baseline and never ingested. Wait for the
+        # persisted cursor first (see _wait_for_source_bootstrap).
+        assert _wait_for_source_bootstrap(cfg, "checkins", timeout=3.0)
         with open(tmp_path / "Checkins.txt", "a", encoding="utf-8") as f:
             f.write(CHECKIN_LINE.format(barcode="SHADOW1"))
 
@@ -736,6 +747,10 @@ def test_shadow_mode_no_error_noise_generated(tmp_path):
 
     runner.start()
     try:
+        # NORMAL bootstrap seeds the cursor at EOF on the collector's first cycle, so an
+        # append before that is folded into the baseline and never ingested. Wait for the
+        # persisted cursor first (see _wait_for_source_bootstrap).
+        assert _wait_for_source_bootstrap(cfg, "checkins", timeout=3.0)
         with open(tmp_path / "Checkins.txt", "a", encoding="utf-8") as f:
             f.write(CHECKIN_LINE.format(barcode="SHADOW3"))
         assert _wait_until(
@@ -810,6 +825,10 @@ def test_shadow_mode_diagnostics_clearly_report_mode_and_backlog(tmp_path):
 
     runner.start()
     try:
+        # NORMAL bootstrap seeds the cursor at EOF on the collector's first cycle, so an
+        # append before that is folded into the baseline and never ingested. Wait for the
+        # persisted cursor first (see _wait_for_source_bootstrap).
+        assert _wait_for_source_bootstrap(cfg, "checkins", timeout=3.0)
         with open(tmp_path / "Checkins.txt", "a", encoding="utf-8") as f:
             f.write(CHECKIN_LINE.format(barcode="SHADOW4"))
         assert _wait_until(
@@ -843,6 +862,10 @@ def test_normal_mode_still_enables_uploads_and_heartbeat_by_default(tmp_path):
     runner, session = _make_runner(tmp_path, cfg=cfg)
     runner.start()
     try:
+        # NORMAL bootstrap seeds the cursor at EOF on the collector's first cycle, so an
+        # append before that is folded into the baseline and never ingested. Wait for the
+        # persisted cursor first (see _wait_for_source_bootstrap).
+        assert _wait_for_source_bootstrap(cfg, "checkins", timeout=3.0)
         with open(tmp_path / "Checkins.txt", "a", encoding="utf-8") as f:
             f.write(CHECKIN_LINE.format(barcode="NORMAL1"))
 
