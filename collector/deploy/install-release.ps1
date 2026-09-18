@@ -488,6 +488,12 @@ Write-Host "Config never contains the API token -- see TOKEN SETUP below."
 
 Write-Host ""
 Write-Host "=== Install complete. Next steps: ===" -ForegroundColor Green
+if ($isFrozenBundle) {
+    Write-Host "RECOMMENDED: finish the setup with the guided script. It performs steps 2-5 below" -ForegroundColor Cyan
+    Write-Host "in order, stops at the first problem, and leaves the Scheduled Task DISABLED:" -ForegroundColor Cyan
+    Write-Host "     $(Join-Path $BundleRoot 'tools\finish-install.ps1') -InstallRoot `"$InstallRoot`" -ConfigPath `"$ConfigPath`""
+    Write-Host "Or follow the steps by hand:" -ForegroundColor Cyan
+}
 Write-Host "1. Review $ConfigPath (written from the values you supplied)."
 Write-Host "2. Set the API token (Machine-scope env var, not stored in any file):"
 Write-Host "     $(Join-Path $BundleRoot 'tools\set-api-token.ps1')"

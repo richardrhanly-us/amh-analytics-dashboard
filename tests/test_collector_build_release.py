@@ -24,11 +24,13 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
 from collector import build_release, deploy_manifest
+from collector import state as collector_state
 from collector.config import load_config
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -678,7 +680,10 @@ def test_frozen_bundle_matches_target_layout(built_frozen_bundle):
     assert (root / "collector_config.example.json").is_file()
     assert (root / "runtime" / "SortViewCollector.exe").is_file()
     assert (root / "runtime" / "_internal" / "python314.dll").is_file()
-    for tool in ("register-task.ps1", "preflight-system.ps1", "update.ps1", "uninstall.ps1", "set-api-token.ps1"):
+    for tool in (
+        "register-task.ps1", "preflight-system.ps1", "update.ps1", "uninstall.ps1", "set-api-token.ps1",
+        "finish-install.ps1",
+    ):
         assert (root / "tools" / tool).is_file(), tool
 
 
@@ -1151,10 +1156,10 @@ def _install_body() -> str:
     return _executable_body(_read_ps1(INSTALL_SCRIPT))
 
 
-def _extract_ps_function(name: str) -> str:
-    text = _read_ps1(INSTALL_SCRIPT)
+def _extract_ps_function(name: str, script: str = INSTALL_SCRIPT) -> str:
+    text = _read_ps1(script)
     match = re.search(rf"^function {re.escape(name)} \{{.*?^\}}", text, re.MULTILINE | re.DOTALL)
-    assert match, f"function {name} not found in {INSTALL_SCRIPT}"
+    assert match, f"function {name} not found in {script}"
     return match.group(0)
 
 
@@ -1171,13 +1176,26 @@ def _run_powershell(script: str) -> str:
     # -EncodedCommand: no quoting/escaping surprises, and no dependency on
     # the machine's script execution policy (no script file is run).
     encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
-    result = subprocess.run(
-        [_powershell(), "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
-    )
+    if len(encoded) <= 24000:
+        command = ["-EncodedCommand", encoded]
+    else:
+        # A command line is limited to ~32K characters on Windows, so a longer
+        # script goes through a temporary file instead (this child process only
+        # is run with -ExecutionPolicy Bypass; nothing on the machine changes).
+        script_file = Path(tempfile.mkdtemp()) / "script.ps1"
+        script_file.write_text(script, encoding="utf-8-sig")
+        command = ["-ExecutionPolicy", "Bypass", "-File", str(script_file)]
+    try:
+        result = subprocess.run(
+            [_powershell(), "-NoProfile", "-NonInteractive", *command],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    finally:
+        if command[0] == "-ExecutionPolicy":
+            shutil.rmtree(Path(command[-1]).parent, ignore_errors=True)
     assert result.returncode == 0, result.stderr
     return result.stdout
 
@@ -1492,3 +1510,819 @@ def test_installer_has_no_direct_database_dependency():
 
     for needle in ("psycopg2", "sqlalchemy", "database_url", "postgres", "libpq", "npgsql", "odbc"):
         assert needle not in text, needle
+
+
+# --- Installer-C: guided first-install orchestration -------------------------
+#
+# collector/deploy/finish-collector-install.ps1 is shipped as
+# tools\finish-install.ps1. It runs the EXISTING audited tools in order (token,
+# interactive preflight, SYSTEM preflight, bootstrap, task registration) and
+# adds no logic of its own to any of them. Same split as Installer-B:
+#
+#   1. Static checks: which tools it calls, in what ORDER, and what it must
+#      never contain (a task-enabling cmdlet, -Force, -Enabled, a state-file
+#      delete, a printed token). CI cannot run it -- it needs administrator
+#      rights, a Machine-scope token, and the machine's Scheduled Tasks.
+#   2. Behavioral checks of its five PURE helpers, extracted verbatim and run
+#      by PowerShell if one is available (skipped otherwise). They touch
+#      nothing on the machine.
+
+FINISH_SCRIPT = "finish-collector-install.ps1"
+FINISH_MAPPING = ("collector/deploy/finish-collector-install.ps1", "tools/finish-install.ps1")
+
+STEP_CALLS = (
+    "& $SetTokenScript",
+    "& $ExePath preflight --config $ConfigPath",
+    "& $PreflightSystemScript -InstallRoot $InstallRoot -ConfigPath $ConfigPath",
+    "& $ExePath bootstrap --config $ConfigPath",
+    "& $RegisterTaskScript -InstallRoot $InstallRoot -ConfigPath $ConfigPath",
+)
+
+
+def _finish_code() -> str:
+    """The script minus its help block and every comment-only line."""
+    return _code_only(_executable_body(_read_ps1(FINISH_SCRIPT)))
+
+
+def _finish_main() -> str:
+    """The script's main flow -- everything after the pure helpers."""
+    code = _finish_code()
+    return code[code.index("$currentPrincipal = New-Object"):]
+
+
+def _without_strings(code: str) -> str:
+    """Blanks every string literal, so a search for a CMDLET is not fooled by
+    the same words appearing in printed guidance."""
+    return re.sub(r'"(?:`.|[^"`])*"|\'[^\']*\'', '""', code)
+
+
+def _finish_pre_token() -> str:
+    """Step 0 -- everything before the token/env handling begins."""
+    main = _finish_main()
+    return main[: main.index("$hadProcessToken =")]
+
+
+# --- shipping -------------------------------------------------------------------
+
+
+def test_finish_install_is_mapped_to_tools_finish_install_ps1():
+    assert FINISH_MAPPING in build_release.DEPLOY_TOOL_FILES
+    assert FINISH_MAPPING[1] not in [dest for _src, dest in build_release.SUPPORT_FILES]
+    assert (REPO_ROOT / FINISH_MAPPING[0]).is_file()
+
+
+def test_finish_install_is_copied_byte_identically_into_source_and_frozen_bundles(built_bundle, built_frozen_bundle):
+    source_bytes = (REPO_ROOT / "collector" / "deploy" / FINISH_SCRIPT).read_bytes()
+
+    assert (built_bundle.bundle_dir / "tools" / "finish-install.ps1").read_bytes() == source_bytes
+    assert (built_frozen_bundle.bundle_dir / "tools" / "finish-install.ps1").read_bytes() == source_bytes
+
+
+def test_finish_install_is_listed_in_the_manifest_with_its_real_hash(built_frozen_bundle):
+    import hashlib
+
+    manifest = json.loads(built_frozen_bundle.manifest_path.read_text(encoding="utf-8"))
+    entries = {entry["path"]: entry for entry in manifest["files"]}
+    shipped = built_frozen_bundle.bundle_dir / "tools" / "finish-install.ps1"
+
+    assert "tools/finish-install.ps1" in entries
+    assert entries["tools/finish-install.ps1"]["sha256"] == hashlib.sha256(shipped.read_bytes()).hexdigest()
+
+
+def test_finish_install_calls_sibling_tools_by_their_shipped_names():
+    shipped = {dest for _src, dest in build_release.DEPLOY_TOOL_FILES}
+    main = _finish_main()
+
+    for name in ("set-api-token.ps1", "preflight-system.ps1", "register-task.ps1"):
+        assert f"tools/{name}" in shipped, name
+        assert f'Join-Path $PSScriptRoot "{name}"' in main, name
+
+
+def test_install_release_points_the_technician_at_finish_install_without_dropping_the_manual_steps():
+    text = _read_ps1(INSTALL_SCRIPT)
+    pointer = text.index("tools\\finish-install.ps1")
+
+    assert text.index("Install complete. Next steps:") < pointer
+    # The pre-existing manual instructions are all still there, after it.
+    assert pointer < text.index('preflight --config `"$ConfigPath`"')
+    assert "bootstrap --config" in text
+    assert "offset 0 is a VALID seed" in text
+    # It is only ever PRINTED by the installer, never run.
+    for line in _code_only(text).splitlines():
+        if "finish-install.ps1" in line:
+            assert line.strip().startswith("Write-Host"), line
+
+
+@needs_powershell
+def test_finish_install_script_parses_without_errors():
+    path = str(REPO_ROOT / "collector" / "deploy" / FINISH_SCRIPT).replace("'", "''")
+    script = (
+        "$errs = $null; $tokens = $null; "
+        f"[void][System.Management.Automation.Language.Parser]::ParseFile('{path}', [ref]$tokens, [ref]$errs); "
+        "$errs.Count"
+    )
+
+    assert _run_powershell(script).strip() == "0"
+
+
+def test_finish_install_has_only_the_two_documented_parameters():
+    body = _executable_body(_read_ps1(FINISH_SCRIPT))
+    param_block = body[body.index("param("): body.index("$ErrorActionPreference")]
+
+    assert re.findall(r"^\s*\[string\]\$(\w+)", param_block, re.MULTILINE) == ["InstallRoot", "ConfigPath"]
+    assert param_block.count("$") == 2
+    assert r'"C:\SortView\Collector"' in param_block
+    assert r'"C:\ProgramData\SortViewCollector\config\collector_config.json"' in param_block
+
+
+def test_finish_install_pins_the_collectors_state_schema_and_source_names():
+    body = _executable_body(_read_ps1(FINISH_SCRIPT))
+    match = re.search(r"^\$ExpectedStateSchemaVersion = (\d+)$", body, re.MULTILINE)
+    assert match
+    assert int(match.group(1)) == collector_state.STATE_SCHEMA_VERSION
+
+    assert '$RequiredSourceNames = @("checkins", "rejects", "acs")' in body
+    parsers_text = (REPO_ROOT / "collector" / "parsers.py").read_text(encoding="utf-8")
+    for name in ("checkins", "rejects", "acs"):
+        assert f'"{name}"' in parsers_text, name
+
+
+# --- Step 0: read-only, before any prompt or change -------------------------------
+
+
+def test_finish_requires_elevation_before_any_prompt_or_child_process():
+    main = _finish_main()
+    guard = main.index("IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)")
+
+    assert "-ExitCode 1" in main[guard : guard + 500]
+    for later in (
+        "Read-Host", "Get-ScheduledTask", "Test-Path $ConfigPath", "Get-Content", *STEP_CALLS,
+        "$env:SORTVIEW_API_TOKEN = ",
+    ):
+        assert guard < main.index(later), later
+
+
+def test_finish_requires_the_frozen_runtime_and_refuses_a_source_install_before_any_prompt():
+    main = _finish_main()
+    venv_check = main.index("if (Test-Path $VenvPython)")
+    exe_check = main.index("if (-not (Test-Path $ExePath -PathType Leaf))")
+    config_check = main.index("if (-not (Test-Path $ConfigPath -PathType Leaf))")
+
+    assert r'$VenvPython = Join-Path $InstallRoot ".venv\Scripts\python.exe"' in main
+    assert '$ExePath = Join-Path $InstallRoot "SortViewCollector.exe"' in main
+    assert venv_check < exe_check < config_check < main.index("Read-Host")
+    # A source install is UNSAFE-STATE (2); a missing exe/config is a plain failure (1).
+    assert "-ExitCode 2" in main[venv_check:exe_check]
+    assert "FROZEN installs only" in main[venv_check:exe_check]
+    assert "-ExitCode 1" in main[exe_check:config_check]
+
+
+def test_finish_inspects_the_scheduled_task_before_the_token_prompt():
+    main = _finish_main()
+    lookup = main.index("Get-ScheduledTask -TaskName $TaskName")
+    decision = main.index("Get-ExistingTaskDecision -TaskState")
+
+    assert lookup < decision < main.index("Read-Host")
+    assert decision < main.index("& $SetTokenScript")
+    assert lookup < main.index("$hadProcessToken =")
+    # A lookup that itself fails is refused (2), not assumed to mean "no task".
+    lookup_block = main[main.index("$existingTask = $null"):decision]
+    assert "catch {" in lookup_block and "-ExitCode 2" in lookup_block
+
+
+def test_finish_refuses_enabled_running_or_mismatching_tasks_with_exit_2_before_any_change():
+    main = _finish_main()
+    refuse = main.index('if ($taskDecision.Decision -eq "Refuse") {')
+    block = main[refuse : main.index("\n}\n", refuse)]
+
+    assert "-ExitCode 2" in block
+    assert "the task was not changed" in block
+    assert refuse < main.index("Read-Host")
+    assert refuse < main.index("& $SetTokenScript")
+
+
+def test_finish_treats_a_matching_disabled_task_as_already_registered_and_skips_registration():
+    main = _finish_main()
+    skip = main.index('if ($taskDecision.Decision -eq "AlreadyRegistered") {')
+    register = main.index("& $RegisterTaskScript")
+    between = main[skip:register]
+
+    assert "registration skipped" in between
+    assert "} else {" in between
+
+
+def test_finish_step_0_is_read_only():
+    pre = _without_strings(_finish_pre_token())
+
+    assert "Read-Host" not in pre
+    assert "& $" not in pre
+    assert "SORTVIEW_API_TOKEN" not in pre
+    assert "Get-ScheduledTask" in pre
+
+
+# --- Step 1: token -------------------------------------------------------------------
+
+
+def test_finish_prompts_keep_or_replace_only_when_a_machine_token_exists():
+    main = _finish_main()
+    guard = main.index("if (-not [string]::IsNullOrWhiteSpace($machineToken)) {")
+    prompt = main.index("Read-Host")
+
+    assert main.count("Read-Host") == 1
+    assert guard < prompt < main.index("if ($runTokenTool) {")
+    assert "Keep the existing token, or replace it?" in main
+    assert "-AsSecureString" not in main  # this prompt never reads a secret
+    assert "$choice = Get-TokenChoice -Answer $answer" in main
+    assert '$runTokenTool = ($choice -eq "Replace")' in main
+    assert "$runTokenTool = $true" in main[:guard]
+    # A prompt that cannot run (non-interactive) is a stop, never a default.
+    assert "-ExitCode 1" in main[prompt : main.index("$choice = Get-TokenChoice")]
+
+
+def test_finish_runs_the_token_tool_only_when_needed_and_verifies_the_machine_token_after():
+    main = _finish_main()
+    run_tool = main.index("if ($runTokenTool) {")
+    call = main.index("& $SetTokenScript")
+    verify = main.index("if ([string]::IsNullOrWhiteSpace($machineToken)) {")
+
+    assert run_tool < call < verify
+    assert "-ExitCode 1" in main[verify : main.index("\n    }\n", verify)]
+    assert 'GetEnvironmentVariable("SORTVIEW_API_TOKEN", "Machine")' in main[call:verify]
+
+
+TOKEN_LINE_ALLOW_LIST = {
+    '$machineToken = [Environment]::GetEnvironmentVariable("SORTVIEW_API_TOKEN", "Machine")',
+    "if (-not [string]::IsNullOrWhiteSpace($machineToken)) {",
+    "if ([string]::IsNullOrWhiteSpace($machineToken)) {",
+    "$env:SORTVIEW_API_TOKEN = $machineToken",
+    "$machineToken = $null",
+    '$hadProcessToken = Test-Path -Path "Env:SORTVIEW_API_TOKEN"',
+    "$previousProcessToken = $env:SORTVIEW_API_TOKEN",
+    "$env:SORTVIEW_API_TOKEN = $previousProcessToken",
+    'Remove-Item -Path "Env:SORTVIEW_API_TOKEN" -ErrorAction SilentlyContinue',
+    "$previousProcessToken = $null",
+}
+
+
+def test_finish_never_prints_the_token_and_touches_it_only_through_an_allow_list_of_statements():
+    for line in _finish_main().splitlines():
+        stripped = line.strip()
+        if re.search(r"\$machineToken|\$previousProcessToken|\$env:SORTVIEW_API_TOKEN|Env:SORTVIEW_API_TOKEN", stripped):
+            assert stripped in TOKEN_LINE_ALLOW_LIST, f"unexpected use of the token: {stripped}"
+    # The helper functions never see it either.
+    helpers = _finish_code()
+    helpers = helpers[: helpers.index("$currentPrincipal = New-Object")]
+    assert "SORTVIEW_API_TOKEN" not in helpers
+    assert "$env:" not in helpers.lower()
+
+
+def test_finish_never_writes_the_token_or_anything_else_to_a_file_or_a_command_line():
+    code = _without_strings(_finish_code())
+
+    for forbidden in (
+        "Out-File", "Set-Content", "Add-Content", "Tee-Object", "Start-Transcript", "Export-", "WriteAllText",
+        "WriteAllBytes", "[System.IO.File]", "[IO.File]", "Write-Output", "Write-Verbose", "Write-Debug",
+        "Write-Information", "Out-String", ">>", " > ", "2>",
+    ):
+        assert forbidden not in code, forbidden
+    # No child process is given anything token-shaped on its command line.
+    for line in code.splitlines():
+        if line.strip().startswith("& $"):
+            assert "token" not in line.replace("$SetTokenScript", "").lower(), line
+
+
+def test_finish_copies_the_machine_token_into_the_process_environment_before_the_first_child_that_needs_it():
+    main = _finish_main()
+    saved = main.index("$previousProcessToken = $env:SORTVIEW_API_TOKEN")
+    verified = main.index("if ([string]::IsNullOrWhiteSpace($machineToken)) {")
+    copied = main.index("$env:SORTVIEW_API_TOKEN = $machineToken")
+
+    assert main.index("$hadProcessToken =") < saved < copied
+    assert verified < copied < main.index("& $ExePath preflight")
+    assert copied < main.index("& $PreflightSystemScript") < main.index("& $ExePath bootstrap")
+    # The variable is captured BEFORE it is overwritten, and never overwritten earlier.
+    assert main.count("$env:SORTVIEW_API_TOKEN = ") == 2  # the copy, and the restore in finally
+
+
+def test_finish_restores_or_removes_the_process_token_in_a_top_level_finally_around_every_step():
+    main = _finish_main()
+    try_start = main.index("\ntry {\n", main.index("$hadProcessToken ="))
+    finally_start = main.rindex("\n} finally {\n")
+    cleanup = main[finally_start:]
+
+    assert try_start < main.index("& $SetTokenScript")
+    assert main.index("& $RegisterTaskScript") < main.index("exit 0") < finally_start
+    assert main.index("$env:SORTVIEW_API_TOKEN = $machineToken") > try_start
+    assert "if ($hadProcessToken) {" in cleanup
+    assert "$env:SORTVIEW_API_TOKEN = $previousProcessToken" in cleanup
+    assert 'Remove-Item -Path "Env:SORTVIEW_API_TOKEN"' in cleanup
+    assert cleanup.rstrip().endswith("}")  # nothing runs after it
+    assert main.count("finally") == 1
+
+
+# --- order and exit-code gating --------------------------------------------------------
+
+
+def test_finish_runs_the_five_steps_in_exactly_the_required_order_each_once():
+    main = _finish_main()
+
+    positions = []
+    for call in STEP_CALLS:
+        assert main.count(call) == 1, call
+        positions.append(main.index(call))
+    assert positions == sorted(positions)
+
+
+def _gate(main: str, call: str, ok_marker: str) -> str:
+    start = main.index(call)
+    return main[start : main.index(ok_marker, start)]
+
+
+def test_finish_stops_with_exit_1_unless_the_interactive_preflight_exits_0():
+    segment = _gate(_finish_main(), "& $ExePath preflight --config $ConfigPath", '"  OK: interactive preflight passed."')
+
+    assert "if ($LASTEXITCODE -ne 0) {" in segment
+    assert "-ExitCode 1" in segment
+    assert "-ExitCode 0" not in segment
+
+
+def test_finish_stops_with_exit_1_unless_the_system_preflight_exits_0():
+    main = _finish_main()
+    segment = _gate(main, "$global:LASTEXITCODE = 99", '"  OK: SYSTEM-context preflight passed."')
+
+    assert "if ($LASTEXITCODE -ne 0) {" in segment
+    assert "-ExitCode 1" in segment
+    # A stale $LASTEXITCODE from the previous command can never read as success.
+    assert main.index("$global:LASTEXITCODE = 99") < main.index("& $PreflightSystemScript")
+    # The tool failing to run at all (a throw) is a stop too.
+    assert "catch {" in segment
+
+
+def test_finish_never_softens_a_child_result():
+    code = _finish_code()
+
+    for line in code.splitlines():
+        if line.strip().startswith("& $"):
+            for softener in ("Out-Null", "SilentlyContinue", "2>", "||", "; exit", "-ErrorAction"):
+                assert softener not in line, (softener, line)
+    assert "$LASTEXITCODE = 0" not in code
+
+
+def test_finish_every_stop_names_the_step_what_is_unchanged_and_what_to_do_with_an_explicit_exit_code():
+    code = _finish_code()
+    main = _finish_main()
+
+    calls = re.findall(r"Stop-Setup (.*?-ExitCode \d)", main, re.DOTALL)
+    assert len(calls) == main.count("Stop-Setup ") >= 15
+    for call in calls:
+        for flag in ("-Step ", "-Problem ", "-Unchanged ", "-Fix "):
+            assert flag in call, (flag, call)
+        assert re.search(r"-ExitCode [12]$", call), call
+    assert "exit $ExitCode" in code[code.index("function Stop-Setup"): code.index("function ConvertTo-ComparablePath")]
+    # Only 0 (the very last statement of the try) and Stop-Setup ever exit.
+    assert re.findall(r"^[ \t]*exit .*$", main, re.MULTILINE) == ["    exit 0"]
+    assert re.search(r"^\s*return\s*$", code, re.MULTILINE) is None
+
+
+# --- Step 4: bootstrap and the existing state file --------------------------------------
+
+
+def test_finish_inspects_state_json_and_skips_bootstrap_when_it_is_valid():
+    main = _finish_main()
+    exists = main.index("if (Test-Path -LiteralPath $StatePath) {")
+    fresh = main.index("} else {\n        & $ExePath bootstrap --config $ConfigPath")
+    existing_branch = main[exists:fresh]
+
+    assert exists < fresh
+    assert "& $ExePath" not in existing_branch  # nothing is executed when state.json exists
+    assert "bootstrap skipped" in existing_branch
+    assert "Get-FinishStateProblems -StateText $stateText" in existing_branch
+    assert main.count("& $ExePath bootstrap") == 1
+
+
+def test_finish_refuses_an_invalid_incomplete_or_unreadable_state_file_with_exit_2_and_touches_nothing():
+    main = _finish_main()
+    exists = main.index("if (Test-Path -LiteralPath $StatePath) {")
+    existing_branch = main[exists : main.index("} else {\n        & $ExePath bootstrap --config $ConfigPath")]
+
+    assert existing_branch.count("Stop-Setup") == 3  # not a file / unreadable / invalid-or-incomplete
+    assert existing_branch.count("-ExitCode 2") == 3
+    assert "-ExitCode 1" not in existing_branch
+    assert "state.json was not modified or deleted" in existing_branch
+
+
+def test_finish_verifies_the_state_file_after_a_fresh_bootstrap():
+    main = _finish_main()
+    fresh = main.index("& $ExePath bootstrap --config $ConfigPath")
+    segment = main[fresh : main.index("$seededNow = $true")]
+
+    assert "if ($LASTEXITCODE -ne 0) {" in segment
+    assert "Get-FinishStateProblems -StateText $verifyText" in segment
+    assert "-ExitCode 1" in segment
+    assert segment.index("if ($LASTEXITCODE -ne 0) {") < segment.index("Get-FinishStateProblems")
+
+
+def test_finish_never_deletes_overwrites_moves_or_rewrites_files():
+    code = _without_strings(_finish_code())
+    # The single Remove-Item is the process-env restore in the finally block.
+    assert code.count("Remove-Item") == 1
+    assert _finish_code().count('Remove-Item -Path "Env:SORTVIEW_API_TOKEN"') == 1
+
+    for forbidden in (
+        "Move-Item", "Rename-Item", "Copy-Item", "New-Item", "Clear-Content", "Set-Content", "Out-File",
+        "Set-ItemProperty", "Set-Acl", "icacls", "takeown", "[System.IO.File]", "WriteAll", "Clear-Item",
+    ):
+        assert forbidden not in code, forbidden
+
+
+def test_finish_never_forces_bootstrap_or_registration_and_never_enables_the_task():
+    code = _finish_code()
+
+    assert "--force" not in code.lower()
+    assert "-Force" not in code
+    assert "-Enabled" not in code
+
+
+# --- Step 5: task registration ------------------------------------------------------------
+
+
+def test_finish_calls_register_task_with_exactly_install_root_and_config_path():
+    code = _finish_code()
+    calls = [line.strip() for line in code.splitlines() if "& $RegisterTaskScript" in line]
+
+    assert calls == ["& $RegisterTaskScript -InstallRoot $InstallRoot -ConfigPath $ConfigPath"]
+
+
+def test_finish_verifies_the_task_exists_is_disabled_and_matches_after_registration():
+    main = _finish_main()
+    register = main.index("& $RegisterTaskScript")
+    verified = main.index("$registeredNow = $true")
+    segment = main[register:verified]
+
+    assert "Get-ScheduledTask -TaskName $TaskName" in segment
+    assert "if ($null -eq $verifyTask) {" in segment
+    assert "Get-ExistingTaskDecision -TaskState ([string]$verifyTask.State)" in segment
+    assert '-ExpectedExe $ExePath -ExpectedConfigPath $ConfigPath' in segment
+    assert 'if ($verifyDecision.Decision -ne "AlreadyRegistered") {' in segment
+    # not-there is a failure (1); there-but-wrong is an unsafe state (2)
+    missing = segment[segment.index("if ($null -eq $verifyTask) {") : segment.index("$verifyDecision =")]
+    mismatch = segment[segment.index('if ($verifyDecision.Decision -ne "AlreadyRegistered") {'):]
+    assert "-ExitCode 1" in missing
+    assert "-ExitCode 2" in mismatch
+    assert verified < main.index("setup COMPLETE")
+
+
+def test_finish_never_changes_or_starts_the_scheduled_task():
+    code = _without_strings(_finish_code())
+
+    for cmdlet in (
+        "Register-ScheduledTask", "Unregister-ScheduledTask", "Enable-ScheduledTask", "Disable-ScheduledTask",
+        "Start-ScheduledTask", "Stop-ScheduledTask", "Set-ScheduledTask", "New-ScheduledTask", "schtasks",
+        "Start-Process", "Invoke-Expression", "iex ", "Invoke-Command", "Register-", "Start-Service",
+    ):
+        assert cmdlet not in code, cmdlet
+    # The only task cmdlet is the read-only lookup: Step 0 and the post-registration check.
+    assert code.count("Get-ScheduledTask") == 2
+    assert re.findall(r"\w+-ScheduledTask\w*", code) == ["Get-ScheduledTask", "Get-ScheduledTask"]
+
+
+def test_finish_prints_the_exact_enable_and_start_commands_and_only_prints_them():
+    code = _finish_code()
+    enable = r"""Write-Host '    Enable-ScheduledTask -TaskName "SortView Collector"'"""
+    start = r"""Write-Host '    Start-ScheduledTask -TaskName "SortView Collector"'"""
+
+    assert [line.strip() for line in code.splitlines() if "Enable-ScheduledTask" in line] == [enable]
+    assert [line.strip() for line in code.splitlines() if "Start-ScheduledTask" in line] == [start]
+    assert "This script does not run either command." in code
+    main = _finish_main()
+    assert main.index("$registeredNow = $true") < main.index(enable) < main.index(start) < main.index("exit 0")
+    assert '$TaskName = "SortView Collector"' in _finish_code()
+
+
+def test_finish_summary_reports_the_task_as_disabled():
+    main = _finish_main()
+
+    assert "registered DISABLED" in main
+    assert "NOTHING WILL RUN until you enable the task." in main
+    assert "State: Disabled" in main
+
+
+# --- no direct DB dependency -----------------------------------------------------------------
+
+
+def test_finish_install_has_no_direct_database_dependency():
+    text = _read_ps1(FINISH_SCRIPT).lower()
+
+    for needle in ("psycopg2", "sqlalchemy", "database_url", "postgres", "libpq", "npgsql", "odbc", "neon"):
+        assert needle not in text, needle
+
+
+# --- behavioral: the pure helpers, run by PowerShell -------------------------------------------
+
+FINISH_EXE = r"C:\SortView\Collector\SortViewCollector.exe"
+FINISH_CONFIG = r"C:\ProgramData\SortViewCollector\config\collector_config.json"
+FINISH_SOURCES = ["checkins", "rejects", "acs"]
+
+
+def _finish_config(**overrides):
+    document = {
+        "customer_id": 7,
+        "branch_id": 3,
+        "api_url": "https://api.example.org",
+        "sources": [
+            {"name": "checkins", "path": r"C:\Site\Checkins.txt"},
+            {"name": "rejects", "path": r"D:\Rejects.txt"},
+            {"name": "acs", "path": r"\\server\share\ACS Log.txt"},
+        ],
+        "state_path": r"C:\ProgramData\SortViewCollector\data\state.json",
+        "status_path": r"C:\ProgramData\SortViewCollector\data\status.json",
+        "log_path": r"C:\ProgramData\SortViewCollector\logs\collector.log",
+    }
+    for key, value in overrides.items():
+        if value is _MISSING:
+            document.pop(key, None)
+        else:
+            document[key] = value
+    return json.dumps(document)
+
+
+_MISSING = object()
+
+FINISH_CONFIG_CASES = {
+    "valid": (_finish_config(), []),
+    "null_root": ("null", ["root must be a JSON object"]),
+    "no_customer": (_finish_config(customer_id=_MISSING), ["'customer_id'"]),
+    "zero_customer": (_finish_config(customer_id=0), ["'customer_id'"]),
+    "negative_branch": (_finish_config(branch_id=-4), ["'branch_id'"]),
+    "no_api_url": (_finish_config(api_url=_MISSING), ["'api_url' is required"]),
+    "http_api_url": (_finish_config(api_url="http://api.example.org"), ["must begin with https://"]),
+    "no_state_path": (_finish_config(state_path=_MISSING), ["'state_path' is required"]),
+    "no_sources": (_finish_config(sources=_MISSING), ["'sources' is required"]),
+    "missing_acs": (
+        _finish_config(sources=[{"name": "checkins", "path": "C:\\a"}, {"name": "rejects", "path": "C:\\b"}]),
+        ["missing: acs"],
+    ),
+    "renamed_source": (
+        _finish_config(sources=[{"name": n, "path": "C:\\a"} for n in ("checkins", "rejects", "acs2")]),
+        ["unrecognized name(s): acs2", "missing: acs"],
+    ),
+    "wrong_case_source": (
+        _finish_config(sources=[{"name": n, "path": "C:\\a"} for n in ("Checkins", "rejects", "acs")]),
+        ["unrecognized name(s): Checkins", "missing: checkins"],
+    ),
+    "duplicate_source": (
+        _finish_config(sources=[{"name": n, "path": "C:\\a"} for n in ("checkins", "rejects", "acs", "acs")]),
+        ["duplicate name(s): acs"],
+    ),
+    "extra_source": (
+        _finish_config(sources=[{"name": n, "path": "C:\\a"} for n in ("checkins", "rejects", "acs", "extra")]),
+        ["unrecognized name(s): extra"],
+    ),
+    "source_without_path": (
+        _finish_config(sources=[{"name": "checkins"}, {"name": "rejects", "path": "C:\\b"}, {"name": "acs", "path": "C:\\c"}]),
+        ["needs a non-empty 'name' and 'path'"],
+    ),
+}
+
+
+def _state_doc(**overrides):
+    document = {
+        "schema_version": 1,
+        "sources": {
+            "checkins": {"offset": 0, "identity": None},
+            "rejects": {"offset": 4096, "identity": [3, 99]},
+            "acs": {"offset": 7, "identity": None},
+        },
+    }
+    document.update(overrides)
+    return document
+
+
+def _state_sources(**entries):
+    sources = _state_doc()["sources"]
+    for name, entry in entries.items():
+        if entry is _MISSING:
+            sources.pop(name, None)
+        else:
+            sources[name] = entry
+    return sources
+
+
+FINISH_STATE_CASES = {
+    "valid": json.dumps(_state_doc()),
+    "valid_all_zero_null_identity": json.dumps(
+        _state_doc(sources={n: {"offset": 0, "identity": None} for n in FINISH_SOURCES})
+    ),
+    "valid_identity_key_absent": json.dumps(_state_doc(sources={n: {"offset": 5} for n in FINISH_SOURCES})),
+    "valid_extra_unconfigured_source": json.dumps(
+        _state_doc(sources=_state_sources(other={"offset": 1, "identity": None}))
+    ),
+    "valid_large_offset": json.dumps(_state_doc(sources=_state_sources(acs={"offset": 10**15, "identity": [1, 2]}))),
+    "empty_file": "",
+    "whitespace_file": "  \r\n",
+    "not_json": "{not json",
+    "array_root": "[]",
+    "string_root": '"state"',
+    "schema_2": json.dumps(_state_doc(schema_version=2)),
+    "schema_0": json.dumps(_state_doc(schema_version=0)),
+    "schema_string": json.dumps(_state_doc(schema_version="1")),
+    "schema_missing": json.dumps({"sources": _state_doc()["sources"]}),
+    "sources_missing": json.dumps({"schema_version": 1}),
+    "sources_array": json.dumps({"schema_version": 1, "sources": []}),
+    "missing_acs": json.dumps(_state_doc(sources=_state_sources(acs=_MISSING))),
+    "missing_all": json.dumps(_state_doc(sources={})),
+    "wrong_case_source": json.dumps(
+        _state_doc(sources={"CheckIns": {"offset": 0, "identity": None}, "rejects": {"offset": 0}, "acs": {"offset": 0}})
+    ),
+    "entry_not_object": json.dumps(_state_doc(sources=_state_sources(acs=12))),
+    "negative_offset": json.dumps(_state_doc(sources=_state_sources(acs={"offset": -1, "identity": None}))),
+    "string_offset": json.dumps(_state_doc(sources=_state_sources(acs={"offset": "5", "identity": None}))),
+    "float_offset": json.dumps(_state_doc(sources=_state_sources(acs={"offset": 1.5, "identity": None}))),
+    "null_offset": json.dumps(_state_doc(sources=_state_sources(acs={"offset": None, "identity": None}))),
+    "missing_offset": json.dumps(_state_doc(sources=_state_sources(acs={"identity": None}))),
+    "identity_three_elements": json.dumps(_state_doc(sources=_state_sources(acs={"offset": 1, "identity": [1, 2, 3]}))),
+    "identity_one_element": json.dumps(_state_doc(sources=_state_sources(acs={"offset": 1, "identity": [1]}))),
+    "identity_string_element": json.dumps(_state_doc(sources=_state_sources(acs={"offset": 1, "identity": [1, "2"]}))),
+    "identity_string": json.dumps(_state_doc(sources=_state_sources(acs={"offset": 1, "identity": "1,2"}))),
+    "identity_empty_list": json.dumps(_state_doc(sources=_state_sources(acs={"offset": 1, "identity": []}))),
+}
+
+FINISH_VALID_STATE_CASES = {name for name in FINISH_STATE_CASES if name.startswith("valid")}
+
+
+def _reference_state_verdict(text: str) -> bool:
+    """What the COLLECTOR itself would make of this file, plus 'covers every
+    configured source' (which the Collector does not require of a file)."""
+    try:
+        parsed = collector_state._deserialize_state(json.loads(text))
+    except (ValueError, collector_state.CorruptStateError):
+        return False
+    return all(name in parsed.sources for name in FINISH_SOURCES)
+
+
+_TASK_ARGS = f'run --config "{FINISH_CONFIG}"'
+
+FINISH_TASK_CASES = {
+    "no_task": (None, [], "None"),
+    "disabled_and_matching": ("Disabled", [(FINISH_EXE, _TASK_ARGS)], "AlreadyRegistered"),
+    "disabled_matching_case_slashes_trailing": (
+        "Disabled",
+        [("c:/sortview/collector/SORTVIEWCOLLECTOR.EXE", 'RUN --CONFIG "c:/programdata/sortviewcollector/config/collector_config.json"')],
+        "AlreadyRegistered",
+    ),
+    "ready": ("Ready", [(FINISH_EXE, _TASK_ARGS)], "Refuse"),
+    "running": ("Running", [(FINISH_EXE, _TASK_ARGS)], "Refuse"),
+    "queued": ("Queued", [(FINISH_EXE, _TASK_ARGS)], "Refuse"),
+    "unknown_state": ("Unknown", [(FINISH_EXE, _TASK_ARGS)], "Refuse"),
+    "disabled_other_exe": ("Disabled", [(r"C:\Other\SortViewCollector.exe", _TASK_ARGS)], "Refuse"),
+    "disabled_sibling_folder": ("Disabled", [(r"C:\SortView\Collector2\SortViewCollector.exe", _TASK_ARGS)], "Refuse"),
+    "disabled_other_config": (
+        "Disabled", [(FINISH_EXE, r'run --config "C:\Elsewhere\collector_config.json"')], "Refuse"
+    ),
+    "disabled_python_style": (
+        "Disabled", [(r"C:\SortView\Collector\.venv\Scripts\python.exe", f'-m collector.run --config "{FINISH_CONFIG}"')], "Refuse"
+    ),
+    "disabled_extra_arguments": ("Disabled", [(FINISH_EXE, _TASK_ARGS + " --extra")], "Refuse"),
+    "disabled_two_actions": (
+        "Disabled", [(FINISH_EXE, _TASK_ARGS), (FINISH_EXE, _TASK_ARGS)], "Refuse"
+    ),
+    "disabled_no_actions": ("Disabled", [], "Refuse"),
+}
+
+FINISH_TOKEN_CHOICE_CASES = {
+    "": "Keep", "k": "Keep", "K": "Keep", " keep ": "Keep", "KEEP": "Keep",
+    "r": "Replace", "R": "Replace", "replace": "Replace", " Replace ": "Replace",
+    "y": "Invalid", "yes": "Invalid", "kr": "Invalid", "n": "Invalid", "0": "Invalid",
+}
+
+
+@pytest.fixture(scope="module")
+def finish_helper_results():
+    """Runs the script's OWN pure helpers, once per case, in a single
+    PowerShell process."""
+    lines = [
+        _extract_ps_function(name, FINISH_SCRIPT)
+        for name in (
+            "ConvertTo-ComparablePath", "Get-FinishConfigProblems", "Get-FinishStateProblems",
+            "Get-ExistingTaskDecision", "Get-TokenChoice",
+        )
+    ]
+    lines.append(_extract_ps_function("New-CollectorConfigJson"))
+    lines.append("$results = [ordered]@{}")
+    sources = "@(" + ",".join(_ps_literal(name) for name in FINISH_SOURCES) + ")"
+
+    for name, (text, _expected) in FINISH_CONFIG_CASES.items():
+        lines.append(
+            f"$results['config:{name}'] = @(Get-FinishConfigProblems -Config ({_ps_literal(text)} | ConvertFrom-Json) "
+            f"-RequiredSourceNames {sources})"
+        )
+    for name, text in FINISH_STATE_CASES.items():
+        lines.append(
+            f"$results['state:{name}'] = @(Get-FinishStateProblems -StateText {_ps_literal(text)} "
+            f"-SourceNames {sources} -ExpectedSchemaVersion {_ps_literal(collector_state.STATE_SCHEMA_VERSION)})"
+        )
+    for name, (state, actions, _expected) in FINISH_TASK_CASES.items():
+        action_literals = ",".join(
+            f"[pscustomobject]@{{Execute={_ps_literal(exe)};Arguments={_ps_literal(args)}}}" for exe, args in actions
+        )
+        lines.append(
+            f"$results['task:{name}'] = (Get-ExistingTaskDecision -TaskState {_ps_literal(state)} "
+            f"-Actions @({action_literals}) -ExpectedExe {_ps_literal(FINISH_EXE)} "
+            f"-ExpectedConfigPath {_ps_literal(FINISH_CONFIG)}).Decision"
+        )
+    for index, answer in enumerate(FINISH_TOKEN_CHOICE_CASES):
+        # Indexed keys: a PowerShell hashtable's keys are case-insensitive ('k' and 'K' would collide).
+        lines.append(f"$results['token:{index}'] = Get-TokenChoice -Answer {_ps_literal(answer)}")
+    lines.append("$results['token:<null>'] = Get-TokenChoice -Answer $null")
+
+    # The installer's own generated config must satisfy this script's config check.
+    generated = " ".join(
+        f"-{key} {_ps_literal(value)}"
+        for key, value in {
+            "CustomerId": 42, "BranchId": 9, "ApiUrl": "https://api.example.org",
+            "CheckinsPath": r"E:\Tech Logic\Checkins.txt", "RejectsPath": r"E:\Tech Logic\Rejects.txt",
+            "AcsPath": r"\\server\share\ACS Log.txt", "DataRoot": r"C:\Custom Data Root",
+        }.items()
+    )
+    lines.append(
+        f"$results['config:installer_generated'] = @(Get-FinishConfigProblems "
+        f"-Config ((New-CollectorConfigJson {generated}) | ConvertFrom-Json) -RequiredSourceNames {sources})"
+    )
+    lines.append("$results['path:a'] = ConvertTo-ComparablePath 'C:/Foo/Bar\\'")
+    lines.append("$results['path:b'] = ConvertTo-ComparablePath $null")
+    lines.append("$results['path:c'] = ConvertTo-ComparablePath '   '")
+    lines.append("ConvertTo-Json -InputObject $results -Depth 4 -Compress")
+
+    raw = json.loads(_run_powershell("\n".join(lines)))
+    return {key: (value if isinstance(value, list) else ([] if value is None else [value])) if key.split(":")[0] in ("config", "state") else value for key, value in raw.items()}
+
+
+@needs_powershell
+def test_finish_config_helper_accepts_a_valid_config_and_the_installers_own_output(finish_helper_results):
+    assert finish_helper_results["config:valid"] == []
+    assert finish_helper_results["config:installer_generated"] == []
+
+
+@needs_powershell
+@pytest.mark.parametrize("case", [name for name, (_text, expected) in FINISH_CONFIG_CASES.items() if expected])
+def test_finish_config_helper_rejects_each_bad_config(finish_helper_results, case):
+    problems = " | ".join(finish_helper_results[f"config:{case}"])
+
+    assert problems, case
+    for fragment in FINISH_CONFIG_CASES[case][1]:
+        assert fragment in problems, (case, fragment, problems)
+
+
+@needs_powershell
+@pytest.mark.parametrize("case", sorted(FINISH_VALID_STATE_CASES))
+def test_finish_state_helper_accepts_valid_states(finish_helper_results, case):
+    assert finish_helper_results[f"state:{case}"] == []
+
+
+@needs_powershell
+@pytest.mark.parametrize("case", sorted(set(FINISH_STATE_CASES) - FINISH_VALID_STATE_CASES))
+def test_finish_state_helper_rejects_invalid_or_incomplete_states(finish_helper_results, case):
+    assert finish_helper_results[f"state:{case}"], case
+
+
+@needs_powershell
+def test_finish_state_helper_agrees_with_the_collectors_own_state_parser_on_every_case(finish_helper_results):
+    for case, text in FINISH_STATE_CASES.items():
+        powershell_says_valid = finish_helper_results[f"state:{case}"] == []
+        assert powershell_says_valid == _reference_state_verdict(text), case
+
+
+@needs_powershell
+def test_finish_state_helper_names_the_missing_source(finish_helper_results):
+    problems = " ".join(finish_helper_results["state:missing_acs"])
+
+    assert "source 'acs' has no entry" in problems
+    assert "checkins" not in problems
+
+
+@needs_powershell
+@pytest.mark.parametrize("case", sorted(FINISH_TASK_CASES))
+def test_finish_task_decision_helper(finish_helper_results, case):
+    assert finish_helper_results[f"task:{case}"] == FINISH_TASK_CASES[case][2], case
+
+
+@needs_powershell
+def test_finish_task_decision_only_ever_treats_a_disabled_matching_task_as_complete(finish_helper_results):
+    complete = {case for case in FINISH_TASK_CASES if finish_helper_results[f"task:{case}"] == "AlreadyRegistered"}
+
+    assert complete == {"disabled_and_matching", "disabled_matching_case_slashes_trailing"}
+    assert {case for case in FINISH_TASK_CASES if finish_helper_results[f"task:{case}"] == "None"} == {"no_task"}
+
+
+@needs_powershell
+def test_finish_token_choice_helper(finish_helper_results):
+    for index, (answer, expected) in enumerate(FINISH_TOKEN_CHOICE_CASES.items()):
+        assert finish_helper_results[f"token:{index}"] == expected, repr(answer)
+    assert finish_helper_results["token:<null>"] == "Keep"
+
+
+@needs_powershell
+def test_finish_comparable_path_helper(finish_helper_results):
+    assert finish_helper_results["path:a"] == r"c:\foo\bar"
+    assert finish_helper_results["path:b"] == ""
+    assert finish_helper_results["path:c"] == ""
