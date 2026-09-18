@@ -82,7 +82,6 @@ class UploadOutcome:
     error: str | None
     body: dict[str, Any] | None
 
-
 def build_session(*, transport_retry_total: int = 2, transport_backoff_factor: float = 0.5) -> requests.Session:
     """trust_env defaults to True (requests' own default) -- deliberately
     left alone so standard Windows/environment proxy configuration
@@ -211,6 +210,9 @@ class UploadRunResult:
     batches_delivered: int
     failure: UploadOutcome | None
     last_response_body: dict[str, Any] | None = None
+    checkins_inserted: int = 0
+    rejects_inserted: int = 0
+    acs_inserted: int = 0
 
 
 def upload_records(
@@ -227,19 +229,39 @@ def upload_records(
     url = f"{cfg.api_url}/upload"
     timeout = (cfg.http_connect_timeout, cfg.http_read_timeout)
     last_body: dict[str, Any] | None = None
+    checkins_inserted = 0
+    rejects_inserted = 0
+    acs_inserted = 0
 
     for i, batch in enumerate(batches):
         outcome = _post_json(session, url, batch, headers=_auth_headers(cfg), timeout=timeout)
         if not outcome.success:
             return UploadRunResult(
-                success=False, batches_attempted=i + 1, batches_delivered=i, failure=outcome,
+                success=False,
+                batches_attempted=i + 1,
+                batches_delivered=i,
+                failure=outcome,
                 last_response_body=last_body,
+                checkins_inserted=checkins_inserted,
+                rejects_inserted=rejects_inserted,
+                acs_inserted=acs_inserted,
             )
+
         last_body = outcome.body
+        if outcome.body is not None:
+            checkins_inserted += int(outcome.body.get("checkins_inserted", 0) or 0)
+            rejects_inserted += int(outcome.body.get("rejects_inserted", 0) or 0)
+            acs_inserted += int(outcome.body.get("acs_inserted", 0) or 0)
 
     return UploadRunResult(
-        success=True, batches_attempted=len(batches), batches_delivered=len(batches), failure=None,
+        success=True,
+        batches_attempted=len(batches),
+        batches_delivered=len(batches),
+        failure=None,
         last_response_body=last_body,
+        checkins_inserted=checkins_inserted,
+        rejects_inserted=rejects_inserted,
+        acs_inserted=acs_inserted,
     )
 
 
