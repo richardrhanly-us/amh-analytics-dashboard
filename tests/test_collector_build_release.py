@@ -18,7 +18,10 @@ tests/test_collector_deploy_manifest.py:
 
 from __future__ import annotations
 
+import base64
 import json
+import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -26,6 +29,7 @@ from pathlib import Path
 import pytest
 
 from collector import build_release, deploy_manifest
+from collector.config import load_config
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -1123,3 +1127,368 @@ def test_update_release_frozen_backup_covers_whole_installroot():
     frozen_backup = backup_section[:backup_section.index("} else {")]
     assert 'Copy-Item $InstallRoot -Destination $BackupRoot -Recurse -Force' in frozen_backup
     assert "BackupRoot must NOT already exist" in frozen_backup  # documents the nesting-avoidance precondition
+
+
+# --- Installer-B: first-stage installer hardening ---------------------------
+#
+# collector/deploy/install-release.ps1 is the source file that becomes the
+# bundle-root install.ps1 (build_release.SUPPORT_FILES). Same two-part split
+# as the rest of this file:
+#
+#   1. Static checks (CI cannot run the installer itself, and running it
+#      would need administrator rights and would query the machine's
+#      Scheduled Tasks): what the script must contain, and in what ORDER --
+#      each guard before any mutation.
+#   2. Behavioral checks of the two PURE functions the script defines,
+#      Get-InstallInputProblems and New-CollectorConfigJson. They are
+#      extracted verbatim from the script and executed by PowerShell if one
+#      is available (skipped otherwise). They touch nothing on the machine.
+
+INSTALL_SCRIPT = "install-release.ps1"
+
+
+def _install_body() -> str:
+    return _executable_body(_read_ps1(INSTALL_SCRIPT))
+
+
+def _extract_ps_function(name: str) -> str:
+    text = _read_ps1(INSTALL_SCRIPT)
+    match = re.search(rf"^function {re.escape(name)} \{{.*?^\}}", text, re.MULTILINE | re.DOTALL)
+    assert match, f"function {name} not found in {INSTALL_SCRIPT}"
+    return match.group(0)
+
+
+def _powershell() -> str | None:
+    return shutil.which("pwsh") or shutil.which("powershell")
+
+
+needs_powershell = pytest.mark.skipif(
+    _powershell() is None, reason="no PowerShell available -- the static installer tests still run"
+)
+
+
+def _run_powershell(script: str) -> str:
+    # -EncodedCommand: no quoting/escaping surprises, and no dependency on
+    # the machine's script execution policy (no script file is run).
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    result = subprocess.run(
+        [_powershell(), "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+def _ps_literal(value) -> str:
+    if value is None:
+        return "$null"
+    if isinstance(value, int):
+        # Parenthesized: a bare negative literal (`-BranchId -1`) is not bound
+        # as a number on a PowerShell command line. The installer itself calls
+        # these functions with variables, where this never arises.
+        return f"({value})"
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+VALID_INSTALL_INPUT = {
+    "CustomerId": 7,
+    "BranchId": 3,
+    "ApiUrl": "https://api.example.org",
+    "CheckinsPath": r"C:\Site Data\Checkins.txt",
+    "RejectsPath": r"D:\Rejects.txt",
+    "AcsPath": r"\\server\share\ACS Log.txt",
+}
+
+INPUT_VALIDATION_CASES = {
+    "valid": {},
+    "no_customer": {"CustomerId": None},
+    "zero_customer": {"CustomerId": 0},
+    "no_branch": {"BranchId": None},
+    "negative_branch": {"BranchId": -1},
+    "no_api_url": {"ApiUrl": None},
+    "blank_api_url": {"ApiUrl": "   "},
+    "http_api_url": {"ApiUrl": "http://api.example.org"},
+    "ftp_api_url": {"ApiUrl": "ftp://api.example.org"},
+    "https_without_host": {"ApiUrl": "https://"},
+    "uppercase_https": {"ApiUrl": "HTTPS://api.example.org"},
+    "no_checkins": {"CheckinsPath": None},
+    "no_rejects": {"RejectsPath": None},
+    "no_acs": {"AcsPath": None},
+    "relative_path": {"RejectsPath": "Rejects.txt"},
+    "drive_relative_path": {"AcsPath": "C:ACS.txt"},
+    "everything_missing": {key: None for key in VALID_INSTALL_INPUT},
+}
+
+
+@pytest.fixture(scope="module")
+def input_validation_results():
+    """Runs the installer's OWN Get-InstallInputProblems, once per case, in a
+    single PowerShell process."""
+    lines = [_extract_ps_function("Get-InstallInputProblems"), "$results = [ordered]@{}"]
+    for case, overrides in INPUT_VALIDATION_CASES.items():
+        args = " ".join(f"-{key} {_ps_literal(value)}" for key, value in {**VALID_INSTALL_INPUT, **overrides}.items())
+        lines.append(f"$results['{case}'] = @(Get-InstallInputProblems {args})")
+    lines.append("ConvertTo-Json -InputObject $results -Depth 4 -Compress")
+
+    raw = json.loads(_run_powershell("\n".join(lines)))
+    return {case: (value if isinstance(value, list) else ([] if value is None else [value])) for case, value in raw.items()}
+
+
+# --- which file becomes install.ps1 ---------------------------------------
+
+
+def test_install_release_ps1_is_the_source_of_the_bundle_install_ps1(built_bundle):
+    assert ("collector/deploy/install-release.ps1", "install.ps1") in build_release.SUPPORT_FILES
+    shipped = (built_bundle.bundle_dir / "install.ps1").read_bytes()
+    assert shipped == (REPO_ROOT / "collector" / "deploy" / INSTALL_SCRIPT).read_bytes()
+
+
+# --- A. administrator guard -----------------------------------------------
+
+
+def test_installer_requires_administrator_before_anything_else():
+    body = _install_body()
+    guard = body.index("IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)")
+
+    assert guard < body.index("Get-InstallInputProblems -CustomerId")
+    assert guard < body.index("Test-ReleaseManifest -BundleRoot")
+    assert guard < body.index("=== 1. Application runtime ===")
+    assert 'Stop-Install "This script must be run from an elevated' in body[guard : guard + 300]
+
+
+def test_installer_refusals_exit_nonzero_via_exit_not_a_bare_return():
+    body = _install_body()
+    stop_install = body[body.index("function Stop-Install"):]
+    stop_install = stop_install[: stop_install.index("\n}\n")]
+
+    assert "exit $ExitCode" in stop_install
+    assert re.search(r"^\s*return\s*$", body, re.MULTILINE) is None
+
+
+# --- B/C/D. required input ------------------------------------------------
+
+
+def test_installer_parameters_are_explicit_and_have_no_defaults():
+    body = _install_body()
+    param_block = body[body.index("param("): body.index("$ErrorActionPreference")]
+
+    for name in ("CustomerId", "BranchId", "ApiUrl", "CheckinsPath", "RejectsPath", "AcsPath"):
+        assert f"${name}" in param_block, name
+        assert not re.search(rf"\${name}\s*=", param_block), f"{name} must have no default"
+    # Existing interface is unchanged.
+    for name in ("InstallRoot", "DataRoot", "PythonExe", "Force"):
+        assert f"${name}" in param_block, name
+
+
+def test_installer_has_no_production_api_default_or_hardcoded_source_paths():
+    text = _read_ps1(INSTALL_SCRIPT)
+
+    assert "ondigitalocean" not in text
+    assert "sortview-app" not in text
+    assert "TLCFinalDlls" not in _executable_body(text)
+
+
+def test_installer_validates_input_before_verifying_the_bundle_or_mutating_anything():
+    body = _install_body()
+    validation = body.index("Get-InstallInputProblems -CustomerId")
+
+    assert validation < body.index("Test-ReleaseManifest -BundleRoot")
+    assert validation < body.index("=== 1. Application runtime ===")
+    assert 'nothing was installed or modified." 1' in body
+
+
+def test_installer_has_no_example_template_fallback_for_the_config():
+    body = _install_body()
+
+    assert "Copy-Item $SourceExampleConfig" not in body
+    assert "New-CollectorConfigJson -CustomerId $CustomerId" in body
+    assert "-CheckinsPath $CheckinsPath -RejectsPath $RejectsPath -AcsPath $AcsPath" in body
+
+
+def test_existing_config_is_left_untouched_and_the_technician_is_told():
+    body = _install_body()
+    branch = body[body.index("if (Test-Path $ConfigPath -PathType Leaf)"):]
+    branch = branch[: branch.index("} else {")]
+
+    assert "left untouched" in branch
+    assert "were NOT applied" in branch
+    assert "WriteAllText" not in branch
+
+
+@needs_powershell
+def test_installer_script_parses_without_errors():
+    path = str(REPO_ROOT / "collector" / "deploy" / INSTALL_SCRIPT).replace("'", "''")
+    script = (
+        "$errs = $null; $tokens = $null; "
+        f"[void][System.Management.Automation.Language.Parser]::ParseFile('{path}', [ref]$tokens, [ref]$errs); "
+        "$errs.Count"
+    )
+
+    assert _run_powershell(script).strip() == "0"
+
+
+@needs_powershell
+def test_valid_complete_input_has_no_problems(input_validation_results):
+    # Includes a path with a space and a UNC path.
+    assert input_validation_results["valid"] == []
+
+
+@needs_powershell
+def test_customer_id_is_required_and_must_be_positive(input_validation_results):
+    for case in ("no_customer", "zero_customer"):
+        problems = input_validation_results[case]
+        assert len(problems) == 1 and "-CustomerId" in problems[0], case
+
+
+@needs_powershell
+def test_branch_id_is_required_and_must_be_positive(input_validation_results):
+    for case in ("no_branch", "negative_branch"):
+        problems = input_validation_results[case]
+        assert len(problems) == 1 and "-BranchId" in problems[0], case
+
+
+@needs_powershell
+def test_api_url_is_required(input_validation_results):
+    for case in ("no_api_url", "blank_api_url"):
+        problems = input_validation_results[case]
+        assert len(problems) == 1 and "-ApiUrl is required" in problems[0], case
+
+
+@needs_powershell
+def test_non_https_api_url_is_rejected(input_validation_results):
+    for case in ("http_api_url", "ftp_api_url", "https_without_host"):
+        problems = input_validation_results[case]
+        assert len(problems) == 1 and "must begin with https://" in problems[0], case
+
+
+@needs_powershell
+def test_https_scheme_check_is_case_insensitive(input_validation_results):
+    assert input_validation_results["uppercase_https"] == []
+
+
+@needs_powershell
+def test_each_of_the_three_source_paths_is_required(input_validation_results):
+    for case, flag in (("no_checkins", "-CheckinsPath"), ("no_rejects", "-RejectsPath"), ("no_acs", "-AcsPath")):
+        problems = input_validation_results[case]
+        assert len(problems) == 1 and problems[0].startswith(f"{flag} is required"), case
+
+
+@needs_powershell
+def test_source_paths_must_be_absolute(input_validation_results):
+    for case, flag in (("relative_path", "-RejectsPath"), ("drive_relative_path", "-AcsPath")):
+        problems = input_validation_results[case]
+        assert len(problems) == 1 and problems[0].startswith(f"{flag} must be an absolute path"), case
+
+
+@needs_powershell
+def test_every_missing_input_is_reported_together(input_validation_results):
+    problems = input_validation_results["everything_missing"]
+
+    assert len(problems) == 6
+    for flag in ("-CustomerId", "-BranchId", "-ApiUrl", "-CheckinsPath", "-RejectsPath", "-AcsPath"):
+        assert any(flag in problem for problem in problems), flag
+
+
+# --- E. generated config uses the supplied values -------------------------
+
+
+@needs_powershell
+def test_generated_config_uses_the_supplied_values_and_loads_in_the_collector(tmp_path, monkeypatch):
+    values = {
+        "CustomerId": 42,
+        "BranchId": 9,
+        "ApiUrl": "  https://api.example.org  ",
+        "CheckinsPath": r"E:\Tech Logic\Checkins.txt",
+        "RejectsPath": r"E:\Tech Logic\Rejects.txt",
+        "AcsPath": r"\\server\share\ACS Log.txt",
+        "DataRoot": "C:\\Custom Data Root\\",
+    }
+    args = " ".join(f"-{key} {_ps_literal(value)}" for key, value in values.items())
+    text = _run_powershell(_extract_ps_function("New-CollectorConfigJson") + f"\nNew-CollectorConfigJson {args}")
+
+    doc = json.loads(text)
+    assert doc["customer_id"] == 42
+    assert doc["branch_id"] == 9
+    assert doc["api_url"] == "https://api.example.org"  # trimmed
+    assert [(s["name"], s["path"]) for s in doc["sources"]] == [
+        ("checkins", r"E:\Tech Logic\Checkins.txt"),
+        ("rejects", r"E:\Tech Logic\Rejects.txt"),
+        ("acs", r"\\server\share\ACS Log.txt"),
+    ]
+    assert doc["state_path"] == r"C:\Custom Data Root\data\state.json"
+    assert doc["status_path"] == r"C:\Custom Data Root\data\status.json"
+    assert doc["log_path"] == r"C:\Custom Data Root\logs\collector.log"
+    assert "token" not in text.lower()
+
+    # ...and the Collector's own config loader accepts exactly this output.
+    config_file = tmp_path / "collector_config.json"
+    config_file.write_text(text, encoding="utf-8")
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token-not-a-real-token")
+    cfg = load_config(config_file)
+    assert (cfg.customer_id, cfg.branch_id) == (42, 9)
+    assert [s.name for s in cfg.sources] == ["checkins", "rejects", "acs"]
+    assert cfg.source("acs").path == r"\\server\share\ACS Log.txt"
+
+
+# --- G. existing install without -Force -----------------------------------
+
+
+def test_existing_install_without_force_refuses_with_a_nonzero_exit_and_modifies_nothing():
+    body = _install_body()
+    start = body.index("if ($alreadyInstalled -and -not $Force) {")
+    block = body[start : body.index("if ($Force) {")]
+
+    assert 'Stop-Install "An existing SortView Collector install was found. Nothing was modified." 2' in block
+    for mutation in ("Remove-Item", "Copy-Item", "New-Item", "WriteAllText", "& $PythonExe"):
+        assert mutation not in block, mutation
+    assert start < body.index("if ($Force -and (Test-Path $InstallRoot))")
+    assert start < body.index("=== 1. Application runtime ===")
+
+
+# --- H. -Force never replaces an install a Scheduled Task points at -------
+
+
+def test_force_refuses_when_the_collector_task_exists():
+    body = _install_body()
+    guard_start = body.index("if ($Force) {")
+    removal = body.index("if ($Force -and (Test-Path $InstallRoot))")
+    guard = body[guard_start:removal]
+
+    assert guard_start < removal < body.index("=== 1. Application runtime ===")
+    assert '$TaskName = "SortView Collector"' in body
+    assert "Get-ScheduledTask -TaskName $TaskName" in guard
+    assert "tools\\update.ps1" in guard
+    assert re.search(r"Stop-Install .*Scheduled Task exists.* 2\s*$", guard, re.MULTILINE)
+    # Fails closed: a lookup that itself errors is refused, not assumed safe.
+    assert "catch {" in guard
+    assert "cannot be proven safe" in guard
+
+
+def test_force_task_guard_only_reads_the_task_and_never_changes_it():
+    body = _install_body()
+    executable = [
+        line
+        for line in _code_only(body).splitlines()
+        if "Write-Host" not in line and "Stop-Install" not in line  # printed guidance may name these cmdlets
+    ]
+    joined = "\n".join(executable)
+
+    for cmdlet in (
+        "Register-ScheduledTask", "Unregister-ScheduledTask", "Enable-ScheduledTask",
+        "Disable-ScheduledTask", "Stop-ScheduledTask", "Start-ScheduledTask",
+        "Set-ScheduledTask", "schtasks",
+    ):
+        assert cmdlet not in joined, cmdlet
+
+
+# --- no direct DB dependency ----------------------------------------------
+
+
+def test_installer_has_no_direct_database_dependency():
+    text = _read_ps1(INSTALL_SCRIPT).lower()
+
+    for needle in ("psycopg2", "sqlalchemy", "database_url", "postgres", "libpq", "npgsql", "odbc"):
+        assert needle not in text, needle
