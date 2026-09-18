@@ -807,13 +807,59 @@ def load_acs_df(org_slug, branch_slug, mtime=None, refresh_count=0):
 
 
 #***************************************************************
+# Pipeline Status Counter Normalization
+#
+# The legacy pipeline agent wrote every counter on every run. The
+# Collector only sends the counters it computes, so when it is the
+# first writer of a branch's pipeline_status row (an INSERT, where
+# every omitted column becomes NULL) these integer columns come back
+# as None. The alerts and Live Today views format or compare them
+# (f"{value:,}", value > 0), so a None raises TypeError and takes the
+# whole page down.
+#
+# They are normalized once, here at the loading boundary, so no view
+# needs its own None handling. NULL means "nothing recorded", which
+# every consumer already treats as 0.
+#
+# pending_outbox_count / quarantined_count are deliberately NOT in this
+# list: NULL there means "no heartbeat was ever reported", not zero.
+#***************************************************************
+
+PIPELINE_STATUS_COUNTER_FIELDS = (
+    "checkins_rows",
+    "rejects_rows",
+    "acs_rows",
+    "uploaded_checkins_rows",
+    "uploaded_rejects_rows",
+    "uploaded_acs_rows",
+    "checkins_bad_datetime_rows",
+    "rejects_bad_datetime_rows",
+    "acs_bad_datetime_rows",
+    "transit_items",
+    "problem_items",
+)
+
+
+def _normalize_pipeline_status_counters(row):
+    """Replace NULL (None/NaN) counters in a pipeline_status row with 0, in place.
+
+    Non-NULL values are left exactly as loaded, including a genuine 0.
+    """
+    for field in PIPELINE_STATUS_COUNTER_FIELDS:
+        value = row.get(field)
+        if value is None or pd.isna(value):
+            row[field] = 0
+
+
+#***************************************************************
 #
 #  Function:     load_pipeline_status
 #
 #  Description: Public cached loader for the latest pipeline status
 #               record. Loads the most recent tenant-scoped pipeline
-#               status from the database and normalizes timestamps and
-#               destination breakdown data for dashboard display.
+#               status from the database and normalizes timestamps,
+#               NULL numeric counters (to 0) and destination
+#               breakdown data for dashboard display.
 #
 #  Parameters:  org_slug - Organization/customer identifier.
 #               branch_slug - Branch identifier.
@@ -898,6 +944,8 @@ def load_pipeline_status(org_slug, branch_slug, path=STATUS_FILE, mtime=None, re
         return {}
 
     row = df.iloc[0].to_dict()
+
+    _normalize_pipeline_status_counters(row)
 
     # Convert timestamp values into strings so they are safe to store
     # in the returned status dictionary and easy for the UI to display.
