@@ -1,10 +1,11 @@
-"""Tests for src/services/pipeline_context_service.py -- specifically the
-Phase 3 compatibility rule: prefer health_status (the new continuous-agent
-heartbeat vocabulary) when present, fall back to legacy status parsing
-(the scheduled run_pipeline vocabulary) when it isn't. Both must keep
-working during Continuous Ingestion Phase 0's parallel-validation
-coexistence window.
+"""Tests for src/services/pipeline_context_service.py.
+
+The dashboard may receive both scheduled Collector run status and
+continuous-agent heartbeat status in the same pipeline_status row.
+Fresh heartbeat state should win only when its watcher timestamp is newer
+than the latest Collector attempt; otherwise Collector run status wins.
 """
+
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -32,29 +33,66 @@ def _ctx(pipeline_status):
 
 
 def test_health_status_healthy_maps_to_green():
-    ctx = _ctx({"health_status": "healthy", "status": "completed"})
+    ctx = _ctx(
+        {
+            "health_status": "healthy",
+            "watcher_last_active_at": "2026-09-18T14:13:00Z",
+            "status": "failed",
+            "last_attempt": "2026-09-18T14:12:00Z",
+        }
+    )
     assert ctx["pipeline_status_label"] == "Pipeline Healthy"
     assert ctx["pipeline_status_color"] == "#059669"
 
 
 def test_health_status_degraded_maps_to_amber():
-    ctx = _ctx({"health_status": "degraded"})
+    ctx = _ctx(
+        {
+            "health_status": "degraded",
+            "watcher_last_active_at": "2026-09-18T14:13:00Z",
+            "last_attempt": "2026-09-18T14:12:00Z",
+        }
+    )
     assert ctx["pipeline_status_label"] == "Pipeline Degraded"
     assert ctx["pipeline_status_color"] == "#d97706"
 
 
 def test_health_status_auth_failure_maps_to_red():
-    ctx = _ctx({"health_status": "auth_failure"})
+    ctx = _ctx(
+        {
+            "health_status": "auth_failure",
+            "watcher_last_active_at": "2026-09-18T14:13:00Z",
+            "last_attempt": "2026-09-18T14:12:00Z",
+        }
+    )
     assert ctx["pipeline_status_label"] == "Pipeline Auth Failure"
     assert ctx["pipeline_status_color"] == "#dc2626"
 
 
-def test_health_status_present_takes_precedence_over_legacy_status():
-    # A branch that has cut over to the heartbeat but still has a stale
-    # legacy `status` column value from before -- health_status must win.
-    ctx = _ctx({"health_status": "healthy", "status": "failed"})
-    assert ctx["pipeline_status_label"] == "Pipeline Healthy"
+def test_stale_health_status_does_not_override_newer_collector_status():
+    ctx = _ctx(
+        {
+            "health_status": "healthy",
+            "watcher_last_active_at": "2026-09-18T14:11:00Z",
+            "status": "failed",
+            "last_attempt": "2026-09-18T14:12:00Z",
+        }
+    )
+    assert ctx["pipeline_status_label"] == "Pipeline Failed"
 
+
+def test_heartbeat_after_collector_start_but_before_completion_does_not_win():
+    ctx = _ctx(
+        {
+            "health_status": "healthy",
+            "watcher_last_active_at": "2026-09-18T14:11:00Z",
+            "status": "failed",
+            "last_attempt": "2026-09-18T14:10:00Z",
+            "last_run": "2026-09-18T14:12:00Z",
+        }
+    )
+    assert ctx["pipeline_status_label"] == "Pipeline Failed"
+    assert ctx["status_code_text"] == "failed"
 
 def test_legacy_status_used_when_health_status_absent():
     # A branch still on the legacy scheduled pipeline only, never having
@@ -79,8 +117,15 @@ def test_no_pipeline_status_at_all():
     assert ctx["pipeline_status_label"] == "Pipeline Status Unknown"
 
 
-def test_status_code_text_reflects_health_status_when_present():
-    ctx = _ctx({"health_status": "degraded", "status": "completed"})
+def test_status_code_text_reflects_fresh_health_status():
+    ctx = _ctx(
+        {
+            "health_status": "degraded",
+            "watcher_last_active_at": "2026-09-18T14:13:00Z",
+            "status": "completed",
+            "last_attempt": "2026-09-18T14:12:00Z",
+        }
+    )
     assert ctx["status_code_text"] == "degraded"
 
 
@@ -90,10 +135,22 @@ def test_status_code_text_reflects_legacy_status_when_health_status_absent():
 
 
 def test_pipeline_expanded_true_when_degraded():
-    ctx = _ctx({"health_status": "degraded"})
+    ctx = _ctx(
+        {
+            "health_status": "degraded",
+            "watcher_last_active_at": "2026-09-18T14:13:00Z",
+            "last_attempt": "2026-09-18T14:12:00Z",
+        }
+    )
     assert ctx["pipeline_expanded"] is True
 
 
-def test_pipeline_expanded_false_when_healthy_via_health_status():
-    ctx = _ctx({"health_status": "healthy"})
+def test_pipeline_expanded_false_when_healthy_via_fresh_health_status():
+    ctx = _ctx(
+        {
+            "health_status": "healthy",
+            "watcher_last_active_at": "2026-09-18T14:13:00Z",
+            "last_attempt": "2026-09-18T14:12:00Z",
+        }
+    )
     assert ctx["pipeline_expanded"] is False

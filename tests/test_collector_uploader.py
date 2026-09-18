@@ -128,6 +128,46 @@ def test_upload_records_multiple_batches_all_succeed():
     assert result.batches_delivered == 3
     assert len(session.calls) == 3
 
+def test_upload_records_aggregates_inserted_counts_across_batches():
+    session = FakeSession(
+        script=[
+            _FakeResponse(
+                200,
+                {
+                    "status": "success",
+                    "checkins_inserted": 10,
+                    "rejects_inserted": 2,
+                    "acs_inserted": 4,
+                },
+            ),
+            _FakeResponse(
+                200,
+                {
+                    "status": "success",
+                    "checkins_inserted": 5,
+                    "rejects_inserted": 1,
+                    "acs_inserted": 3,
+                },
+            ),
+        ]
+    )
+
+    checkins = [{"barcode": str(i)} for i in range(15)]
+    rejects = [{"barcode": str(i)} for i in range(3)]
+    acs = [{"barcode": str(i)} for i in range(7)]
+
+    result = upload_records(
+        session,
+        _cfg(max_records_per_batch=10),
+        checkins,
+        rejects,
+        acs,
+    )
+
+    assert result.success is True
+    assert result.checkins_inserted == 15
+    assert result.rejects_inserted == 3
+    assert result.acs_inserted == 7
 
 # --- upload_records: multi-batch partial-failure semantics ---------------
 

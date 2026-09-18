@@ -105,7 +105,20 @@ def test_first_run_with_no_source_files_completes_with_no_new_rows(tmp_path):
 def test_successful_run_persists_new_state_and_uploads(tmp_path):
     cfg = _cfg(tmp_path)
     (tmp_path / "Checkins.txt").write_text("line one\nline two\n", encoding="utf-8")
-    session = FakeSession()
+    session = FakeSession(
+        script=[
+            _FakeResponse(
+                200,
+                {
+                    "status": "success",
+                    "checkins_inserted": 2,
+                    "rejects_inserted": 0,
+                    "acs_inserted": 0,
+                },
+            ),
+            _FakeResponse(200, {"status": "success"}),
+        ]
+    )
 
     outcome = run_once(
         cfg, session=session, parse_fns=_ALL_PASSTHROUGH, logger=_logger()
@@ -114,6 +127,9 @@ def test_successful_run_persists_new_state_and_uploads(tmp_path):
     assert outcome.exit_code == 0
     assert outcome.status["status"] == "completed"
     assert outcome.status["checkins_rows"] == 2
+    assert outcome.status["uploaded_checkins_rows"] == 2
+    assert outcome.status["uploaded_rejects_rows"] == 0
+    assert outcome.status["uploaded_acs_rows"] == 0
 
     loaded_state = state_mod.load_state(cfg.state_path)
     checkins_state = state_mod.get_source(loaded_state, "checkins")
