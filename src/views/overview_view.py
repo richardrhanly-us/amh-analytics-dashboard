@@ -136,7 +136,7 @@ def render_overview(
             st.dataframe(
                 debug_ill_df[_available_debug_columns(debug_ill_df)]
                 .sort_values("datetime", ascending=False),
-                use_container_width=True,
+                width="stretch",
             )
         else:
             st.info("No ILL items found for this range.")
@@ -148,7 +148,7 @@ def render_overview(
             st.dataframe(
                 debug_branch_df[_available_debug_columns(debug_branch_df)]
                 .sort_values("datetime", ascending=False),
-                use_container_width=True,
+                width="stretch",
             )
         else:
             st.info("No Branch Services items found for this range.")
@@ -160,7 +160,7 @@ def render_overview(
             st.dataframe(
                 debug_collection_df[_available_debug_columns(debug_collection_df)]
                 .sort_values("datetime", ascending=False),
-                use_container_width=True,
+                width="stretch",
             )
         else:
             st.info("No Collection Services items found for this range.")
@@ -172,7 +172,7 @@ def render_overview(
             st.dataframe(
                 debug_holds_df[_available_debug_columns(debug_holds_df)]
                 .sort_values("datetime", ascending=False),
-                use_container_width=True,
+                width="stretch",
             )
         else:
             st.info("No public holds found for this range.")

@@ -264,7 +264,7 @@ def render_transits(
 
             daily_transfer_summary["Date"] = daily_transfer_summary["Date"].dt.strftime("%Y-%m-%d")
 
-            st.dataframe(daily_transfer_summary, use_container_width=True)
+            st.dataframe(daily_transfer_summary, width="stretch")
             download_button(
                 daily_transfer_summary,
                 "daily_transfer_summary_report.csv",
@@ -346,7 +346,7 @@ def render_transits(
                     transit_hourly_display["Avg Transit Items Per Day"].round(1)
                 )
 
-            st.dataframe(transit_hourly_display, use_container_width=True)
+            st.dataframe(transit_hourly_display, width="stretch")
             download_button(
                 transit_hourly_display,
                 "transit_by_hour_report.csv",
@@ -383,7 +383,7 @@ def render_transits(
                 "transit_items": "Transit Items"
             })
 
-            st.dataframe(transit_mix_display, use_container_width=True)
+            st.dataframe(transit_mix_display, width="stretch")
             download_button(
                 transit_mix_display,
                 "transit_trends_over_time_report.csv",
@@ -414,7 +414,7 @@ def render_transits(
                 "pct_of_total_items": "% of Total Items"
             })
 
-            st.dataframe(routing_distribution_display, use_container_width=True)
+            st.dataframe(routing_distribution_display, width="stretch")
             download_button(
                 routing_distribution_display,
                 "routing_distribution_report.csv",
@@ -459,7 +459,7 @@ def render_transits(
                 "routing_pct": "Routing %"
             })
 
-            st.dataframe(routing_pct_display, use_container_width=True)
+            st.dataframe(routing_pct_display, width="stretch")
             download_button(
                 routing_pct_display,
                 "percentage_routing_over_time_report.csv",
@@ -482,7 +482,7 @@ def render_transits(
                 "reason_count": "Top Reason Count",
                 "top_reason_pct_of_destination_rejects": "Top Reason % of Destination Rejects"
             })
-            st.dataframe(diagnostics_display, use_container_width=True)
+            st.dataframe(diagnostics_display, width="stretch")
             download_button(
                 diagnostics_display,
                 "exception_report.csv",
@@ -573,7 +573,7 @@ def render_transits(
                 unsafe_allow_html=True
             )
 
-            st.dataframe(no_agency_display, use_container_width=True)
+            st.dataframe(no_agency_display, width="stretch")
             download_button(
                 no_agency_display,
                 "no_agency_destination_deep_dive_report.csv",
@@ -642,7 +642,7 @@ def render_transits(
                 ]
             })
 
-            st.dataframe(baseline_df, use_container_width=True)
+            st.dataframe(baseline_df, width="stretch")
             download_button(
                 baseline_df,
                 "transit_baseline_comparison_report.csv",
@@ -708,7 +708,7 @@ def render_transits(
                     unsafe_allow_html=True
                 )
 
-            st.dataframe(diagnostics_display, use_container_width=True)
+            st.dataframe(diagnostics_display, width="stretch")
             download_button(
                 diagnostics_display,
                 "destination_diagnostics_report.csv",

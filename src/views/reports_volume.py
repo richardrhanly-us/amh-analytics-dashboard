@@ -97,7 +97,7 @@ def render_volume_capacity_section(df, df_live_raw, df_history_raw, today, gated
     
                 dow_display["Avg Checkins Per Day"] = dow_display["Avg Checkins Per Day"].round(1)
     
-                st.dataframe(dow_display, use_container_width=True)
+                st.dataframe(dow_display, width="stretch")
                 gated_csv_download(dow_display, "weekday_volume.csv")
             else:
                 st.info("No weekday data available for selected range.")
@@ -177,7 +177,7 @@ def render_volume_capacity_section(df, df_live_raw, df_history_raw, today, gated
             
                 peak_hour_display["Avg Checkins Per Day"] = peak_hour_display["Avg Checkins Per Day"].round(1)
             
-                st.dataframe(peak_hour_display, use_container_width=True)
+                st.dataframe(peak_hour_display, width="stretch")
                 gated_csv_download(
                     peak_hour_display,
                     "peak_hour_analysis.csv"
@@ -253,7 +253,7 @@ def render_volume_capacity_section(df, df_live_raw, df_history_raw, today, gated
             
             display_df["Avg Checkins Per Hour"] = display_df["Avg Checkins Per Hour"].round(1)
             
-            st.dataframe(display_df, use_container_width=True)
+            st.dataframe(display_df, width="stretch")
             gated_csv_download(display_df, "throughput_report.csv")
     
             # ===== WEEKDAY SECTION =====
@@ -315,7 +315,7 @@ def render_volume_capacity_section(df, df_live_raw, df_history_raw, today, gated
     
             weekday_display["Avg Checkins Per Day"] = weekday_display["Avg Checkins Per Day"].round(1)
     
-            st.dataframe(weekday_display, use_container_width=True)
+            st.dataframe(weekday_display, width="stretch")
             gated_csv_download(weekday_display, "throughput_by_weekday_report.csv")
     
         else:
@@ -394,7 +394,7 @@ def render_volume_capacity_section(df, df_live_raw, df_history_raw, today, gated
             display_df = compare_df[["hour_label", "today", "typical", "delta"]].rename(
                 columns={"hour_label": "hour"}
             )
-            st.dataframe(display_df, use_container_width=True)
+            st.dataframe(display_df, width="stretch")
             gated_csv_download(display_df, "today_vs_typical_hourly_pattern.csv")
         else:
             st.info("Not enough data available to compare today versus the typical hourly pattern.")

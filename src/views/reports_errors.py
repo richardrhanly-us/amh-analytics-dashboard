@@ -65,7 +65,7 @@ def render_errors_exceptions_section(df, rejects_df, gated_csv_download):
     
             render_chart(reject_chart)
     
-            st.dataframe(reject_counts, use_container_width=True)
+            st.dataframe(reject_counts, width="stretch")
             gated_csv_download(reject_counts, "reject_reasons.csv")
         else:
             st.info("No reject reason data available for the selected date range.")
@@ -97,7 +97,7 @@ def render_errors_exceptions_section(df, rejects_df, gated_csv_download):
     
             top_issues_df["Explanation"] = top_issues_df["Issue"].map(issue_explanations).fillna("Operational issue requiring review")
     
-            st.dataframe(top_issues_df, use_container_width=True)
+            st.dataframe(top_issues_df, width="stretch")
         else:
             st.info("No reject issues found for the selected date range.")
     
@@ -225,7 +225,7 @@ def render_errors_exceptions_section(df, rejects_df, gated_csv_download):
                 st.line_chart(chart_df)
     
                 overflow_daily_display = overflow_daily.reset_index().rename(columns={"index": "date"})
-                st.dataframe(overflow_daily_display, use_container_width=True)
+                st.dataframe(overflow_daily_display, width="stretch")
                 gated_csv_download(
                     overflow_daily_display,
                     "exception_bin_rate_by_day_report.csv",
@@ -315,7 +315,7 @@ def render_errors_exceptions_section(df, rejects_df, gated_csv_download):
                         hourly_exception_display["Avg Exception Items Per Day"].round(1)
                     )
     
-                    st.dataframe(hourly_exception_display, use_container_width=True)
+                    st.dataframe(hourly_exception_display, width="stretch")
                     gated_csv_download(
                         hourly_exception_display,
                         "exception_bin_volume_by_hour_report.csv",

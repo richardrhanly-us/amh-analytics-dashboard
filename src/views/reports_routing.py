@@ -64,7 +64,7 @@ def render_routing_destinations_section(df, gated_csv_download):
     
             render_chart(destination_chart)
     
-            st.dataframe(destination_counts, use_container_width=True)
+            st.dataframe(destination_counts, width="stretch")
             gated_csv_download(destination_counts, "destination_breakdown.csv")
         else:
             st.info("No destination data available for the selected date range.")
@@ -160,7 +160,7 @@ def render_routing_destinations_section(df, gated_csv_download):
                 "pct_of_total": "% of Total"
             })
     
-            st.dataframe(bin_volume_display, use_container_width=True)
+            st.dataframe(bin_volume_display, width="stretch")
             gated_csv_download(bin_volume_display, "bin_volume_report.csv")
     
             hour_range = list(range(7, 21))
@@ -226,7 +226,7 @@ def render_routing_destinations_section(df, gated_csv_download):
                     .interactive(False)
                 )
     
-                st.altair_chart(bin_chart, use_container_width=True)
+                st.altair_chart(bin_chart, width="stretch")
     
                 hourly_bin_display = hourly_bin_summary.pivot_table(
                     index="hour_label",
@@ -246,6 +246,6 @@ def render_routing_destinations_section(df, gated_csv_download):
                 for col in avg_cols:
                     hourly_bin_display[col] = hourly_bin_display[col].round(1)
     
-                st.dataframe(hourly_bin_display, use_container_width=True)
+                st.dataframe(hourly_bin_display, width="stretch")
                 gated_csv_download(hourly_bin_display, "bin_volume_by_hour_report.csv")
     
