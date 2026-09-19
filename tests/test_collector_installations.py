@@ -239,7 +239,8 @@ def test_collector_installations_migration_chains_from_previous_head():
 
     assert revision is not None
     assert revision.down_revision == "c53c1b536c71"
-    assert script.get_heads() == ["fb984ee6c56c"]
+    # Later migrations may extend the chain; this one just has to stay in it.
+    assert "fb984ee6c56c" in {r.revision for r in script.walk_revisions()}
 
 
 def test_collector_installations_migration_has_no_secret_or_agent_token_columns():

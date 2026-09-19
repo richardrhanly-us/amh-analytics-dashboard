@@ -151,6 +151,213 @@ def get_branch_by_slug(org_slug: str, branch_slug: str) -> dict[str, Any] | None
         return dict(row) if row else None
 
 
+# --- operational identity ----------------------------------------------------
+#
+# Two ID domains exist and must never be mixed:
+#
+#   SaaS:         organizations.id, branches.id
+#   operational:  customers.id (via organizations.operational_customer_id) and
+#                 branches.id (via branches.operational_branch_id, which for a
+#                 provisioned branch equals branches.id -- there is no separate
+#                 operational-branches table)
+#
+# Collector/API scope, agent tokens and pipeline_status are all keyed by the
+# operational pair. organizations.id is NEVER a valid customer_id.
+
+
+def assign_operational_identity(organization_id: int, branch_id: int) -> dict[str, Any]:
+    """Assign (or confirm) the operational identity for one organization/branch.
+
+    Atomic (one transaction) and idempotent:
+
+    * If the organization has no operational customer yet, a customers row is
+      created from the organization's name and its id is stored in
+      organizations.operational_customer_id.
+    * The branch's operational_branch_id is set to branches.id.
+    * Re-running an already-correct assignment changes nothing and creates no
+      second customer.
+
+    Fails closed (RuntimeError, nothing written) if the organization or branch
+    is missing, the branch belongs to another organization, or an existing
+    mapping is inconsistent: a dangling customer, a customer already claimed by
+    a different organization, or an operational_branch_id that is not the
+    branch's own id. Never creates tokens.
+
+    Returns {organization_id, branch_id, operational_customer_id,
+    operational_branch_id, created_customer, changed}.
+    """
+    sql_lock_org = text("""
+        SELECT id, name, operational_customer_id
+        FROM organizations
+        WHERE id = :organization_id
+        FOR UPDATE
+    """)
+
+    sql_lock_branch = text("""
+        SELECT id, organization_id, operational_branch_id
+        FROM branches
+        WHERE id = :branch_id
+          AND organization_id = :organization_id
+        FOR UPDATE
+    """)
+
+    sql_customer_exists = text("""
+        SELECT id
+        FROM customers
+        WHERE id = :customer_id
+    """)
+
+    sql_customer_claimed_elsewhere = text("""
+        SELECT id
+        FROM organizations
+        WHERE operational_customer_id = :customer_id
+          AND id <> :organization_id
+        LIMIT 1
+    """)
+
+    sql_insert_customer = text("""
+        INSERT INTO customers (name)
+        VALUES (:name)
+        RETURNING id
+    """)
+
+    sql_set_org_customer = text("""
+        UPDATE organizations
+        SET operational_customer_id = :customer_id,
+            updated_at = NOW()
+        WHERE id = :organization_id
+          AND operational_customer_id IS NULL
+    """)
+
+    sql_set_branch_identity = text("""
+        UPDATE branches
+        SET operational_branch_id = id,
+            updated_at = NOW()
+        WHERE id = :branch_id
+          AND operational_branch_id IS NULL
+    """)
+
+    engine = get_engine()
+    with engine.begin() as conn:
+        # Row locks serialise concurrent assignments for the same tenant so two
+        # racing runs cannot both allocate a customer.
+        org = conn.execute(
+            sql_lock_org, {"organization_id": organization_id}
+        ).mappings().first()
+        if not org:
+            raise RuntimeError(f"Organization {organization_id} not found")
+
+        branch = conn.execute(
+            sql_lock_branch,
+            {"branch_id": branch_id, "organization_id": organization_id},
+        ).mappings().first()
+        if not branch:
+            raise RuntimeError(
+                f"Branch {branch_id} not found for organization {organization_id}"
+            )
+
+        existing_branch_identity = branch["operational_branch_id"]
+        if existing_branch_identity is not None and existing_branch_identity != branch["id"]:
+            raise RuntimeError(
+                f"Inconsistent operational identity: branch {branch_id} has "
+                f"operational_branch_id {existing_branch_identity}, expected {branch_id}"
+            )
+
+        customer_id = org["operational_customer_id"]
+        created_customer = False
+
+        if customer_id is not None:
+            customer = conn.execute(
+                sql_customer_exists, {"customer_id": customer_id}
+            ).mappings().first()
+            if not customer:
+                raise RuntimeError(
+                    f"Inconsistent operational identity: organization {organization_id} "
+                    f"maps to customer {customer_id}, which does not exist"
+                )
+
+            claimed = conn.execute(
+                sql_customer_claimed_elsewhere,
+                {"customer_id": customer_id, "organization_id": organization_id},
+            ).mappings().first()
+            if claimed:
+                raise RuntimeError(
+                    f"Operational customer {customer_id} is already mapped to "
+                    f"organization {claimed['id']}"
+                )
+        else:
+            new_customer = conn.execute(
+                sql_insert_customer, {"name": org["name"]}
+            ).mappings().first()
+            if not new_customer:
+                raise RuntimeError("Failed to create operational customer")
+            customer_id = new_customer["id"]
+            created_customer = True
+
+            conn.execute(
+                sql_set_org_customer,
+                {"customer_id": customer_id, "organization_id": organization_id},
+            )
+
+        branch_changed = existing_branch_identity is None
+        if branch_changed:
+            conn.execute(sql_set_branch_identity, {"branch_id": branch_id})
+
+    return {
+        "organization_id": organization_id,
+        "branch_id": branch_id,
+        "operational_customer_id": customer_id,
+        "operational_branch_id": branch_id,
+        "created_customer": created_customer,
+        "changed": created_customer or branch_changed,
+    }
+
+
+# Defaults match the Tech Logic source paths used by the legacy Super Admin
+# agent-config generators this replaces.
+DEFAULT_RAW_CHECKINS_FILE = r"C:\TLCFinalDlls\Checkins.txt"
+DEFAULT_RAW_REJECTS_FILE = r"C:\TLCFinalDlls\Rejects.txt"
+DEFAULT_RAW_ACS_FILE = r"C:\TLCFinalDlls\ACS Log.txt"
+
+
+def build_collector_agent_config(
+    operational_customer_id: int | None,
+    operational_branch_id: int | None,
+    api_url: str,
+    raw_checkins_file: str = DEFAULT_RAW_CHECKINS_FILE,
+    raw_rejects_file: str = DEFAULT_RAW_REJECTS_FILE,
+    raw_acs_file: str = DEFAULT_RAW_ACS_FILE,
+) -> dict[str, Any]:
+    """Build the agent_config.json content for a provisioned tenant.
+
+    customer_id / branch_id are the OPERATIONAL pair. Raises ValueError if
+    either is missing: there is deliberately no fallback to SaaS
+    organizations.id / branches.id, so an unprovisioned tenant can never
+    produce a config that would upload under the wrong scope.
+    """
+    if operational_customer_id is None or operational_branch_id is None:
+        raise ValueError(
+            "Operational identity is not assigned; cannot generate Collector config"
+        )
+
+    return {
+        "database_url": "",
+        "customer_id": int(operational_customer_id),
+        "branch_id": int(operational_branch_id),
+        "raw_checkins_file": raw_checkins_file.strip(),
+        "raw_rejects_file": raw_rejects_file.strip(),
+        "processed_checkins_file": r"data\processed\checkins_clean.csv",
+        "processed_rejects_file": r"data\processed\rejects_clean.csv",
+        "checkins_history_file": r"data\processed\checkins_history.csv",
+        "rejects_history_file": r"data\processed\rejects_history.csv",
+        "status_file": r"data\processed\pipeline_status.json",
+        "api_url": api_url.strip().rstrip("/"),
+        "raw_acs_file": raw_acs_file.strip(),
+        "processed_acs_file": r"data\processed\acs_clean.csv",
+        "acs_history_file": r"data\processed\acs_history.csv",
+    }
+
+
 # --- collector installations -------------------------------------------------
 #
 # collector_installations is server-side bookkeeping only: one row per

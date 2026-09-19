@@ -21,6 +21,8 @@ if SUPER_ADMIN_DIR not in sys.path:
 from super_auth import require_super_admin
 
 from services.tenant_service import (
+    assign_operational_identity,
+    build_collector_agent_config,
     create_collector_installation,
     create_organization_with_primary_branch,
 )
@@ -78,13 +80,48 @@ def slugify(value: str) -> str:
 def lines_to_list(text: str) -> list[str]:
     return [line.strip() for line in text.splitlines() if line.strip()]
 
+def run_operational_stage(
+    organization_id: int, branch_id: int, config_inputs: dict[str, str]
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
+    """Stage 2 of provisioning: assign operational identity, then build the
+    Collector config from the MAPPED operational IDs (never the SaaS IDs).
+
+    Returns (operational_identity, agent_config, error). On any failure the
+    identity and config are None and error describes it; assignment is atomic
+    and idempotent, so this can simply be run again.
+    """
+    try:
+        identity = assign_operational_identity(
+            organization_id=organization_id,
+            branch_id=branch_id,
+        )
+        agent_config = build_collector_agent_config(
+            operational_customer_id=identity["operational_customer_id"],
+            operational_branch_id=identity["operational_branch_id"],
+            api_url=config_inputs["api_url"],
+            raw_checkins_file=config_inputs["raw_checkins_file"],
+            raw_rejects_file=config_inputs["raw_rejects_file"],
+            raw_acs_file=config_inputs["raw_acs_file"],
+        )
+    except Exception as e:
+        return None, None, f"{type(e).__name__}: {e}"
+
+    return identity, agent_config, None
+
+
 auth_user = st.session_state["auth_user"]
 
 st.title("Provision Library")
-st.caption("Create a new library tenant and generate its agent config.")
+st.caption(
+    "Create a new library tenant, assign its operational identity, and "
+    "generate its agent config."
+)
 
 if "provision_result" not in st.session_state:
     st.session_state["provision_result"] = None
+
+if "provision_config_inputs" not in st.session_state:
+    st.session_state["provision_config_inputs"] = None
 
 with st.form("provision_library_form"):
     col1, col2 = st.columns(2)
@@ -207,22 +244,19 @@ if submitted:
     organization = result["organization"]
     branch = result["branch"]
 
-    agent_config = {
-        "database_url": "",
-        "customer_id": organization["id"],
-        "branch_id": branch["id"],
-        "raw_checkins_file": raw_checkins_file.strip(),
-        "raw_rejects_file": raw_rejects_file.strip(),
-        "processed_checkins_file": r"data\processed\checkins_clean.csv",
-        "processed_rejects_file": r"data\processed\rejects_clean.csv",
-        "checkins_history_file": r"data\processed\checkins_history.csv",
-        "rejects_history_file": r"data\processed\rejects_history.csv",
-        "status_file": r"data\processed\pipeline_status.json",
-        "api_url": api_base_url.strip().rstrip("/"),
-        "raw_acs_file": raw_acs_file.strip(),
-        "processed_acs_file": r"data\processed\acs_clean.csv",
-        "acs_history_file": r"data\processed\acs_history.csv",
+    # Stage 2: operational identity. The SaaS tenant above is already
+    # committed, so a failure here must not hide it -- it is reported as
+    # "operational provisioning incomplete" and no Collector config is
+    # produced until a (re-runnable) assignment succeeds.
+    config_inputs = {
+        "api_url": api_base_url,
+        "raw_checkins_file": raw_checkins_file,
+        "raw_rejects_file": raw_rejects_file,
+        "raw_acs_file": raw_acs_file,
     }
+    operational_identity, agent_config, operational_error = run_operational_stage(
+        organization["id"], branch["id"], config_inputs
+    )
 
     # The library is already committed at this point; an installation-record
     # failure must not hide that, so it is reported alongside the result and
@@ -247,11 +281,21 @@ if submitted:
         "branch": branch,
         "plan": result["plan"],
         "subscription": result["subscription"],
+        "operational_identity": operational_identity,
+        "operational_error": operational_error,
         "collector_installation": installation,
         "agent_config": agent_config,
     }
+    st.session_state["provision_config_inputs"] = config_inputs
 
-    st.success("Library provisioned.")
+    if operational_error:
+        st.warning(
+            "SaaS organization and branch were created, but operational "
+            f"provisioning is INCOMPLETE ({operational_error}). Retry below or "
+            "from Manage Libraries."
+        )
+    else:
+        st.success("Library provisioned.")
     if installation_error:
         st.warning(
             "Library provisioned, but the installation record could not be created "
@@ -262,11 +306,32 @@ if st.session_state["provision_result"]:
     provision_result = st.session_state["provision_result"]
 
     st.subheader("Provision Result")
+
+    if provision_result.get("operational_error"):
+        st.error(
+            "Operational provisioning is incomplete. The SaaS organization and "
+            "branch exist, but no operational identity is assigned, so no "
+            "Collector configuration is available yet."
+        )
+        config_inputs_saved = st.session_state["provision_config_inputs"]
+        if config_inputs_saved and st.button("Retry operational identity assignment"):
+            identity, config, error = run_operational_stage(
+                provision_result["organization"]["id"],
+                provision_result["branch"]["id"],
+                config_inputs_saved,
+            )
+            provision_result["operational_identity"] = identity
+            provision_result["operational_error"] = error
+            provision_result["agent_config"] = config
+            st.session_state["provision_result"] = provision_result
+            st.rerun()
+
     st.json(provision_result)
 
-    st.download_button(
-        "Download agent_config.json",
-        data=json.dumps(provision_result["agent_config"], indent=2),
-        file_name="agent_config.json",
-        mime="application/json",
-    )
+    if provision_result.get("agent_config"):
+        st.download_button(
+            "Download agent_config.json",
+            data=json.dumps(provision_result["agent_config"], indent=2),
+            file_name="agent_config.json",
+            mime="application/json",
+        )
