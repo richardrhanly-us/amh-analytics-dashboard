@@ -222,9 +222,10 @@ def test_bundle_never_includes_pycache(built_bundle):
 def test_bundle_config_template_has_no_production_credentials(built_bundle):
     text = (built_bundle.bundle_dir / "collector_config.example.json").read_text(encoding="utf-8")
     doc = json.loads(text)
-    # Template values only -- 0, not a real customer_id/branch_id.
+    # Template values only -- 0, not a real customer_id/branch_id/installation_id.
     assert doc["customer_id"] == 0
     assert doc["branch_id"] == 0
+    assert doc["installation_id"] == 0
     # No real token value under any non-comment key -- the env var NAME is
     # expected to appear in the explanatory comment (that's the whole
     # point of _comment_token), but no actual token belongs anywhere here.
@@ -730,6 +731,7 @@ def test_frozen_bundle_config_template_no_secrets_or_prefilled_values(built_froz
     doc = json.loads(text)
     assert doc["customer_id"] == 0
     assert doc["branch_id"] == 0
+    assert doc["installation_id"] == 0
     assert "token" not in json.dumps({k: v for k, v in doc.items() if not k.startswith("_comment")}).lower()
 
 
@@ -1214,6 +1216,7 @@ def _ps_literal(value) -> str:
 VALID_INSTALL_INPUT = {
     "CustomerId": 7,
     "BranchId": 3,
+    "InstallationId": 12,
     "ApiUrl": "https://api.example.org",
     "CheckinsPath": r"C:\Site Data\Checkins.txt",
     "RejectsPath": r"D:\Rejects.txt",
@@ -1226,6 +1229,9 @@ INPUT_VALIDATION_CASES = {
     "zero_customer": {"CustomerId": 0},
     "no_branch": {"BranchId": None},
     "negative_branch": {"BranchId": -1},
+    "no_installation": {"InstallationId": None},
+    "zero_installation": {"InstallationId": 0},
+    "negative_installation": {"InstallationId": -1},
     "no_api_url": {"ApiUrl": None},
     "blank_api_url": {"ApiUrl": "   "},
     "http_api_url": {"ApiUrl": "http://api.example.org"},
@@ -1293,7 +1299,7 @@ def test_installer_parameters_are_explicit_and_have_no_defaults():
     body = _install_body()
     param_block = body[body.index("param("): body.index("$ErrorActionPreference")]
 
-    for name in ("CustomerId", "BranchId", "ApiUrl", "CheckinsPath", "RejectsPath", "AcsPath"):
+    for name in ("CustomerId", "BranchId", "InstallationId", "ApiUrl", "CheckinsPath", "RejectsPath", "AcsPath"):
         assert f"${name}" in param_block, name
         assert not re.search(rf"\${name}\s*=", param_block), f"{name} must have no default"
     # Existing interface is unchanged.
@@ -1323,6 +1329,7 @@ def test_installer_has_no_example_template_fallback_for_the_config():
 
     assert "Copy-Item $SourceExampleConfig" not in body
     assert "New-CollectorConfigJson -CustomerId $CustomerId" in body
+    assert "-BranchId $BranchId -InstallationId $InstallationId" in body
     assert "-CheckinsPath $CheckinsPath -RejectsPath $RejectsPath -AcsPath $AcsPath" in body
 
 
@@ -1369,6 +1376,15 @@ def test_branch_id_is_required_and_must_be_positive(input_validation_results):
 
 
 @needs_powershell
+def test_installation_id_is_required_and_must_be_positive(input_validation_results):
+    for case in ("no_installation", "zero_installation", "negative_installation"):
+        problems = input_validation_results[case]
+        assert len(problems) == 1 and "-InstallationId" in problems[0], case
+        # The technician is told where the value comes from, not to invent one.
+        assert "Super Admin" in problems[0], case
+
+
+@needs_powershell
 def test_api_url_is_required(input_validation_results):
     for case in ("no_api_url", "blank_api_url"):
         problems = input_validation_results[case]
@@ -1405,8 +1421,8 @@ def test_source_paths_must_be_absolute(input_validation_results):
 def test_every_missing_input_is_reported_together(input_validation_results):
     problems = input_validation_results["everything_missing"]
 
-    assert len(problems) == 6
-    for flag in ("-CustomerId", "-BranchId", "-ApiUrl", "-CheckinsPath", "-RejectsPath", "-AcsPath"):
+    assert len(problems) == 7
+    for flag in ("-CustomerId", "-BranchId", "-InstallationId", "-ApiUrl", "-CheckinsPath", "-RejectsPath", "-AcsPath"):
         assert any(flag in problem for problem in problems), flag
 
 
@@ -1418,6 +1434,7 @@ def test_generated_config_uses_the_supplied_values_and_loads_in_the_collector(tm
     values = {
         "CustomerId": 42,
         "BranchId": 9,
+        "InstallationId": 17,
         "ApiUrl": "  https://api.example.org  ",
         "CheckinsPath": r"E:\Tech Logic\Checkins.txt",
         "RejectsPath": r"E:\Tech Logic\Rejects.txt",
@@ -1430,6 +1447,8 @@ def test_generated_config_uses_the_supplied_values_and_loads_in_the_collector(tm
     doc = json.loads(text)
     assert doc["customer_id"] == 42
     assert doc["branch_id"] == 9
+    assert doc["installation_id"] == 17
+    assert isinstance(doc["installation_id"], int)
     assert doc["api_url"] == "https://api.example.org"  # trimmed
     assert [(s["name"], s["path"]) for s in doc["sources"]] == [
         ("checkins", r"E:\Tech Logic\Checkins.txt"),
@@ -1446,7 +1465,7 @@ def test_generated_config_uses_the_supplied_values_and_loads_in_the_collector(tm
     config_file.write_text(text, encoding="utf-8")
     monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token-not-a-real-token")
     cfg = load_config(config_file)
-    assert (cfg.customer_id, cfg.branch_id) == (42, 9)
+    assert (cfg.customer_id, cfg.branch_id, cfg.installation_id) == (42, 9, 17)
     assert [s.name for s in cfg.sources] == ["checkins", "rejects", "acs"]
     assert cfg.source("acs").path == r"\\server\share\ACS Log.txt"
 
@@ -2028,6 +2047,7 @@ def _finish_config(**overrides):
     document = {
         "customer_id": 7,
         "branch_id": 3,
+        "installation_id": 12,
         "api_url": "https://api.example.org",
         "sources": [
             {"name": "checkins", "path": r"C:\Site\Checkins.txt"},
@@ -2054,6 +2074,10 @@ FINISH_CONFIG_CASES = {
     "no_customer": (_finish_config(customer_id=_MISSING), ["'customer_id'"]),
     "zero_customer": (_finish_config(customer_id=0), ["'customer_id'"]),
     "negative_branch": (_finish_config(branch_id=-4), ["'branch_id'"]),
+    "no_installation": (_finish_config(installation_id=_MISSING), ["'installation_id' is required"]),
+    "zero_installation": (_finish_config(installation_id=0), ["'installation_id' is required"]),
+    "negative_installation": (_finish_config(installation_id=-2), ["'installation_id' is required"]),
+    "non_numeric_installation": (_finish_config(installation_id="abc"), ["'installation_id' is required"]),
     "no_api_url": (_finish_config(api_url=_MISSING), ["'api_url' is required"]),
     "http_api_url": (_finish_config(api_url="http://api.example.org"), ["must begin with https://"]),
     "no_state_path": (_finish_config(state_path=_MISSING), ["'state_path' is required"]),
@@ -2239,7 +2263,7 @@ def finish_helper_results():
     generated = " ".join(
         f"-{key} {_ps_literal(value)}"
         for key, value in {
-            "CustomerId": 42, "BranchId": 9, "ApiUrl": "https://api.example.org",
+            "CustomerId": 42, "BranchId": 9, "InstallationId": 17, "ApiUrl": "https://api.example.org",
             "CheckinsPath": r"E:\Tech Logic\Checkins.txt", "RejectsPath": r"E:\Tech Logic\Rejects.txt",
             "AcsPath": r"\\server\share\ACS Log.txt", "DataRoot": r"C:\Custom Data Root",
         }.items()

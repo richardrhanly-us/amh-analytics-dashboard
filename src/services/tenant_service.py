@@ -358,12 +358,52 @@ def build_collector_agent_config(
     }
 
 
+def _require_installation_id(installation_id: int | None) -> int:
+    if installation_id is None or isinstance(installation_id, bool) or int(installation_id) < 1:
+        raise ValueError(
+            "Installation ID is not available; create the Collector installation record first"
+        )
+    return int(installation_id)
+
+
+def format_collector_install_parameters(
+    operational_customer_id: int | None,
+    operational_branch_id: int | None,
+    installation_id: int | None,
+) -> str:
+    """The three identity parameters the on-site installer (install.ps1 in
+    the Collector release bundle) requires, as a paste-ready command fragment:
+    Operational Customer ID, Operational Branch ID and Installation ID (the id
+    RETURNED by create_collector_installation -- never typed). No operational
+    identity, or no installation record, means no onboarding values.
+
+    This is deliberately separate from build_collector_agent_config, which
+    generates the LEGACY agent_config.json and is not consumed by the
+    scheduled Collector: the Collector's own collector_config.json is written
+    on the site by install.ps1 from these values."""
+    if operational_customer_id is None or operational_branch_id is None:
+        raise ValueError(
+            "Operational identity is not assigned; cannot generate Collector install parameters"
+        )
+    installation_id = _require_installation_id(installation_id)
+    return (
+        f"-CustomerId {int(operational_customer_id)} "
+        f"-BranchId {int(operational_branch_id)} "
+        f"-InstallationId {installation_id}"
+    )
+
+
 # --- collector installations -------------------------------------------------
 #
 # collector_installations is server-side bookkeeping only: one row per
 # deployed Collector instance/machine. It holds no credentials, and it is not
 # a health signal -- pipeline_status remains the source of branch/ingestion
-# health. last_seen_at is not populated by any of these functions.
+# health. None of these functions populates last_seen_at: it is set only by
+# the API's handling of a confirmed installation contact
+# (main.record_installation_heartbeat -- a scheduled-run heartbeat or an
+# install-time preflight probe carrying the installation_id), which also moves
+# provisioning -> active, stamps installed_at at the first such contact, and
+# records the running Collector version.
 
 COLLECTOR_INSTALLATION_STATUSES = ("provisioning", "active", "inactive", "retired")
 

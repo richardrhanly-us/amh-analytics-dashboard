@@ -28,6 +28,7 @@ from services.tenant_service import (
     assign_operational_identity,
     build_collector_agent_config,
     create_collector_installation,
+    format_collector_install_parameters,
     list_collector_installations_for_organization,
     update_collector_installation,
 )
@@ -56,6 +57,11 @@ ORGANIZATION_STATUS_LABELS = {
     "suspended": "Suspended",
     "cancelled": "Cancelled",
 }
+
+
+# A heartbeat is only accepted for a provisioning/active installation, so
+# installer values are only offered for one of those.
+INSTALLER_INSTALLATION_STATUSES = ("provisioning", "active")
 
 
 def operational_id(value):
@@ -196,6 +202,11 @@ with detail_col2:
                 st.rerun()
 
     st.markdown("#### Agent Config")
+    st.caption(
+        "Legacy agent_config.json -- for the legacy agent only. It is NOT the scheduled "
+        "Collector's collector_config.json and contains no Installation ID; see "
+        "Collector Installer Values below."
+    )
     if agent_config is not None:
         st.download_button(
             "Download agent_config.json",
@@ -263,8 +274,11 @@ with detail_col2:
 
 st.subheader("Collector Installations")
 st.caption(
-    "Server-side records of deployed Collectors for this library. "
-    "These are bookkeeping only; pipeline health is shown separately below."
+    "Server-side records of deployed Collectors for this library. Installed At is the first "
+    "confirmed contact from the Collector (its install-time preflight or a scheduled-run "
+    "heartbeat carrying its Installation ID), which also moves the installation from "
+    "provisioning to active; Last Seen At is the most recent such contact; Collector "
+    "Version is what that Collector last reported. Pipeline health is shown separately below."
 )
 
 organization_id = int(selected_row["organization_id"])
@@ -274,6 +288,7 @@ installations = list_collector_installations_for_organization(organization_id)
 if installations:
     installations_df = pd.DataFrame(installations).rename(
         columns={
+            "id": "Installation ID",
             "name": "Installation",
             "branch_name": "Branch",
             "hostname": "Hostname",
@@ -286,6 +301,7 @@ if installations:
     st.dataframe(
         installations_df[
             [
+                "Installation ID",
                 "Installation",
                 "Branch",
                 "Hostname",
@@ -346,7 +362,7 @@ if pd.notna(primary_branch_id):
         with st.form("add_installation_form"):
             new_name = st.text_input("Installation name", value="Main AMH Sorter")
             new_hostname = st.text_input("Hostname (optional)")
-            new_version = st.text_input("Collector version", value="1.0.2")
+            new_version = st.text_input("Collector version", value="1.0.3")
             add_installation = st.form_submit_button("Add Installation")
 
         if add_installation:
@@ -364,6 +380,47 @@ if pd.notna(primary_branch_id):
             else:
                 st.success("Installation added.")
                 st.rerun()
+
+st.subheader("Collector Installer Values")
+st.caption(
+    "The scheduled Collector's collector_config.json is written on the library's machine by "
+    "install.ps1 from these three values. Copy them exactly. Only provisioning/active "
+    "installations of the primary branch are listed: the API rejects a heartbeat from an "
+    "inactive or retired installation, or one belonging to another branch."
+)
+installer_installations = {
+    int(row["id"]): row
+    for row in installations
+    if pd.notna(primary_branch_id)
+    and int(row["branch_id"]) == int(primary_branch_id)
+    and row["status"] in INSTALLER_INSTALLATION_STATUSES
+}
+if selected_customer_id is None or selected_operational_branch_id is None:
+    st.info("Unavailable until the operational identity is assigned.")
+elif not installer_installations:
+    st.info(
+        "Unavailable until the primary branch has a provisioning or active installation "
+        "record (add one above)."
+    )
+else:
+    installer_installation_id = st.selectbox(
+        "Installation",
+        list(installer_installations),
+        format_func=lambda installation_id: (
+            f"Installation ID {installation_id} - {installer_installations[installation_id]['name']}"
+        ),
+        key=f"installer_installation_{organization_id}",
+    )
+    installer_col1, installer_col2, installer_col3 = st.columns(3)
+    installer_col1.metric("Operational Customer ID", selected_customer_id)
+    installer_col2.metric("Operational Branch ID", selected_operational_branch_id)
+    installer_col3.metric("Installation ID", installer_installation_id)
+    st.code(
+        format_collector_install_parameters(
+            selected_customer_id, selected_operational_branch_id, installer_installation_id
+        ),
+        language="powershell",
+    )
 
 st.subheader("Pipeline Status")
 st.caption(

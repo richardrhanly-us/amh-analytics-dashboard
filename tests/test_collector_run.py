@@ -342,3 +342,55 @@ def test_best_effort_status_post_failure_does_not_fail_an_otherwise_successful_r
     outcome = run_once(cfg, session=session, parse_fns=_ALL_PASSTHROUGH, logger=_logger())
 
     assert outcome.exit_code == 0
+
+
+# --- installation lifecycle linkage ---------------------------------------
+
+
+def test_successful_run_heartbeat_carries_the_configured_installation(tmp_path):
+    from collector import __version__
+
+    cfg = _cfg(tmp_path, installation_id=41)
+    (tmp_path / "Checkins.txt").write_text("line one\n", encoding="utf-8")
+    session = FakeSession()
+
+    outcome = run_once(cfg, session=session, parse_fns=_ALL_PASSTHROUGH, logger=_logger())
+
+    assert outcome.exit_code == 0
+    status_calls = [payload for url, payload in session.calls if url.endswith("/upload-pipeline-status")]
+    assert len(status_calls) == 1
+    assert status_calls[0]["installation_id"] == 41
+    assert status_calls[0]["collector_version"] == __version__
+    upload_calls = [payload for url, payload in session.calls if url.endswith("/upload")]
+    assert upload_calls and all("installation_id" not in p for p in upload_calls)
+
+
+def test_legacy_config_run_is_unchanged_and_sends_no_installation_fields(tmp_path):
+    cfg = _cfg(tmp_path)  # no installation_id: a deployed 1.0.2-style config
+    (tmp_path / "Checkins.txt").write_text("line one\n", encoding="utf-8")
+    session = FakeSession()
+
+    outcome = run_once(cfg, session=session, parse_fns=_ALL_PASSTHROUGH, logger=_logger())
+
+    assert outcome.exit_code == 0
+    status_calls = [payload for url, payload in session.calls if url.endswith("/upload-pipeline-status")]
+    assert len(status_calls) == 1
+    assert "installation_id" not in status_calls[0]
+    assert "collector_version" not in status_calls[0]
+
+
+def test_rejected_installation_heartbeat_does_not_fail_an_otherwise_successful_run(tmp_path):
+    # The API rejects a wrong/inactive installation_id with a 403 for the WHOLE
+    # heartbeat. That must be a warning only: the data upload already
+    # succeeded and its state was committed.
+    cfg = _cfg(tmp_path, installation_id=41)
+    (tmp_path / "Checkins.txt").write_text("line one\n", encoding="utf-8")
+    session = FakeSession(script=[
+        _FakeResponse(200, {"status": "success"}),  # /upload
+        _FakeResponse(403, text='{"detail": "Collector installation is not authorized to report status"}'),
+    ])
+
+    outcome = run_once(cfg, session=session, parse_fns=_ALL_PASSTHROUGH, logger=_logger())
+
+    assert outcome.exit_code == 0
+    assert cfg.state_path.exists()

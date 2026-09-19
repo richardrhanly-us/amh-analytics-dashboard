@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -136,3 +137,56 @@ def test_numeric_defaults_when_not_specified(tmp_path, monkeypatch):
     assert cfg.max_records_per_batch == 1000
     assert cfg.http_connect_timeout == 10.0
     assert cfg.http_read_timeout == 60.0
+
+
+# --- installation_id ----------------------------------------------------
+#
+# Required for newly generated commercial configs (the installers write it,
+# finish-install validates it), but OPTIONAL at load time so an already
+# deployed 1.0.2 config that predates it keeps loading and running.
+
+
+def test_installation_id_is_loaded_when_present(tmp_path, monkeypatch):
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+
+    cfg = load_config(_write_config(tmp_path, installation_id=41))
+
+    assert cfg.installation_id == 41
+    assert isinstance(cfg.installation_id, int)
+
+
+def test_legacy_config_without_installation_id_still_loads_with_none(tmp_path, monkeypatch):
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    path = _write_config(tmp_path)
+    assert "installation_id" not in json.loads(path.read_text(encoding="utf-8"))
+
+    cfg = load_config(path)
+
+    assert cfg.installation_id is None
+    # ...and everything else is exactly as before.
+    assert (cfg.customer_id, cfg.branch_id) == (1, 1)
+    assert [s.name for s in cfg.sources] == ["checkins", "rejects", "acs"]
+
+
+def test_explicit_null_installation_id_is_treated_as_absent(tmp_path, monkeypatch):
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+
+    assert load_config(_write_config(tmp_path, installation_id=None)).installation_id is None
+
+
+@pytest.mark.parametrize("bad", [0, -1, "12", "abc", 1.5, True, [3], {"id": 3}])
+def test_invalid_installation_id_fails_loudly_at_load(tmp_path, monkeypatch, bad):
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+
+    with pytest.raises(ConfigError, match="installation_id"):
+        load_config(_write_config(tmp_path, installation_id=bad))
+
+
+def test_the_shipped_example_template_placeholder_is_rejected_not_silently_used(monkeypatch):
+    # The template's installation_id is a 0 placeholder: copying it without
+    # filling it in must not produce a Collector that heartbeats as id 0.
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    template = Path(__file__).resolve().parent.parent / "collector" / "deploy" / "collector_config.example.json"
+
+    with pytest.raises(ConfigError, match="installation_id"):
+        load_config(template)

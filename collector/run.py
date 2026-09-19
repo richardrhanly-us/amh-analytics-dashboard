@@ -329,6 +329,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     logger = _build_logger(cfg.log_path)
+    if cfg.installation_id is None:
+        logger.warning(
+            "Config has no installation_id (legacy config): heartbeats will not update "
+            "the server-side collector installation record. Uploads are unaffected."
+        )
 
     try:
         session = uploader.build_session()

@@ -51,11 +51,11 @@ Scope of what lives here:
 
 from __future__ import annotations
 
-# Simple semver, same reasoning as agent_version's (agent/runtime/config.py):
-# staying below 1.0.0 deliberately -- production parser wiring is done,
-# but real SYSTEM-context validation, onsite reboot/proxy validation, and
-# an actual production cutover are still pending -- see
-# docs/collector-v1-admin-guide.md's validation checklist. Bump to 1.0.0
-# once those are complete and this has actually run a real production
-# cutover.
-__version__ = "0.1.0"
+# Simple semver. This is the version the RUNNING Collector reports on every
+# heartbeat (collector/uploader.py::post_status) and the backend records as
+# collector_installations.collector_version, so it must match the release
+# label a build is shipped under. 1.0.2 is the frozen, validated release
+# ZIP; this is the next build, which adds installation-lifecycle heartbeat
+# linkage (installation_id). build_release.py does not stamp or assert this
+# value -- it is bumped here by hand.
+__version__ = "1.0.3"

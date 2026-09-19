@@ -28,7 +28,7 @@
        Streamlit/FastAPI backend and must never end up in this venv --
        see that file's own comment for why that specifically matters).
     4. Writes collector_config.json from the -CustomerId/-BranchId/
-       -ApiUrl/-SourcePaths parameters (or copies the example template
+       -InstallationId/-ApiUrl/-SourcePaths parameters (or copies the example template
        verbatim if none are given, for manual editing afterward). NEVER
        writes a token into this file -- SORTVIEW_API_TOKEN is handled
        entirely separately; see TOKEN SETUP below.
@@ -68,6 +68,7 @@ param(
     [string]$PythonExe = "python",
     [Nullable[int]]$CustomerId,
     [Nullable[int]]$BranchId,
+    [Nullable[int]]$InstallationId,
     [string]$ApiUrl = "https://sortview-app-2p336.ondigitalocean.app",
     [switch]$Force
 )
@@ -172,6 +173,16 @@ if (Test-Path $ConfigPath -PathType Leaf) {
         state_path  = (Join-Path $DataRoot "data\state.json")
         status_path = (Join-Path $DataRoot "data\status.json")
         log_path    = (Join-Path $DataRoot "logs\collector.log")
+    }
+    # installation_id links this Collector's heartbeat to its server-side
+    # collector_installations record. Optional here -- this is the
+    # source-checkout/development installer (the commercial release
+    # bundle's install.ps1 REQUIRES it); a config without it still runs, it
+    # just does not report installation lifecycle.
+    if ($InstallationId) {
+        $config["installation_id"] = [int]$InstallationId
+    } else {
+        Write-Host "No -InstallationId given -- the config will not link heartbeats to an installation record." -ForegroundColor Yellow
     }
     # Real production finding: `Set-Content -Encoding utf8` on Windows
     # PowerShell 5.1 writes a UTF-8 BOM -- confirmed on LIB-L26 to produce

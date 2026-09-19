@@ -7,6 +7,14 @@ immediately removes its own probe file) -- running preflight never
 leaves anything behind and never mutates production source files, state,
 or status.
 
+ONE DELIBERATE SERVER-SIDE EFFECT: the authentication/scope check is a real
+POST /upload-pipeline-status (labeled status "preflight_check"), and when the
+config carries an installation_id it also carries it. An accepted probe is a
+confirmed installation contact like any scheduled-run heartbeat: the server
+may move that installation provisioning -> active, stamps installed_at if it
+is still unset (so installed_at is the first confirmed contact -- possibly this
+preflight, before the Scheduled Task has ever run) and sets last_seen_at.
+
 WHY THIS MATTERS UNDER SYSTEM SPECIFICALLY: running this INTERACTIVELY
 (as whichever admin account happens to run the installer) proves nothing
 about whether the actual Scheduled Task -- which runs as SYSTEM, a
@@ -160,13 +168,25 @@ def _check_https_and_tls(cfg: CollectorConfig, session) -> CheckResult:
     return CheckResult("https_tls_connection", True, f"connected, HTTP {response.status_code}")
 
 
-def _check_auth_and_scope(cfg: CollectorConfig, session) -> tuple[CheckResult, CheckResult]:
+def _check_auth_and_scope(cfg: CollectorConfig, session) -> tuple[CheckResult, CheckResult, CheckResult]:
     """One real call (the same POST /upload-pipeline-status the production
-    collector already makes every run) serves both checks -- there is no
-    side-effect-free authenticated endpoint to probe instead, and this is
-    the exact call path production actually uses, which is arguably more
+    collector already makes every run) serves all three checks -- there is
+    no side-effect-free authenticated endpoint to probe instead, and this
+    is the exact call path production actually uses, which is arguably more
     meaningful than a synthetic check would be. The status payload is
-    clearly labeled as a preflight probe."""
+    clearly labeled as a preflight probe.
+
+    Because it is the production call, a config that carries an
+    installation_id also sends it (with the running version): a passing
+    preflight therefore also proves the installation_id is accepted by the
+    server. An accepted probe is the first confirmed contact with the
+    installation, exactly like a scheduled-run heartbeat: it may move a
+    `provisioning` installation to `active`, stamps `installed_at` if unset
+    (first confirmed contact -- not specifically the first scheduled run) and
+    sets `last_seen_at` (most recent confirmed contact). That is deliberate:
+    it catches a mistyped installation_id at install time rather than letting
+    the Collector upload fine forever while never linking to its
+    installation record."""
     probe_status = {
         "status": "preflight_check",
         "last_attempt": _now_iso(),
@@ -175,28 +195,53 @@ def _check_auth_and_scope(cfg: CollectorConfig, session) -> tuple[CheckResult, C
     outcome = uploader.post_status(session, cfg, probe_status)
 
     if outcome.success:
+        if cfg.installation_id is None:
+            installation_result = CheckResult(
+                "installation_id_accepted", True,
+                "config has no installation_id (legacy config) -- installation lifecycle reporting is disabled",
+            )
+        else:
+            installation_result = CheckResult(
+                "installation_id_accepted", True, f"installation_id={cfg.installation_id} accepted by the server"
+            )
         return (
             CheckResult("api_authentication", True, "authenticated successfully"),
             CheckResult("token_scope_matches", True, f"token is scoped to customer_id={cfg.customer_id}, branch_id={cfg.branch_id}"),
+            installation_result,
         )
 
     error_text = outcome.error or "unknown error"
     if outcome.category == uploader.FailureCategory.AUTH_FAILURE:
+        if "installation" in error_text.lower():
+            # The server checks the token and its scope BEFORE the
+            # installation, so reaching this rejection means both passed.
+            return (
+                CheckResult("api_authentication", True, "token itself is valid"),
+                CheckResult("token_scope_matches", True, f"token is scoped to customer_id={cfg.customer_id}, branch_id={cfg.branch_id}"),
+                CheckResult(
+                    "installation_id_accepted", False,
+                    f"installation_id={cfg.installation_id} was rejected -- confirm it is the Installation ID "
+                    f"shown in Super Admin for this Collector, and that the installation is not inactive/retired: {error_text}",
+                ),
+            )
         if "scope" in error_text.lower():
             return (
                 CheckResult("api_authentication", True, "token itself is valid"),
                 CheckResult("token_scope_matches", False, error_text),
+                CheckResult("installation_id_accepted", False, "not evaluated -- token scope check failed first"),
             )
         return (
             CheckResult("api_authentication", False, error_text),
             CheckResult("token_scope_matches", False, "not evaluated -- authentication failed first"),
+            CheckResult("installation_id_accepted", False, "not evaluated -- authentication failed first"),
         )
 
     # Non-auth failure (network/5xx/etc.) -- can't evaluate auth or scope
-    # at all; report both as not evaluated rather than guessing.
+    # at all; report all as not evaluated rather than guessing.
     return (
         CheckResult("api_authentication", False, f"could not evaluate -- {error_text}"),
         CheckResult("token_scope_matches", False, f"could not evaluate -- {error_text}"),
+        CheckResult("installation_id_accepted", False, f"could not evaluate -- {error_text}"),
     )
 
 
@@ -261,9 +306,10 @@ def run_preflight(cfg: CollectorConfig, *, session=None, is_importable=_default_
         _check_https_and_tls(cfg, session),
     ]
 
-    auth_result, scope_result = _check_auth_and_scope(cfg, session)
+    auth_result, scope_result, installation_result = _check_auth_and_scope(cfg, session)
     results.append(auth_result)
     results.append(scope_result)
+    results.append(installation_result)
 
     results.append(_check_no_direct_database_dependency(is_importable=is_importable))
     results.append(_check_runtime_imports())
