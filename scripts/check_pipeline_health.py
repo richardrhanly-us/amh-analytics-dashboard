@@ -1,6 +1,7 @@
 """Checks whether every active branch's AMH pipeline is still reporting in.
 
-Reads pipeline_status for every active branch and flags branches where the
+Reads pipeline_status for every active branch of an active or trial
+organization and flags branches where the
 most recent report is older than SORTVIEW_PIPELINE_STALE_MINUTES, has never
 reported at all, or reported an unhealthy status. Two vocabularies can be
 live on the same row during Continuous Ingestion Phase 0's parallel
@@ -11,6 +12,13 @@ ever reported one; legacy status parsing is the fallback for branches that
 haven't. Meant to run on a schedule (a GitHub Actions cron job by default)
 so a dead agent or a stalled AMH machine gets noticed without a human
 staring at the dashboard's pipeline-status panel.
+
+SCOPE: only organizations whose status is active or trial, and only their
+active branches, are evaluated. A suspended or cancelled organization is
+intentionally non-operational -- the API rejects its Collector traffic (see
+main.authenticate_agent), so it stops heartbeating by design and must not
+raise stale/never-reported alerts. Those organizations are excluded entirely,
+not merely downgraded. pipeline_status is only ever read here, never modified.
 
 SORTVIEW_PIPELINE_STALE_MINUTES has no single correct value -- it depends on
 how often each branch's AMH agent is actually scheduled to run, which lives
@@ -80,6 +88,7 @@ def find_unhealthy_branches(
                 ON ps.customer_id = o.operational_customer_id
                AND ps.branch_id = b.operational_branch_id
             WHERE b.status = 'active'
+              AND o.status IN ('active', 'trial')
             ORDER BY o.name, b.name
         """)
     ).mappings().all()

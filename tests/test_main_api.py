@@ -31,12 +31,19 @@ def reset_rate_limiter():
     # push another test over the limit.
     main.limiter.reset()
 
+# The token lookup also resolves the tenant behind the token through the
+# operational bridge (see main._AGENT_TOKEN_LOOKUP_SQL); a row must carry a
+# usable organization_status/branch_status or authenticate_agent rejects it
+# with 403. Tenant-state rejection itself is covered in
+# test_agent_tenant_authorization.py.
 VALID_TOKEN_ROW = {
     "id": 1,
     "customer_id": 100,
     "branch_id": 5,
     "is_active": True,
     "description": "test agent",
+    "organization_status": "active",
+    "branch_status": "active",
 }
 
 
@@ -217,6 +224,8 @@ SECOND_BRANCH_TOKEN_ROW = {
     "branch_id": 9,
     "is_active": True,
     "description": "second branch test agent",
+    "organization_status": "active",
+    "branch_status": "active",
 }
 
 
