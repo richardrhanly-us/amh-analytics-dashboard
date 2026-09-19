@@ -29,6 +29,11 @@ def list_libraries_with_status():
     # operational mapping (NULL) matches no pipeline_status row, which is the
     # correct "not reporting" answer. The two ID domains only coincide by
     # accident for some tenants (e.g. NBPL, 1/1).
+    #
+    # Each organization is joined to only its most recent subscription (newest
+    # created_at, id as the tie-breaker -- the same "latest subscription"
+    # ordering tenant_service and entitlement_service use), so an organization
+    # with several subscription rows still yields one row.
     sql = text("""
         select
             o.id as organization_id,
@@ -50,7 +55,13 @@ def list_libraries_with_status():
             on b.organization_id = o.id
            and b.is_primary = true
         left join subscriptions s
-            on s.organization_id = o.id
+            on s.id = (
+                select s2.id
+                from subscriptions s2
+                where s2.organization_id = o.id
+                order by s2.created_at desc, s2.id desc
+                limit 1
+            )
         left join plans p
             on p.id = s.plan_id
         left join pipeline_status ps
