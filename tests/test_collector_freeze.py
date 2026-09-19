@@ -19,8 +19,18 @@ tests/test_collector_build_release.py and test_collector_deploy_manifest.py:
 
 from __future__ import annotations
 
+import base64
+import json
+import os
+import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
+
+import pytest
+
+from collector import __version__
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FREEZE_DIR = REPO_ROOT / "collector" / "freeze"
@@ -74,10 +84,85 @@ def test_dispatcher_default_argv_uses_sys_argv(monkeypatch):
     assert dispatcher.main() == 2
 
 
-def test_dispatcher_contains_all_five_subcommands():
+def test_dispatcher_contains_all_six_subcommands():
     # task-xml added for the frozen release-bundle integration phase --
     # deployment/Task-Scheduler-XML generation, not Collector ingestion.
-    assert set(dispatcher._SUBCOMMANDS) == {"run", "preflight", "bootstrap", "support-info", "task-xml"}
+    # version added for release-version hardening -- a config-free report of
+    # collector.__version__; the five earlier subcommands are unchanged.
+    assert set(dispatcher._SUBCOMMANDS) == {"run", "preflight", "bootstrap", "support-info", "task-xml", "version"}
+    assert {"run", "preflight", "bootstrap", "support-info", "task-xml"} <= set(dispatcher._SUBCOMMANDS)
+
+
+# --- dispatcher: `version` -- config-free, collector.__version__ only -------
+
+
+def test_dispatcher_version_prints_exactly_collector_version_and_exits_zero(capsys):
+    exit_code = dispatcher.main(["version"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.out == f"{__version__}\n"
+    assert captured.err == ""
+
+
+def test_dispatcher_version_needs_no_config_token_or_working_files(monkeypatch, tmp_path, capsys):
+    monkeypatch.delenv("SORTVIEW_API_TOKEN", raising=False)
+    monkeypatch.chdir(tmp_path)  # an empty directory: no config, state or logs anywhere near
+
+    assert dispatcher.main(["version"]) == 0
+    assert capsys.readouterr().out == f"{__version__}\n"
+    assert list(tmp_path.iterdir()) == []  # and it wrote nothing
+
+
+def test_dispatcher_version_as_a_real_source_invocation_matches(tmp_path):
+    # The source-mode equivalent of `SortViewCollector.exe version`: run the
+    # dispatcher script itself in a fresh interpreter, with no token and no
+    # config anywhere in sight.
+    env = {k: v for k, v in os.environ.items() if k != "SORTVIEW_API_TOKEN"}
+    env["PYTHONPATH"] = str(REPO_ROOT)
+
+    result = subprocess.run(
+        [sys.executable, str(FREEZE_DIR / "dispatcher.py"), "version"],
+        cwd=tmp_path, env=env, capture_output=True, text=True, check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.rstrip("\r\n") == __version__
+    assert result.stdout.strip() == __version__  # nothing else on stdout
+    assert result.stderr == ""
+
+
+def test_dispatcher_version_rejects_arguments_rather_than_ignoring_them(capsys):
+    assert dispatcher.main(["version", "--config", "does-not-exist.json"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Usage" in captured.err and "version" in captured.err
+
+
+def test_dispatcher_usage_lists_the_version_subcommand(capsys):
+    dispatcher.main([])
+
+    assert "version" in capsys.readouterr().err
+
+
+def test_dispatcher_takes_the_version_from_collector_and_never_hardcodes_it():
+    text = (FREEZE_DIR / "dispatcher.py").read_text(encoding="utf-8")
+
+    assert "from collector import __version__" in text
+    assert __version__ not in text
+    assert not re.search(r"\d+\.\d+\.\d+", text.split('"""', 2)[-1])  # no version literal in the code body
+
+
+def test_the_other_subcommands_are_unchanged_by_the_version_addition(capsys):
+    # The same forwarding/exit-code contracts asserted individually above,
+    # re-checked together after `version` was added ahead of them.
+    assert dispatcher.main(["run", "--config", "does-not-exist.json"]) == 2
+    assert dispatcher.main(["bootstrap", "--config", "does-not-exist.json"]) == 2
+    assert dispatcher.main(["preflight", "--config", "does-not-exist.json"]) == 2
+    assert dispatcher.main(["support-info", "--config", "does-not-exist.json"]) == 2
+    out = capsys.readouterr().out
+    assert "config_loads" in out and "did NOT load" in out
+    assert dispatcher.main(["bogus"]) == 2
 
 
 def test_dispatcher_task_xml_forwards_to_collector_task_settings_main(tmp_path):
@@ -222,6 +307,185 @@ def test_build_script_is_deterministic_same_spec_same_venv_every_run():
     assert "Get-Random" not in text
     assert "Invoke-WebRequest" not in text
     assert "Invoke-RestMethod" not in text
+
+
+def test_build_script_runs_the_built_executables_version_command_after_the_exe_check():
+    text = _build_script_text()
+    exe_check = text.index('throw "Build reported success but $ExePath was not found."')
+    version_run = text.index("& $ExePath version")
+
+    assert exe_check < version_run
+    assert "Assert-FrozenRuntimeVersion -ExpectedVersion $ExpectedVersion" in text[version_run:]
+    assert "$LASTEXITCODE" in text[version_run - 80 : version_run + 120]  # exit code captured immediately
+
+
+def test_build_script_gets_the_expected_version_by_importing_this_repos_collector_not_by_regex():
+    text = _build_script_text()
+    code = text[text.index("function Get-SourceCollectorVersion") : text.index("function Assert-FrozenRuntimeVersion")]
+
+    assert "import collector" in code and "collector.__version__" in code
+    assert "-I -c" in code  # isolated: ignores PYTHONPATH, user site and the current directory
+    assert "sys.path.insert(0" in code and "collector.__file__" in code  # this repo first, location verified
+    assert "Get-SourceCollectorVersion -PythonExe $VenvPython -RepoRoot $RepoRoot" in text
+    # ...and never parses the version out of the source file.
+    assert "__init__.py" not in text
+    assert "Select-String" not in text and "Get-Content" not in text
+
+
+def test_build_script_never_rewrites_source_or_writes_a_version_file():
+    text = _build_script_text()
+
+    for forbidden in ("Set-Content", "Out-File", "WriteAllText", "Add-Content", "-replace", "(Get-Content"):
+        assert forbidden not in text, forbidden
+
+
+def _powershell():
+    return shutil.which("pwsh") or shutil.which("powershell")
+
+
+needs_powershell = pytest.mark.skipif(
+    _powershell() is None, reason="no PowerShell available -- the static build-script tests still run"
+)
+
+
+def _ps_function(name: str) -> str:
+    match = re.search(rf"^function {re.escape(name)} \{{.*?^\}}", _build_script_text(), re.MULTILINE | re.DOTALL)
+    assert match, f"function {name} not found in build_frozen.ps1"
+    return match.group(0)
+
+
+def _run_powershell(script: str) -> str:
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    result = subprocess.run(
+        [_powershell(), "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+        capture_output=True, text=True, timeout=120, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+def _ps_literal(value) -> str:
+    if value is None:
+        return "$null"
+    if isinstance(value, bool):
+        return "$true" if value else "$false"
+    if isinstance(value, int):
+        return f"({value})"
+    if isinstance(value, list):
+        return "@(" + ",".join(_ps_literal(v) for v in value) + ")"
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _assert_outcomes(cases: dict[str, dict]) -> dict[str, str]:
+    """Runs the script's OWN Assert-FrozenRuntimeVersion once per case in one
+    PowerShell process; returns each case's thrown message ('' if it passed)."""
+    lines = [_ps_function("Assert-FrozenRuntimeVersion"), "$results = [ordered]@{}"]
+    for name, args in cases.items():
+        rendered = " ".join(f"-{key} {_ps_literal(value)}" for key, value in args.items())
+        lines.append(
+            f"try {{ Assert-FrozenRuntimeVersion {rendered}; $results['{name}'] = '' }} "
+            f"catch {{ $results['{name}'] = $_.Exception.Message }}"
+        )
+    lines.append("ConvertTo-Json -InputObject $results -Compress")
+    return json.loads(_run_powershell("\n".join(lines)))
+
+
+_ASSERT_CASES = {
+    "match": {"ExpectedVersion": "1.0.3", "ActualOutput": ["1.0.3"], "ExitCode": 0},
+    "match_padded": {"ExpectedVersion": "1.0.3", "ActualOutput": ["1.0.3 "], "ExitCode": 0},
+    "mismatch": {"ExpectedVersion": "1.0.3", "ActualOutput": ["1.0.2"], "ExitCode": 0},
+    "mismatch_case": {"ExpectedVersion": "1.0.3-RC1", "ActualOutput": ["1.0.3-rc1"], "ExitCode": 0},
+    "nonzero_exit": {"ExpectedVersion": "1.0.3", "ActualOutput": ["1.0.3"], "ExitCode": 2},
+    "blank": {"ExpectedVersion": "1.0.3", "ActualOutput": ["", "  "], "ExitCode": 0},
+    "null_output": {"ExpectedVersion": "1.0.3", "ActualOutput": None, "ExitCode": 0},
+    "malformed_words": {"ExpectedVersion": "1.0.3", "ActualOutput": ["1.0.3 extra"], "ExitCode": 0},
+    "malformed_lines": {"ExpectedVersion": "1.0.3", "ActualOutput": ["1.0.3", "1.0.3"], "ExitCode": 0},
+    "usage_text": {"ExpectedVersion": "1.0.3", "ActualOutput": ["Usage: SortViewCollector.exe <subcommand>"], "ExitCode": 2},
+    "blank_expected": {"ExpectedVersion": " ", "ActualOutput": ["1.0.3"], "ExitCode": 0},
+}
+
+
+@pytest.fixture(scope="module")
+def assert_outcomes():
+    if _powershell() is None:
+        pytest.skip("no PowerShell available")
+    return _assert_outcomes(_ASSERT_CASES)
+
+
+@needs_powershell
+def test_build_script_accepts_a_runtime_reporting_exactly_the_expected_version(assert_outcomes):
+    assert assert_outcomes["match"] == ""
+    assert assert_outcomes["match_padded"] == ""  # only surrounding whitespace is tolerated
+
+
+@needs_powershell
+def test_build_script_fails_loudly_on_a_version_mismatch_showing_expected_and_actual(assert_outcomes):
+    for case in ("mismatch", "mismatch_case"):
+        message = assert_outcomes[case]
+        assert "VERSION MISMATCH" in message, case
+        assert "expected '" in message and "reports '" in message, case
+    assert "1.0.3" in assert_outcomes["mismatch"] and "1.0.2" in assert_outcomes["mismatch"]
+
+
+@needs_powershell
+def test_build_script_fails_on_nonzero_exit_blank_or_malformed_output(assert_outcomes):
+    for case in ("nonzero_exit", "blank", "null_output", "malformed_words", "malformed_lines", "usage_text",
+                 "blank_expected"):
+        assert "VERSION CHECK FAILED" in assert_outcomes[case], case
+    assert "exited 2" in assert_outcomes["nonzero_exit"]
+    assert "1.0.3" in assert_outcomes["malformed_words"]  # both sides shown
+
+
+@needs_powershell
+def test_build_script_reads_the_expected_version_from_this_repos_collector_import():
+    python_exe = _ps_literal(sys.executable)
+    repo = _ps_literal(str(REPO_ROOT))
+
+    out = _run_powershell(
+        _ps_function("Get-SourceCollectorVersion")
+        + f"\nGet-SourceCollectorVersion -PythonExe {python_exe} -RepoRoot {repo}"
+    )
+
+    assert out.strip() == __version__
+
+
+@needs_powershell
+def test_build_script_expected_version_comes_from_the_repo_it_is_pointed_at_not_any_other_collector(tmp_path):
+    decoy_repo = tmp_path / "decoy_repo"
+    (decoy_repo / "collector").mkdir(parents=True)
+    (decoy_repo / "collector" / "__init__.py").write_text('__version__ = "9.8.7"\n', encoding="utf-8")
+
+    out = _run_powershell(
+        _ps_function("Get-SourceCollectorVersion")
+        + f"\nGet-SourceCollectorVersion -PythonExe {_ps_literal(sys.executable)} -RepoRoot {_ps_literal(str(decoy_repo))}"
+    )
+
+    assert out.strip() == "9.8.7"  # THAT repo's version -- not this repo's, not an installed package's
+
+
+@needs_powershell
+def test_build_script_refuses_when_the_repo_has_no_collector_package(tmp_path):
+    empty = tmp_path / "empty_repo"
+    empty.mkdir()
+    script = (
+        _ps_function("Get-SourceCollectorVersion")
+        + f"\ntry {{ Get-SourceCollectorVersion -PythonExe {_ps_literal(sys.executable)} "
+        f"-RepoRoot {_ps_literal(str(empty))}; 'NO-THROW' }} catch {{ 'THREW' }}"
+    )
+
+    assert _run_powershell(script).strip().splitlines()[-1] == "THREW"
+
+
+@needs_powershell
+def test_build_script_parses_without_errors():
+    path = str(FREEZE_DIR / "build_frozen.ps1").replace("'", "''")
+    script = (
+        "$errs = $null; $tokens = $null; "
+        f"[void][System.Management.Automation.Language.Parser]::ParseFile('{path}', [ref]$tokens, [ref]$errs); "
+        "$errs.Count"
+    )
+
+    assert _run_powershell(script).strip() == "0"
 
 
 # --- no secrets / production config in the packaging-only directory -----

@@ -43,6 +43,19 @@ SUPPORT_FILES below) vs. what is deliberately excluded:
     update-collector.ps1, agent/deploy/set-sortview-api-token.ps1 -- keep
     resolving relative to a checkout, for the separate developer/QA
     install-from-checkout flow, which this module does not replace).
+  - VERSION AUTHORITY: collector.__version__ is the single authoritative
+    Collector version -- the one the running Collector reports on every
+    heartbeat and in support-info. The --version / `version` argument here
+    is only an ASSERTION of it, never an independent source: both
+    build_release and build_frozen_release raise BuildError, before any
+    output directory is created or removed, unless it equals
+    collector.__version__ exactly. A FROZEN bundle is additionally proven at
+    the packaging boundary: the supplied runtime's SortViewCollector.exe is
+    run with its config-free `version` command and must report that same
+    version, so a stale PyInstaller build can never ship under a newer
+    bundle name. This module never rewrites or stamps source (or any
+    generated version file); the bundle directory name and
+    MANIFEST.json["version"] are both derived from the validated value.
   - Never bundled: tests/, docs/, SortViewAgent/, this repo's own
     Streamlit/FastAPI backend requirements, agent/runtime/* (frozen
     continuous-agent architecture -- see agent/README.md and
@@ -56,12 +69,14 @@ import argparse
 import hashlib
 import json
 import shutil
+import subprocess  # nosec B404 -- runs only the frozen SortViewCollector.exe being packaged, see probe_frozen_runtime_version
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import deploy_manifest
+from . import __version__, deploy_manifest
 
 PRODUCT_NAME = "SortView Collector"
 
@@ -135,6 +150,11 @@ CONFIG_TEMPLATE_DEST = "collector_config.example.json"
 FROZEN_RUNTIME_DEST = "runtime"
 FROZEN_EXE_NAME = "SortViewCollector.exe"
 FROZEN_INTERNAL_DIR_NAME = "_internal"
+# The config-free dispatcher subcommand (collector/freeze/dispatcher.py) that
+# prints collector.__version__ -- what the frozen executable ACTUALLY is.
+FROZEN_VERSION_SUBCOMMAND = "version"
+FROZEN_VERSION_PROBE_TIMEOUT_SECONDS = 60.0
+_MAX_PROBE_OUTPUT_PREVIEW_CHARS = 200
 
 # SUPPORT_FILES minus requirements.txt -- a frozen bundle ships no
 # requirements to install (there is no venv/pip step at all), but still
@@ -301,6 +321,104 @@ def _new_bundle_dir(output_dir: Path, version: str, *, force: bool) -> Path:
     return bundle_dir
 
 
+def _require_version_matches_source(version: str, repo_root: Path) -> None:
+    """The release-version assertion shared by build_release and
+    build_frozen_release: `version` must equal collector.__version__ EXACTLY
+    (no trimming, no normalization). Called before any output directory is
+    created or removed, so a mismatch can never touch an existing bundle.
+
+    collector.__version__ is what THIS running package reports; the guard
+    below makes sure that is also the package being packaged, so pointing
+    --repo-root at a different checkout cannot reintroduce the drift this
+    check exists to close (a source bundle ships repo_root's own
+    collector/__init__.py)."""
+    running_init = Path(__file__).resolve().parent / "__init__.py"
+    packaged_init = repo_root / "collector" / "__init__.py"
+    if packaged_init.is_file() and not packaged_init.samefile(running_init):
+        raise BuildError(
+            f"repo root {repo_root} contains a different collector package ({packaged_init}) than the "
+            f"one running this build ({running_init}), so collector.__version__ cannot be checked "
+            "against it. Run build_release from that checkout (python -m collector.build_release)."
+        )
+    if version != __version__:
+        raise BuildError(
+            f"Requested release version {version!r} does not match collector.__version__ "
+            f"{__version__!r} (collector/__init__.py). collector.__version__ is the single authoritative "
+            "Collector version and --version only asserts it; nothing here rewrites it. To release a "
+            "different version, change collector.__version__ first (and rebuild the frozen runtime), "
+            "then request that version."
+        )
+
+
+def _parse_frozen_version_output(stdout: str, exe_path: Path) -> str:
+    """The `version` command prints exactly the version and a newline. Anything
+    else -- nothing, whitespace only, several words/lines -- is malformed and
+    refused rather than guessed at."""
+    value = stdout.strip()
+    if not value:
+        raise FrozenRuntimeError(f"{exe_path} `{FROZEN_VERSION_SUBCOMMAND}` printed no version (blank output).")
+    if any(ch.isspace() for ch in value):
+        preview = stdout[:_MAX_PROBE_OUTPUT_PREVIEW_CHARS]
+        raise FrozenRuntimeError(
+            f"{exe_path} `{FROZEN_VERSION_SUBCOMMAND}` printed malformed output (expected exactly a "
+            f"version): {preview!r}"
+        )
+    return value
+
+
+def probe_frozen_runtime_version(exe_path: Path, *, timeout: float = FROZEN_VERSION_PROBE_TIMEOUT_SECONDS) -> str:
+    """Runs `<exe_path> version` and returns the version it reports. Raises
+    FrozenRuntimeError -- never returns a guess -- if the executable cannot
+    be started, times out, exits nonzero, or prints blank/malformed output.
+
+    Runs only the SortViewCollector.exe the caller is about to package, with
+    a fixed argument list (no shell, no caller-controlled arguments)."""
+    try:
+        completed = subprocess.run(  # nosec B603
+            [str(exe_path), FROZEN_VERSION_SUBCOMMAND],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            stdin=subprocess.DEVNULL,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise FrozenRuntimeError(
+            f"{exe_path} `{FROZEN_VERSION_SUBCOMMAND}` did not finish within {timeout:g}s."
+        ) from exc
+    except OSError as exc:
+        raise FrozenRuntimeError(
+            f"could not run {exe_path} `{FROZEN_VERSION_SUBCOMMAND}` to check its version: {exc}"
+        ) from exc
+
+    if completed.returncode != 0:
+        stderr_preview = (completed.stderr or "").strip()[:_MAX_PROBE_OUTPUT_PREVIEW_CHARS]
+        raise FrozenRuntimeError(
+            f"{exe_path} `{FROZEN_VERSION_SUBCOMMAND}` exited with code {completed.returncode} "
+            f"(expected 0). stderr: {stderr_preview!r}"
+        )
+    return _parse_frozen_version_output(completed.stdout or "", exe_path)
+
+
+def _verify_frozen_runtime_version(
+    frozen_runtime_dir: Path, expected_version: str, version_probe: Callable[[Path], str] | None
+) -> None:
+    """Proves the runtime being packaged NOW reports exactly `expected_version`.
+    Deliberately independent of build_frozen.ps1's own check right after the
+    PyInstaller build: that proves a fresh binary matched the source when it
+    was built; this proves the binary handed to the packager still does."""
+    probe = version_probe if version_probe is not None else probe_frozen_runtime_version
+    exe_path = frozen_runtime_dir / FROZEN_EXE_NAME
+    actual = probe(exe_path)
+    if actual != expected_version:
+        raise FrozenRuntimeError(
+            f"Frozen runtime version mismatch: {exe_path} reports {actual!r} but the release version is "
+            f"{expected_version!r} (collector.__version__). The PyInstaller runtime is stale or was built "
+            "from different source -- rebuild it with collector/freeze/build_frozen.ps1 and pass that output."
+        )
+
+
 def build_release(
     repo_root: Path,
     output_dir: Path,
@@ -314,15 +432,22 @@ def build_release(
     plus requirements.txt, installed by install.ps1 into a fresh venv. See
     build_frozen_release for the PyInstaller (no-Python-required) bundle kind.
 
-    Fails loudly (BuildError) and writes NOTHING if any required source
-    file is missing -- every source file's existence is checked up front,
-    before the target directory is even created, so a partially-built
-    bundle is never left behind by a mid-build failure. Deterministic
-    given a fixed `built_at` (accepted so tests don't depend on wall-clock
-    time); defaults to the current UTC time.
+    `version` is an ASSERTION, not a source of truth: it must equal
+    collector.__version__ exactly or BuildError is raised (see
+    _require_version_matches_source). The bundle directory name and
+    MANIFEST.json["version"] are derived from that validated value.
+
+    Fails loudly (BuildError) and writes NOTHING if the version does not
+    match or any required source file is missing -- both are checked up
+    front, before the target directory is even created (or, with force,
+    removed), so a partially-built bundle is never left behind by a
+    mid-build failure and an existing bundle is never destroyed by a
+    failing build. Deterministic given a fixed `built_at` (accepted so tests
+    don't depend on wall-clock time); defaults to the current UTC time.
     """
     if not version.strip():
         raise BuildError("version must not be empty")
+    _require_version_matches_source(version, repo_root)
 
     required = _required_source_files(repo_root)
     missing = [str(src) for src, _dest in required if not src.is_file()]
@@ -414,6 +539,7 @@ def build_frozen_release(
     *,
     force: bool = False,
     built_at: str | None = None,
+    version_probe: Callable[[Path], str] | None = None,
 ) -> BuildResult:
     """Builds a standalone FROZEN release bundle at
     <output_dir>/SortViewCollector-<version>/ -- a PyInstaller onedir
@@ -432,13 +558,23 @@ def build_frozen_release(
     invocation time, exactly the kind of hidden environment coupling the
     isolated packaging venv exists to avoid.
 
-    Fails loudly and writes NOTHING if frozen_runtime_dir is invalid (see
-    _validate_frozen_runtime_dir) or any deploy-tool source file is
-    missing -- checked before any output directory is created, same
-    fail-closed contract as build_release.
+    `version` is an ASSERTION, not a source of truth (see build_release): it
+    must equal collector.__version__ exactly. Because this function packages
+    an ALREADY-BUILT runtime, that alone is not enough -- the runtime could
+    have been built from older source -- so the supplied SortViewCollector.exe
+    is also run with its config-free `version` command and must report that
+    same version (`version_probe` replaces that subprocess call, for tests).
+
+    Fails loudly and writes NOTHING if the version does not match, the
+    runtime reports a different/blank/malformed version or fails to run,
+    frozen_runtime_dir is invalid (see _validate_frozen_runtime_dir), or any
+    deploy-tool source file is missing -- all checked before any output
+    directory is created (or, with force, removed), same fail-closed
+    contract as build_release.
     """
     if not version.strip():
         raise BuildError("version must not be empty")
+    _require_version_matches_source(version, repo_root)
 
     _validate_frozen_runtime_dir(frozen_runtime_dir)
 
@@ -448,6 +584,8 @@ def build_frozen_release(
         raise BuildError(
             "Refusing to build -- required source file(s) missing:\n" + "\n".join(f"  {m}" for m in missing)
         )
+
+    _verify_frozen_runtime_version(frozen_runtime_dir, version, version_probe)
 
     bundle_dir = _new_bundle_dir(output_dir, version, force=force)
 
@@ -467,7 +605,14 @@ def main(argv: list[str] | None = None) -> int:
         "machine to install from the result."
     )
     parser.add_argument("--output", required=True, help="Directory to build the release bundle into")
-    parser.add_argument("--version", required=True, help='Release version, e.g. "1.0.0"')
+    parser.add_argument(
+        "--version",
+        required=True,
+        help="Release version ASSERTION -- must exactly equal collector.__version__ (the single "
+        "authoritative Collector version, in collector/__init__.py), or the build fails before "
+        "creating anything. It never changes the version; it only confirms you are releasing "
+        "what the source says.",
+    )
     parser.add_argument(
         "--repo-root",
         default=str(Path(__file__).resolve().parent.parent),

@@ -29,6 +29,7 @@ from pathlib import Path
 
 import pytest
 
+from collector import __version__ as SOURCE_VERSION
 from collector import build_release, deploy_manifest
 from collector import state as collector_state
 from collector.config import load_config
@@ -80,28 +81,28 @@ def test_deploy_tool_and_support_file_sources_all_exist():
 @pytest.fixture
 def built_bundle(tmp_path):
     result = build_release.build_release(
-        REPO_ROOT, tmp_path, "9.9.9-test", built_at="2026-01-01T00:00:00.000000Z"
+        REPO_ROOT, tmp_path, SOURCE_VERSION, built_at="2026-01-01T00:00:00.000000Z"
     )
     return result
 
 
 def test_build_release_creates_versioned_directory(built_bundle, tmp_path):
-    assert built_bundle.bundle_dir == tmp_path / "SortViewCollector-9.9.9-test"
+    assert built_bundle.bundle_dir == tmp_path / f"SortViewCollector-{SOURCE_VERSION}"
     assert built_bundle.bundle_dir.is_dir()
 
 
 def test_build_release_refuses_existing_output_without_force(tmp_path):
-    build_release.build_release(REPO_ROOT, tmp_path, "1.0.0", built_at="x")
+    build_release.build_release(REPO_ROOT, tmp_path, SOURCE_VERSION, built_at="x")
     with pytest.raises(build_release.BuildError):
-        build_release.build_release(REPO_ROOT, tmp_path, "1.0.0", built_at="x")
+        build_release.build_release(REPO_ROOT, tmp_path, SOURCE_VERSION, built_at="x")
 
 
 def test_build_release_force_rebuilds(tmp_path):
-    build_release.build_release(REPO_ROOT, tmp_path, "1.0.0", built_at="x")
-    marker = tmp_path / "SortViewCollector-1.0.0" / "collector" / "run.py"
+    build_release.build_release(REPO_ROOT, tmp_path, SOURCE_VERSION, built_at="x")
+    marker = tmp_path / f"SortViewCollector-{SOURCE_VERSION}" / "collector" / "run.py"
     original = marker.read_bytes()
     marker.write_bytes(b"corrupted")
-    build_release.build_release(REPO_ROOT, tmp_path, "1.0.0", force=True, built_at="y")
+    build_release.build_release(REPO_ROOT, tmp_path, SOURCE_VERSION, force=True, built_at="y")
     assert marker.read_bytes() == original
 
 
@@ -110,7 +111,7 @@ def test_build_release_raises_loudly_and_writes_nothing_on_missing_source(tmp_pa
     fake_repo.mkdir()
     output = tmp_path / "out"
     with pytest.raises(build_release.BuildError):
-        build_release.build_release(fake_repo, output, "1.0.0", built_at="x")
+        build_release.build_release(fake_repo, output, SOURCE_VERSION, built_at="x")
     assert not output.exists()
 
 
@@ -244,7 +245,7 @@ def test_bundle_config_template_comment_points_at_bundle_paths_not_repo_paths(bu
 def test_manifest_lists_every_bundled_file_with_checksums(built_bundle):
     manifest = json.loads(built_bundle.manifest_path.read_text(encoding="utf-8"))
     assert manifest["product"] == "SortView Collector"
-    assert manifest["version"] == "9.9.9-test"
+    assert manifest["version"] == SOURCE_VERSION
     manifest_paths = {entry["path"] for entry in manifest["files"]}
 
     on_disk = {
@@ -264,8 +265,8 @@ def test_manifest_lists_every_bundled_file_with_checksums(built_bundle):
 
 def test_build_is_deterministic_given_fixed_built_at(tmp_path):
     out1, out2 = tmp_path / "a", tmp_path / "b"
-    r1 = build_release.build_release(REPO_ROOT, out1, "1.2.3", built_at="2026-01-01T00:00:00.000000Z")
-    r2 = build_release.build_release(REPO_ROOT, out2, "1.2.3", built_at="2026-01-01T00:00:00.000000Z")
+    r1 = build_release.build_release(REPO_ROOT, out1, SOURCE_VERSION, built_at="2026-01-01T00:00:00.000000Z")
+    r2 = build_release.build_release(REPO_ROOT, out2, SOURCE_VERSION, built_at="2026-01-01T00:00:00.000000Z")
     assert r1.manifest_path.read_text(encoding="utf-8") == r2.manifest_path.read_text(encoding="utf-8")
 
 
@@ -314,11 +315,11 @@ print("BUNDLE_ISOLATED_IMPORT_OK")
 
 def test_cli_builds_and_prints_summary(tmp_path):
     result = subprocess.run(
-        [sys.executable, "-m", "collector.build_release", "--output", str(tmp_path), "--version", "2.0.0"],
+        [sys.executable, "-m", "collector.build_release", "--output", str(tmp_path), "--version", SOURCE_VERSION],
         cwd=REPO_ROOT, capture_output=True, text=True, check=True,
     )
     assert "Built release bundle" in result.stdout
-    assert (tmp_path / "SortViewCollector-2.0.0" / "install.ps1").is_file()
+    assert (tmp_path / f"SortViewCollector-{SOURCE_VERSION}" / "install.ps1").is_file()
 
 
 def test_cli_fails_loudly_on_missing_version(tmp_path):
@@ -616,11 +617,18 @@ def fake_frozen_runtime_dir(tmp_path):
     return runtime_dir
 
 
+def _probe_reporting(version):
+    """A stand-in for running the fake (non-executable) SortViewCollector.exe:
+    reports `version` as if `SortViewCollector.exe version` had printed it."""
+    return lambda _exe_path: version
+
+
 @pytest.fixture
 def built_frozen_bundle(fake_frozen_runtime_dir, tmp_path):
     output_dir = tmp_path / "out"
     return build_release.build_frozen_release(
-        REPO_ROOT, output_dir, "9.9.9-frozen-test", fake_frozen_runtime_dir, built_at="2026-01-01T00:00:00.000000Z"
+        REPO_ROOT, output_dir, SOURCE_VERSION, fake_frozen_runtime_dir,
+        built_at="2026-01-01T00:00:00.000000Z", version_probe=_probe_reporting(SOURCE_VERSION),
     )
 
 
@@ -630,7 +638,7 @@ def built_frozen_bundle(fake_frozen_runtime_dir, tmp_path):
 def test_frozen_release_rejects_nonexistent_runtime_dir(tmp_path):
     with pytest.raises(build_release.FrozenRuntimeError):
         build_release.build_frozen_release(
-            REPO_ROOT, tmp_path / "out", "1.0.0", tmp_path / "does-not-exist", built_at="x"
+            REPO_ROOT, tmp_path / "out", SOURCE_VERSION, tmp_path / "does-not-exist", built_at="x"
         )
 
 
@@ -638,7 +646,7 @@ def test_frozen_release_rejects_empty_runtime_dir(tmp_path):
     empty_dir = tmp_path / "empty"
     empty_dir.mkdir()
     with pytest.raises(build_release.FrozenRuntimeError):
-        build_release.build_frozen_release(REPO_ROOT, tmp_path / "out", "1.0.0", empty_dir, built_at="x")
+        build_release.build_frozen_release(REPO_ROOT, tmp_path / "out", SOURCE_VERSION, empty_dir, built_at="x")
 
 
 def test_frozen_release_rejects_missing_exe(tmp_path):
@@ -646,7 +654,7 @@ def test_frozen_release_rejects_missing_exe(tmp_path):
     (runtime_dir / "_internal").mkdir(parents=True)
     (runtime_dir / "_internal" / "something.dll").write_bytes(b"x")
     with pytest.raises(build_release.FrozenRuntimeError, match="SortViewCollector.exe"):
-        build_release.build_frozen_release(REPO_ROOT, tmp_path / "out", "1.0.0", runtime_dir, built_at="x")
+        build_release.build_frozen_release(REPO_ROOT, tmp_path / "out", SOURCE_VERSION, runtime_dir, built_at="x")
 
 
 def test_frozen_release_rejects_missing_internal_dir(tmp_path):
@@ -654,13 +662,13 @@ def test_frozen_release_rejects_missing_internal_dir(tmp_path):
     runtime_dir.mkdir(parents=True)
     (runtime_dir / "SortViewCollector.exe").write_bytes(b"x")
     with pytest.raises(build_release.FrozenRuntimeError, match="_internal"):
-        build_release.build_frozen_release(REPO_ROOT, tmp_path / "out", "1.0.0", runtime_dir, built_at="x")
+        build_release.build_frozen_release(REPO_ROOT, tmp_path / "out", SOURCE_VERSION, runtime_dir, built_at="x")
 
 
 def test_frozen_release_writes_nothing_on_invalid_runtime(tmp_path):
     output_dir = tmp_path / "out"
     with pytest.raises(build_release.FrozenRuntimeError):
-        build_release.build_frozen_release(REPO_ROOT, output_dir, "1.0.0", tmp_path / "nope", built_at="x")
+        build_release.build_frozen_release(REPO_ROOT, output_dir, SOURCE_VERSION, tmp_path / "nope", built_at="x")
     assert not output_dir.exists()
 
 
@@ -771,17 +779,20 @@ def test_frozen_manifest_matches_every_file_on_disk_exactly(built_frozen_bundle)
 # --- CLI: --frozen-runtime ------------------------------------------------
 
 
-def test_cli_frozen_runtime_flag_builds_frozen_bundle(fake_frozen_runtime_dir, tmp_path):
-    result = subprocess.run(
-        [
-            sys.executable, "-m", "collector.build_release",
-            "--output", str(tmp_path / "out"), "--version", "3.0.0",
-            "--frozen-runtime", str(fake_frozen_runtime_dir),
-        ],
-        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
-    )
-    assert "Built release bundle" in result.stdout
-    bundle = tmp_path / "out" / "SortViewCollector-3.0.0"
+def test_cli_frozen_runtime_flag_builds_frozen_bundle(fake_frozen_runtime_dir, tmp_path, monkeypatch, capsys):
+    # In-process (not a subprocess) so the fake, non-executable .exe's version
+    # probe can be stood in for -- see _probe_reporting. The real probe is
+    # covered directly in the probe_frozen_runtime_version tests below.
+    monkeypatch.setattr(build_release, "probe_frozen_runtime_version", _probe_reporting(SOURCE_VERSION))
+
+    exit_code = build_release.main([
+        "--output", str(tmp_path / "out"), "--version", SOURCE_VERSION,
+        "--frozen-runtime", str(fake_frozen_runtime_dir),
+    ])
+
+    assert exit_code == 0
+    assert "Built release bundle" in capsys.readouterr().out
+    bundle = tmp_path / "out" / f"SortViewCollector-{SOURCE_VERSION}"
     assert (bundle / "runtime" / "SortViewCollector.exe").is_file()
     assert not (bundle / "collector").exists()
 
@@ -790,11 +801,11 @@ def test_cli_without_frozen_runtime_still_builds_source_bundle(tmp_path):
     # Regression guard: the default (no --frozen-runtime) CLI path must
     # remain completely unchanged -- source-mode is still supported.
     result = subprocess.run(
-        [sys.executable, "-m", "collector.build_release", "--output", str(tmp_path), "--version", "4.0.0"],
+        [sys.executable, "-m", "collector.build_release", "--output", str(tmp_path), "--version", SOURCE_VERSION],
         cwd=REPO_ROOT, capture_output=True, text=True, check=True,
     )
     assert "Built release bundle" in result.stdout
-    bundle = tmp_path / "SortViewCollector-4.0.0"
+    bundle = tmp_path / f"SortViewCollector-{SOURCE_VERSION}"
     assert (bundle / "collector" / "run.py").is_file()
     assert not (bundle / "runtime").exists()
 
@@ -2446,3 +2457,426 @@ def test_finish_state_verdicts_do_not_depend_on_how_the_edition_types_json_integ
 ):
     for case in FINISH_STATE_CASES:
         assert (finish_helper_results[f"state:{case}"] == []) == (finish_state_results_with_int64_json[f"state:{case}"] == []), case
+
+
+# =========================================================================
+# Release-version hardening: collector.__version__ is the single authority
+# =========================================================================
+#
+# --version / the `version` argument is only an ASSERTION of
+# collector.__version__. Both build functions must reject a mismatch BEFORE
+# any output directory is created or removed, and a FROZEN bundle's
+# SortViewCollector.exe must itself report that version before packaging.
+
+WRONG_VERSION = "1.0.2" if SOURCE_VERSION != "1.0.2" else "1.0.1"
+
+
+def _existing_bundle(output_dir, version, *, marker="do-not-delete.txt"):
+    """A pre-existing bundle directory holding a marker file -- what a --force
+    rebuild must NEVER remove when the build is going to fail anyway."""
+    bundle = output_dir / f"SortViewCollector-{version}"
+    bundle.mkdir(parents=True)
+    (bundle / marker).write_text("precious", encoding="utf-8")
+    return bundle
+
+
+def _probe_must_not_run(_exe_path):
+    raise AssertionError("the frozen runtime must not be probed when an earlier check already failed")
+
+
+def _completed(stdout="", returncode=0, stderr=""):
+    return subprocess.CompletedProcess(args=["SortViewCollector.exe", "version"], returncode=returncode,
+                                       stdout=stdout, stderr=stderr)
+
+
+# --- source releases --------------------------------------------------------
+
+
+def test_source_release_with_the_matching_version_succeeds(tmp_path):
+    result = build_release.build_release(REPO_ROOT, tmp_path, SOURCE_VERSION, built_at="x")
+
+    assert result.bundle_dir.is_dir()
+
+
+def test_source_release_derives_directory_name_and_manifest_version_from_the_source_version(built_bundle, tmp_path):
+    manifest = json.loads(built_bundle.manifest_path.read_text(encoding="utf-8"))
+
+    assert manifest["version"] == SOURCE_VERSION
+    assert built_bundle.bundle_dir.name == f"SortViewCollector-{SOURCE_VERSION}"
+    assert built_bundle.bundle_dir.parent == tmp_path
+
+
+def test_source_release_version_mismatch_raises_naming_both_versions(tmp_path):
+    with pytest.raises(build_release.BuildError) as excinfo:
+        build_release.build_release(REPO_ROOT, tmp_path / "out", WRONG_VERSION, built_at="x")
+
+    message = str(excinfo.value)
+    assert repr(WRONG_VERSION) in message
+    assert repr(SOURCE_VERSION) in message
+    assert "collector.__version__" in message
+
+
+@pytest.mark.parametrize("requested", [WRONG_VERSION, f" {SOURCE_VERSION}", f"{SOURCE_VERSION} ", f"{SOURCE_VERSION}-rc1",
+                                       "9.9.9-test", SOURCE_VERSION.upper() + "x"])
+def test_source_release_requires_an_exact_match(tmp_path, requested):
+    with pytest.raises(build_release.BuildError):
+        build_release.build_release(REPO_ROOT, tmp_path / "out", requested, built_at="x")
+
+
+def test_source_release_mismatch_creates_nothing(tmp_path):
+    output = tmp_path / "out"
+
+    with pytest.raises(build_release.BuildError):
+        build_release.build_release(REPO_ROOT, output, WRONG_VERSION, built_at="x")
+
+    assert not output.exists()
+
+
+def test_source_release_mismatch_with_force_does_not_delete_an_existing_bundle(tmp_path):
+    # The frozen 1.0.2 release directory is exactly what a stale
+    # `--version 1.0.2 --force` would target.
+    bundle = _existing_bundle(tmp_path, WRONG_VERSION)
+
+    with pytest.raises(build_release.BuildError):
+        build_release.build_release(REPO_ROOT, tmp_path, WRONG_VERSION, force=True, built_at="x")
+
+    assert (bundle / "do-not-delete.txt").read_text(encoding="utf-8") == "precious"
+
+
+def test_source_release_never_rewrites_the_source_version(tmp_path):
+    init_file = REPO_ROOT / "collector" / "__init__.py"
+    before = init_file.read_bytes()
+
+    build_release.build_release(REPO_ROOT, tmp_path, SOURCE_VERSION, built_at="x")
+
+    assert init_file.read_bytes() == before
+    bundled = (tmp_path / f"SortViewCollector-{SOURCE_VERSION}" / "collector" / "__init__.py").read_bytes()
+    assert bundled == before  # copied verbatim, no generated/stamped version file
+
+
+def test_build_from_a_different_checkouts_collector_package_is_refused_before_anything_is_created(tmp_path):
+    # The assertion compares against the RUNNING package's version, so it must
+    # also be the package being packaged -- otherwise --repo-root could
+    # reintroduce the drift.
+    other_checkout = tmp_path / "other_checkout"
+    (other_checkout / "collector").mkdir(parents=True)
+    (other_checkout / "collector" / "__init__.py").write_text('__version__ = "0.0.1"\n', encoding="utf-8")
+    output = tmp_path / "out"
+
+    with pytest.raises(build_release.BuildError, match="different collector package"):
+        build_release.build_release(other_checkout, output, SOURCE_VERSION, built_at="x")
+
+    assert not output.exists()
+
+
+def test_the_version_assertion_runs_before_the_missing_source_check(tmp_path):
+    # An empty fake repo has no source files, but the version problem is
+    # reported first -- and nothing is written either way.
+    fake_repo = tmp_path / "fake_repo"
+    fake_repo.mkdir()
+
+    with pytest.raises(build_release.BuildError, match="does not match collector.__version__"):
+        build_release.build_release(fake_repo, tmp_path / "out", WRONG_VERSION, built_at="x")
+
+
+# --- frozen releases: the requested version ---------------------------------------
+
+
+def test_frozen_release_succeeds_when_the_runtime_reports_the_matching_version(fake_frozen_runtime_dir, tmp_path):
+    seen = []
+
+    def probe(exe_path):
+        seen.append(exe_path)
+        return SOURCE_VERSION
+
+    result = build_release.build_frozen_release(
+        REPO_ROOT, tmp_path / "out", SOURCE_VERSION, fake_frozen_runtime_dir, built_at="x", version_probe=probe
+    )
+
+    assert seen == [fake_frozen_runtime_dir / "SortViewCollector.exe"]
+    assert result.bundle_dir == tmp_path / "out" / f"SortViewCollector-{SOURCE_VERSION}"
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["version"] == SOURCE_VERSION
+
+
+def test_frozen_release_manifest_version_and_directory_name_equal_the_source_version(built_frozen_bundle):
+    manifest = json.loads(built_frozen_bundle.manifest_path.read_text(encoding="utf-8"))
+
+    assert manifest["version"] == SOURCE_VERSION
+    assert built_frozen_bundle.bundle_dir.name == f"SortViewCollector-{SOURCE_VERSION}"
+
+
+def test_frozen_release_requested_version_mismatch_fails_before_the_runtime_is_even_probed(
+    fake_frozen_runtime_dir, tmp_path
+):
+    output = tmp_path / "out"
+
+    with pytest.raises(build_release.BuildError) as excinfo:
+        build_release.build_frozen_release(
+            REPO_ROOT, output, WRONG_VERSION, fake_frozen_runtime_dir, built_at="x",
+            version_probe=_probe_must_not_run,
+        )
+
+    assert repr(WRONG_VERSION) in str(excinfo.value) and repr(SOURCE_VERSION) in str(excinfo.value)
+    assert not output.exists()
+
+
+def test_frozen_release_requested_version_mismatch_with_force_does_not_delete_an_existing_bundle(
+    fake_frozen_runtime_dir, tmp_path
+):
+    bundle = _existing_bundle(tmp_path, WRONG_VERSION)
+
+    with pytest.raises(build_release.BuildError):
+        build_release.build_frozen_release(
+            REPO_ROOT, tmp_path, WRONG_VERSION, fake_frozen_runtime_dir, force=True, built_at="x",
+            version_probe=_probe_must_not_run,
+        )
+
+    assert (bundle / "do-not-delete.txt").exists()
+
+
+# --- frozen releases: the runtime's own reported version (fake probe) --------------------
+
+
+def test_frozen_runtime_reporting_the_wrong_version_fails_naming_both(fake_frozen_runtime_dir, tmp_path):
+    output = tmp_path / "out"
+
+    with pytest.raises(build_release.FrozenRuntimeError) as excinfo:
+        build_release.build_frozen_release(
+            REPO_ROOT, output, SOURCE_VERSION, fake_frozen_runtime_dir, built_at="x",
+            version_probe=_probe_reporting(WRONG_VERSION),
+        )
+
+    message = str(excinfo.value)
+    assert repr(WRONG_VERSION) in message and repr(SOURCE_VERSION) in message
+    assert "build_frozen.ps1" in message  # tells the operator how to fix it
+    assert not output.exists()
+
+
+def test_frozen_runtime_version_failure_with_force_does_not_delete_an_existing_bundle(
+    fake_frozen_runtime_dir, tmp_path
+):
+    # Same-named existing bundle, stale runtime: --force must not destroy it.
+    bundle = _existing_bundle(tmp_path, SOURCE_VERSION)
+
+    with pytest.raises(build_release.FrozenRuntimeError):
+        build_release.build_frozen_release(
+            REPO_ROOT, tmp_path, SOURCE_VERSION, fake_frozen_runtime_dir, force=True, built_at="x",
+            version_probe=_probe_reporting(WRONG_VERSION),
+        )
+
+    assert (bundle / "do-not-delete.txt").exists()
+    assert not (bundle / "runtime").exists()  # nothing of the failed build leaked in
+
+
+def test_a_probe_that_raises_fails_the_build_before_anything_is_created(fake_frozen_runtime_dir, tmp_path):
+    def broken_probe(_exe_path):
+        raise build_release.FrozenRuntimeError("boom")
+
+    output = tmp_path / "out"
+
+    with pytest.raises(build_release.FrozenRuntimeError, match="boom"):
+        build_release.build_frozen_release(
+            REPO_ROOT, output, SOURCE_VERSION, fake_frozen_runtime_dir, built_at="x", version_probe=broken_probe
+        )
+
+    assert not output.exists()
+
+
+# --- probe_frozen_runtime_version: the real subprocess handling (subprocess.run stubbed) ----
+
+
+def _stub_run(monkeypatch, result=None, raises=None, calls=None):
+    def fake_run(command, **kwargs):
+        if calls is not None:
+            calls.append((command, kwargs))
+        if raises is not None:
+            raise raises
+        return result
+
+    monkeypatch.setattr(build_release.subprocess, "run", fake_run)
+
+
+def test_probe_runs_the_version_command_and_returns_the_reported_version(monkeypatch, tmp_path):
+    calls = []
+    _stub_run(monkeypatch, _completed(stdout=f"{SOURCE_VERSION}\r\n"), calls=calls)
+    exe = tmp_path / "SortViewCollector.exe"
+
+    assert build_release.probe_frozen_runtime_version(exe) == SOURCE_VERSION
+    (command, kwargs), = calls
+    assert command == [str(exe), "version"]  # fixed argv, no shell, no config
+    assert "shell" not in kwargs or kwargs["shell"] is False
+    assert kwargs["timeout"] > 0
+
+
+def test_probe_nonzero_exit_fails_even_if_it_printed_the_right_version(monkeypatch, tmp_path):
+    _stub_run(monkeypatch, _completed(stdout=SOURCE_VERSION, returncode=3, stderr="Traceback ..."))
+
+    with pytest.raises(build_release.FrozenRuntimeError, match="exited with code 3"):
+        build_release.probe_frozen_runtime_version(tmp_path / "SortViewCollector.exe")
+
+
+@pytest.mark.parametrize("stdout", ["", "   ", "\r\n", "\n\n"])
+def test_probe_blank_output_fails(monkeypatch, tmp_path, stdout):
+    _stub_run(monkeypatch, _completed(stdout=stdout))
+
+    with pytest.raises(build_release.FrozenRuntimeError, match="blank"):
+        build_release.probe_frozen_runtime_version(tmp_path / "SortViewCollector.exe")
+
+
+@pytest.mark.parametrize("stdout", [f"{SOURCE_VERSION} extra", f"version {SOURCE_VERSION}", f"{SOURCE_VERSION}\nsecond line",
+                                    "Usage: SortViewCollector.exe <subcommand> [args...]\n"])
+def test_probe_malformed_output_fails(monkeypatch, tmp_path, stdout):
+    _stub_run(monkeypatch, _completed(stdout=stdout))
+
+    with pytest.raises(build_release.FrozenRuntimeError, match="malformed"):
+        build_release.probe_frozen_runtime_version(tmp_path / "SortViewCollector.exe")
+
+
+def test_probe_that_cannot_start_the_executable_fails(monkeypatch, tmp_path):
+    _stub_run(monkeypatch, raises=OSError("[WinError 193] %1 is not a valid Win32 application"))
+
+    with pytest.raises(build_release.FrozenRuntimeError, match="could not run"):
+        build_release.probe_frozen_runtime_version(tmp_path / "SortViewCollector.exe")
+
+
+def test_probe_timeout_fails(monkeypatch, tmp_path):
+    _stub_run(monkeypatch, raises=subprocess.TimeoutExpired(cmd="SortViewCollector.exe", timeout=1))
+
+    with pytest.raises(build_release.FrozenRuntimeError, match="did not finish"):
+        build_release.probe_frozen_runtime_version(tmp_path / "SortViewCollector.exe", timeout=1)
+
+
+# --- build_frozen_release with the REAL probe (subprocess.run stubbed at the process boundary) --------
+
+
+@pytest.mark.parametrize(
+    ("result", "raises", "match"),
+    [
+        (_completed(stdout=WRONG_VERSION), None, "version mismatch"),
+        (_completed(stdout=SOURCE_VERSION, returncode=1), None, "exited with code 1"),
+        (_completed(stdout=""), None, "blank"),
+        (_completed(stdout="1.0.3 (frozen)"), None, "malformed"),
+        (None, OSError("not a valid Win32 application"), "could not run"),
+    ],
+    ids=["wrong-version", "nonzero-exit", "blank", "malformed", "cannot-start"],
+)
+def test_frozen_release_fails_before_creating_anything_when_the_real_probe_rejects_the_runtime(
+    monkeypatch, fake_frozen_runtime_dir, tmp_path, result, raises, match
+):
+    _stub_run(monkeypatch, result, raises)
+    output = tmp_path / "out"
+
+    with pytest.raises(build_release.FrozenRuntimeError, match=match):
+        build_release.build_frozen_release(REPO_ROOT, output, SOURCE_VERSION, fake_frozen_runtime_dir, built_at="x")
+
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("result", "raises"),
+    [
+        (_completed(stdout=WRONG_VERSION), None),
+        (_completed(stdout=SOURCE_VERSION, returncode=1), None),
+        (_completed(stdout=""), None),
+        (_completed(stdout="1.0.3 (frozen)"), None),
+        (None, OSError("not a valid Win32 application")),
+    ],
+    ids=["wrong-version", "nonzero-exit", "blank", "malformed", "cannot-start"],
+)
+def test_force_cannot_destroy_an_existing_bundle_when_the_runtime_check_fails(
+    monkeypatch, fake_frozen_runtime_dir, tmp_path, result, raises
+):
+    bundle = _existing_bundle(tmp_path, SOURCE_VERSION)
+    _stub_run(monkeypatch, result, raises)
+
+    with pytest.raises(build_release.FrozenRuntimeError):
+        build_release.build_frozen_release(
+            REPO_ROOT, tmp_path, SOURCE_VERSION, fake_frozen_runtime_dir, force=True, built_at="x"
+        )
+
+    assert (bundle / "do-not-delete.txt").read_text(encoding="utf-8") == "precious"
+
+
+def test_frozen_release_with_the_real_probe_succeeds_when_the_runtime_prints_the_version(
+    monkeypatch, fake_frozen_runtime_dir, tmp_path
+):
+    _stub_run(monkeypatch, _completed(stdout=f"{SOURCE_VERSION}\r\n"))
+
+    result = build_release.build_frozen_release(
+        REPO_ROOT, tmp_path / "out", SOURCE_VERSION, fake_frozen_runtime_dir, built_at="x"
+    )
+
+    assert (result.bundle_dir / "runtime" / "SortViewCollector.exe").is_file()
+
+
+def test_a_fake_non_executable_runtime_can_never_pass_the_real_probe(fake_frozen_runtime_dir, tmp_path):
+    # No stubbing: SortViewCollector.exe here is not a real executable, so the
+    # unmocked probe genuinely fails to run it -- a placeholder .exe cannot be
+    # packaged by accident.
+    output = tmp_path / "out"
+
+    with pytest.raises(build_release.FrozenRuntimeError):
+        build_release.build_frozen_release(REPO_ROOT, output, SOURCE_VERSION, fake_frozen_runtime_dir, built_at="x")
+
+    assert not output.exists()
+
+
+# --- CLI --------------------------------------------------------------------------------------
+
+
+def _cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "collector.build_release", *args],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=False,
+    )
+
+
+def test_cli_source_version_mismatch_exits_nonzero_and_creates_nothing(tmp_path):
+    output = tmp_path / "out"
+
+    result = _cli("--output", str(output), "--version", WRONG_VERSION)
+
+    assert result.returncode != 0
+    assert "Build failed" in result.stderr
+    assert repr(WRONG_VERSION) in result.stderr and repr(SOURCE_VERSION) in result.stderr
+    assert not output.exists()
+
+
+def test_cli_frozen_version_mismatch_exits_nonzero_and_creates_nothing(fake_frozen_runtime_dir, tmp_path):
+    output = tmp_path / "out"
+
+    result = _cli("--output", str(output), "--version", WRONG_VERSION, "--frozen-runtime", str(fake_frozen_runtime_dir))
+
+    assert result.returncode != 0
+    assert repr(WRONG_VERSION) in result.stderr and repr(SOURCE_VERSION) in result.stderr
+    assert not output.exists()
+
+
+def test_cli_matching_version_still_builds_a_source_bundle(tmp_path):
+    result = _cli("--output", str(tmp_path), "--version", SOURCE_VERSION)
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / f"SortViewCollector-{SOURCE_VERSION}" / "collector" / "run.py").is_file()
+
+
+def test_cli_frozen_runtime_reporting_the_wrong_version_exits_nonzero(
+    monkeypatch, fake_frozen_runtime_dir, tmp_path, capsys
+):
+    monkeypatch.setattr(build_release, "probe_frozen_runtime_version", _probe_reporting(WRONG_VERSION))
+    output = tmp_path / "out"
+
+    exit_code = build_release.main([
+        "--output", str(output), "--version", SOURCE_VERSION, "--frozen-runtime", str(fake_frozen_runtime_dir),
+    ])
+
+    assert exit_code == 1
+    assert "Frozen runtime version mismatch" in capsys.readouterr().err
+    assert not output.exists()
+
+
+def test_cli_still_requires_the_version_argument(tmp_path):
+    result = _cli("--output", str(tmp_path / "out"))
+
+    assert result.returncode != 0
+    assert "--version" in result.stderr

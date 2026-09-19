@@ -51,11 +51,20 @@ Scope of what lives here:
 
 from __future__ import annotations
 
-# Simple semver. This is the version the RUNNING Collector reports on every
-# heartbeat (collector/uploader.py::post_status) and the backend records as
-# collector_installations.collector_version, so it must match the release
-# label a build is shipped under. 1.0.2 is the frozen, validated release
-# ZIP; this is the next build, which adds installation-lifecycle heartbeat
-# linkage (installation_id). build_release.py does not stamp or assert this
-# value -- it is bumped here by hand.
+# Simple semver -- the SINGLE AUTHORITATIVE Collector version. It is what the
+# RUNNING Collector reports on every heartbeat
+# (collector/uploader.py::post_status), in `support-info`, and via the
+# config-free `SortViewCollector.exe version` command, and what the backend
+# records as collector_installations.collector_version. Nothing else keeps a
+# copy of it, and no build rewrites it: it is bumped here by hand.
+#
+# Release builds ASSERT against it instead of trusting their own input:
+#   - collector/build_release.py: --version is only an assertion and must
+#     equal this value exactly (source and frozen bundles alike); a frozen
+#     bundle's SortViewCollector.exe is also run with `version` and must report
+#     it before anything is packaged.
+#   - collector/freeze/build_frozen.ps1: the freshly built executable's
+#     `version` output must equal this value, or the build fails.
+# 1.0.2 is the frozen, validated release ZIP; this is the next build, which
+# adds installation-lifecycle heartbeat linkage (installation_id).
 __version__ = "1.0.3"
