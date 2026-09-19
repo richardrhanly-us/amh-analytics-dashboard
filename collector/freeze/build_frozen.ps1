@@ -20,6 +20,18 @@
         SortViewCollector.exe preflight --config <path>
         SortViewCollector.exe bootstrap --config <path>
         SortViewCollector.exe support-info --config <path>
+        SortViewCollector.exe version
+
+    VERSION CHECK (fails the build on any drift): collector.__version__ is
+    the single authoritative Collector version. After PyInstaller succeeds
+    and the executable exists, this script runs `SortViewCollector.exe
+    version` and requires exit code 0 and output exactly equal to
+    collector.__version__ as imported by the packaging Python from THIS
+    repository (isolated mode, this repo's root first on sys.path, and the
+    imported package's location verified -- an installed `collector`
+    package elsewhere can never supply the expected value). A mismatch
+    throws with both the expected and the actual version and never
+    continues. This script never rewrites the source version.
 
 .EXAMPLE
     .\collector\freeze\build_frozen.ps1
@@ -34,6 +46,58 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Get-SourceCollectorVersion {
+    # The expected version: collector.__version__ imported by a normal Python
+    # import, not parsed out of the file. -I (isolated) ignores PYTHONPATH,
+    # the user site and the current directory, and this repository's root is
+    # then put FIRST on sys.path explicitly -- and the imported package's
+    # location is checked -- so it can only ever be THIS repository's
+    # Collector. Only single quotes inside the code: it is passed as one
+    # command-line argument.
+    param(
+        [Parameter(Mandatory)][string]$PythonExe,
+        [Parameter(Mandatory)][string]$RepoRoot
+    )
+
+    $code = "import sys, pathlib; repo = pathlib.Path(sys.argv[1]).resolve(); sys.path.insert(0, str(repo)); import collector; loc = pathlib.Path(collector.__file__).resolve().parent.parent; loc == repo or sys.exit('collector was imported from ' + str(loc) + ', not from ' + str(repo)); print(collector.__version__)"
+    $output = @(& $PythonExe -I -c $code $RepoRoot)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not read collector.__version__ from '$RepoRoot' using '$PythonExe' (exit $LASTEXITCODE)."
+    }
+    $version = (($output | ForEach-Object { [string]$_ }) -join "`n").Trim()
+    if ([string]::IsNullOrWhiteSpace($version) -or $version -match '\s') {
+        throw "collector.__version__ read from '$RepoRoot' is blank or malformed: '$version'"
+    }
+    return $version
+}
+
+function Assert-FrozenRuntimeVersion {
+    # Pure check of what `SortViewCollector.exe version` did -- throws unless
+    # it exited 0 and printed exactly the expected version.
+    param(
+        [Parameter(Mandatory)][string]$ExpectedVersion,
+        [AllowNull()]$ActualOutput,
+        [Parameter(Mandatory)][int]$ExitCode
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ExpectedVersion)) {
+        throw "VERSION CHECK FAILED: the expected collector.__version__ is blank."
+    }
+    if ($ExitCode -ne 0) {
+        throw "VERSION CHECK FAILED: the built executable's 'version' command exited $ExitCode (expected 0). Expected version: '$ExpectedVersion'."
+    }
+    $actual = (@($ActualOutput | ForEach-Object { [string]$_ }) -join "`n").Trim()
+    if ([string]::IsNullOrWhiteSpace($actual)) {
+        throw "VERSION CHECK FAILED: the built executable's 'version' command printed nothing. Expected version: '$ExpectedVersion'."
+    }
+    if ($actual -match '\s') {
+        throw "VERSION CHECK FAILED: the built executable's 'version' output is malformed (expected exactly a version). Expected: '$ExpectedVersion'. Actual output: '$actual'."
+    }
+    if ($actual -cne $ExpectedVersion) {
+        throw "VERSION MISMATCH: expected '$ExpectedVersion' (collector.__version__ in this repository) but the built executable reports '$actual'. Refusing to continue with a mismatched runtime."
+    }
+}
 
 $VenvPython = Join-Path $PackagingVenv "Scripts\python.exe"
 if (-not (Test-Path $VenvPython)) {
@@ -56,5 +120,12 @@ if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed (exit $LASTEXITCODE)"
 $ExePath = Join-Path $DistPath "SortViewCollector\SortViewCollector.exe"
 if (-not (Test-Path $ExePath)) { throw "Build reported success but $ExePath was not found." }
 
+# --- version check: the executable must report collector.__version__ ------
+$ExpectedVersion = Get-SourceCollectorVersion -PythonExe $VenvPython -RepoRoot $RepoRoot
+Write-Host "Checking the built executable's version against collector.__version__ '$ExpectedVersion' ..." -ForegroundColor Cyan
+$ActualOutput = @(& $ExePath version)
+$VersionExit = $LASTEXITCODE
+Assert-FrozenRuntimeVersion -ExpectedVersion $ExpectedVersion -ActualOutput $ActualOutput -ExitCode $VersionExit
+
 Write-Host ""
-Write-Host "Built frozen runtime: $ExePath" -ForegroundColor Green
+Write-Host "Built frozen runtime: $ExePath (version $ExpectedVersion, verified)" -ForegroundColor Green

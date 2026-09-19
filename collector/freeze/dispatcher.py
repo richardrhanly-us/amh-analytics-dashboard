@@ -3,12 +3,20 @@
 PACKAGING-ONLY -- never imported by, or a dependency of, any real
 Collector runtime module. This is the PyInstaller entry-point script that
 produces SortViewCollector.exe (see sortview_collector.spec), letting one
-frozen executable cover all five CLI surfaces (production run, preflight,
-bootstrap, support-info, and task-xml -- deployment/Task-Scheduler-XML
+frozen executable cover all six CLI surfaces (production run, preflight,
+bootstrap, support-info, task-xml -- deployment/Task-Scheduler-XML
 generation, added for the frozen release-bundle integration phase; see
-collector/deploy/register-collector-task.ps1) instead of five separate
-executables -- one shared PyInstaller onedir payload (pandas/numpy/etc.
-bundled once) rather than five duplicated ones.
+collector/deploy/register-collector-task.ps1 -- and version) instead of
+six separate executables -- one shared PyInstaller onedir payload
+(pandas/numpy/etc. bundled once) rather than six duplicated ones.
+
+`version` is the one subcommand that is NOT a forward to a module main():
+it prints collector.__version__ (the single authoritative Collector
+version -- never a copy of it) and exits 0. It needs no config, token,
+network or file access, so release tooling can ask ANY built executable
+"what version are you actually?" -- collector/freeze/build_frozen.ps1 does
+right after building, and collector/build_release.py does again before
+packaging a frozen bundle. stdout is exactly the version and a newline.
 
 THIN DISPATCH ONLY, per the frozen-runtime proof's explicit constraint:
 no Collector runtime logic is duplicated or reimplemented here. Each
@@ -33,7 +41,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 
-_SUBCOMMANDS = ("run", "preflight", "bootstrap", "support-info", "task-xml")
+_SUBCOMMANDS = ("run", "preflight", "bootstrap", "support-info", "task-xml", "version")
 
 
 def _usage() -> str:
@@ -51,6 +59,17 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     subcommand, rest = argv[0], argv[1:]
+
+    if subcommand == "version":
+        # Config-free by design: takes no arguments, so a stray --config (or
+        # anything else) is a usage error rather than being silently ignored.
+        if rest:
+            print(_usage(), file=sys.stderr)
+            return 2
+        from collector import __version__
+
+        print(__version__)
+        return 0
 
     # Explicit annotation, not inferred from the first branch: collector/run.py's
     # main() takes Sequence[str] | None while the other three take

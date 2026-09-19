@@ -4,12 +4,18 @@
 production Collector itself.
 
 Produces one dispatcher executable (SortViewCollector.exe, see
-dispatcher.py) covering all four CLI surfaces via subcommand:
+dispatcher.py) covering all the CLI surfaces via subcommand:
 
     SortViewCollector.exe run --config <path>
     SortViewCollector.exe preflight --config <path>
     SortViewCollector.exe bootstrap --config <path>
     SortViewCollector.exe support-info --config <path>
+    SortViewCollector.exe task-xml ...      (deployment tooling)
+    SortViewCollector.exe version           (config-free: prints collector.__version__)
+
+The built executable's `version` output is verified against
+collector.__version__ by build_frozen.ps1 (and again by
+collector/build_release.py before packaging) -- see those for why.
 
 Chosen over four separate executables specifically because it requires
 the SAME zero-refactoring dispatch (dispatcher.py imports and forwards to
