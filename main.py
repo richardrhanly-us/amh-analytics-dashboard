@@ -395,7 +395,9 @@ def get_bearer_token(authorization: str | None) -> str:
 ALLOWED_ORGANIZATION_STATUSES = ("active", "trial")
 ALLOWED_BRANCH_STATUS = "active"
 
-_AGENT_TOKEN_LOOKUP_SQL = """
+
+_AGENT_TOKEN_LOOKUP_SQL = (  # nosec B105
+    """
     SELECT
         t.id,
         t.customer_id,
@@ -412,7 +414,8 @@ _AGENT_TOKEN_LOOKUP_SQL = """
      AND b.organization_id = o.id
     WHERE t.token_hash = encode(digest(:token, 'sha256'), 'hex')
     LIMIT 1
-"""
+    """
+)
 
 
 def tenant_unusable_reason(token_row) -> str | None:
