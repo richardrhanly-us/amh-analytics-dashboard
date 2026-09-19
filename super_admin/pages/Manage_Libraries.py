@@ -25,6 +25,8 @@ from services.platform_admin_service import (
 )
 from services.tenant_service import (
     COLLECTOR_INSTALLATION_STATUSES,
+    assign_operational_identity,
+    build_collector_agent_config,
     create_collector_installation,
     list_collector_installations_for_organization,
     update_collector_installation,
@@ -48,28 +50,30 @@ if not rows:
     st.stop()
 
 
+def operational_id(value):
+    """int for a mapped operational ID, None for NULL/NaN (pandas turns a
+    nullable integer column into floats with NaN)."""
+    return None if pd.isna(value) else int(value)
+
+
 def build_agent_config(row):
+    """Collector config for the library, or None if it has no complete
+    operational identity. customer_id/branch_id are the OPERATIONAL pair
+    (operational_customer_id / operational_branch_id) -- never the SaaS
+    organization/branch IDs, and there is no fallback to them."""
     api_base_url = st.secrets.get(
         "AGENT_API_BASE_URL",
         "https://sortview-app-2p336.ondigitalocean.app",
     )
 
-    return {
-        "database_url": "",
-        "customer_id": int(row["organization_id"]),
-        "branch_id": int(row["branch_id"]),
-        "raw_checkins_file": r"C:\TLCFinalDlls\Checkins.txt",
-        "raw_rejects_file": r"C:\TLCFinalDlls\Rejects.txt",
-        "processed_checkins_file": r"data\processed\checkins_clean.csv",
-        "processed_rejects_file": r"data\processed\rejects_clean.csv",
-        "checkins_history_file": r"data\processed\checkins_history.csv",
-        "rejects_history_file": r"data\processed\rejects_history.csv",
-        "status_file": r"data\processed\pipeline_status.json",
-        "api_url": api_base_url.rstrip("/"),
-        "raw_acs_file": r"C:\TLCFinalDlls\ACS Log.txt",
-        "processed_acs_file": r"data\processed\acs_clean.csv",
-        "acs_history_file": r"data\processed\acs_history.csv",
-    }
+    try:
+        return build_collector_agent_config(
+            operational_customer_id=operational_id(row.get("operational_customer_id")),
+            operational_branch_id=operational_id(row.get("operational_branch_id")),
+            api_url=api_base_url,
+        )
+    except ValueError:
+        return None
 
 
 df = pd.DataFrame(rows)
@@ -139,19 +143,60 @@ selected_library = st.selectbox("Choose a library", library_names)
 selected_row = df[df["organization_name"] == selected_library].iloc[0].to_dict()
 agent_config = build_agent_config(selected_row)
 
+selected_customer_id = operational_id(selected_row.get("operational_customer_id"))
+selected_operational_branch_id = operational_id(selected_row.get("operational_branch_id"))
+
 detail_col1, detail_col2 = st.columns([2, 1])
 
 with detail_col1:
     st.json(selected_row)
 
 with detail_col2:
+    st.markdown("#### Operational Identity")
+
+    if selected_customer_id is not None and selected_operational_branch_id is not None:
+        st.metric("Operational Customer ID", selected_customer_id)
+        st.metric("Operational Branch ID", selected_operational_branch_id)
+    else:
+        if selected_customer_id is None and selected_operational_branch_id is None:
+            st.warning("Operational identity: Not assigned")
+        else:
+            st.warning("Operational identity: Partially assigned")
+            st.write(f"Operational Customer ID: {selected_customer_id}")
+            st.write(f"Operational Branch ID: {selected_operational_branch_id}")
+
+        st.caption(
+            "No Collector config or agent token should be issued until this is "
+            "assigned. Assignment is safe to re-run."
+        )
+        if pd.isna(selected_row.get("branch_id")):
+            st.error("This library has no primary branch to assign an identity to.")
+        elif st.button("Assign operational identity", type="primary"):
+            try:
+                assigned = assign_operational_identity(
+                    organization_id=int(selected_row["organization_id"]),
+                    branch_id=int(selected_row["branch_id"]),
+                )
+            except Exception as e:
+                st.error(f"Assignment failed: {type(e).__name__}: {e}")
+            else:
+                st.success(
+                    "Operational identity assigned: customer "
+                    f"{assigned['operational_customer_id']}, branch "
+                    f"{assigned['operational_branch_id']}."
+                )
+                st.rerun()
+
     st.markdown("#### Agent Config")
-    st.download_button(
-        "Download agent_config.json",
-        data=json.dumps(agent_config, indent=2),
-        file_name=f"{selected_row['organization_slug']}_agent_config.json",
-        mime="application/json",
-    )
+    if agent_config is not None:
+        st.download_button(
+            "Download agent_config.json",
+            data=json.dumps(agent_config, indent=2),
+            file_name=f"{selected_row['organization_slug']}_agent_config.json",
+            mime="application/json",
+        )
+    else:
+        st.info("Unavailable until the operational identity is assigned.")
 
     st.markdown("#### Library Controls")
 

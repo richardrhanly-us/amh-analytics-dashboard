@@ -192,6 +192,39 @@ def test_mapped_and_unmapped_libraries_are_resolved_independently(db):
     assert rows[2]["pipeline_status"] is None
 
 
+# --- operational identity columns --------------------------------------------
+
+def test_listing_exposes_operational_identity_for_mapped_and_unmapped_libraries(db):
+    # NBPL-style mapped 1/1 alongside a clean-install-style unmapped tenant
+    # (SaaS 2/2, NULL bridges). The unmapped tenant must read as NOT
+    # operationally provisioned even though a historical row sits at 2/2.
+    _add_library(db, org_id=1, branch_id=1,
+                 operational_customer_id=1, operational_branch_id=1)
+    _add_library(db, org_id=2, branch_id=2,
+                 operational_customer_id=None, operational_branch_id=None)
+    _add_pipeline_status(db, customer_id=2, branch_id=2, status="historical")
+
+    by_org = _by_org(platform_admin_service.list_libraries_with_status())
+
+    assert by_org[1]["operational_customer_id"] == 1
+    assert by_org[1]["operational_branch_id"] == 1
+    assert by_org[2]["operational_customer_id"] is None
+    assert by_org[2]["operational_branch_id"] is None
+    assert by_org[2]["pipeline_status"] is None
+
+
+def test_listing_reports_operational_ids_distinct_from_saas_ids(db):
+    _add_library(db, org_id=2, branch_id=2,
+                 operational_customer_id=50, operational_branch_id=2)
+
+    row = platform_admin_service.list_libraries_with_status()[0]
+
+    assert row["organization_id"] == 2
+    assert row["operational_customer_id"] == 50
+    assert row["branch_id"] == 2
+    assert row["operational_branch_id"] == 2
+
+
 # --- latest-subscription join ------------------------------------------------
 
 def test_organization_with_multiple_subscriptions_returns_one_row(db):

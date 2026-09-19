@@ -6,6 +6,18 @@ token from whatever the legacy agent already uses for the same
 customer_id/branch_id, so either can be revoked/rotated independently
 (set is_active = FALSE) without touching the other.
 
+SCOPE VALIDATION: --customer-id/--branch-id are the OPERATIONAL pair --
+organizations.operational_customer_id and branches.operational_branch_id, NOT
+the SaaS organizations.id / branches.id. With --execute the script reads the
+database first and refuses to insert unless the pair is a valid, fully mapped
+tenant: the customers row exists, the branch exists, exactly one organization
+maps to that customer, the branch's operational_branch_id is set to its own
+id, the branch belongs to that same organization, and the organization
+(active/trial) and branch (active) are in a usable status. Nothing is printed
+or written if validation fails -- in particular no raw token is shown for a
+token that was never stored. A dry run never touches a database, so it cannot
+validate; it says so.
+
 SAFE BY DEFAULT: prints the token (shown exactly once -- it is never
 stored anywhere in plaintext, only its SHA-256 hash is written to the
 database, the same scheme main.py's authenticate_agent already looks up
@@ -15,16 +27,16 @@ prints the raw token more than once, and never logs it anywhere else.
 
 Usage (dry run -- print what would happen, write nothing):
 
-    python scripts/create_agent_token.py --customer-id 100 --branch-id 5 \\
+    python scripts/create_agent_token.py --customer-id 1 --branch-id 1 \\
         --description "NBPL canonical agent (production cutover)"
 
 Usage (actually insert the row):
 
     DATABASE_URL=postgresql://... python scripts/create_agent_token.py \\
-        --customer-id 100 --branch-id 5 \\
+        --customer-id 1 --branch-id 1 \\
         --description "NBPL canonical agent (production cutover)" --execute
 
-    python scripts/create_agent_token.py --customer-id 100 --branch-id 5 \\
+    python scripts/create_agent_token.py --customer-id 1 --branch-id 1 \\
         --description "..." --execute "postgresql://..."
 
 After a successful --execute run, immediately hand the printed token to
@@ -78,10 +90,122 @@ def generate_token() -> tuple[str, str]:
     return raw_token, token_hash
 
 
+# Statuses under which a tenant may be issued a new token. organizations.status
+# is constrained to active/trial/suspended/cancelled; branches.status to
+# active/inactive. readiness_service requires branch status 'active'.
+_ALLOWED_ORGANIZATION_STATUSES = ("active", "trial")
+_ALLOWED_BRANCH_STATUS = "active"
+
+
+class ScopeError(Exception):
+    """The (customer_id, branch_id) pair is not a valid provisioned tenant."""
+
+
+def validate_token_scope(conn, customer_id: int, branch_id: int) -> dict:
+    """Verify (customer_id, branch_id) is a valid, fully mapped operational
+    pair belonging to ONE organization. Read-only. Raises ScopeError with a
+    specific reason; returns a summary dict on success."""
+    customer = conn.execute(
+        text("SELECT id FROM customers WHERE id = :customer_id"),
+        {"customer_id": customer_id},
+    ).mappings().first()
+    if customer is None:
+        raise ScopeError(f"customer_id {customer_id} does not exist in customers")
+
+    branch = conn.execute(
+        text("""
+            SELECT id, organization_id, status, operational_branch_id
+            FROM branches
+            WHERE id = :branch_id
+        """),
+        {"branch_id": branch_id},
+    ).mappings().first()
+    if branch is None:
+        raise ScopeError(f"branch_id {branch_id} does not exist in branches")
+
+    orgs = conn.execute(
+        text("""
+            SELECT id, slug, status
+            FROM organizations
+            WHERE operational_customer_id = :customer_id
+        """),
+        {"customer_id": customer_id},
+    ).mappings().all()
+    if not orgs:
+        raise ScopeError(
+            f"customer_id {customer_id} is not mapped to any organization "
+            "(unmapped tenant); assign its operational identity first"
+        )
+    if len(orgs) > 1:
+        raise ScopeError(
+            f"customer_id {customer_id} is mapped to {len(orgs)} organizations; "
+            "refusing to issue a token for an ambiguous tenant"
+        )
+    org = orgs[0]
+
+    if branch["operational_branch_id"] is None:
+        raise ScopeError(
+            f"branch_id {branch_id} has no operational_branch_id (unmapped "
+            "branch); assign its operational identity first"
+        )
+    if branch["operational_branch_id"] != branch["id"]:
+        raise ScopeError(
+            f"branch {branch_id} has inconsistent operational_branch_id "
+            f"{branch['operational_branch_id']}"
+        )
+
+    if branch["organization_id"] != org["id"]:
+        raise ScopeError(
+            f"customer_id {customer_id} belongs to organization {org['id']} "
+            f"but branch_id {branch_id} belongs to organization "
+            f"{branch['organization_id']}; the pair spans different tenants"
+        )
+
+    if org["status"] not in _ALLOWED_ORGANIZATION_STATUSES:
+        raise ScopeError(
+            f"organization {org['id']} status is {org['status']!r}; "
+            f"expected one of {', '.join(_ALLOWED_ORGANIZATION_STATUSES)}"
+        )
+    if branch["status"] != _ALLOWED_BRANCH_STATUS:
+        raise ScopeError(
+            f"branch {branch_id} status is {branch['status']!r}; "
+            f"expected {_ALLOWED_BRANCH_STATUS!r}"
+        )
+
+    return {
+        "organization_id": org["id"],
+        "organization_slug": org["slug"],
+        "customer_id": customer_id,
+        "branch_id": branch_id,
+    }
+
+
 _INSERT_SQL = """
     INSERT INTO agent_tokens (token_hash, customer_id, branch_id, description, is_active)
     VALUES (:token_hash, :customer_id, :branch_id, :description, TRUE)
     """
+
+
+def print_token_banner(raw_token: str) -> None:
+    print("=" * 78)
+    print("NEW AGENT TOKEN -- shown exactly once, never recoverable afterward:")
+    print()
+    print(f"  {raw_token}")
+    print()
+    print("Hand this to whoever configures the agent's SORTVIEW_API_TOKEN")
+    print("(e.g. agent/deploy/set-sortview-api-token.ps1) and then discard it from")
+    print("this terminal's scrollback / any place it was displayed.")
+    print("=" * 78)
+    print()
+
+
+def print_sql(params: dict) -> None:
+    print("SQL that will run (or would have run, without --execute), as a bound")
+    print("statement -- shown separately from its parameters, never hand-interpolated,")
+    print("so a description containing a quote can't produce broken/unsafe SQL:")
+    print(f"  {_INSERT_SQL.strip()}")
+    print(f"  params: {params}")
+    print()
 
 
 def main() -> None:
@@ -94,25 +218,13 @@ def main() -> None:
         "description": args.description,
     }
 
-    print("=" * 78)
-    print("NEW AGENT TOKEN -- shown exactly once, never recoverable afterward:")
-    print()
-    print(f"  {raw_token}")
-    print()
-    print("Hand this to whoever configures the agent's SORTVIEW_API_TOKEN")
-    print("(e.g. agent/deploy/set-sortview-api-token.ps1) and then discard it from")
-    print("this terminal's scrollback / any place it was displayed.")
-    print("=" * 78)
-    print()
-    print("SQL that will run (or would have run, without --execute), as a bound")
-    print("statement -- shown separately from its parameters, never hand-interpolated,")
-    print("so a description containing a quote can't produce broken/unsafe SQL:")
-    print(f"  {_INSERT_SQL.strip()}")
-    print(f"  params: {params}")
-    print()
-
     if args.execute is None:
-        print("DRY RUN -- nothing was written. Re-run with --execute to insert this row.")
+        print_token_banner(raw_token)
+        print_sql(params)
+        print("DRY RUN -- nothing was written and the (customer_id, branch_id) pair was")
+        print("NOT validated (a dry run has no database access). --execute validates the")
+        print("pair against the database and rejects unmapped or mismatched tenants.")
+        print("Re-run with --execute to insert this row.")
         return
 
     database_url = args.execute if args.execute != "__use_env__" else os.getenv("DATABASE_URL")
@@ -123,6 +235,21 @@ def main() -> None:
 
     engine = create_engine(database_url, connect_args={"sslmode": "require"})
     with engine.begin() as conn:
+        # Validate BEFORE showing any token, so a rejected pair never yields a
+        # raw token that was never stored.
+        try:
+            scope = validate_token_scope(conn, args.customer_id, args.branch_id)
+        except ScopeError as exc:
+            raise SystemExit(f"REFUSED: {exc}. Nothing was written.") from exc
+
+        print(
+            f"Verified scope: organization {scope['organization_slug']} "
+            f"(id {scope['organization_id']}), operational customer_id "
+            f"{scope['customer_id']}, branch_id {scope['branch_id']}."
+        )
+        print()
+        print_token_banner(raw_token)
+        print_sql(params)
         conn.execute(text(_INSERT_SQL), params)
 
     print("WROTE the row above to the database. The token was NOT saved anywhere by this "
