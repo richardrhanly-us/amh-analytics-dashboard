@@ -22,6 +22,13 @@ def is_platform_admin(user_id: int) -> bool:
 
 
 def list_libraries_with_status():
+    # pipeline_status is keyed by OPERATIONAL (customer_id, branch_id), not by
+    # organizations.id / branches.id (the SaaS-facing IDs). It must be joined
+    # through the operational_customer_id / operational_branch_id bridge, with
+    # no fallback to the SaaS IDs: an organization or branch that has no
+    # operational mapping (NULL) matches no pipeline_status row, which is the
+    # correct "not reporting" answer. The two ID domains only coincide by
+    # accident for some tenants (e.g. NBPL, 1/1).
     sql = text("""
         select
             o.id as organization_id,
@@ -47,8 +54,8 @@ def list_libraries_with_status():
         left join plans p
             on p.id = s.plan_id
         left join pipeline_status ps
-            on ps.customer_id = o.id
-           and ps.branch_id = b.id
+            on ps.customer_id = o.operational_customer_id
+           and ps.branch_id = b.operational_branch_id
         order by lower(o.name), b.id
     """)
 
