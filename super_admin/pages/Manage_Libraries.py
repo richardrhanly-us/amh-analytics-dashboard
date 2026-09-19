@@ -23,6 +23,12 @@ from services.platform_admin_service import (
     list_libraries_with_status,
     set_library_active_status,
 )
+from services.tenant_service import (
+    COLLECTOR_INSTALLATION_STATUSES,
+    create_collector_installation,
+    list_collector_installations_for_organization,
+    update_collector_installation,
+)
 
 st.set_page_config(
     page_title="Manage Libraries",
@@ -169,3 +175,126 @@ with detail_col2:
             )
             st.success("Library reactivated.")
             st.rerun()
+
+st.subheader("Collector Installations")
+st.caption(
+    "Server-side records of deployed Collectors for this library. "
+    "These are bookkeeping only; pipeline health is shown separately below."
+)
+
+organization_id = int(selected_row["organization_id"])
+primary_branch_id = selected_row.get("branch_id")
+installations = list_collector_installations_for_organization(organization_id)
+
+if installations:
+    installations_df = pd.DataFrame(installations).rename(
+        columns={
+            "name": "Installation",
+            "branch_name": "Branch",
+            "hostname": "Hostname",
+            "collector_version": "Collector Version",
+            "status": "Status",
+            "installed_at": "Installed At",
+            "last_seen_at": "Last Seen At",
+        }
+    )
+    st.dataframe(
+        installations_df[
+            [
+                "Installation",
+                "Branch",
+                "Hostname",
+                "Collector Version",
+                "Status",
+                "Installed At",
+                "Last Seen At",
+            ]
+        ],
+        width="stretch",
+        hide_index=True,
+    )
+
+    installations_by_id = {int(row["id"]): row for row in installations}
+    selected_installation_id = st.selectbox(
+        "Edit installation",
+        list(installations_by_id),
+        format_func=lambda installation_id: (
+            f"{installations_by_id[installation_id]['name']} "
+            f"({installations_by_id[installation_id]['branch_name']})"
+        ),
+    )
+    installation = installations_by_id[selected_installation_id]
+
+    with st.form(f"edit_installation_form_{selected_installation_id}"):
+        edit_name = st.text_input("Installation name", value=installation["name"])
+        edit_hostname = st.text_input("Hostname", value=installation["hostname"] or "")
+        edit_version = st.text_input(
+            "Collector version", value=installation["collector_version"] or ""
+        )
+        edit_status = st.selectbox(
+            "Status",
+            COLLECTOR_INSTALLATION_STATUSES,
+            index=COLLECTOR_INSTALLATION_STATUSES.index(installation["status"]),
+        )
+        save_installation = st.form_submit_button("Save Installation", type="primary")
+
+    if save_installation:
+        try:
+            update_collector_installation(
+                installation_id=selected_installation_id,
+                organization_id=organization_id,
+                name=edit_name,
+                hostname=edit_hostname,
+                collector_version=edit_version,
+                status=edit_status,
+            )
+        except Exception as e:
+            st.error(f"Update failed: {type(e).__name__}: {e}")
+        else:
+            st.success("Installation updated.")
+            st.rerun()
+else:
+    st.info("No collector installations recorded for this library.")
+
+if pd.notna(primary_branch_id):
+    with st.expander("Add installation"):
+        with st.form("add_installation_form"):
+            new_name = st.text_input("Installation name", value="Main AMH Sorter")
+            new_hostname = st.text_input("Hostname (optional)")
+            new_version = st.text_input("Collector version", value="1.0.2")
+            add_installation = st.form_submit_button("Add Installation")
+
+        if add_installation:
+            try:
+                create_collector_installation(
+                    organization_id=organization_id,
+                    branch_id=int(primary_branch_id),
+                    name=new_name,
+                    hostname=new_hostname,
+                    collector_version=new_version,
+                    status="provisioning",
+                )
+            except Exception as e:
+                st.error(f"Create failed: {type(e).__name__}: {e}")
+            else:
+                st.success("Installation added.")
+                st.rerun()
+
+st.subheader("Pipeline Status")
+st.caption(
+    "From pipeline_status for the primary branch. Independent of the "
+    "installation records above."
+)
+st.dataframe(
+    pd.DataFrame(
+        [
+            {
+                "Agent Status": selected_row.get("pipeline_status"),
+                "Last Run": selected_row.get("last_run"),
+                "Last Attempt": selected_row.get("last_attempt"),
+            }
+        ]
+    ),
+    width="stretch",
+    hide_index=True,
+)

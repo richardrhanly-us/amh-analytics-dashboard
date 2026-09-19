@@ -20,7 +20,10 @@ if SUPER_ADMIN_DIR not in sys.path:
 
 from super_auth import require_super_admin
 
-from services.tenant_service import create_organization_with_primary_branch
+from services.tenant_service import (
+    create_collector_installation,
+    create_organization_with_primary_branch,
+)
 
 st.set_page_config(
     page_title="Provision Library",
@@ -125,6 +128,16 @@ with st.form("provision_library_form"):
     raw_rejects_file = st.text_input("Raw rejects file", value=r"C:\TLCFinalDlls\Rejects.txt")
     raw_acs_file = st.text_input("Raw ACS file", value=r"C:\TLCFinalDlls\ACS Log.txt")
 
+    st.subheader("Collector Installation")
+    st.caption(
+        "Server-side record of the deployed Collector. "
+        "Does not change the generated Collector configuration."
+    )
+    create_installation = st.checkbox("Create initial installation record", value=True)
+    installation_name = st.text_input("Installation name", value="Main AMH Sorter")
+    installation_hostname = st.text_input("Installation hostname (optional)")
+    installation_version = st.text_input("Collector version", value="1.0.2")
+
     submitted = st.form_submit_button("Provision Library", type="primary")
 
 if submitted:
@@ -137,6 +150,10 @@ if submitted:
 
     if not branch_name.strip():
         st.error("Primary branch name is required.")
+        st.stop()
+
+    if create_installation and not installation_name.strip():
+        st.error("Installation name is required to create an installation record.")
         st.stop()
 
     org_settings: dict[str, Any] = dict(DEFAULT_ORG_SETTINGS)
@@ -207,15 +224,39 @@ if submitted:
         "acs_history_file": r"data\processed\acs_history.csv",
     }
 
+    # The library is already committed at this point; an installation-record
+    # failure must not hide that, so it is reported alongside the result and
+    # the record can be added later from Manage Libraries.
+    installation = None
+    installation_error = None
+    if create_installation:
+        try:
+            installation = create_collector_installation(
+                organization_id=organization["id"],
+                branch_id=branch["id"],
+                name=installation_name,
+                hostname=installation_hostname,
+                collector_version=installation_version,
+                status="provisioning",
+            )
+        except Exception as e:
+            installation_error = f"{type(e).__name__}: {e}"
+
     st.session_state["provision_result"] = {
         "organization": organization,
         "branch": branch,
         "plan": result["plan"],
         "subscription": result["subscription"],
+        "collector_installation": installation,
         "agent_config": agent_config,
     }
 
     st.success("Library provisioned.")
+    if installation_error:
+        st.warning(
+            "Library provisioned, but the installation record could not be created "
+            f"({installation_error}). Add it from Manage Libraries."
+        )
 
 if st.session_state["provision_result"]:
     provision_result = st.session_state["provision_result"]
