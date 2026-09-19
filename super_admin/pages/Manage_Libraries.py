@@ -50,6 +50,14 @@ if not rows:
     st.stop()
 
 
+ORGANIZATION_STATUS_LABELS = {
+    "active": "Active",
+    "trial": "Trial",
+    "suspended": "Suspended",
+    "cancelled": "Cancelled",
+}
+
+
 def operational_id(value):
     """int for a mapped operational ID, None for NULL/NaN (pandas turns a
     nullable integer column into floats with NaN)."""
@@ -200,26 +208,58 @@ with detail_col2:
 
     st.markdown("#### Library Controls")
 
-    is_active = str(selected_row.get("organization_status", "")).lower() == "active"
+    org_status = str(selected_row.get("organization_status") or "").lower()
+    branch_status = selected_row.get("branch_status")
+    branch_status = None if pd.isna(branch_status) else str(branch_status).lower()
+    org_status_label = ORGANIZATION_STATUS_LABELS.get(org_status, org_status or "Unknown")
 
-    if is_active:
-        if st.button("Deactivate Library", type="secondary"):
-            set_library_active_status(
-                organization_id=int(selected_row["organization_id"]),
-                branch_id=int(selected_row["branch_id"]),
-                is_active=False,
+    st.write(f"Library status: **{org_status_label}**")
+    if branch_status is not None:
+        st.write(f"Primary branch status: **{branch_status.title()}**")
+        if branch_status != "active":
+            st.warning(
+                "The primary branch is not active, so Collector uploads are rejected "
+                "regardless of the library status. Suspend/reactivate does not change "
+                "branch status."
             )
-            st.success("Library deactivated.")
-            st.rerun()
-    else:
+
+    library_organization_id = int(selected_row["organization_id"])
+
+    if org_status in ("active", "trial"):
+        st.caption(
+            "Suspending is reversible. While suspended, Collector uploads for this "
+            "library are rejected. Data, operational identity, installations, "
+            "subscriptions and agent tokens are all preserved."
+        )
+        if st.button("Suspend Library", type="secondary"):
+            try:
+                set_library_active_status(organization_id=library_organization_id, is_active=False)
+            except Exception as e:
+                st.error(f"Suspend failed: {type(e).__name__}: {e}")
+            else:
+                st.success("Library suspended.")
+                st.rerun()
+    elif org_status == "suspended":
+        st.caption(
+            "Reactivating sets the library to Active. It does not reactivate any "
+            "agent token; tokens that are still active work again, deactivated "
+            "tokens stay deactivated."
+        )
         if st.button("Reactivate Library", type="primary"):
-            set_library_active_status(
-                organization_id=int(selected_row["organization_id"]),
-                branch_id=int(selected_row["branch_id"]),
-                is_active=True,
-            )
-            st.success("Library reactivated.")
-            st.rerun()
+            try:
+                set_library_active_status(organization_id=library_organization_id, is_active=True)
+            except Exception as e:
+                st.error(f"Reactivate failed: {type(e).__name__}: {e}")
+            else:
+                st.success("Library reactivated.")
+                st.rerun()
+    elif org_status == "cancelled":
+        st.error(
+            "This library is Cancelled. It cannot be suspended or reactivated from "
+            "here."
+        )
+    else:
+        st.error(f"Unrecognised library status {org_status!r}; no action is available.")
 
 st.subheader("Collector Installations")
 st.caption(

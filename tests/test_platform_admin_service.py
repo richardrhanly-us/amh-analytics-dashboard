@@ -30,7 +30,7 @@ _SCHEMA = [
         operational_customer_id INTEGER)""",
     """CREATE TABLE branches (
         id INTEGER PRIMARY KEY, organization_id INTEGER, name TEXT, slug TEXT,
-        is_primary BOOLEAN, operational_branch_id INTEGER)""",
+        is_primary BOOLEAN, operational_branch_id INTEGER, status TEXT)""",
     "CREATE TABLE plans (id INTEGER PRIMARY KEY, code TEXT, name TEXT)",
     """CREATE TABLE subscriptions (
         id INTEGER PRIMARY KEY, organization_id INTEGER, plan_id INTEGER,
@@ -59,7 +59,7 @@ def _add_library(engine, *, org_id, branch_id, operational_customer_id, operatio
              "ocid": operational_customer_id},
         )
         conn.execute(
-            text("INSERT INTO branches VALUES (:id, :org, :name, :slug, 1, :obid)"),
+            text("INSERT INTO branches VALUES (:id, :org, :name, :slug, 1, :obid, 'active')"),
             {"id": branch_id, "org": org_id, "name": f"Branch {branch_id}",
              "slug": f"branch-{branch_id}", "obid": operational_branch_id},
         )
@@ -223,6 +223,19 @@ def test_listing_reports_operational_ids_distinct_from_saas_ids(db):
     assert row["operational_customer_id"] == 50
     assert row["branch_id"] == 2
     assert row["operational_branch_id"] == 2
+
+
+def test_listing_exposes_organization_and_branch_status_separately(db):
+    _add_library(db, org_id=1, branch_id=1,
+                 operational_customer_id=1, operational_branch_id=1)
+    with db.begin() as conn:
+        conn.execute(text("UPDATE organizations SET status = 'suspended' WHERE id = 1"))
+        conn.execute(text("UPDATE branches SET status = 'inactive' WHERE id = 1"))
+
+    row = platform_admin_service.list_libraries_with_status()[0]
+
+    assert row["organization_status"] == "suspended"
+    assert row["branch_status"] == "inactive"
 
 
 # --- latest-subscription join ------------------------------------------------

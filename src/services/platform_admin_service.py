@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import text
 
 from database import get_engine
@@ -45,6 +47,7 @@ def list_libraries_with_status():
             b.name as branch_name,
             b.slug as branch_slug,
             b.operational_branch_id,
+            b.status as branch_status,
             b.is_primary,
             s.status as subscription_status,
             p.code as plan_code,
@@ -78,34 +81,79 @@ def list_libraries_with_status():
         return [dict(row) for row in rows]
 
 
-def set_library_active_status(organization_id: int, branch_id: int, is_active: bool):
-    new_status = "active" if is_active else "inactive"
+# Library lifecycle. organizations.status is constrained to
+# active / trial / suspended / cancelled ('inactive' is NOT a valid value).
+#
+#   Deactivate = reversible administrative SUSPENSION: organizations.status
+#   becomes 'suspended'. Nothing else changes -- historical data, operational
+#   identity mappings, collector_installations, subscriptions and agent tokens
+#   are all preserved, and branch statuses are left alone (a branch that was
+#   individually inactive must not become active on reactivation). The API
+#   rejects ingestion for a suspended organization even though its tokens stay
+#   active (see main.authenticate_agent).
+#
+#   Reactivate = 'suspended' -> 'active'. It never touches tokens: token state
+#   and tenant state are independent gates.
+#
+#   'cancelled' is terminal here: neither action will change it. Cancellation
+#   semantics are out of scope for this function.
+_ORGANIZATION_STATUSES = ("active", "trial", "suspended", "cancelled")
 
-    sql_update_org = text("""
-        update organizations
-        set status = :new_status
+
+def set_library_active_status(organization_id: int, is_active: bool) -> dict[str, Any]:
+    """Suspend (is_active=False) or reactivate (is_active=True) a library.
+
+    Only organizations.status is written, and only when it actually needs to
+    change: suspending an already-suspended library and reactivating an
+    active/trial one are no-ops (a trial library is not promoted to 'active').
+    Raises RuntimeError, writing nothing, if the organization does not exist,
+    is cancelled, or has an unrecognised status.
+
+    Returns {organization_id, status, changed}.
+    """
+    sql_lock = text("""
+        select status
+        from organizations
         where id = :organization_id
+        for update
     """)
 
-    sql_update_branch = text("""
-        update branches
-        set status = :new_status
-        where id = :branch_id
+    sql_update = text("""
+        update organizations
+        set status = :new_status,
+            updated_at = now()
+        where id = :organization_id
     """)
 
     engine = get_engine()
     with engine.begin() as conn:
+        row = conn.execute(sql_lock, {"organization_id": organization_id}).mappings().first()
+        if not row:
+            raise RuntimeError(f"Organization {organization_id} not found")
+
+        current = row["status"]
+        if current not in _ORGANIZATION_STATUSES:
+            raise RuntimeError(
+                f"Organization {organization_id} has unrecognised status {current!r}"
+            )
+        if current == "cancelled":
+            raise RuntimeError(
+                f"Organization {organization_id} is cancelled; it cannot be "
+                f"{'reactivated' if is_active else 'suspended'} from here"
+            )
+
+        if is_active:
+            if current in ("active", "trial"):
+                return {"organization_id": organization_id, "status": current, "changed": False}
+            new_status = "active"
+        else:
+            if current == "suspended":
+                return {"organization_id": organization_id, "status": current, "changed": False}
+            new_status = "suspended"
+
         conn.execute(
-            sql_update_org,
-            {
-                "organization_id": organization_id,
-                "new_status": new_status,
-            },
+            sql_update,
+            {"organization_id": organization_id, "new_status": new_status},
         )
-        conn.execute(
-            sql_update_branch,
-            {
-                "branch_id": branch_id,
-                "new_status": new_status,
-            },
-        )
+
+    return {"organization_id": organization_id, "status": new_status, "changed": True}

@@ -379,21 +379,65 @@ def get_bearer_token(authorization: str | None) -> str:
     return token
 
 
+# A request is authorized to ingest only when ALL of these hold: the token is
+# valid, the token is active, the request's (customer_id, branch_id) match the
+# token's scope, and the tenant that scope maps to is currently usable. Token
+# state and tenant state are independent gates -- reactivating a library never
+# reactivates a token, and an active token never outlives a suspended library.
+#
+# The tenant is resolved through the OPERATIONAL bridge (never the SaaS ids):
+#   organizations.operational_customer_id = agent_tokens.customer_id
+#   branches.operational_branch_id        = agent_tokens.branch_id
+#   and the branch must belong to that organization.
+# LEFT JOINs, so an unmapped scope or a branch that belongs to another
+# organization yields NULL statuses and is rejected (fail closed), not dropped
+# into a "token not found" 401.
+ALLOWED_ORGANIZATION_STATUSES = ("active", "trial")
+ALLOWED_BRANCH_STATUS = "active"
+
+_AGENT_TOKEN_LOOKUP_SQL = """
+    SELECT
+        t.id,
+        t.customer_id,
+        t.branch_id,
+        t.is_active,
+        t.description,
+        o.status AS organization_status,
+        b.status AS branch_status
+    FROM agent_tokens t
+    LEFT JOIN organizations o
+      ON o.operational_customer_id = t.customer_id
+    LEFT JOIN branches b
+      ON b.operational_branch_id = t.branch_id
+     AND b.organization_id = o.id
+    WHERE t.token_hash = encode(digest(:token, 'sha256'), 'hex')
+    LIMIT 1
+"""
+
+
+def tenant_unusable_reason(token_row) -> str | None:
+    """Why the tenant behind an otherwise-valid token may not ingest, or None
+    if it may. The reason is for server-side logs only -- never sent to the
+    client."""
+    organization_status = token_row.get("organization_status")
+    branch_status = token_row.get("branch_status")
+
+    if organization_status is None:
+        return "no mapped organization"
+    if organization_status not in ALLOWED_ORGANIZATION_STATUSES:
+        return f"organization status {organization_status!r}"
+    if branch_status is None:
+        return "no mapped branch for the organization"
+    if branch_status != ALLOWED_BRANCH_STATUS:
+        return f"branch status {branch_status!r}"
+    return None
+
+
 def authenticate_agent(conn, authorization: str | None, customer_id: int, branch_id: int):
     bearer_token = get_bearer_token(authorization)
 
     token_row = conn.execute(
-        text("""
-            SELECT
-                id,
-                customer_id,
-                branch_id,
-                is_active,
-                description
-            FROM agent_tokens
-            WHERE token_hash = encode(digest(:token, 'sha256'), 'hex')
-            LIMIT 1
-        """),
+        text(_AGENT_TOKEN_LOOKUP_SQL),
         {"token": bearer_token},
     ).mappings().first()
 
@@ -405,6 +449,19 @@ def authenticate_agent(conn, authorization: str | None, customer_id: int, branch
 
     if int(token_row["customer_id"]) != int(customer_id) or int(token_row["branch_id"]) != int(branch_id):
         raise HTTPException(status_code=403, detail="Token scope does not match customer_id / branch_id")
+
+    # Authenticated, but not authorized to ingest while the tenant is
+    # suspended/cancelled or the branch is inactive. The specific reason is
+    # logged for operators; the response stays generic and reveals nothing
+    # about the tenant's state.
+    unusable_reason = tenant_unusable_reason(token_row)
+    if unusable_reason is not None:
+        logger.warning(
+            "Agent request rejected, tenant not usable | token_id=%s customer_id=%s "
+            "branch_id=%s reason=%s",
+            token_row["id"], token_row["customer_id"], token_row["branch_id"], unusable_reason,
+        )
+        raise HTTPException(status_code=403, detail="Agent is not currently authorized to upload data")
 
     conn.execute(
         text("""
