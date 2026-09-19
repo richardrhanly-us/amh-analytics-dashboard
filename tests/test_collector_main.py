@@ -232,3 +232,71 @@ def test_successful_run_exits_zero_and_persists_state(monkeypatch, tmp_path):
 
     assert exit_code == 0
     assert (tmp_path / "state.json").exists()
+
+
+# --- legacy (no installation_id) configs ----------------------------------
+
+
+def _write_config_with(tmp_path, **extra):
+    path = _write_config(tmp_path)
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc.update(extra)
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    return path
+
+
+def _drop_collector_log_handlers():
+    # collector.run._build_logger caches handlers on a shared named logger,
+    # which would otherwise keep writing to (and holding open) an earlier
+    # test's tmp_path log file.
+    import logging
+
+    logger = logging.getLogger("sortview.collector")
+    for handler in list(logger.handlers):
+        handler.close()
+        logger.removeHandler(handler)
+
+
+def test_legacy_config_without_installation_id_runs_and_logs_a_warning(monkeypatch, tmp_path):
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    _drop_collector_log_handlers()
+    config_path = _write_config(tmp_path)  # no installation_id
+    session = FakeSession()
+    monkeypatch.setattr(run_mod.uploader, "build_session", lambda: session)
+    _configure_a_passthrough_parser_for_testing(monkeypatch)
+
+    try:
+        exit_code = run_mod.main(["--config", str(config_path)])
+    finally:
+        _drop_collector_log_handlers()
+
+    assert exit_code == 0
+    assert "no installation_id" in (tmp_path / "collector.log").read_text(encoding="utf-8")
+    status_calls = [p for url, p in session.calls if url.endswith("/upload-pipeline-status")]
+    assert status_calls and "installation_id" not in status_calls[0]
+
+
+def test_config_with_installation_id_runs_without_the_legacy_warning(monkeypatch, tmp_path):
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    _drop_collector_log_handlers()
+    config_path = _write_config_with(tmp_path, installation_id=41)
+    session = FakeSession()
+    monkeypatch.setattr(run_mod.uploader, "build_session", lambda: session)
+    _configure_a_passthrough_parser_for_testing(monkeypatch)
+
+    try:
+        exit_code = run_mod.main(["--config", str(config_path)])
+    finally:
+        _drop_collector_log_handlers()
+
+    assert exit_code == 0
+    assert "no installation_id" not in (tmp_path / "collector.log").read_text(encoding="utf-8")
+    status_calls = [p for url, p in session.calls if url.endswith("/upload-pipeline-status")]
+    assert status_calls and status_calls[0]["installation_id"] == 41
+
+
+def test_invalid_installation_id_in_config_exits_with_config_error(monkeypatch, tmp_path):
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    config_path = _write_config_with(tmp_path, installation_id="not-a-number")
+
+    assert run_mod.main(["--config", str(config_path)]) == 2

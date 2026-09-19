@@ -43,8 +43,18 @@ From an elevated PowerShell session, in a checkout of this repository:
 
 ```powershell
 cd collector\deploy
-.\install-collector.ps1 -CustomerId <id> -BranchId <id> -ApiUrl "https://sortview-app-2p336.ondigitalocean.app"
+.\install-collector.ps1 -CustomerId <id> -BranchId <id> -InstallationId <id> -ApiUrl "https://sortview-app-2p336.ondigitalocean.app"
 ```
+
+`-CustomerId` / `-BranchId` / `-InstallationId` are the **Operational
+Customer ID**, **Operational Branch ID** and **Installation ID** shown for
+this Collector in SortView Super Admin (Provision Library, or Manage
+Libraries -> Collector Installer Values, which also shows the paste-ready
+`-CustomerId -BranchId -InstallationId` fragment). Copy them; never choose a
+number. Super Admin's downloadable `agent_config.json` is the legacy agent's
+config, not this Collector's `collector_config.json`. (The
+commercial release bundle's `install.ps1` *requires* all three; this
+source-checkout installer treats `-InstallationId` as optional.)
 
 Defaults: install root `C:\SortView\Collector` (code + venv), data root
 `C:\ProgramData\SortViewCollector` (`config\`, `data\`, `logs\`). Override
@@ -69,8 +79,35 @@ doesn't use the standard Tech Logic locations.
 
 `<DataRoot>\config\collector_config.json` -- see
 `collector/deploy/collector_config.example.json` for every field and
-what it means. Never contains a secret. `sources` makes source **paths**
-configurable per site; it does not make the collector work with a
+what it means. Never contains a secret.
+
+`installation_id` links this Collector to its server-side installation
+record. A **confirmed installation contact** is any successful,
+authenticated status request that carries it -- a scheduled run's
+heartbeat **or** an install-time preflight run (the preflight's
+authentication check is that same request). Confirmed contact:
+
+- moves the installation from `provisioning` to `active` (so activation
+  does **not** wait for the Scheduled Task's first normal run -- a passing
+  preflight can activate it);
+- stamps `installed_at` once, at the **first** confirmed contact (it is
+  never re-stamped; if an admin sets the installation `active` in Super
+  Admin first, that admin change stamps it instead);
+- sets `last_seen_at` to the **most recent** confirmed contact, and
+  `collector_version` to the version that Collector reported.
+
+The installation must exist, belong to this customer/branch, and be
+`provisioning` or `active`: an unknown, another tenant's, `inactive` or
+`retired` installation is refused (HTTP 403, generic message) and that
+request records nothing -- contact never reactivates an installation. A
+config **without** `installation_id` (an older 1.0.2 install) keeps working
+exactly as before: uploads and pipeline status are unaffected, but the
+installation record is never updated, and the Collector logs a warning
+saying so. The preflight `installation_id_accepted` check confirms the
+value. The installation is never inferred from the branch or the machine
+name.
+
+`sources` makes source **paths** configurable per site; it does not make the collector work with a
 different AMH vendor's file format -- the wired-in parser
 (`collector/parsers.py`) is still Tech Logic-specific, and only
 recognizes the three source names `checkins`/`rejects`/`acs`.
@@ -107,7 +144,12 @@ not the production identity):
 ```
 
 Fourteen independent checks, each printed with `[PASS]`/`[FAIL]` and a
-detail message; overall exit code is `0` only if every check passed. A
+detail message; overall exit code is `0` only if every check passed. Note
+that the authentication check is a real status request: with an
+`installation_id` in the config it is a confirmed installation contact, so a
+passing preflight can move the installation from `provisioning` to `active`
+and stamp `installed_at` before the Scheduled Task has ever run (see
+**Config**). A
 passing interactive run does **not** prove SYSTEM can do the same things
 -- proxy configuration, file permissions, and environment variable
 visibility can all differ by security principal. See the next section.

@@ -25,6 +25,7 @@ from services.tenant_service import (
     build_collector_agent_config,
     create_collector_installation,
     create_organization_with_primary_branch,
+    format_collector_install_parameters,
 )
 
 st.set_page_config(
@@ -167,13 +168,19 @@ with st.form("provision_library_form"):
 
     st.subheader("Collector Installation")
     st.caption(
-        "Server-side record of the deployed Collector. "
-        "Does not change the generated Collector configuration."
+        "Server-side record of the deployed Collector. It is created first; its "
+        "Installation ID is then shown with the Operational Customer ID and Operational "
+        "Branch ID as the three values the on-site installer (install.ps1) needs. It is "
+        "not part of the legacy agent_config.json. The Collector version is an initial "
+        "value only -- the running Collector replaces it with the version it reports at "
+        "its first confirmed contact (the install-time preflight or a scheduled-run "
+        "heartbeat, whichever comes first), which also moves the installation from "
+        "provisioning to active."
     )
     create_installation = st.checkbox("Create initial installation record", value=True)
     installation_name = st.text_input("Installation name", value="Main AMH Sorter")
     installation_hostname = st.text_input("Installation hostname (optional)")
-    installation_version = st.text_input("Collector version", value="1.0.2")
+    installation_version = st.text_input("Collector version", value="1.0.3")
 
     submitted = st.form_submit_button("Provision Library", type="primary")
 
@@ -244,23 +251,12 @@ if submitted:
     organization = result["organization"]
     branch = result["branch"]
 
-    # Stage 2: operational identity. The SaaS tenant above is already
-    # committed, so a failure here must not hide it -- it is reported as
-    # "operational provisioning incomplete" and no Collector config is
-    # produced until a (re-runnable) assignment succeeds.
-    config_inputs = {
-        "api_url": api_base_url,
-        "raw_checkins_file": raw_checkins_file,
-        "raw_rejects_file": raw_rejects_file,
-        "raw_acs_file": raw_acs_file,
-    }
-    operational_identity, agent_config, operational_error = run_operational_stage(
-        organization["id"], branch["id"], config_inputs
-    )
-
-    # The library is already committed at this point; an installation-record
-    # failure must not hide that, so it is reported alongside the result and
-    # the record can be added later from Manage Libraries.
+    # The installation record is created FIRST and its returned id retained
+    # (collector_installation below) so it can be shown as the Collector's
+    # Installation ID. The library is already committed at this point; an
+    # installation-record failure must not hide that, so it is reported
+    # alongside the result and the record can be added later from Manage
+    # Libraries.
     installation = None
     installation_error = None
     if create_installation:
@@ -275,6 +271,20 @@ if submitted:
             )
         except Exception as e:
             installation_error = f"{type(e).__name__}: {e}"
+
+    # Stage 2: operational identity. The SaaS tenant above is already
+    # committed, so a failure here must not hide it -- it is reported as
+    # "operational provisioning incomplete" and no Collector config is
+    # produced until a (re-runnable) assignment succeeds.
+    config_inputs = {
+        "api_url": api_base_url,
+        "raw_checkins_file": raw_checkins_file,
+        "raw_rejects_file": raw_rejects_file,
+        "raw_acs_file": raw_acs_file,
+    }
+    operational_identity, agent_config, operational_error = run_operational_stage(
+        organization["id"], branch["id"], config_inputs
+    )
 
     st.session_state["provision_result"] = {
         "organization": organization,
@@ -299,7 +309,13 @@ if submitted:
     if installation_error:
         st.warning(
             "Library provisioned, but the installation record could not be created "
-            f"({installation_error}). Add it from Manage Libraries."
+            f"({installation_error}). Add it from Manage Libraries to get the Installation "
+            "ID the on-site installer needs."
+        )
+    elif not create_installation:
+        st.info(
+            "No installation record was created, so there is no Installation ID yet. Add an "
+            "installation from Manage Libraries to get the on-site installer values."
         )
 
 if st.session_state["provision_result"]:
@@ -328,7 +344,37 @@ if st.session_state["provision_result"]:
 
     st.json(provision_result)
 
+    st.subheader("Collector Installer Values")
+    result_identity = provision_result.get("operational_identity")
+    result_installation = provision_result.get("collector_installation")
+    if result_identity and result_installation:
+        st.caption(
+            "The scheduled Collector's own collector_config.json is written on the library's "
+            "machine by install.ps1 from these three values. Copy them exactly."
+        )
+        installer_col1, installer_col2, installer_col3 = st.columns(3)
+        installer_col1.metric("Operational Customer ID", result_identity["operational_customer_id"])
+        installer_col2.metric("Operational Branch ID", result_identity["operational_branch_id"])
+        installer_col3.metric("Installation ID", result_installation["id"])
+        st.code(
+            format_collector_install_parameters(
+                result_identity["operational_customer_id"],
+                result_identity["operational_branch_id"],
+                result_installation["id"],
+            ),
+            language="powershell",
+        )
+    else:
+        st.info(
+            "Unavailable until both the operational identity is assigned and an installation "
+            "record exists."
+        )
+
     if provision_result.get("agent_config"):
+        st.caption(
+            "Legacy agent_config.json -- for the legacy agent only. It is NOT the scheduled "
+            "Collector's collector_config.json and contains no Installation ID."
+        )
         st.download_button(
             "Download agent_config.json",
             data=json.dumps(provision_result["agent_config"], indent=2),

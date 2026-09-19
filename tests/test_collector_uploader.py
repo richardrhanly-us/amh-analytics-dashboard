@@ -6,6 +6,7 @@ import json as json_mod
 
 import requests
 
+import collector
 from collector.config import CollectorConfig, SourceConfig
 from collector.uploader import (
     FailureCategory,
@@ -290,3 +291,63 @@ def test_post_status_failure_does_not_raise():
     outcome = post_status(session, _cfg(), {"status": "completed"})
     assert outcome.success is False
     assert outcome.category == FailureCategory.RETRYABLE_INFRA
+
+
+# --- installation lifecycle linkage in the status heartbeat ---------------
+
+
+def test_post_status_sends_installation_id_and_the_running_collector_version():
+    session = FakeSession()
+
+    outcome = post_status(session, _cfg(installation_id=41), {"status": "completed"})
+
+    assert outcome.success is True
+    payload = session.calls[0][1]
+    assert payload["installation_id"] == 41
+    assert payload["collector_version"] == collector.__version__
+    # Existing heartbeat fields are unchanged.
+    assert payload["status"] == "completed"
+    assert (payload["customer_id"], payload["branch_id"]) == (1, 1)
+
+
+def test_post_status_without_installation_id_is_exactly_the_legacy_payload():
+    session = FakeSession()
+
+    post_status(session, _cfg(), {"status": "completed"})
+
+    assert session.calls[0][1] == {"status": "completed", "customer_id": 1, "branch_id": 1}
+
+
+def test_post_status_never_sends_a_hostname_identity():
+    session = FakeSession()
+
+    post_status(session, _cfg(installation_id=41), {"status": "completed"})
+
+    assert "hostname" not in session.calls[0][1]
+
+
+def test_a_status_dict_cannot_override_the_configured_installation_identity():
+    session = FakeSession()
+
+    post_status(
+        session, _cfg(installation_id=41),
+        {"status": "completed", "installation_id": 999, "collector_version": "spoofed", "customer_id": 7},
+    )
+
+    payload = session.calls[0][1]
+    assert payload["installation_id"] == 41
+    assert payload["collector_version"] == collector.__version__
+    assert payload["customer_id"] == 1
+
+
+def test_upload_records_payload_never_carries_installation_fields():
+    session = FakeSession()
+
+    upload_records(session, _cfg(installation_id=41), [{"barcode": "1"}], [], [])
+
+    payload = session.calls[0][1]
+    assert "installation_id" not in payload and "collector_version" not in payload
+
+
+def test_the_next_build_reports_1_0_3():
+    assert collector.__version__ == "1.0.3"

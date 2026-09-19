@@ -44,7 +44,8 @@
        -PythonExe is never used, and a frozen bundle does not even contain
        a requirements.txt to install from.
     4. Writes collector_config.json from the required -CustomerId/
-       -BranchId/-ApiUrl/-CheckinsPath/-RejectsPath/-AcsPath parameters.
+       -BranchId/-InstallationId/-ApiUrl/-CheckinsPath/-RejectsPath/-AcsPath
+       parameters.
        There is no template fallback and no default for any of them --
        see REQUIRED INPUT below. NEVER writes a token into this file --
        SORTVIEW_API_TOKEN is handled entirely separately; see TOKEN SETUP
@@ -56,8 +57,14 @@
        bundle kind was detected -- does NOT register the Scheduled Task,
        bootstrap state, or start anything itself.
 
-    REQUIRED INPUT: -CustomerId and -BranchId (positive integers), -ApiUrl
-    (must begin with https://), and -CheckinsPath, -RejectsPath, -AcsPath
+    REQUIRED INPUT: -CustomerId (Operational Customer ID), -BranchId
+    (Operational Branch ID) and -InstallationId (Installation ID) -- all
+    positive integers, and all three shown for this Collector on the
+    SortView Super Admin Provision Library / Manage Libraries pages, so copy
+    them from there rather than choosing a number. -InstallationId is the
+    server-side collector_installations.id the Collector's heartbeat reports
+    against; it is never inferred from the branch or the machine name. Also
+    required: -ApiUrl (must begin with https://), and -CheckinsPath, -RejectsPath, -AcsPath
     (absolute paths to the three Tech Logic files). Nothing is defaulted:
     a missing or invalid value stops the script, before anything is
     touched, with a non-zero exit code. The source files themselves do not
@@ -95,7 +102,7 @@
 
 .EXAMPLE
     .\install.ps1 `
-        -CustomerId 1 -BranchId 1 `
+        -CustomerId 1 -BranchId 1 -InstallationId 1 `
         -ApiUrl "https://<your-sortview-api-host>" `
         -CheckinsPath "C:\TLCFinalDlls\Checkins.txt" `
         -RejectsPath "C:\TLCFinalDlls\Rejects.txt" `
@@ -109,6 +116,7 @@ param(
     [string]$PythonExe = "python",
     [Nullable[int]]$CustomerId,
     [Nullable[int]]$BranchId,
+    [Nullable[int]]$InstallationId,
     [string]$ApiUrl,
     [string]$CheckinsPath,
     [string]$RejectsPath,
@@ -145,7 +153,7 @@ function Get-InstallInputProblems {
     # Pure validation of the required site inputs -- returns a list of
     # problems (empty = valid); touches nothing on the machine. Kept as a
     # function so tests can run exactly this code without an installer run.
-    param($CustomerId, $BranchId, $ApiUrl, $CheckinsPath, $RejectsPath, $AcsPath)
+    param($CustomerId, $BranchId, $InstallationId, $ApiUrl, $CheckinsPath, $RejectsPath, $AcsPath)
 
     $problems = @()
 
@@ -154,6 +162,9 @@ function Get-InstallInputProblems {
     }
     if ($null -eq $BranchId -or $BranchId -lt 1) {
         $problems += "-BranchId is required and must be a positive integer."
+    }
+    if ($null -eq $InstallationId -or $InstallationId -lt 1) {
+        $problems += "-InstallationId is required and must be a positive integer (the Installation ID shown in Super Admin for this Collector)."
     }
 
     if ([string]::IsNullOrWhiteSpace($ApiUrl)) {
@@ -179,12 +190,13 @@ function New-CollectorConfigJson {
     # Builds collector_config.json's text from the supplied values -- pure,
     # writes nothing. Never includes a token (SORTVIEW_API_TOKEN is read
     # from the environment only). state/status/log paths sit under -DataRoot.
-    param($CustomerId, $BranchId, $ApiUrl, $CheckinsPath, $RejectsPath, $AcsPath, $DataRoot)
+    param($CustomerId, $BranchId, $InstallationId, $ApiUrl, $CheckinsPath, $RejectsPath, $AcsPath, $DataRoot)
 
     $dataRootTrimmed = $DataRoot.TrimEnd('\', '/')
     $config = [ordered]@{
         customer_id = [int]$CustomerId
         branch_id   = [int]$BranchId
+        installation_id = [int]$InstallationId
         api_url     = $ApiUrl.Trim()
         sources     = @(
             [ordered]@{ name = "checkins"; path = $CheckinsPath.Trim() }
@@ -200,7 +212,7 @@ function New-CollectorConfigJson {
 
 # --- required input ----------------------------------------------------
 # Validated before the bundle is verified or anything is touched.
-$inputProblems = @(Get-InstallInputProblems -CustomerId $CustomerId -BranchId $BranchId -ApiUrl $ApiUrl `
+$inputProblems = @(Get-InstallInputProblems -CustomerId $CustomerId -BranchId $BranchId -InstallationId $InstallationId -ApiUrl $ApiUrl `
         -CheckinsPath $CheckinsPath -RejectsPath $RejectsPath -AcsPath $AcsPath)
 if ($inputProblems.Count -gt 0) {
     Write-Host "Missing or invalid required input:" -ForegroundColor Red
@@ -470,7 +482,7 @@ Write-Host "=== 4. Configuration ===" -ForegroundColor Cyan
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 if (Test-Path $ConfigPath -PathType Leaf) {
     Write-Host "Config already exists at $ConfigPath -- left untouched." -ForegroundColor Yellow
-    Write-Host "The -CustomerId/-BranchId/-ApiUrl/-*Path values you supplied were NOT applied to it;" -ForegroundColor Yellow
+    Write-Host "The -CustomerId/-BranchId/-InstallationId/-ApiUrl/-*Path values you supplied were NOT applied to it;" -ForegroundColor Yellow
     Write-Host "review the existing file yourself before continuing." -ForegroundColor Yellow
 } else {
     # Real production finding (unchanged from install-collector.ps1):
@@ -479,10 +491,10 @@ if (Test-Path $ConfigPath -PathType Leaf) {
     # (deliberately not "utf-8-sig"), so a BOM makes json.loads fail
     # immediately. [System.Text.UTF8Encoding($false)] writes UTF-8 with NO
     # BOM. Identical for both bundle kinds.
-    $jsonText = New-CollectorConfigJson -CustomerId $CustomerId -BranchId $BranchId -ApiUrl $ApiUrl `
+    $jsonText = New-CollectorConfigJson -CustomerId $CustomerId -BranchId $BranchId -InstallationId $InstallationId -ApiUrl $ApiUrl `
         -CheckinsPath $CheckinsPath -RejectsPath $RejectsPath -AcsPath $AcsPath -DataRoot $DataRoot
     [System.IO.File]::WriteAllText($ConfigPath, $jsonText, $utf8NoBom)
-    Write-Host "Wrote $ConfigPath from the supplied -CustomerId/-BranchId/-ApiUrl/-CheckinsPath/-RejectsPath/-AcsPath." -ForegroundColor Green
+    Write-Host "Wrote $ConfigPath from the supplied -CustomerId/-BranchId/-InstallationId/-ApiUrl/-CheckinsPath/-RejectsPath/-AcsPath." -ForegroundColor Green
 }
 Write-Host "Config never contains the API token -- see TOKEN SETUP below."
 

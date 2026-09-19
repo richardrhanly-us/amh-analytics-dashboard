@@ -50,6 +50,15 @@ class CollectorConfig:
     http_connect_timeout: float = 10.0
     http_read_timeout: float = 60.0
 
+    # collector_installations.id of THIS deployed Collector. Required for
+    # newly generated commercial configs (the installers write it and
+    # finish-install validates it), but OPTIONAL HERE so an already-deployed
+    # 1.0.2 config that predates it keeps loading and running: with None,
+    # the heartbeat simply omits installation linkage (see
+    # uploader.post_status) and the backend never touches
+    # collector_installations for it. Never inferred from branch/hostname.
+    installation_id: int | None = None
+
     def source(self, name: str) -> SourceConfig:
         for source_cfg in self.sources:
             if source_cfg.name == name:
@@ -73,6 +82,20 @@ def _parse_source(raw: dict[str, Any]) -> SourceConfig:
     if not str(raw["path"]).strip():
         raise ConfigError(f"source entry has an empty 'path': {raw!r}")
     return SourceConfig(name=str(raw["name"]), path=str(raw["path"]))
+
+
+def _parse_installation_id(raw: dict[str, Any]) -> int | None:
+    """Absent (or JSON null) -> None: a legacy config. Anything present must
+    be a genuine positive JSON integer -- bool is rejected explicitly (it is
+    an int subclass), and a string/float is rejected rather than coerced, so
+    a mistyped value fails loudly at config load instead of silently
+    heartbeating as some other installation."""
+    value = raw.get("installation_id")
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ConfigError(f"config 'installation_id' must be a positive integer, got {value!r}")
+    return value
 
 
 def load_config(config_path: str | Path) -> CollectorConfig:
@@ -121,6 +144,7 @@ def load_config(config_path: str | Path) -> CollectorConfig:
         "state_path": Path(raw["state_path"]),
         "status_path": Path(raw["status_path"]),
         "log_path": Path(raw["log_path"]),
+        "installation_id": _parse_installation_id(raw),
     }
 
     defaults = CollectorConfig(**kwargs)

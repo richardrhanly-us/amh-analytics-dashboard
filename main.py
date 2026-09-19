@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import re
-from typing import Literal
+from typing import Literal, NoReturn
 
 import sentry_sdk
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -209,6 +209,11 @@ class UploadRequest(BaseModel):
     acs: list[AcsRow] = Field(default_factory=list)
 
 
+# collector_installations.id is a BIGINT; larger values could only ever be
+# rejected by the database as a 500, so they are rejected as a 422 up front.
+_BIGINT_MAX = 2**63 - 1
+
+
 class PipelineStatusRequest(BaseModel):
     """Shared by two independent writers -- the legacy scheduled
     run_pipeline uploader (last_attempt..destination_breakdown, the
@@ -255,6 +260,18 @@ class PipelineStatusRequest(BaseModel):
     last_failure_category: Literal["retryable_infra", "auth_failure"] | None = None
     last_error: str | None = None
     watcher_last_active_at: str | None = None
+
+    # --- installation lifecycle linkage (metadata only) ----------------------
+    # NOT pipeline_status columns and deliberately absent from the
+    # _PIPELINE_STATUS_*_FIELDS allowlists below: they identify which
+    # collector_installations row this heartbeat belongs to (see
+    # record_installation_heartbeat). Both are omitted by the legacy 1.0.2
+    # Collector, and then collector_installations is never touched.
+    # installation_id is an EXPLICIT identity, never inferred from branch or
+    # hostname; collector_version is informational and never an
+    # authorization input.
+    installation_id: int | None = Field(default=None, ge=1, le=_BIGINT_MAX)
+    collector_version: str | None = Field(default=None, max_length=64)
 
 
 # Fixed allowlists of pipeline_status columns each writer type may update.
@@ -478,6 +495,117 @@ def authenticate_agent(conn, authorization: str | None, customer_id: int, branch
     return token_row
 
 
+# --- collector installation lifecycle linkage ------------------------------
+#
+# Runs AFTER authenticate_agent, inside the same transaction as the
+# pipeline_status upsert, and only when the heartbeat carries an explicit
+# installation_id. The installation must be exactly that row AND belong to the
+# tenant the token resolves to through the same OPERATIONAL bridge
+# authenticate_agent uses (never SaaS ids, never hostname, never "some
+# installation of this branch"):
+#   ci.id = :installation_id
+#   organizations.operational_customer_id = token's customer_id, ci.organization_id = o.id
+#   branches.operational_branch_id        = token's branch_id,   ci.branch_id       = b.id
+#   and the branch must belong to that organization.
+#
+# Fail closed: an unknown/foreign/inactive/retired installation rejects the
+# WHOLE heartbeat with one generic 403 (the specific reason is only logged), so
+# the transaction rolls back and neither pipeline_status nor any installation
+# state changes -- consistent with /upload's "authenticated but not authorized"
+# 403 for an unusable tenant. The 403 is identical whether the installation does
+# not exist, belongs to someone else, or is inactive/retired, so it discloses
+# nothing about which installations or tenants exist.
+#
+# Lifecycle semantics. A "confirmed installation contact" is any successful,
+# authenticated /upload-pipeline-status request carrying the installation_id of
+# a provisioning/active installation of the authenticated customer/branch. The
+# server cannot (and does not try to) tell WHICH Collector operation sent it: a
+# scheduled run's status heartbeat and the install-time preflight probe are both
+# confirmed contact, so activation does NOT wait for the Scheduled Task's first
+# normal run.
+#   installed_at = the FIRST such contact (stamped once, never re-stamped; if an
+#                  admin sets the installation active first, that admin change
+#                  stamped it instead -- see tenant_service.update_collector_installation)
+#   last_seen_at = the MOST RECENT such contact
+#   status       = provisioning -> active on the first such contact
+INSTALLATION_NOT_AUTHORIZED_DETAIL = "Collector installation is not authorized to report status"
+# Heartbeats may only ever keep a live installation alive. inactive/retired are
+# deliberate admin decisions a heartbeat must never undo.
+INSTALLATION_HEARTBEAT_STATUSES = ("provisioning", "active")
+
+_INSTALLATION_LOOKUP_SQL = """
+    SELECT ci.id, ci.status
+    FROM collector_installations ci
+    JOIN organizations o
+      ON o.id = ci.organization_id
+    JOIN branches b
+      ON b.id = ci.branch_id
+     AND b.organization_id = o.id
+    WHERE ci.id = :installation_id
+      AND o.operational_customer_id = :customer_id
+      AND b.operational_branch_id = :branch_id
+"""
+
+# The status guard in the WHERE clause (not just the Python check above) keeps
+# an admin's concurrent inactive/retired change from being overwritten between
+# the lookup and this write. status is always 'active' afterwards: this only
+# ever matches provisioning (-> active) or active (unchanged).
+_INSTALLATION_HEARTBEAT_SQL = """
+    UPDATE collector_installations
+    SET status = 'active',
+        installed_at = COALESCE(installed_at, CURRENT_TIMESTAMP),
+        last_seen_at = CURRENT_TIMESTAMP,
+        collector_version = COALESCE(:collector_version, collector_version),
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = :installation_id
+      AND status IN ('provisioning', 'active')
+"""
+
+
+def _reject_installation(token_row, installation_id: int, reason: str) -> NoReturn:
+    logger.warning(
+        "Agent heartbeat rejected, installation not authorized | token_id=%s customer_id=%s "
+        "branch_id=%s installation_id=%s reason=%s",
+        token_row["id"], token_row["customer_id"], token_row["branch_id"], installation_id, reason,
+    )
+    raise HTTPException(status_code=403, detail=INSTALLATION_NOT_AUTHORIZED_DETAIL)
+
+
+def record_installation_heartbeat(conn, token_row, installation_id: int, collector_version: str | None) -> None:
+    """Validates that `installation_id` is exactly an installation of the
+    authenticated tenant/branch and still provisioning/active, then records
+    the confirmed contact (a scheduled-run heartbeat or a preflight probe --
+    see "Lifecycle semantics" above): provisioning -> active, installed_at
+    stamped once at the first such contact, last_seen_at and the
+    runtime-reported collector_version updated.
+    Raises the generic 403 otherwise, leaving the installation untouched."""
+    version = (collector_version or "").strip() or None
+
+    installation = conn.execute(
+        text(_INSTALLATION_LOOKUP_SQL),
+        {
+            "installation_id": installation_id,
+            "customer_id": token_row["customer_id"],
+            "branch_id": token_row["branch_id"],
+        },
+    ).mappings().first()
+
+    if installation is None:
+        _reject_installation(
+            token_row, installation_id,
+            "no such installation for the authenticated organization/branch",
+        )
+    elif installation["status"] not in INSTALLATION_HEARTBEAT_STATUSES:
+        _reject_installation(token_row, installation_id, f"installation status {installation['status']!r}")
+
+    result = conn.execute(
+        text(_INSTALLATION_HEARTBEAT_SQL),
+        {"installation_id": installation_id, "collector_version": version},
+    )
+    if result.rowcount != 1:
+        _reject_installation(token_row, installation_id, "installation status changed during the heartbeat")
+
+
 @app.get("/")
 def root():
     return {"status": "SortView API running"}
@@ -641,12 +769,21 @@ def upload(request: Request, data: UploadRequest, authorization: str | None = He
 def upload_pipeline_status(request: Request, data: PipelineStatusRequest, authorization: str | None = Header(default=None)):
     try:
         with engine.begin() as conn:
-            authenticate_agent(
+            token_row = authenticate_agent(
                 conn=conn,
                 authorization=authorization,
                 customer_id=data.customer_id,
                 branch_id=data.branch_id,
             )
+
+            # Only a heartbeat that explicitly names an installation is linked
+            # to one; a legacy heartbeat (no installation_id) never touches
+            # collector_installations. Same transaction as the upsert below:
+            # a rejection here rolls back the entire heartbeat.
+            if data.installation_id is not None:
+                record_installation_heartbeat(
+                    conn, token_row, data.installation_id, data.collector_version
+                )
 
             sql, params = _build_pipeline_status_upsert(data)
             conn.execute(text(sql), params)

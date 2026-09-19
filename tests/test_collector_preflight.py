@@ -392,3 +392,87 @@ def test_main_returns_nonzero_when_a_check_fails(tmp_path, monkeypatch):
 
     exit_code = main(["--config", str(config_path)])
     assert exit_code == 1
+
+
+# --- installation_id check ------------------------------------------------
+
+
+def test_preflight_probe_carries_the_installation_identity_when_configured(tmp_path, monkeypatch):
+    from collector import __version__
+
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
+    session = FakeSession()
+
+    run_preflight(_cfg(tmp_path, installation_id=41), session=session)
+
+    payload = session.post_calls[0][1]
+    assert payload["installation_id"] == 41
+    assert payload["collector_version"] == __version__
+    assert payload["status"] == "preflight_check"
+
+
+def test_preflight_probe_for_a_legacy_config_has_no_installation_fields(tmp_path, monkeypatch):
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
+    session = FakeSession()
+
+    report = run_preflight(_cfg(tmp_path), session=session)
+
+    payload = session.post_calls[0][1]
+    assert "installation_id" not in payload and "collector_version" not in payload
+    result = _result(report, "installation_id_accepted")
+    assert result.passed is True
+    assert "legacy" in result.detail
+
+
+def test_accepted_installation_id_passes_the_installation_check(tmp_path, monkeypatch):
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
+
+    report = run_preflight(_cfg(tmp_path, installation_id=41), session=FakeSession())
+
+    result = _result(report, "installation_id_accepted")
+    assert result.passed is True
+    assert "41" in result.detail
+
+
+def test_rejected_installation_id_fails_only_the_installation_check(tmp_path, monkeypatch):
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
+    session = FakeSession(post_response=_FakeResponse(
+        403, text='{"detail": "Collector installation is not authorized to report status"}'
+    ))
+
+    report = run_preflight(_cfg(tmp_path, installation_id=41), session=session)
+
+    # The server checks token and scope BEFORE the installation, so both passed.
+    assert _result(report, "api_authentication").passed is True
+    assert _result(report, "token_scope_matches").passed is True
+    result = _result(report, "installation_id_accepted")
+    assert result.passed is False
+    assert "Installation ID" in result.detail and "Super Admin" in result.detail
+    assert report.passed is False
+
+
+def test_scope_mismatch_leaves_the_installation_check_not_evaluated(tmp_path, monkeypatch):
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
+    session = FakeSession(post_response=_FakeResponse(403, text="Token scope does not match customer_id / branch_id"))
+
+    report = run_preflight(_cfg(tmp_path, installation_id=41), session=session)
+
+    assert _result(report, "token_scope_matches").passed is False
+    result = _result(report, "installation_id_accepted")
+    assert result.passed is False and "not evaluated" in result.detail
+
+
+def test_network_failure_leaves_the_installation_check_not_evaluated(tmp_path, monkeypatch):
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
+    session = FakeSession(post_response=_FakeResponse(503, text="down"))
+
+    report = run_preflight(_cfg(tmp_path, installation_id=41), session=session)
+
+    result = _result(report, "installation_id_accepted")
+    assert result.passed is False and "could not evaluate" in result.detail

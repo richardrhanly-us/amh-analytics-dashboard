@@ -3,6 +3,8 @@
 
   "customer_id": 0,
   "branch_id": 0,
+  "_comment_installation_id": "installation_id is the Installation ID shown for this Collector in SortView Super Admin (collector_installations.id). Required for a new install; copy it from Super Admin, never invent it. 0 here is a placeholder and is rejected at load time. A config from an older Collector without this key still loads, but its heartbeats will not update the installation record.",
+  "installation_id": 0,
   "api_url": "https://sortview-app-2p336.ondigitalocean.app",
 
   "sources": [

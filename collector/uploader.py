@@ -60,6 +60,7 @@ from typing import Any
 import requests
 from urllib3.util.retry import Retry
 
+from . import __version__
 from .config import CollectorConfig
 
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
@@ -272,4 +273,13 @@ def post_status(session: requests.Session, cfg: CollectorConfig, status: dict[st
     url = f"{cfg.api_url}/upload-pipeline-status"
     timeout = (cfg.http_connect_timeout, cfg.http_read_timeout)
     payload = {**status, "customer_id": cfg.customer_id, "branch_id": cfg.branch_id}
+    # Installation lifecycle linkage: only when the config carries an
+    # explicit installation_id. A legacy config (no installation_id) sends
+    # neither field, exactly as the 1.0.2 Collector did, and the backend
+    # then leaves collector_installations alone. collector_version is the
+    # running code's own version, metadata only -- never an authorization
+    # input on the server.
+    if cfg.installation_id is not None:
+        payload["installation_id"] = cfg.installation_id
+        payload["collector_version"] = __version__
     return _post_json(session, url, payload, headers=_auth_headers(cfg), timeout=timeout)

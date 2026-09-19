@@ -136,7 +136,11 @@ function Get-FinishConfigProblems {
 
     $problems = @()
 
-    foreach ($idName in @("customer_id", "branch_id")) {
+    # installation_id: required for a freshly installed (commercial) Collector,
+    # so its heartbeat links to its installation record. (collector/config.py
+    # itself still loads a config without it -- an already-deployed 1.0.2
+    # config keeps running -- but a new install must never finish without it.)
+    foreach ($idName in @("customer_id", "branch_id", "installation_id")) {
         $property = $Config.PSObject.Properties[$idName]
         $parsed = 0
         if ($null -eq $property -or -not [int]::TryParse([string]$property.Value, [ref]$parsed) -or $parsed -lt 1) {
