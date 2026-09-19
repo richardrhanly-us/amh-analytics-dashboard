@@ -151,6 +151,202 @@ def get_branch_by_slug(org_slug: str, branch_slug: str) -> dict[str, Any] | None
         return dict(row) if row else None
 
 
+# --- collector installations -------------------------------------------------
+#
+# collector_installations is server-side bookkeeping only: one row per
+# deployed Collector instance/machine. It holds no credentials, and it is not
+# a health signal -- pipeline_status remains the source of branch/ingestion
+# health. last_seen_at is not populated by any of these functions.
+
+COLLECTOR_INSTALLATION_STATUSES = ("provisioning", "active", "inactive", "retired")
+
+
+def _clean_optional(value: str | None) -> str | None:
+    value = (value or "").strip()
+    return value or None
+
+
+def _validate_installation_fields(name: str, status: str) -> str:
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Installation name is required")
+    if status not in COLLECTOR_INSTALLATION_STATUSES:
+        raise ValueError(
+            f"Invalid installation status: {status!r} "
+            f"(expected one of {', '.join(COLLECTOR_INSTALLATION_STATUSES)})"
+        )
+    return name
+
+
+def create_collector_installation(
+    organization_id: int,
+    branch_id: int,
+    name: str,
+    hostname: str | None = None,
+    collector_version: str | None = None,
+    status: str = "provisioning",
+) -> dict[str, Any]:
+    name = _validate_installation_fields(name, status)
+
+    sql_find_branch = text("""
+        SELECT id
+        FROM branches
+        WHERE id = :branch_id
+          AND organization_id = :organization_id
+        LIMIT 1
+    """)
+
+    sql_insert = text("""
+        INSERT INTO collector_installations
+            (organization_id, branch_id, name, hostname, collector_version, status)
+        VALUES
+            (:organization_id, :branch_id, :name, :hostname, :collector_version, :status)
+        RETURNING
+            id, organization_id, branch_id, name, hostname, collector_version,
+            status, installed_at, last_seen_at, created_at, updated_at
+    """)
+
+    engine = get_engine()
+    with engine.begin() as conn:
+        branch = conn.execute(
+            sql_find_branch,
+            {"branch_id": branch_id, "organization_id": organization_id},
+        ).mappings().first()
+        if not branch:
+            raise RuntimeError(
+                f"Branch {branch_id} not found for organization {organization_id}"
+            )
+
+        row = conn.execute(
+            sql_insert,
+            {
+                "organization_id": organization_id,
+                "branch_id": branch_id,
+                "name": name,
+                "hostname": _clean_optional(hostname),
+                "collector_version": _clean_optional(collector_version),
+                "status": status,
+            },
+        ).mappings().first()
+
+    return dict(row) if row else {}
+
+
+def list_collector_installations_for_branch(branch_id: int) -> list[dict[str, Any]]:
+    sql = text("""
+        SELECT
+            ci.id,
+            ci.organization_id,
+            ci.branch_id,
+            b.name AS branch_name,
+            b.slug AS branch_slug,
+            ci.name,
+            ci.hostname,
+            ci.collector_version,
+            ci.status,
+            ci.installed_at,
+            ci.last_seen_at,
+            ci.created_at,
+            ci.updated_at
+        FROM collector_installations ci
+        JOIN branches b
+          ON b.id = ci.branch_id
+        WHERE ci.branch_id = :branch_id
+        ORDER BY ci.id
+    """)
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(sql, {"branch_id": branch_id}).mappings().all()
+        return [dict(row) for row in rows]
+
+
+def list_collector_installations_for_organization(organization_id: int) -> list[dict[str, Any]]:
+    sql = text("""
+        SELECT
+            ci.id,
+            ci.organization_id,
+            ci.branch_id,
+            b.name AS branch_name,
+            b.slug AS branch_slug,
+            ci.name,
+            ci.hostname,
+            ci.collector_version,
+            ci.status,
+            ci.installed_at,
+            ci.last_seen_at,
+            ci.created_at,
+            ci.updated_at
+        FROM collector_installations ci
+        JOIN branches b
+          ON b.id = ci.branch_id
+        WHERE ci.organization_id = :organization_id
+        ORDER BY b.is_primary DESC, b.id, ci.id
+    """)
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(sql, {"organization_id": organization_id}).mappings().all()
+        return [dict(row) for row in rows]
+
+
+def update_collector_installation(
+    installation_id: int,
+    organization_id: int,
+    name: str,
+    hostname: str | None,
+    collector_version: str | None,
+    status: str,
+) -> dict[str, Any]:
+    """Set an installation's name/hostname/collector_version/status.
+
+    All four fields are written; an empty hostname or collector_version is
+    stored as NULL. organization_id scopes the update so one tenant's
+    installation can never be edited through another tenant's context.
+    installed_at is stamped once, the first time an installation becomes
+    'active'; last_seen_at is never touched here.
+    """
+    name = _validate_installation_fields(name, status)
+
+    sql = text("""
+        UPDATE collector_installations
+        SET name = :name,
+            hostname = :hostname,
+            collector_version = :collector_version,
+            status = :status,
+            installed_at = CASE
+                WHEN :status = 'active' AND installed_at IS NULL THEN NOW()
+                ELSE installed_at
+            END,
+            updated_at = NOW()
+        WHERE id = :installation_id
+          AND organization_id = :organization_id
+        RETURNING
+            id, organization_id, branch_id, name, hostname, collector_version,
+            status, installed_at, last_seen_at, created_at, updated_at
+    """)
+
+    engine = get_engine()
+    with engine.begin() as conn:
+        row = conn.execute(
+            sql,
+            {
+                "installation_id": installation_id,
+                "organization_id": organization_id,
+                "name": name,
+                "hostname": _clean_optional(hostname),
+                "collector_version": _clean_optional(collector_version),
+                "status": status,
+            },
+        ).mappings().first()
+
+    if not row:
+        raise RuntimeError(
+            f"Collector installation {installation_id} not found for organization {organization_id}"
+        )
+    return dict(row)
+
+
 def _deep_merge_settings(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     result = dict(base)
 
