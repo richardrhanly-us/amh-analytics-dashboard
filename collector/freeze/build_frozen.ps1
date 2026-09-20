@@ -22,6 +22,11 @@
         SortViewCollector.exe support-info --config <path>
         SortViewCollector.exe version
 
+    RELEASE READINESS (before anything is built): scripts\check_release_readiness.py
+    must pass -- collector.__version__ is still the only place the version is
+    written, the packaging tooling derives from it, and no current-state test
+    carries a stale release literal or depends on today's date.
+
     VERSION CHECK (fails the build on any drift): collector.__version__ is
     the single authoritative Collector version. After PyInstaller succeeds
     and the executable exists, this script runs `SortViewCollector.exe
@@ -112,6 +117,18 @@ $SpecPath = Join-Path $PSScriptRoot "sortview_collector.spec"
 if (-not (Test-Path $SpecPath)) {
     throw "Spec file not found at '$SpecPath'."
 }
+
+# --- release readiness: BEFORE anything is built ---------------------------
+# collector.__version__ is the single version authority; this proves the tooling still derives from it and that
+# no current-state test carries a stale release literal or depends on today's date -- and fails fast, before the
+# ~25s PyInstaller build, if not. (collector/build_release.py runs the same check before packaging.)
+$ReadinessScript = Join-Path $RepoRoot "scripts\check_release_readiness.py"
+if (-not (Test-Path $ReadinessScript)) {
+    throw "Release readiness check not found at '$ReadinessScript'."
+}
+Write-Host "Checking release readiness ..." -ForegroundColor Cyan
+& $VenvPython $ReadinessScript --repo-root $RepoRoot
+if ($LASTEXITCODE -ne 0) { throw "Release readiness check failed (exit $LASTEXITCODE): fix what it lists, then build again." }
 
 Write-Host "Building frozen runtime with $VenvPython ..." -ForegroundColor Cyan
 & $VenvPython -m PyInstaller $SpecPath --distpath $DistPath --workpath $WorkPath --noconfirm

@@ -27,7 +27,7 @@ import pandas as pd
 from streamlit.testing.v1 import AppTest
 
 TEST_MIN_DATE = pd.Timestamp("2020-01-01").date()
-TEST_TODAY = pd.Timestamp("2026-03-30").date()
+TEST_TODAY = pd.Timestamp("2026-03-30").date()  # freshness: allow FRESH004 -- the same date is injected as local_today= into the code under test
 
 
 def _resolve_script():

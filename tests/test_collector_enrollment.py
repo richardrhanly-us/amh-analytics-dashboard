@@ -17,18 +17,22 @@ import hashlib
 import json
 import re
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
 
 import pytest
+from controlled_clock import ControlledClock
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.pool import StaticPool
 
 import main
+from collector import __version__ as COLLECTOR_VERSION
 from scripts import create_agent_token as create_agent_token_script
 from src.services import collector_enrollment_service as enrollment
 
-NOW = datetime(2026, 9, 20, 12, 0, 0, tzinfo=UTC)
+# ONE controlled clock for this whole module (see tests/controlled_clock.py). Codes are generated from it, the
+# endpoint and the service read it (never the wall clock), and "expired" is reached by ADVANCING it -- so no test
+# here depends on the real calendar date, and none can silently start failing as real time passes.
+CLOCK = ControlledClock()
 PUBLIC = {"detail": "Invalid or expired enrollment code"}
 _HASH_EXPR = "encode(digest(:token, 'sha256'), 'hex')"
 CODE_PATTERN = re.compile(r"^SV(-[A-HJKMNP-Z2-9]{4}){4}$")
@@ -48,6 +52,14 @@ client = TestClient(main.app)
 @pytest.fixture(autouse=True)
 def _reset_rate_limiter():
     main.limiter.reset()
+
+
+@pytest.fixture(autouse=True)
+def _controlled_time():
+    """Every test starts at the clock's start and the service reads the clock, not the wall clock."""
+    CLOCK.reset()
+    with CLOCK.controlling(enrollment):
+        yield
 
 
 # --- database ---------------------------------------------------------------------------
@@ -150,13 +162,13 @@ def world(db):
 # --- helpers -------------------------------------------------------------------------------
 
 def _generate(engine, installation_id, **kwargs):
-    kwargs.setdefault("now", NOW)
+    kwargs.setdefault("now", CLOCK.instant)
     with engine.begin() as conn:
         return enrollment.create_enrollment_code(conn, installation_id, **kwargs)
 
 
 def _redeem(engine, code, **kwargs):
-    kwargs.setdefault("now", NOW + timedelta(minutes=1))
+    kwargs.setdefault("now", CLOCK.instant)
     with engine.begin() as conn:
         return enrollment.redeem_enrollment_code(conn, code, **kwargs)
 
@@ -172,9 +184,9 @@ def _insert_code(engine, installation_id, *, expires_at=None, used=False, revoke
                 "revoked_at) VALUES (:installation_id, :code_hash, :expires_at, :used_at, :revoked_at)",
                 installation_id=installation_id,
                 code_hash=enrollment.hash_enrollment_code(raw),
-                expires_at=expires_at or NOW + timedelta(minutes=30),
-                used_at="2026-09-20 11:00:00" if used else None,
-                revoked_at="2026-09-20 11:00:00" if revoked else None,
+                expires_at=expires_at or CLOCK.instant + enrollment.DEFAULT_ENROLLMENT_CODE_TTL,
+                used_at=CLOCK.instant - timedelta(hours=1) if used else None,
+                revoked_at=CLOCK.instant - timedelta(hours=1) if revoked else None,
             )
         )
     return raw
@@ -278,7 +290,7 @@ def test_generation_returns_the_raw_code_once_with_installation_and_expiry(world
     assert CODE_PATTERN.match(result["enrollment_code"])
     assert result["installation_id"] == 101
     assert result["installation_name"] == "Main AMH Sorter"
-    assert result["expires_at"] == NOW + timedelta(minutes=30)  # default 30 minutes
+    assert result["expires_at"] == CLOCK.instant + timedelta(minutes=30)  # default 30 minutes
     assert result["ttl_minutes"] == 30
     assert result["revoked_previous_count"] == 0
 
@@ -299,7 +311,7 @@ def test_generation_stores_only_the_sha256_hash_and_never_the_raw_code(world):
 def test_generation_honours_a_custom_ttl(world):
     result = _generate(world, 101, ttl=timedelta(minutes=5))
 
-    assert result["expires_at"] == NOW + timedelta(minutes=5) and result["ttl_minutes"] == 5
+    assert result["expires_at"] == CLOCK.instant + timedelta(minutes=5) and result["ttl_minutes"] == 5
 
 
 @pytest.mark.parametrize("installation_id", [101, 102], ids=["provisioning", "active"])
@@ -406,7 +418,7 @@ def test_generation_uses_the_installation_row_lock_only_on_postgresql(world):
 def test_redeeming_a_provisioning_installations_code_returns_exactly_the_four_fields(world):
     code = _generate(world, 101)["enrollment_code"]
 
-    result = _redeem(world, code, hostname="AMH-PC", collector_version="1.0.4")
+    result = _redeem(world, code, hostname="AMH-PC", collector_version=COLLECTOR_VERSION)
 
     assert set(result) == {"customer_id", "branch_id", "installation_id", "agent_token"}
     assert result["customer_id"] == 10  # OPERATIONAL customer, not organizations.id (1)
@@ -427,14 +439,14 @@ def test_redeeming_an_active_installations_code_works_for_a_reinstall(world):
 def test_the_token_row_has_the_right_scope_binding_hash_and_description(world):
     code = _generate(world, 101)["enrollment_code"]
 
-    result = _redeem(world, code, hostname="AMH-PC", collector_version="1.0.4")
+    result = _redeem(world, code, hostname="AMH-PC", collector_version=COLLECTOR_VERSION)
 
     (token,) = _tokens(world)
     assert (token["customer_id"], token["branch_id"], token["installation_id"]) == (10, 1, 101)
     assert token["is_active"] in (1, True)
     assert token["token_hash"] == hashlib.sha256(result["agent_token"].encode("utf-8")).hexdigest()
     assert "installation 101" in token["description"] and "Main AMH Sorter" in token["description"]
-    assert "AMH-PC" in token["description"] and "1.0.4" in token["description"]
+    assert "AMH-PC" in token["description"] and COLLECTOR_VERSION in token["description"]
     assert result["agent_token"] not in token["description"]
     assert token["last_used_at"] is None
 
@@ -550,17 +562,29 @@ def test_a_malformed_code_is_refused_without_reaching_the_database(world, bad):
     _assert_refused(world, bad, "malformed_code")
 
 
-def test_an_expired_code_is_refused_and_the_boundary_is_exclusive(world):
-    code = _generate(world, 101)["enrollment_code"]  # expires NOW + 30m
+@pytest.mark.parametrize(
+    ("elapsed", "expired"),
+    [
+        (timedelta(0), False),
+        (timedelta(minutes=29, seconds=59), False),
+        (timedelta(minutes=30), True),  # exactly at expires_at: the boundary is exclusive
+        (timedelta(minutes=30, seconds=1), True),
+        (timedelta(minutes=31), True),
+        (timedelta(days=400), True),
+    ],
+    ids=["issued", "one_second_left", "at_expiry", "one_second_past", "one_minute_past", "long_past"],
+)
+def test_a_code_expires_when_the_controlled_clock_reaches_its_expiry_and_not_before(world, elapsed, expired):
+    code = _generate(world, 101)["enrollment_code"]  # default lifetime: 30 minutes
+    CLOCK.advance(elapsed)
 
-    with pytest.raises(enrollment.EnrollmentError) as excinfo:
-        _redeem(world, code, now=NOW + timedelta(minutes=31))
-    assert _reason(excinfo) == "expired"
-    with pytest.raises(enrollment.EnrollmentError) as excinfo:
-        _redeem(world, code, now=NOW + timedelta(minutes=30))  # exactly at expires_at
-    assert _reason(excinfo) == "expired"
-    assert _tokens(world) == []
-    assert _redeem(world, code, now=NOW + timedelta(minutes=29, seconds=59))["installation_id"] == 101
+    if expired:
+        with pytest.raises(enrollment.EnrollmentError) as excinfo:
+            _redeem(world, code)
+        assert _reason(excinfo) == "expired"
+        assert _tokens(world) == []
+    else:
+        assert _redeem(world, code)["installation_id"] == 101
 
 
 def test_a_used_code_cannot_be_redeemed_again(world):
@@ -754,7 +778,7 @@ def test_a_code_claimed_between_the_lookup_and_the_update_issues_no_token(world)
 
     with pytest.raises(enrollment.EnrollmentError) as excinfo, \
             _HookedEngine(world, steal_the_code).begin() as conn:
-        enrollment.redeem_enrollment_code(conn, code, now=NOW + timedelta(minutes=1))
+        enrollment.redeem_enrollment_code(conn, code, now=CLOCK.instant)
 
     assert _reason(excinfo) == "lost_redemption_race"
     assert _tokens(world) == []  # and the claimed-by-someone-else state was rolled back with it
@@ -797,53 +821,50 @@ def test_neither_the_code_nor_the_token_is_ever_logged(world, caplog):
 # POST /collector/enroll
 # ======================================================================================
 
-# The endpoint takes no `now`: it reads the wall clock (redeem_enrollment_code(now=None)). _generate, though,
-# stamps codes at the fixed NOW, so under the real clock every HTTP test silently expired 30 minutes after NOW in
-# real time. _enroll therefore pins the service's clock to the instant _redeem uses for direct calls -- the
-# same relationship (generated at NOW, redeemed a minute later) on both paths, whatever day the suite runs.
-ENDPOINT_NOW = NOW + timedelta(minutes=1)
-
-
-class _InstanceOfRealDatetime(type):
-    def __instancecheck__(cls, instance):
-        return isinstance(instance, datetime)  # the service still sees its real, timezone-aware datetimes as datetimes
-
-
-class _FrozenDatetime(datetime, metaclass=_InstanceOfRealDatetime):
-    """`datetime` as the service module sees it, with only now() fixed; everything else is the real class."""
-
-    @classmethod
-    def now(cls, tz=None):
-        return ENDPOINT_NOW.astimezone(tz) if tz else ENDPOINT_NOW.replace(tzinfo=None)
-
-
 def _enroll(code, **extra):
-    with patch.object(enrollment, "datetime", _FrozenDatetime):
-        return client.post("/collector/enroll", json={"enrollment_code": code, **extra})
+    return client.post("/collector/enroll", json={"enrollment_code": code, **extra})
 
 
-def test_the_endpoint_clock_is_pinned_so_a_fresh_code_is_unexpired_and_the_expiry_boundary_is_exact(world):
-    fresh = _generate(world, 101)["enrollment_code"]  # expires NOW + 30m; the endpoint judges at NOW + 1m
-    assert _enroll(fresh).status_code == 200
+# The endpoint takes no `now`: it reads the service's clock -- which the autouse fixture above points at CLOCK.
+_YEARS_APART = [
+    datetime(1999, 12, 31, 23, 0, tzinfo=UTC),
+    datetime(2026, 9, 20, 12, 0, tzinfo=UTC),
+    datetime(2099, 6, 1, 8, 30, tzinfo=UTC),
+]
 
-    at_the_boundary = _insert_code(world, 102, expires_at=ENDPOINT_NOW)  # expires exactly when the endpoint checks
-    assert _enroll(at_the_boundary).status_code == 400
 
-    just_valid = _insert_code(world, 201, expires_at=ENDPOINT_NOW + timedelta(seconds=1))
+@pytest.mark.parametrize("start", _YEARS_APART, ids=["before_today", "the_default_start", "long_after_today"])
+def test_a_freshly_generated_code_is_unexpired_at_the_endpoint_on_any_calendar_date(world, start):
+    CLOCK.set(start)  # nothing in the flow may care what the real date is
+
+    code = _generate(world, 101)["enrollment_code"]
+
+    assert _enroll(code).status_code == 200
+
+
+def test_the_endpoint_expires_a_code_exactly_when_the_controlled_clock_says_so(world):
+    just_valid = _generate(world, 101, ttl=timedelta(minutes=5))["enrollment_code"]
+    at_expiry = _generate(world, 102, ttl=timedelta(minutes=5))["enrollment_code"]
+    long_past = _generate(world, 201, ttl=timedelta(minutes=5))["enrollment_code"]
+
+    CLOCK.advance(timedelta(minutes=5) - timedelta(seconds=1))
     assert _enroll(just_valid).status_code == 200
+    CLOCK.advance(timedelta(seconds=1))
+    assert _enroll(at_expiry).status_code == 400  # the boundary is exclusive at the endpoint too
+    CLOCK.advance(timedelta(days=400))
+    assert _enroll(long_past).status_code == 400
 
 
-def test_the_pinned_clock_changes_nothing_else_the_service_does_with_datetimes(world):
-    with patch.object(enrollment, "datetime", _FrozenDatetime):
-        assert enrollment.datetime.now(UTC) == ENDPOINT_NOW
-        assert isinstance(NOW, enrollment.datetime) and isinstance(datetime.now(UTC), enrollment.datetime)
-    assert enrollment.datetime is datetime  # restored afterwards: the super-admin tests below use the real clock
+def test_the_service_reads_only_the_controlled_clock():
+    CLOCK.advance(timedelta(minutes=7))
+
+    assert enrollment.datetime.now(UTC) == CLOCK.instant  # freshness: allow FRESH005 -- reads the controlled clock through the module under test, not the wall clock
 
 
 def test_the_endpoint_needs_no_token_and_returns_exactly_the_four_fields(world):
     code = _generate(world, 101)["enrollment_code"]
 
-    response = _enroll(code, hostname="AMH-PC", collector_version="1.0.4")
+    response = _enroll(code, hostname="AMH-PC", collector_version=COLLECTOR_VERSION)
 
     assert response.status_code == 200
     body = response.json()
@@ -870,7 +891,7 @@ def test_the_enrolled_token_authenticates_a_heartbeat_and_that_is_what_confirms_
     heartbeat = client.post(
         "/upload-pipeline-status",
         json={"customer_id": body["customer_id"], "branch_id": body["branch_id"], "status": "completed",
-              "installation_id": body["installation_id"], "collector_version": "1.0.4"},
+              "installation_id": body["installation_id"], "collector_version": COLLECTOR_VERSION},
         headers={"Authorization": f"Bearer {body['agent_token']}"},
     )
 
@@ -878,7 +899,7 @@ def test_the_enrolled_token_authenticates_a_heartbeat_and_that_is_what_confirms_
     installation = next(r for r in _installations(world) if r["id"] == 101)
     assert installation["status"] == "active"
     assert installation["installed_at"] is not None and installation["last_seen_at"] is not None
-    assert installation["collector_version"] == "1.0.4"
+    assert installation["collector_version"] == COLLECTOR_VERSION
 
 
 def _used_code(engine):
@@ -887,11 +908,17 @@ def _used_code(engine):
     return code
 
 
+def _expired_code(engine):
+    code = _generate(engine, 101)["enrollment_code"]
+    CLOCK.advance(enrollment.DEFAULT_ENROLLMENT_CODE_TTL + timedelta(seconds=1))  # time passes; nothing else changes
+    return code
+
+
 _REFUSAL_SETUPS = {
     "unknown": lambda db: enrollment.new_enrollment_code(),
     "malformed": lambda db: "not-a-code",
     "used": lambda db: _used_code(db),
-    "expired": lambda db: _insert_code(db, 101, expires_at=datetime(2020, 1, 1, tzinfo=UTC)),
+    "expired": lambda db: _expired_code(db),
     "revoked": lambda db: _insert_code(db, 101, revoked=True),
     "inactive_installation": lambda db: _insert_code(db, 103),
     "retired_installation": lambda db: _insert_code(db, 104),
@@ -1061,7 +1088,7 @@ def test_an_enrolled_token_may_report_its_own_installation_and_omit_the_id(world
     body = _enroll(_generate(world, 101)["enrollment_code"]).json()
     token = body["agent_token"]
 
-    assert _heartbeat(token, installation_id=101, collector_version="1.0.4").status_code == 200
+    assert _heartbeat(token, installation_id=101, collector_version=COLLECTOR_VERSION).status_code == 200
     assert _heartbeat(token).status_code == 200  # a legacy-shaped heartbeat is not rejected
 
 
@@ -1154,7 +1181,7 @@ def test_super_admin_generation_returns_the_code_once_and_records_the_admin(supe
 
     assert CODE_PATTERN.match(result["enrollment_code"])
     assert result["installation_id"] == 101 and result["installation_name"] == "Main AMH Sorter"
-    assert result["ttl_minutes"] == 30 and result["expires_at"] > datetime.now(UTC)
+    assert result["ttl_minutes"] == 30 and result["expires_at"] == CLOCK.instant + timedelta(minutes=30)
     (row,) = _codes(super_admin_engine)
     assert row["created_by_user_id"] == 5
     assert result["enrollment_code"] not in _everything_stored(super_admin_engine)
@@ -1166,9 +1193,9 @@ def test_super_admin_generation_invalidates_the_previous_unused_code_for_that_in
 
     assert second["revoked_previous_count"] == 1
     with pytest.raises(enrollment.EnrollmentError) as excinfo:
-        _redeem(super_admin_engine, first["enrollment_code"], now=datetime.now(UTC))
+        _redeem(super_admin_engine, first["enrollment_code"], now=CLOCK.instant)
     assert _reason(excinfo) == "revoked"
-    assert _redeem(super_admin_engine, second["enrollment_code"], now=datetime.now(UTC))["installation_id"] == 101
+    assert _redeem(super_admin_engine, second["enrollment_code"], now=CLOCK.instant)["installation_id"] == 101
 
 
 def test_super_admin_generation_is_scoped_to_the_selected_installation_and_organization(super_admin_engine):
@@ -1181,7 +1208,7 @@ def test_super_admin_generation_is_scoped_to_the_selected_installation_and_organ
 
     # Generating for 101 twice never disturbed 102's code.
     enrollment.generate_enrollment_code_for_installation(101, expected_organization_id=1)
-    assert _redeem(super_admin_engine, other["enrollment_code"], now=datetime.now(UTC))["installation_id"] == 102
+    assert _redeem(super_admin_engine, other["enrollment_code"], now=CLOCK.instant)["installation_id"] == 102
 
 
 def test_super_admin_generation_refuses_an_unenrollable_installation(super_admin_engine):

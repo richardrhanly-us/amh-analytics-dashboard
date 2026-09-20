@@ -18,8 +18,15 @@ if SRC_DIR not in sys.path:
 if SUPER_ADMIN_DIR not in sys.path:
     sys.path.insert(0, SUPER_ADMIN_DIR)
 
+# The repository root, for `collector` -- the one authority for the Collector version
+# (collector/__init__.py; importing the package runs nothing else). Appended, not
+# inserted first, so nothing that is already importable can be shadowed by it.
+if ROOT_DIR not in sys.path:
+    sys.path.append(ROOT_DIR)
+
 from super_auth import require_super_admin
 
+from collector import __version__ as COLLECTOR_VERSION
 from services.tenant_service import (
     assign_operational_identity,
     build_collector_agent_config,
@@ -180,7 +187,7 @@ with st.form("provision_library_form"):
     create_installation = st.checkbox("Create initial installation record", value=True)
     installation_name = st.text_input("Installation name", value="Main AMH Sorter")
     installation_hostname = st.text_input("Installation hostname (optional)")
-    installation_version = st.text_input("Collector version", value="1.0.3")
+    installation_version = st.text_input("Collector version", value=COLLECTOR_VERSION)
 
     submitted = st.form_submit_button("Provision Library", type="primary")
 

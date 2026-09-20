@@ -67,6 +67,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import shutil
 import subprocess  # nosec B404 -- runs only the frozen SortViewCollector.exe being packaged, see probe_frozen_runtime_version
@@ -427,6 +428,35 @@ def _verify_frozen_runtime_version(
         )
 
 
+def _require_release_readiness(repo_root: Path, version: str) -> None:
+    """Refuses to build from a tree that fails scripts/check_release_readiness.py: collector.__version__ is the
+    one version authority, the packaging/release tooling derives from it, and no current-state test carries a
+    stale release literal or depends on today's wall clock. Called from the CLI before anything is built (so
+    nothing is created or removed on failure). The check itself is scripts/check_release_readiness.py -- loaded
+    from `repo_root`, so there is exactly one implementation of it, shared with CI."""
+    script = repo_root / "scripts" / "check_release_readiness.py"
+    if not script.is_file():
+        raise BuildError(
+            f"Refusing to build -- the release-readiness check ({script}) is missing, so the release cannot be "
+            "verified against collector.__version__ and the test-freshness rules."
+        )
+    spec = importlib.util.spec_from_file_location("sortview_check_release_readiness", script)
+    if spec is None or spec.loader is None:
+        raise BuildError(f"Refusing to build -- {script} could not be loaded.")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # dataclasses resolves string annotations through sys.modules
+    try:
+        spec.loader.exec_module(module)
+        findings = module.check_release_readiness(repo_root, expected_version=version)
+    finally:
+        sys.modules.pop(spec.name, None)
+    if findings:
+        raise BuildError(
+            "Refusing to build -- the tree is not release-ready (python scripts/check_release_readiness.py "
+            "shows the same):\n" + "\n".join(f"  {finding}" for finding in findings)
+        )
+
+
 def build_release(
     repo_root: Path,
     output_dir: Path,
@@ -637,6 +667,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
+        # Version assertion first (its message is the specific one), then the release-readiness check --
+        # both before either build function creates or removes anything.
+        _require_version_matches_source(args.version, Path(args.repo_root))
+        _require_release_readiness(Path(args.repo_root), args.version)
         if args.frozen_runtime:
             result = build_frozen_release(
                 Path(args.repo_root), Path(args.output), args.version,

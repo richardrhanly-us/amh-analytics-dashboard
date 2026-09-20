@@ -40,6 +40,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
 
 import main
+from collector import __version__ as COLLECTOR_VERSION
 from src.services import collector_enrollment_service as enrollment
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -200,7 +201,7 @@ def test_generate_and_redeem_round_trip_on_postgresql(pg):
     installation_before = _rows(pg, "SELECT * FROM collector_installations ORDER BY id")
     generated = _generate(pg, 101, created_by_user_id=5)
 
-    issued = _redeem(pg, generated["enrollment_code"], hostname="AMH-PC", collector_version="1.0.4")
+    issued = _redeem(pg, generated["enrollment_code"], hostname="AMH-PC", collector_version=COLLECTOR_VERSION)
 
     assert set(issued) == {"customer_id", "branch_id", "installation_id", "agent_token"}
     assert (issued["customer_id"], issued["branch_id"], issued["installation_id"]) == (10, 1, 101)
@@ -370,7 +371,7 @@ def test_enroll_then_heartbeat_end_to_end_on_postgresql(pg):
     code = _generate(pg, 101)["enrollment_code"]
 
     enrolled = client.post("/collector/enroll", json={"enrollment_code": code, "hostname": "AMH-PC",
-                                                       "collector_version": "1.0.4"})
+                                                       "collector_version": COLLECTOR_VERSION})
 
     assert enrolled.status_code == 200
     body = enrolled.json()
@@ -381,7 +382,7 @@ def test_enroll_then_heartbeat_end_to_end_on_postgresql(pg):
     heartbeat = client.post(
         "/upload-pipeline-status",
         json={"customer_id": body["customer_id"], "branch_id": body["branch_id"], "status": "completed",
-              "installation_id": body["installation_id"], "collector_version": "1.0.4"},
+              "installation_id": body["installation_id"], "collector_version": COLLECTOR_VERSION},
         headers={"Authorization": f"Bearer {body['agent_token']}"},
     )
 
@@ -389,7 +390,7 @@ def test_enroll_then_heartbeat_end_to_end_on_postgresql(pg):
     (after,) = _rows(pg, "SELECT status, installed_at, last_seen_at, collector_version "
                          "FROM collector_installations WHERE id = 101")
     assert after["status"] == "active" and after["installed_at"] is not None
-    assert after["last_seen_at"] is not None and after["collector_version"] == "1.0.4"
+    assert after["last_seen_at"] is not None and after["collector_version"] == COLLECTOR_VERSION
     assert len(_rows(pg, "SELECT 1 FROM pipeline_status")) == 1
 
 

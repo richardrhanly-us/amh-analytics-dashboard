@@ -347,9 +347,3 @@ def test_upload_records_payload_never_carries_installation_fields():
 
     payload = session.calls[0][1]
     assert "installation_id" not in payload and "collector_version" not in payload
-
-
-def test_collector_reports_current_release_version():
-    # Deliberately a literal, updated by hand with every release bump: it is what the running Collector reports
-    # on each heartbeat, so an accidental change (or a forgotten bump) must fail here.
-    assert collector.__version__ == "1.0.4"

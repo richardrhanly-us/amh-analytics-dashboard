@@ -42,6 +42,33 @@ Before deploying anything, confirm:
 
 If the release includes a schema change, review the Alembic migration before doing anything else.
 
+### Collector releases: keeping tests from going stale
+
+`collector.__version__` (`collector/__init__.py`) is the only place the Collector version is written. To release a
+new Collector, bump it there by hand -- **no test file should need editing for a version bump**. Ordinary tests
+compare against `collector.__version__` (or against what a component reports), never against a copied number.
+
+Two checks enforce this, both fast, dependency-free and run by CI on every pull request (the `lint` job):
+
+- `python scripts/check_test_freshness.py` -- flags a test that compares `collector.__version__` with a literal, asserts
+  the current release as a literal, has a release number in its name, or treats a fixed timestamp as "now"
+  (a `NOW`/`TODAY` constant) without the shared controlled clock. It also flags production code that hardcodes a
+  Collector release as a default -- e.g. the Super Admin "Collector version" fields, which import
+  `collector.__version__` instead. Historical version fixtures, other kinds of version (schema, API, agent) and
+  explicit expiry/boundary timestamps are not flagged. A legitimate exception is annotated where it lives:
+  `# freshness: allow FRESH004 -- <reason>` (the reason is required).
+- `python scripts/check_release_readiness.py [--expect-version X.Y.Z]` -- also verifies the version authority is
+  a single literal with no copies, the packaging/release tooling derives from it, and the time-sensitive enrollment
+  tests are wall-clock-free. `--expect-version` is the one place to assert an exact release number: pass the version
+  you are about to build.
+
+`python -m collector.build_release` and `collector/freeze/build_frozen.ps1` run the readiness check before building
+anything and refuse to continue if it fails.
+
+Time-sensitive tests read one controlled clock (`tests/controlled_clock.py`), generate fixtures from it and reach
+"expired" by advancing it -- never by picking a fixed "long ago" date -- so they cannot start failing as real time
+passes.
+
 ---
 
 ## part 1: database migration

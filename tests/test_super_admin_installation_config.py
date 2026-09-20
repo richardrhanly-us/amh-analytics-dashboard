@@ -20,11 +20,16 @@ from __future__ import annotations
 
 import ast
 import inspect
+import json
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+import collector
 from src.services import tenant_service
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -140,9 +145,70 @@ def test_provisioning_says_the_legacy_config_is_not_the_collectors_config():
     assert "NOT the scheduled" in source and "collector_config.json" in source
 
 
-def test_installation_form_default_version_is_the_next_build():
-    assert 'st.text_input("Collector version", value="1.0.3")' in _source(PROVISION)
-    assert 'st.text_input("Collector version", value="1.0.3")' in _source(MANAGE)
+def _collector_version_field_defaults(path: Path) -> list[ast.expr]:
+    """The `value=` expression of every st.text_input("Collector version", ...) on a page."""
+    defaults = []
+    for node in ast.walk(ast.parse(_source(path))):
+        if (
+            isinstance(node, ast.Call)
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "Collector version"
+        ):
+            defaults.extend(keyword.value for keyword in node.keywords if keyword.arg == "value")
+    return defaults
+
+
+@pytest.mark.parametrize("page", [PROVISION, MANAGE], ids=["provision", "manage"])
+def test_installation_form_default_version_is_the_collector_version_authority(page):
+    # The default is collector.__version__ itself (imported), never a copy of the number: a release
+    # bump must not need this page -- or this test -- edited.
+    imports = [n for n in ast.walk(ast.parse(_source(page))) if isinstance(n, ast.ImportFrom) and n.module == "collector"]
+    assert [(a.name, a.asname) for n in imports for a in n.names] == [("__version__", "COLLECTOR_VERSION")]
+
+    defaults = _collector_version_field_defaults(page)
+
+    assert defaults, "the page no longer has a 'Collector version' field"
+    assert [ast.unparse(d) for d in defaults].count("COLLECTOR_VERSION") == 1  # the add/provision form's default
+    assert not [d for d in defaults if isinstance(d, ast.Constant)]  # ...and no field holds a literal release
+
+
+@pytest.mark.parametrize("page", [PROVISION, MANAGE], ids=["provision", "manage"])
+def test_the_pages_own_path_setup_can_import_the_version_authority_in_an_isolated_interpreter(page):
+    # The deployed app (Streamlit, started from src/app.py) does not have the repository root on sys.path
+    # by itself. Run the page's REAL import prelude -- extracted from its source -- in an isolated interpreter
+    # (no PYTHONPATH, no working directory on sys.path) so only the page's own path handling can supply `collector`.
+    path_names = {"ROOT_DIR", "SRC_DIR", "SUPER_ADMIN_DIR"}
+    wanted = [
+        node for node in ast.parse(_source(page)).body
+        if (isinstance(node, ast.Import) and {a.name for a in node.names} <= {"os", "sys"})
+        or (isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id in path_names for t in node.targets))
+        or (isinstance(node, ast.If) and "sys.path" in ast.unparse(node))
+        or (isinstance(node, ast.ImportFrom) and node.module == "collector")
+    ]
+    program = chr(10).join([
+        "import json, sys",
+        f"__file__ = {str(page)!r}",
+        "before = set(sys.modules)",
+        ast.unparse(ast.Module(body=wanted, type_ignores=[])),
+        (
+            "print(json.dumps({'version': COLLECTOR_VERSION, 'new': sorted(set(sys.modules) - before), "
+            "'last_path': sys.path[-1], 'first_path': sys.path[0], 'root': ROOT_DIR}))"
+        ),
+    ])
+
+    result = subprocess.run(  # nosec B603 - test-only: this interpreter, code built from repo source
+        [sys.executable, "-I", "-c", program], cwd=Path(tempfile.gettempdir()), capture_output=True, text=True,
+        timeout=60, check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["version"] == collector.__version__
+    # Importing the package pulls in nothing else -- no third-party module can be missing in the deployed app.
+    assert set(report["new"]) - {"__future__"} == {"collector"}, report["new"]
+    # The repository root is appended, so it cannot shadow anything that was already importable.
+    assert report["last_path"] == report["root"] == str(ROOT) and report["first_path"] != report["root"]
 
 
 # --- Manage Libraries -------------------------------------------------------------

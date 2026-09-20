@@ -19,7 +19,7 @@ from sqlalchemy.pool import StaticPool
 
 from scripts.check_pipeline_health import find_unhealthy_branches
 
-NOW = datetime(2026, 8, 28, 12, 0, tzinfo=UTC)
+NOW = datetime(2026, 8, 28, 12, 0, tzinfo=UTC)  # freshness: allow FRESH004 -- passed to find_unhealthy_branches as an explicit cutoff, never read from the clock
 STALE_AFTER = NOW - timedelta(minutes=60)
 
 
