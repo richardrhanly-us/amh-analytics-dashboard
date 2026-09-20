@@ -63,6 +63,15 @@ jobs:
       - name: Run mypy
         run: python -m mypy src agent main.py collector
 
+      # Fast, stdlib-only, deterministic (AST checks): fails the PR when a test carries a copied "current
+      # version" or treats a fixed timestamp as the current time (scripts/check_test_freshness.py), or when the
+      # version authority / release tooling / time-sensitive tests drift apart (scripts/check_release_readiness.py).
+      - name: Check test freshness
+        run: python scripts/check_test_freshness.py
+
+      - name: Check release readiness
+        run: python scripts/check_release_readiness.py
+
   security:
     name: Dependency and security scan
     runs-on: ubuntu-latest

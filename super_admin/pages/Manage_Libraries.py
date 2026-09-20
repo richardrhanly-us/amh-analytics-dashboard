@@ -17,8 +17,15 @@ if SRC_DIR not in sys.path:
 if SUPER_ADMIN_DIR not in sys.path:
     sys.path.insert(0, SUPER_ADMIN_DIR)
 
+# The repository root, for `collector` -- the one authority for the Collector version
+# (collector/__init__.py; importing the package runs nothing else). Appended, not
+# inserted first, so nothing that is already importable can be shadowed by it.
+if ROOT_DIR not in sys.path:
+    sys.path.append(ROOT_DIR)
+
 from super_auth import require_super_admin
 
+from collector import __version__ as COLLECTOR_VERSION
 from services.collector_enrollment_service import (
     ALLOWED_INSTALLATION_STATUSES as ENROLLABLE_INSTALLATION_STATUSES,
 )
@@ -418,7 +425,7 @@ if pd.notna(primary_branch_id):
         with st.form("add_installation_form"):
             new_name = st.text_input("Installation name", value="Main AMH Sorter")
             new_hostname = st.text_input("Hostname (optional)")
-            new_version = st.text_input("Collector version", value="1.0.3")
+            new_version = st.text_input("Collector version", value=COLLECTOR_VERSION)
             add_installation = st.form_submit_button("Add Installation")
 
         if add_installation:

@@ -15,7 +15,7 @@ import pandas as pd
 from services.pipeline_context_service import build_pipeline_context
 
 APP_TZ = ZoneInfo("America/Chicago")
-NOW_CT = datetime(2026, 8, 28, 12, 0, tzinfo=APP_TZ)
+NOW_CT = datetime(2026, 8, 28, 12, 0, tzinfo=APP_TZ)  # freshness: allow FRESH004 -- passed as now_ct= to every call under test
 
 
 def empty_df():

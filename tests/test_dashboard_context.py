@@ -7,8 +7,8 @@ import pytest
 from src.dashboard_context import build_dashboard_context
 
 APP_TZ = ZoneInfo("America/Chicago")
-TODAY = pd.Timestamp("2026-03-30").date()
-NOW_CT = datetime(2026, 3, 30, 12, 0, tzinfo=APP_TZ)
+TODAY = pd.Timestamp("2026-03-30").date()  # freshness: allow FRESH004 -- handed to the code under test as an explicit argument
+NOW_CT = datetime(2026, 3, 30, 12, 0, tzinfo=APP_TZ)  # freshness: allow FRESH004 -- handed to the code under test as an explicit argument
 
 
 def build_checkins_df(dates):
