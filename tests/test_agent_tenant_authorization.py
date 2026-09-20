@@ -35,11 +35,16 @@ GENERIC_DETAIL = "Agent is not currently authorized to upload data"
 
 
 def _row(*, is_active=True, organization_status="active", branch_status="active",
-         customer_id=1, branch_id=1):
+         customer_id=1, branch_id=1, **installation):
+    """A token-lookup row. `installation` may carry the bound-installation
+    columns (installation_id, installation_status, installation_organization_id,
+    installation_branch_id, resolved_organization_id, resolved_branch_id); without
+    them it is a legacy, unbound token."""
     return {
         "id": 7, "customer_id": customer_id, "branch_id": branch_id,
         "is_active": is_active, "description": "test",
         "organization_status": organization_status, "branch_status": branch_status,
+        **installation,
     }
 
 
@@ -182,7 +187,60 @@ def test_scope_mismatch_takes_precedence_over_tenant_state():
     assert error.detail == "Token scope does not match customer_id / branch_id"
 
 
+# --- enrollment-bound tokens: the installation gate ------------------------------
+
+def _bound(**overrides):
+    fields = {"installation_id": 5, "installation_status": "active", "installation_organization_id": 1,
+              "resolved_organization_id": 1, "installation_branch_id": 1, "resolved_branch_id": 1}
+    fields.update(overrides)
+    return fields
+
+
+@pytest.mark.parametrize("installation_status", ["provisioning", "active"])
+def test_a_bound_token_with_a_live_installation_is_accepted_and_marked_used(installation_status):
+    _, conn = _authenticate(_row(**_bound(installation_status=installation_status)))
+
+    assert conn.used_marked()
+
+
+@pytest.mark.parametrize(
+    "installation",
+    [
+        _bound(installation_status="inactive"),
+        _bound(installation_status="retired"),
+        _bound(installation_status=None),
+        _bound(installation_organization_id=2),
+        _bound(installation_branch_id=2),
+    ],
+    ids=["inactive", "retired", "missing", "other-organization", "other-branch"],
+)
+def test_a_bound_token_with_an_unusable_installation_is_rejected_generically(installation):
+    error, conn = _rejection(_row(**installation))
+
+    assert error.status_code == 403
+    assert error.detail == GENERIC_DETAIL
+    assert not conn.used_marked()
+    for word in ("installation", "retired", "inactive", "bound"):
+        assert word not in str(error.detail).lower()
+
+
+def test_a_legacy_token_ignores_installation_columns_entirely():
+    # No installation_id -> nothing is checked, even if stray installation columns say 'retired'.
+    _, conn = _authenticate(_row(installation_id=None, installation_status="retired"))
+
+    assert conn.used_marked()
+    _, conn = _authenticate(_row())  # and the plain legacy row shape used everywhere else
+    assert conn.used_marked()
+
+
+def test_tenant_state_is_reported_before_the_installation_state():
+    error, _ = _rejection(_row(organization_status="suspended", **_bound(installation_status="retired")))
+
+    assert error.detail == GENERIC_DETAIL  # same text either way; the tenant gate simply runs first
+
+
 # --- the real lookup SQL: join semantics against SQLite --------------------------
+
 #
 # The only Postgres-specific part of the query is the token hash expression;
 # it is swapped for a plain comparison so the JOIN logic runs unmodified.
@@ -203,7 +261,9 @@ def lookup_db():
                 operational_branch_id INTEGER)""",
             """CREATE TABLE agent_tokens (
                 id INTEGER PRIMARY KEY, token_hash TEXT, customer_id INTEGER,
-                branch_id INTEGER, is_active BOOLEAN, description TEXT)""",
+                branch_id INTEGER, is_active BOOLEAN, description TEXT, installation_id INTEGER)""",
+            """CREATE TABLE collector_installations (
+                id INTEGER PRIMARY KEY, organization_id INTEGER, branch_id INTEGER, status TEXT)""",
         ):
             conn.execute(text(ddl))
     return engine
@@ -309,6 +369,45 @@ def test_lookup_unknown_token_finds_no_row(lookup_db):
           tokens=[("t", 1, 1)])
 
     assert _lookup(lookup_db, "nope") is None
+
+
+def test_lookup_returns_the_bound_installation_and_the_resolved_tenant_ids(lookup_db):
+    _seed(lookup_db, orgs=[(2, "active", 50)], branches=[(2, 2, "active", 2)], tokens=[("enrolled", 50, 2)])
+    with lookup_db.begin() as conn:
+        conn.execute(text("INSERT INTO collector_installations VALUES (9, 2, 2, 'retired')"))
+        conn.execute(text("UPDATE agent_tokens SET installation_id = 9 WHERE token_hash = 'enrolled'"))
+
+    row = _lookup(lookup_db, "enrolled")
+
+    assert (row["installation_id"], row["installation_status"]) == (9, "retired")
+    assert (row["installation_organization_id"], row["installation_branch_id"]) == (2, 2)
+    assert (row["resolved_organization_id"], row["resolved_branch_id"]) == (2, 2)
+    assert main.bound_installation_unusable_reason(row) == "bound installation 9 status 'retired'"
+
+
+def test_lookup_of_a_legacy_token_yields_no_installation_columns_and_one_row(lookup_db):
+    _seed(lookup_db, orgs=[(1, "active", 1)], branches=[(1, 1, "active", 1)], tokens=[("legacy", 1, 1)])
+    with lookup_db.begin() as conn:  # installations exist, but the token names none
+        conn.execute(text("INSERT INTO collector_installations VALUES (1, 1, 1, 'retired'), (2, 1, 1, 'active')"))
+
+    row = _lookup(lookup_db, "legacy")
+
+    assert row["installation_id"] is None and row["installation_status"] is None
+    assert main.bound_installation_unusable_reason(row) is None
+    assert main.tenant_unusable_reason(row) is None
+
+
+def test_lookup_never_matches_an_installation_by_branch_only(lookup_db):
+    # Two installations share the token's branch; only the token's OWN installation_id counts.
+    _seed(lookup_db, orgs=[(1, "active", 1)], branches=[(1, 1, "active", 1)], tokens=[("bound", 1, 1)])
+    with lookup_db.begin() as conn:
+        conn.execute(text("INSERT INTO collector_installations VALUES (1, 1, 1, 'retired'), (2, 1, 1, 'active')"))
+        conn.execute(text("UPDATE agent_tokens SET installation_id = 2 WHERE token_hash = 'bound'"))
+
+    row = _lookup(lookup_db, "bound")
+
+    assert (row["installation_id"], row["installation_status"]) == (2, "active")  # not 1 (retired)
+    assert main.bound_installation_unusable_reason(row) is None
 
 
 def test_lookup_sql_uses_the_operational_bridge():

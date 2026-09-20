@@ -8,13 +8,19 @@ from typing import Literal, NoReturn
 import sentry_sdk
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from sqlalchemy import create_engine, text
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
+
+from src.services.collector_enrollment_service import (
+    PUBLIC_ENROLLMENT_ERROR,
+    EnrollmentError,
+    redeem_enrollment_code,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,6 +50,10 @@ else:
 # blunt brute-forcing/abuse of the bearer token, not to constrain
 # legitimate traffic. Configurable per deployment via env var.
 UPLOAD_RATE_LIMIT = os.getenv("SORTVIEW_UPLOAD_RATE_LIMIT", "30/minute")
+# POST /collector/enroll takes no token, so it is limited per client address and
+# much more tightly than uploads. The 79-bit code space already makes guessing
+# infeasible; this only blunts abuse.
+ENROLL_RATE_LIMIT = os.getenv("SORTVIEW_ENROLL_RATE_LIMIT", "10/minute")
 MAX_REQUEST_BODY_BYTES = int(os.getenv("SORTVIEW_MAX_REQUEST_BODY_BYTES", str(5 * 1024 * 1024)))
 
 
@@ -212,6 +222,17 @@ class UploadRequest(BaseModel):
 # collector_installations.id is a BIGINT; larger values could only ever be
 # rejected by the database as a 500, so they are rejected as a 422 up front.
 _BIGINT_MAX = 2**63 - 1
+
+
+class CollectorEnrollRequest(BaseModel):
+    """Body of POST /collector/enroll. The code is a SecretStr so it is masked
+    in reprs (and therefore in any error-tracker frame locals); hostname and
+    collector_version are untrusted, informational metadata only -- they never
+    identify or select an installation."""
+
+    enrollment_code: SecretStr = Field(max_length=64)
+    hostname: str | None = Field(default=None, max_length=255)
+    collector_version: str | None = Field(default=None, max_length=64)
 
 
 class PipelineStatusRequest(BaseModel):
@@ -412,6 +433,14 @@ def get_bearer_token(authorization: str | None) -> str:
 ALLOWED_ORGANIZATION_STATUSES = ("active", "trial")
 ALLOWED_BRANCH_STATUS = "active"
 
+# A token issued by Collector enrollment is bound to ONE installation
+# (agent_tokens.installation_id); the lookup below also resolves that
+# installation, and bound_installation_unusable_reason enforces that it is still
+# provisioning/active and belongs to the very tenant the token's scope resolves
+# to. Legacy tokens (installation_id IS NULL) are exempt: nothing about how they
+# authenticate changed. Reads agent_tokens.installation_id, so the migration that
+# adds it (b4e91d7a3c58) must be applied BEFORE this code is deployed.
+
 
 _AGENT_TOKEN_LOOKUP_SQL = (  # nosec B105
     """
@@ -421,14 +450,22 @@ _AGENT_TOKEN_LOOKUP_SQL = (  # nosec B105
         t.branch_id,
         t.is_active,
         t.description,
+        t.installation_id,
+        o.id AS resolved_organization_id,
         o.status AS organization_status,
-        b.status AS branch_status
+        b.id AS resolved_branch_id,
+        b.status AS branch_status,
+        ci.status AS installation_status,
+        ci.organization_id AS installation_organization_id,
+        ci.branch_id AS installation_branch_id
     FROM agent_tokens t
     LEFT JOIN organizations o
       ON o.operational_customer_id = t.customer_id
     LEFT JOIN branches b
       ON b.operational_branch_id = t.branch_id
      AND b.organization_id = o.id
+    LEFT JOIN collector_installations ci
+      ON ci.id = t.installation_id
     WHERE t.token_hash = encode(digest(:token, 'sha256'), 'hex')
     LIMIT 1
     """
@@ -450,6 +487,30 @@ def tenant_unusable_reason(token_row) -> str | None:
         return "no mapped branch for the organization"
     if branch_status != ALLOWED_BRANCH_STATUS:
         return f"branch status {branch_status!r}"
+    return None
+
+
+def bound_installation_unusable_reason(token_row) -> str | None:
+    """Why the installation an enrollment-issued token is bound to may not be
+    used, or None if it may (or the token is a legacy, unbound one). Fail closed:
+    a bound token whose installation is inactive/retired -- a deliberate admin
+    decision, e.g. a decommissioned machine -- stops authenticating everywhere
+    (uploads and heartbeats alike), and so does one whose installation does not
+    belong to the organization/branch the token's scope resolves to. For server-
+    side logs only -- never sent to the client."""
+    installation_id = token_row.get("installation_id")
+    if installation_id is None:
+        return None
+
+    installation_status = token_row.get("installation_status")
+    if installation_status is None:
+        return f"bound installation {installation_id} not found"
+    if installation_status not in INSTALLATION_HEARTBEAT_STATUSES:
+        return f"bound installation {installation_id} status {installation_status!r}"
+    if token_row.get("installation_organization_id") != token_row.get("resolved_organization_id"):
+        return f"bound installation {installation_id} belongs to another organization"
+    if token_row.get("installation_branch_id") != token_row.get("resolved_branch_id"):
+        return f"bound installation {installation_id} belongs to another branch"
     return None
 
 
@@ -480,6 +541,17 @@ def authenticate_agent(conn, authorization: str | None, customer_id: int, branch
             "Agent request rejected, tenant not usable | token_id=%s customer_id=%s "
             "branch_id=%s reason=%s",
             token_row["id"], token_row["customer_id"], token_row["branch_id"], unusable_reason,
+        )
+        raise HTTPException(status_code=403, detail="Agent is not currently authorized to upload data")
+
+    # An enrollment-issued token also dies with its installation. Same generic
+    # 403 as the tenant gate; the reason is only logged.
+    installation_reason = bound_installation_unusable_reason(token_row)
+    if installation_reason is not None:
+        logger.warning(
+            "Agent request rejected, bound installation not usable | token_id=%s customer_id=%s "
+            "branch_id=%s reason=%s",
+            token_row["id"], token_row["customer_id"], token_row["branch_id"], installation_reason,
         )
         raise HTTPException(status_code=403, detail="Agent is not currently authorized to upload data")
 
@@ -580,6 +652,16 @@ def record_installation_heartbeat(conn, token_row, installation_id: int, collect
     runtime-reported collector_version updated.
     Raises the generic 403 otherwise, leaving the installation untouched."""
     version = (collector_version or "").strip() or None
+
+    # A token issued by enrollment is bound to one installation and may not claim
+    # another. A legacy token (installation_id NULL) is unaffected -- it may name
+    # any installation of its own tenant/branch, exactly as before.
+    # (token_row.installation_id was resolved by authenticate_agent's lookup.)
+    bound_installation_id = token_row.get("installation_id")
+    if bound_installation_id is not None and int(bound_installation_id) != int(installation_id):
+        _reject_installation(
+            token_row, installation_id, f"token is bound to installation {int(bound_installation_id)}"
+        )
 
     installation = conn.execute(
         text(_INSTALLATION_LOOKUP_SQL),
@@ -802,3 +884,35 @@ def upload_pipeline_status(request: Request, data: PipelineStatusRequest, author
     status_code=500,
     detail="Internal server error",
     )
+
+
+@app.post("/collector/enroll")
+@limiter.limit(ENROLL_RATE_LIMIT)
+def collector_enroll(request: Request, data: CollectorEnrollRequest):
+    """Redeems a one-time enrollment code for a long-lived agent token. Takes no
+    token: possession of an unexpired, unused code is the credential. One
+    transaction covers locking the code, validating the tenant, marking the code
+    used and inserting the token, so a failure anywhere leaves the code unused
+    and no token created. Every refusal is the same generic 400; the specific
+    reason is logged (never the code or a token) for operators."""
+    try:
+        with engine.begin() as conn:
+            result = redeem_enrollment_code(
+                conn,
+                data.enrollment_code.get_secret_value(),
+                hostname=data.hostname,
+                collector_version=data.collector_version,
+            )
+    except EnrollmentError as exc:
+        logger.warning(
+            "Collector enrollment rejected | reason=%s client=%s",
+            exc.reason, get_remote_address(request),
+        )
+        raise HTTPException(status_code=400, detail=PUBLIC_ENROLLMENT_ERROR) from None
+    except Exception as exc:
+        logger.exception("Collector enrollment failed")
+        sentry_sdk.capture_exception(exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from None
+
+    # The body carries a credential: never cacheable.
+    return JSONResponse(content=result, headers={"Cache-Control": "no-store"})
