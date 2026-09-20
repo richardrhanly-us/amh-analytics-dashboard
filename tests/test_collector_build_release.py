@@ -1655,12 +1655,14 @@ def test_finish_install_script_parses_without_errors():
     assert _run_powershell(script).strip() == "0"
 
 
-def test_finish_install_has_only_the_two_documented_parameters():
+def test_finish_install_has_only_the_documented_parameters():
     body = _executable_body(_read_ps1(FINISH_SCRIPT))
     param_block = body[body.index("param("): body.index("$ErrorActionPreference")]
 
     assert re.findall(r"^\s*\[string\]\$(\w+)", param_block, re.MULTILINE) == ["InstallRoot", "ConfigPath"]
-    assert param_block.count("$") == 2
+    # The guided setup.ps1's one addition: use the token it already stored instead of prompting.
+    assert re.findall(r"^\s*\[switch\]\$(\w+)", param_block, re.MULTILINE) == ["UseExistingMachineToken"]
+    assert param_block.count("$") == 3
     assert r'"C:\SortView\Collector"' in param_block
     assert r'"C:\ProgramData\SortViewCollector\config\collector_config.json"' in param_block
 
@@ -1755,8 +1757,11 @@ def test_finish_step_0_is_read_only():
 
 def test_finish_prompts_keep_or_replace_only_when_a_machine_token_exists():
     main = _finish_main()
-    guard = main.index("if (-not [string]::IsNullOrWhiteSpace($machineToken)) {")
+    # The presence of a Machine token is judged once and decides the branch (Get-TokenStepAction);
+    # the keep/replace prompt lives only in the AskKeepOrReplace branch.
+    guard = main.index('} elseif ($tokenAction -eq "AskKeepOrReplace") {')
     prompt = main.index("Read-Host")
+    assert "-MachineTokenPresent (-not [string]::IsNullOrWhiteSpace($machineToken))" in main[:guard]
 
     assert main.count("Read-Host") == 1
     assert guard < prompt < main.index("if ($runTokenTool) {")
@@ -1782,7 +1787,8 @@ def test_finish_runs_the_token_tool_only_when_needed_and_verifies_the_machine_to
 
 TOKEN_LINE_ALLOW_LIST = {
     '$machineToken = [Environment]::GetEnvironmentVariable("SORTVIEW_API_TOKEN", "Machine")',
-    "if (-not [string]::IsNullOrWhiteSpace($machineToken)) {",
+    # Whether a token exists (never its value) feeds Get-TokenStepAction.
+    "-MachineTokenPresent (-not [string]::IsNullOrWhiteSpace($machineToken))",
     "if ([string]::IsNullOrWhiteSpace($machineToken)) {",
     "$env:SORTVIEW_API_TOKEN = $machineToken",
     "$machineToken = $null",

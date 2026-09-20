@@ -37,6 +37,18 @@
     Requires an elevated (Administrator) PowerShell session -- setting a
     Machine-scope environment variable always does.
 
+    AUTOMATED USE (guided setup): collector/deploy/setup-collector.ps1
+    (shipped as setup.ps1) calls this script with -Token, a SecureString it
+    already holds -- the permanent token issued by one-time enrollment -- so
+    the storage semantics stay exactly these (same variable, same Machine
+    scope) and there is only one implementation of them. -Token is a
+    SecureString, not a string, so a plain-text token cannot be passed by
+    accident, and it is bound in-process: it is never part of any process
+    command line. In that mode nothing derived from the token is printed
+    (no length, no hash prefix) -- the only output is that the variable was
+    set. Without -Token this script behaves exactly as before (hidden
+    prompt).
+
     A newly-started process picks up a Machine env var change immediately.
     Since the Collector is a one-shot process (Task Scheduler starts a
     fresh python.exe every run, it never stays resident), its VERY NEXT
@@ -48,6 +60,10 @@
     named Collector installation on this same machine needs its own token
     variable (not the normal single-branch case).
 
+.PARAMETER Token
+    Optional, for automation only (see AUTOMATED USE). When omitted, the
+    token is read from a hidden prompt, as always.
+
 .EXAMPLE
     # Run from an elevated PowerShell prompt:
     .\set-api-token.ps1
@@ -56,7 +72,8 @@
 
 [CmdletBinding()]
 param(
-    [string]$VariableName = "SORTVIEW_API_TOKEN"
+    [string]$VariableName = "SORTVIEW_API_TOKEN",
+    [SecureString]$Token
 )
 
 $ErrorActionPreference = "Stop"
@@ -66,7 +83,8 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
     throw "This script must be run from an elevated (Administrator) PowerShell session -- setting a Machine-scope environment variable requires it."
 }
 
-$secure = Read-Host -AsSecureString -Prompt "Paste the SortView Collector API token (input hidden)"
+$tokenFromCaller = $PSBoundParameters.ContainsKey("Token")
+$secure = if ($tokenFromCaller) { $Token } else { Read-Host -AsSecureString -Prompt "Paste the SortView Collector API token (input hidden)" }
 $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
 try {
     $plainToken = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
@@ -79,6 +97,14 @@ if ([string]::IsNullOrWhiteSpace($plainToken)) {
 }
 
 [Environment]::SetEnvironmentVariable($VariableName, $plainToken, "Machine")
+
+if ($tokenFromCaller) {
+    # Automated use: no length, no hash prefix -- nothing derived from the token.
+    $plainToken = $null
+    [GC]::Collect()
+    Write-Host "Set $VariableName as a Machine environment variable (value not shown)." -ForegroundColor Green
+    return
+}
 
 # Confirmation only -- a hash PREFIX, never the token, never the full hash.
 $sha256 = [Security.Cryptography.SHA256]::Create()

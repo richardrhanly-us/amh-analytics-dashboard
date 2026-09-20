@@ -164,6 +164,14 @@ FROZEN_SUPPORT_FILES: tuple[tuple[str, str], ...] = tuple(
     (source_rel, dest_rel) for source_rel, dest_rel in SUPPORT_FILES if dest_rel != "requirements.txt"
 )
 
+# Files that ship at the root of FROZEN bundles ONLY. setup.ps1 is the guided,
+# enrollment-driven setup: it orchestrates install.ps1 and the tools\ scripts
+# and supports frozen bundles alone (it refuses a source bundle before it does
+# anything), so a source bundle does not carry it.
+FROZEN_ONLY_SUPPORT_FILES: tuple[tuple[str, str], ...] = (
+    ("collector/deploy/setup-collector.ps1", "setup.ps1"),
+)
+
 
 class BuildError(Exception):
     """Raised for any build-time problem -- a missing required source
@@ -523,7 +531,7 @@ def _required_frozen_deploy_files(repo_root: Path) -> list[tuple[Path, str | Non
     for source_rel, dest_rel in DEPLOY_TOOL_FILES:
         pairs.append((repo_root / source_rel, dest_rel))
 
-    for source_rel, dest_rel in FROZEN_SUPPORT_FILES:
+    for source_rel, dest_rel in FROZEN_SUPPORT_FILES + FROZEN_ONLY_SUPPORT_FILES:
         pairs.append((repo_root / source_rel, dest_rel))
 
     pairs.append((repo_root / CONFIG_TEMPLATE_SOURCE, None))

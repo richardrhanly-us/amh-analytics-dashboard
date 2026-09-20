@@ -94,6 +94,16 @@
     before touching anything, and re-validates before declaring success),
     or removed with tools\uninstall.ps1 first.
 
+    VERIFY-ONLY MODE (-VerifyBundleOnly): runs exactly the bundle checks this
+    script always runs before touching anything -- bundle-kind detection and
+    the MANIFEST.json verification (Test-ReleaseManifest, the one and only
+    implementation) -- then exits 0. It needs no -CustomerId/-BranchId/
+    -InstallationId or other inputs and changes nothing, so it does not
+    require an elevated session either (reading and hashing files needs no
+    privilege). setup.ps1 uses it to establish the bundle's integrity BEFORE it
+    trusts anything in the bundle or makes any network request. Any problem is
+    the same terminating error as in a real install, with a non-zero exit.
+
 .PARAMETER TOKEN SETUP
     This script does not set SORTVIEW_API_TOKEN. Run tools\set-api-token.ps1
     (in this same bundle) -- a Machine-scope Windows environment variable,
@@ -121,7 +131,15 @@ param(
     [string]$CheckinsPath,
     [string]$RejectsPath,
     [string]$AcsPath,
-    [switch]$Force
+    [switch]$Force,
+    # Used by the guided setup.ps1, which performs every one of the "next
+    # steps" printed below itself: suppresses ONLY that closing text (nothing
+    # about what is installed or written changes). Default: unchanged output.
+    [switch]$SuppressNextSteps,
+    # Read-only integrity check of the bundle (see VERIFY-ONLY MODE): the same
+    # manifest verification the installer performs, with no other input and no
+    # change to the machine.
+    [switch]$VerifyBundleOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -144,8 +162,9 @@ function Stop-Install {
 # --- elevation ---------------------------------------------------------
 # Checked before anything else, including input validation and bundle
 # verification: nothing below can succeed without administrator rights.
+# (-VerifyBundleOnly changes nothing and needs no privilege, so it alone is exempt.)
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+if (-not $VerifyBundleOnly -and -not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Stop-Install "This script must be run from an elevated (Administrator) PowerShell session." 1
 }
 
@@ -212,8 +231,12 @@ function New-CollectorConfigJson {
 
 # --- required input ----------------------------------------------------
 # Validated before the bundle is verified or anything is touched.
-$inputProblems = @(Get-InstallInputProblems -CustomerId $CustomerId -BranchId $BranchId -InstallationId $InstallationId -ApiUrl $ApiUrl `
-        -CheckinsPath $CheckinsPath -RejectsPath $RejectsPath -AcsPath $AcsPath)
+# (-VerifyBundleOnly takes no input: it only verifies the bundle.)
+$inputProblems = @()
+if (-not $VerifyBundleOnly) {
+    $inputProblems = @(Get-InstallInputProblems -CustomerId $CustomerId -BranchId $BranchId -InstallationId $InstallationId -ApiUrl $ApiUrl `
+            -CheckinsPath $CheckinsPath -RejectsPath $RejectsPath -AcsPath $AcsPath)
+}
 if ($inputProblems.Count -gt 0) {
     Write-Host "Missing or invalid required input:" -ForegroundColor Red
     foreach ($problem in $inputProblems) { Write-Host "  $problem" -ForegroundColor Red }
@@ -353,6 +376,12 @@ if ($isSourceBundle -and -not (Test-Path $SourceRequirements)) {
 
 Write-Host "Bundle kind: $(if ($isFrozenBundle) { 'FROZEN (no Python required)' } else { 'SOURCE (Python + venv required)' })" -ForegroundColor Cyan
 Test-ReleaseManifest -BundleRoot $BundleRoot
+
+if ($VerifyBundleOnly) {
+    # Read-only mode ends here: nothing above wrote anything, and nothing below is reached.
+    Write-Host "Bundle verified (read-only): nothing was installed or changed." -ForegroundColor Green
+    exit 0
+}
 
 $ConfigPath = Join-Path $DataRoot "config\collector_config.json"
 $VenvPath = Join-Path $InstallRoot ".venv"
@@ -497,6 +526,12 @@ if (Test-Path $ConfigPath -PathType Leaf) {
     Write-Host "Wrote $ConfigPath from the supplied -CustomerId/-BranchId/-InstallationId/-ApiUrl/-CheckinsPath/-RejectsPath/-AcsPath." -ForegroundColor Green
 }
 Write-Host "Config never contains the API token -- see TOKEN SETUP below."
+
+if ($SuppressNextSteps) {
+    Write-Host ""
+    Write-Host "=== Install complete. ===" -ForegroundColor Green
+    exit 0
+}
 
 Write-Host ""
 Write-Host "=== Install complete. Next steps: ===" -ForegroundColor Green
