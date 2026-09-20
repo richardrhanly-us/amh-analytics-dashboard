@@ -17,6 +17,7 @@ import hashlib
 import json
 import re
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -796,8 +797,47 @@ def test_neither_the_code_nor_the_token_is_ever_logged(world, caplog):
 # POST /collector/enroll
 # ======================================================================================
 
+# The endpoint takes no `now`: it reads the wall clock (redeem_enrollment_code(now=None)). _generate, though,
+# stamps codes at the fixed NOW, so under the real clock every HTTP test silently expired 30 minutes after NOW in
+# real time. _enroll therefore pins the service's clock to the instant _redeem uses for direct calls -- the
+# same relationship (generated at NOW, redeemed a minute later) on both paths, whatever day the suite runs.
+ENDPOINT_NOW = NOW + timedelta(minutes=1)
+
+
+class _InstanceOfRealDatetime(type):
+    def __instancecheck__(cls, instance):
+        return isinstance(instance, datetime)  # the service still sees its real, timezone-aware datetimes as datetimes
+
+
+class _FrozenDatetime(datetime, metaclass=_InstanceOfRealDatetime):
+    """`datetime` as the service module sees it, with only now() fixed; everything else is the real class."""
+
+    @classmethod
+    def now(cls, tz=None):
+        return ENDPOINT_NOW.astimezone(tz) if tz else ENDPOINT_NOW.replace(tzinfo=None)
+
+
 def _enroll(code, **extra):
-    return client.post("/collector/enroll", json={"enrollment_code": code, **extra})
+    with patch.object(enrollment, "datetime", _FrozenDatetime):
+        return client.post("/collector/enroll", json={"enrollment_code": code, **extra})
+
+
+def test_the_endpoint_clock_is_pinned_so_a_fresh_code_is_unexpired_and_the_expiry_boundary_is_exact(world):
+    fresh = _generate(world, 101)["enrollment_code"]  # expires NOW + 30m; the endpoint judges at NOW + 1m
+    assert _enroll(fresh).status_code == 200
+
+    at_the_boundary = _insert_code(world, 102, expires_at=ENDPOINT_NOW)  # expires exactly when the endpoint checks
+    assert _enroll(at_the_boundary).status_code == 400
+
+    just_valid = _insert_code(world, 201, expires_at=ENDPOINT_NOW + timedelta(seconds=1))
+    assert _enroll(just_valid).status_code == 200
+
+
+def test_the_pinned_clock_changes_nothing_else_the_service_does_with_datetimes(world):
+    with patch.object(enrollment, "datetime", _FrozenDatetime):
+        assert enrollment.datetime.now(UTC) == ENDPOINT_NOW
+        assert isinstance(NOW, enrollment.datetime) and isinstance(datetime.now(UTC), enrollment.datetime)
+    assert enrollment.datetime is datetime  # restored afterwards: the super-admin tests below use the real clock
 
 
 def test_the_endpoint_needs_no_token_and_returns_exactly_the_four_fields(world):
