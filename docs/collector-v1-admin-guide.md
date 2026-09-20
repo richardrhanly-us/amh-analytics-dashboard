@@ -37,6 +37,93 @@ module docstrings).
 
 ---
 
+## Guided setup with an enrollment code (frozen release bundles)
+
+For a new library machine this replaces the manual sequence below. A
+SortView administrator generates a one-time **enrollment code** for the
+installation in Super Admin (Manage Libraries -> the installation -> Generate
+Enrollment Code). On the Tech Logic machine, from an **elevated** PowerShell
+in the extracted release folder:
+
+```powershell
+.\setup.ps1
+```
+
+(If script execution is blocked: `powershell -ExecutionPolicy Bypass -File .\setup.ps1`.)
+
+The technician enters the code (input is hidden) and confirms the Tech Logic
+files. Nothing else is typed: the operational Customer ID, Branch ID,
+Installation ID and the permanent agent token are issued by SortView in
+exchange for the code and used automatically. The token is stored as the
+Machine-scope `SORTVIEW_API_TOKEN` and is never displayed, logged, or written to
+`collector_config.json`.
+
+What it does, in order -- everything up to the code prompt is read-only, so an
+avoidable local problem never uses up the single-use code:
+
+1. requires an elevated session, then **verifies the release bundle** before
+   trusting anything in it or contacting anything: it runs
+   `install.ps1 -VerifyBundleOnly` (the same manifest check the installer has
+   always performed -- every file must match `MANIFEST.json` and no unlisted
+   file may be present). A modified, incomplete or extra-file bundle stops setup
+   here, before any network request. It then requires a frozen bundle and a
+   bundled runtime whose `version` matches `MANIFEST.json`;
+2. refuses to touch an existing install, Scheduled Task or `SORTVIEW_API_TOKEN`
+   (see *Re-running* below);
+3. finds the three Tech Logic files (`C:\TLCFinalDlls\Checkins.txt`,
+   `Rejects.txt`, `ACS Log.txt` -- the locations recorded in the bundle's
+   `collector_config.example.json`) and requires that each **exists**;
+   `-CheckinsPath` / `-RejectsPath` / `-AcsPath` override them;
+4. reaches the SortView API over HTTPS (the address also comes from
+   `collector_config.example.json`, read only after the bundle was verified;
+   `-ApiUrl` overrides it for development);
+5. redeems the code (`POST /collector/enroll`) with this computer's name and the
+   release version, and validates the response strictly;
+6. stores the token, then saves the non-secret enrollment details for resuming
+   (see below), reads them back and checks them -- **only if that succeeds** does
+   it run `install.ps1` with the returned IDs;
+7. runs `tools\finish-install.ps1`: interactive preflight, SYSTEM-context
+   preflight, starting-cursor bootstrap, and Scheduled Task registration -- the
+   task is left **Disabled**.
+
+At the end it asks whether to enable the task now; Enter (the default) leaves it
+disabled. `-EnableTask` enables it without asking, but only after every step
+succeeded. Setup never starts a Collector run, and on any failure the task is
+left (or put back) disabled.
+
+**Re-running and resuming.** An enrollment code works once and expires quickly.
+
+- If setup stops *before* the code is used (a bundle, machine, file or network
+  problem), fix it and run setup again with the **same** code.
+- If setup stops *after* the code was used, nothing needs a new code. Right after
+  redemption setup stores the token and saves only non-secret details --
+  `schema_version`, the release version, the API address and the three IDs -- to
+  `<DataRoot>\setup\enrollment-recovery.json` (never the code or the token; the
+  folder is restricted to Administrators and SYSTEM before anything is written).
+  The record is read back and must contain exactly the release version, API
+  address and IDs just issued before installing starts. If it cannot be saved or
+  verified, setup **stops before `install.ps1`** (it does not continue with a
+  warning), removes the unverified record, and leaves the stored token in place
+  and the Scheduled Task untouched; fix the cause it names, get a **new** code,
+  and run setup again (it asks before replacing the token already stored, or use
+  `-ReplaceExistingToken`).
+  Otherwise, run `setup.ps1` again: it finds that record and the stored token and offers to
+  **resume** (Enter = resume). No enrollment request is made; the saved IDs are
+  given to `install.ps1` (or, if the matching install is already in place,
+  straight to the verification steps). The record is deleted when setup completes.
+- If that record is malformed, or its token is missing, setup stops without
+  changing anything and says what to do (a **new** code is then needed). If a
+  half-finished install is in the way, run `tools\uninstall.ps1` first; the saved
+  enrollment and the stored token are kept.
+- Without a saved enrollment: an unfinished manual setup is completed with
+  `tools\finish-install.ps1`; starting over needs `tools\uninstall.ps1` and a new
+  code. Setup replaces an existing token only after an explicit yes, or with
+  `-ReplaceExistingToken`.
+
+Setup never uses `-Force`, never overwrites or deletes an existing install, never
+adopts an install that does not match the saved enrollment, and refuses to run on
+a machine with a running or enabled Collector (use `tools\update.ps1` there).
+
 ## Fresh install
 
 From an elevated PowerShell session, in a checkout of this repository:

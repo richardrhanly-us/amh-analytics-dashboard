@@ -32,6 +32,14 @@
     install's executable and config is refused -- this script is for a
     first install, not for an install that is already live.
 
+    GUIDED SETUP: setup.ps1 (the enrollment-driven setup) stores the token
+    itself and then runs this script with -UseExistingMachineToken. That
+    switch changes exactly one thing: step 1 neither asks keep/replace nor
+    runs the token tool -- it requires the Machine-scope token to already
+    exist (stopping if it does not) and uses it. Everything else is
+    unchanged, and without the switch the behavior below is exactly as
+    before.
+
     TOKEN: if a Machine-scope SORTVIEW_API_TOKEN already exists you are
     asked whether to keep or replace it; the value is never displayed. A
     Machine-scope variable set during this PowerShell session does NOT
@@ -75,7 +83,8 @@
 [CmdletBinding()]
 param(
     [string]$InstallRoot = "C:\SortView\Collector",
-    [string]$ConfigPath = "C:\ProgramData\SortViewCollector\config\collector_config.json"
+    [string]$ConfigPath = "C:\ProgramData\SortViewCollector\config\collector_config.json",
+    [switch]$UseExistingMachineToken
 )
 
 $ErrorActionPreference = "Stop"
@@ -305,6 +314,21 @@ function Get-ExistingTaskDecision {
     return [pscustomobject]@{ Decision = "AlreadyRegistered"; Reason = "a matching Disabled task is already registered" }
 }
 
+function Get-TokenStepAction {
+    # What step 1 does. Without -UseExistingMachineToken this is the original
+    # behavior: ask keep/replace when a token exists, prompt for one when not.
+    #   UseExisting     -> switch given and a Machine token exists: use it, ask nothing
+    #   MissingExisting -> switch given but no Machine token: stop (never prompt)
+    #   AskKeepOrReplace / PromptForToken -> original interactive behavior
+    param([bool]$UseExisting, [bool]$MachineTokenPresent)
+    if ($UseExisting) {
+        if ($MachineTokenPresent) { return "UseExisting" }
+        return "MissingExisting"
+    }
+    if ($MachineTokenPresent) { return "AskKeepOrReplace" }
+    return "PromptForToken"
+}
+
 function Get-TokenChoice {
     # Interprets the answer to "keep or replace?". Enter = keep.
     param([string]$Answer)
@@ -403,7 +427,17 @@ try {
 
     $machineToken = [Environment]::GetEnvironmentVariable("SORTVIEW_API_TOKEN", "Machine")
     $runTokenTool = $true
-    if (-not [string]::IsNullOrWhiteSpace($machineToken)) {
+    $tokenAction = Get-TokenStepAction -UseExisting ([bool]$UseExistingMachineToken) `
+        -MachineTokenPresent (-not [string]::IsNullOrWhiteSpace($machineToken))
+    if ($tokenAction -eq "MissingExisting") {
+        Stop-Setup -Step "step 1 of 5 (API token)" -Problem "-UseExistingMachineToken was given, but no Machine-scope SORTVIEW_API_TOKEN is set." `
+            -Unchanged "no preflight, bootstrap, or Scheduled Task step was run" `
+            -Fix "Run setup.ps1 again (it stores the token), or run this script without -UseExistingMachineToken to enter one." -ExitCode 1
+    }
+    if ($tokenAction -eq "UseExisting") {
+        Write-Host "Using the API token already stored on this machine (Machine scope; value not shown)."
+        $runTokenTool = $false
+    } elseif ($tokenAction -eq "AskKeepOrReplace") {
         Write-Host "An API token is already set on this machine (Machine scope; value not shown)."
         $choice = "Invalid"
         while ($choice -eq "Invalid") {
