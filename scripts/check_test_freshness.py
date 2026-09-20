@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Test-freshness guard: catches tests (and production defaults) that quietly go stale as releases and the calendar move on.
 
 WHY. Two failure modes recur around every Collector release, and neither shows up until a PR is already open:

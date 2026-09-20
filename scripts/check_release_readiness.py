@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Release-readiness validation for a Collector release: run BEFORE a release is built.
 
 collector.__version__ (collector/__init__.py) is the ONE authoritative Collector version. This check never records
