@@ -65,6 +65,6 @@ from __future__ import annotations
 #     it before anything is packaged.
 #   - collector/freeze/build_frozen.ps1: the freshly built executable's
 #     `version` output must equal this value, or the build fails.
-# 1.0.2 is the frozen, validated release ZIP; this is the next build, which
-# adds installation-lifecycle heartbeat linkage (installation_id).
-__version__ = "1.0.3"
+# 1.0.3 is the previously validated release; 1.0.4 adds guided one-time
+# enrollment and setup while preserving the existing Collector runtime.
+__version__ = "1.0.4"

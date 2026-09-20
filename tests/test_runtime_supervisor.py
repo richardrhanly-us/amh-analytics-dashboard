@@ -13,6 +13,8 @@ import json
 import time
 from dataclasses import replace
 
+import requests
+
 from agent import spool, state
 from agent.runtime.config import RuntimeConfig, SourceConfig
 from agent.runtime.supervisor import AgentRunner
@@ -654,7 +656,11 @@ def test_disk_pressure_resume_allows_collection_to_continue(tmp_path):
 
 def test_heartbeat_reflects_pending_backlog_end_to_end(tmp_path):
     cfg = _cfg(tmp_path)
-    runner, session = _make_runner(tmp_path, cfg=cfg, upload_script=[Exception("down")] * 50)
+    # A real outage: requests raises RequestException subclasses, which the uploader classifies as retryable and
+    # backs off from -- the batch stays pending and every thread stays up. (A bare Exception is NOT a network
+    # error: it crashes the uploader, and the supervisor's fail-fast policy then stops the heartbeat thread too,
+    # so the test would depend on the first heartbeat winning a race against that crash.)
+    runner, session = _make_runner(tmp_path, cfg=cfg, upload_script=[requests.ConnectionError("down")] * 50)
     spool.write_batch(
         cfg.spool_root, "checkins", [{"barcode": "1", "source_event_id": "c" * 64}], source_generation=0, start_offset=0, end_offset=10
     )
