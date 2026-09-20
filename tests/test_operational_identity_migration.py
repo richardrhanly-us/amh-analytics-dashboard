@@ -52,14 +52,16 @@ def _render(function_name: str) -> str:
 
 # --- chain -------------------------------------------------------------------
 
-def test_migration_chains_from_the_previous_head_and_is_the_only_head():
+def test_migration_chains_from_the_previous_head_and_stays_in_a_single_linear_chain():
     script = _script_directory()
 
     revision = script.get_revision(REVISION)
 
     assert revision is not None
     assert revision.down_revision == PREVIOUS_HEAD
-    assert script.get_heads() == [REVISION]
+    # Later migrations may extend the chain; it must stay one linear history.
+    assert REVISION in {r.revision for r in script.walk_revisions()}
+    assert len(script.get_heads()) == 1
 
 
 # --- upgrade DDL -------------------------------------------------------------

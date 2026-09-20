@@ -62,7 +62,8 @@ def db(monkeypatch):
             operational_branch_id INTEGER)""",
         """CREATE TABLE agent_tokens (
             id INTEGER PRIMARY KEY, token_hash TEXT, customer_id INTEGER,
-            branch_id INTEGER, is_active BOOLEAN, description TEXT, last_used_at TEXT)""",
+            branch_id INTEGER, is_active BOOLEAN, description TEXT, last_used_at TEXT,
+            installation_id INTEGER)""",
         """CREATE TABLE collector_installations (
             id INTEGER PRIMARY KEY, organization_id INTEGER, branch_id INTEGER,
             name TEXT, hostname TEXT, collector_version TEXT, status TEXT,
@@ -306,7 +307,7 @@ def test_legacy_heartbeat_with_explicit_null_installation_id_is_legacy(world):
     assert len(_pipeline_rows(world)) == 1
 
 
-def test_legacy_heartbeat_never_runs_an_installation_query(world, monkeypatch):
+def test_legacy_heartbeat_never_runs_the_installation_lifecycle_query(world, monkeypatch):
     executed: list[str] = []
     monkeypatch.setattr(main, "engine", _HookedEngine(world, lambda sql, conn: executed.append(sql)))
 
@@ -314,7 +315,10 @@ def test_legacy_heartbeat_never_runs_an_installation_query(world, monkeypatch):
 
     assert response.status_code == 200
     assert any("agent_tokens" in sql for sql in executed)
-    assert not any("collector_installations" in sql for sql in executed)
+    # The token lookup joins collector_installations read-only (to fail closed for a
+    # BOUND token); a legacy heartbeat must never run the lifecycle lookup or write.
+    assert not any("UPDATE collector_installations" in sql for sql in executed)
+    assert not any("ci.id = :installation_id" in " ".join(sql.split()) for sql in executed)
 
 
 # --- lifecycle: provisioning -> active, installed_at, last_seen_at, version -----
@@ -711,7 +715,7 @@ def test_a_concurrent_deactivation_between_lookup_and_update_is_not_overwritten(
 
 # --- /upload is unchanged ------------------------------------------------------------------
 
-def test_upload_never_touches_collector_installations(monkeypatch):
+def test_upload_never_writes_collector_installations(monkeypatch):
     executed: list[str] = []
 
     class _Result:
@@ -752,7 +756,8 @@ def test_upload_never_touches_collector_installations(monkeypatch):
 
     assert response.status_code == 200
     assert any("INSERT INTO checkins" in sql for sql in executed)
-    assert not any("collector_installations" in sql for sql in executed)
+    assert not any("UPDATE collector_installations" in sql for sql in executed)
+    assert not any("INSERT INTO collector_installations" in sql for sql in executed)
 
 
 def test_upload_ignores_installation_fields_entirely():

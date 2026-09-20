@@ -19,6 +19,13 @@ if SUPER_ADMIN_DIR not in sys.path:
 
 from super_auth import require_super_admin
 
+from services.collector_enrollment_service import (
+    ALLOWED_INSTALLATION_STATUSES as ENROLLABLE_INSTALLATION_STATUSES,
+)
+from services.collector_enrollment_service import (
+    EnrollmentError,
+    generate_enrollment_code_for_installation,
+)
 from services.platform_admin_service import (
     list_libraries_with_status,
     set_library_active_status,
@@ -354,6 +361,55 @@ if installations:
         else:
             st.success("Installation updated.")
             st.rerun()
+
+    st.markdown("#### Enrollment Code")
+    st.caption(
+        "A one-time code the Collector setup redeems over HTTPS for its own agent token, "
+        f"for the selected installation only (Installation ID {selected_installation_id}). "
+        "Generating a new code invalidates any earlier unused code for this installation. "
+        "Existing agent tokens are not touched."
+    )
+    if installation["status"] not in ENROLLABLE_INSTALLATION_STATUSES:
+        st.info(
+            "Enrollment codes are only available for provisioning or active installations "
+            f"(this one is {installation['status']})."
+        )
+    elif st.button(
+        "Generate Enrollment Code",
+        key=f"generate_enrollment_code_{selected_installation_id}",
+    ):
+        try:
+            generated = generate_enrollment_code_for_installation(
+                installation_id=selected_installation_id,
+                created_by_user_id=int(auth_user["id"]),
+                expected_organization_id=organization_id,
+            )
+        except EnrollmentError as e:
+            st.error(f"Cannot generate an enrollment code: {e.reason.replace('_', ' ')}.")
+        except Exception as e:
+            st.error(f"Enrollment code generation failed: {type(e).__name__}: {e}")
+        else:
+            # Shown once, in this run only: deliberately NOT kept in session state,
+            # so it is gone the next time the page refreshes.
+            st.success(
+                f"Enrollment code for {generated['installation_name']} "
+                f"(Installation ID {generated['installation_id']})"
+            )
+            st.code(generated["enrollment_code"], language=None)
+            st.write(
+                f"Expires: {generated['expires_at']:%Y-%m-%d %H:%M:%S} UTC "
+                f"({generated['ttl_minutes']} minutes from now)"
+            )
+            st.warning(
+                "SINGLE USE. This code is shown only now -- copy it before this page refreshes; "
+                "it cannot be displayed again. It expires at the time above and stops working "
+                "the moment it is used or a new code is generated."
+            )
+            if generated["revoked_previous_count"]:
+                st.info(
+                    f"{generated['revoked_previous_count']} earlier unused code(s) for this "
+                    "installation were invalidated."
+                )
 else:
     st.info("No collector installations recorded for this library.")
 
