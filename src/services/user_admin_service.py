@@ -1,13 +1,23 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from sqlalchemy import text
 
 from database import get_engine
 from services import auth_service
+from services.privacy_hardening import log_safe_exception
+
+logger = logging.getLogger("sortview.user_admin")
 
 ALLOWED_MEMBERSHIP_ROLES = ["owner", "admin", "manager", "viewer"]
+
+# Shown by the admin Users page; fixed text, never an exception's own message.
+USER_CREATE_FAILED_MESSAGE = (
+    "The user could not be created. Please check the details and try again. "
+    "If this keeps happening, contact SortView support."
+)
 
 
 def _get_org_row(org_slug: str) -> dict[str, Any] | None:
@@ -131,10 +141,16 @@ def create_or_add_org_user(
             password=password,
             full_name=full_name,
         )
-    except ValueError as e:
+    except auth_service.UserAlreadyExistsError:
         return {
             "ok": False,
-            "message": str(e),
+            "message": auth_service.UserAlreadyExistsError.MESSAGE,
+        }
+    except ValueError as exc:
+        log_safe_exception(logger, "User creation refused", exc)
+        return {
+            "ok": False,
+            "message": USER_CREATE_FAILED_MESSAGE,
         }
 
     insert_membership_sql = text("""

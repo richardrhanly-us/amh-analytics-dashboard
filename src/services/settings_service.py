@@ -1,9 +1,19 @@
 import json
+import logging
 from pathlib import Path
 
 import streamlit as st
 
+from services.privacy_hardening import log_safe_exception
 from services.tenant_service import get_effective_settings
+
+logger = logging.getLogger("sortview.settings")
+
+# What `settings_error` holds when the database settings could not be loaded and the file fallback
+# was used instead. It is a stable code, never exception text: the settings dict is cached
+# process-wide by st.cache_data for _SETTINGS_CACHE_TTL_SECONDS, and a driver's error message
+# quotes SQL, bound values and the failing row. The exception itself is logged as a safe summary.
+SETTINGS_ERROR_DATABASE_UNAVAILABLE = "database_unavailable"
 
 # load_runtime_settings (via get_effective_settings: 4 sequential
 # queries -- org, branch, subscription, entitlements) previously ran on
@@ -182,10 +192,11 @@ def load_runtime_settings(
                 org_slug=org_slug,
                 branch_slug=branch_slug,
             )
-        except Exception as e:
+        except Exception as exc:
+            log_safe_exception(logger, "Database settings load failed; using the settings file", exc)
             fallback = load_app_settings_from_file(settings_file)
             fallback["source"] = "file_fallback"
-            fallback["settings_error"] = f"{type(e).__name__}: {e}"
+            fallback["settings_error"] = SETTINGS_ERROR_DATABASE_UNAVAILABLE
             return fallback
 
     return load_app_settings_from_file(settings_file)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 
@@ -37,6 +38,7 @@ from services.platform_admin_service import (
     list_libraries_with_status,
     set_library_active_status,
 )
+from services.privacy_hardening import log_safe_exception
 from services.tenant_service import (
     COLLECTOR_INSTALLATION_STATUSES,
     assign_operational_identity,
@@ -46,6 +48,26 @@ from services.tenant_service import (
     list_collector_installations_for_organization,
     update_collector_installation,
 )
+
+logger = logging.getLogger("sortview.super_admin.libraries")
+
+# Fixed, support-safe failure messages. A failure is logged as a safe summary (log_safe_exception:
+# error type, SQLSTATE, code location -- never the message); the exception's own text is never
+# shown, because a database driver's message quotes SQL, bound values and the failing row.
+_SUPPORT_HINT = "If this keeps happening, contact SortView support."
+ASSIGN_FAILED_MESSAGE = (
+    f"The operational identity could not be assigned. Assignment is safe to run again. {_SUPPORT_HINT}"
+)
+SUSPEND_FAILED_MESSAGE = f"The library could not be suspended. Please try again. {_SUPPORT_HINT}"
+REACTIVATE_FAILED_MESSAGE = f"The library could not be reactivated. Please try again. {_SUPPORT_HINT}"
+INSTALLATION_UPDATE_FAILED_MESSAGE = (
+    f"The installation could not be updated. Check the values and try again. {_SUPPORT_HINT}"
+)
+INSTALLATION_ADD_FAILED_MESSAGE = (
+    f"The installation could not be added. Check the values and try again. {_SUPPORT_HINT}"
+)
+ENROLLMENT_CODE_FAILED_MESSAGE = f"An enrollment code could not be generated. Please try again. {_SUPPORT_HINT}"
+INSTALLATION_NAME_REQUIRED_MESSAGE = "Installation name is required."
 
 st.set_page_config(
     page_title="Manage Libraries",
@@ -205,8 +227,9 @@ with detail_col2:
                     organization_id=int(selected_row["organization_id"]),
                     branch_id=int(selected_row["branch_id"]),
                 )
-            except Exception as e:
-                st.error(f"Assignment failed: {type(e).__name__}: {e}")
+            except Exception as exc:
+                log_safe_exception(logger, "Operational identity assignment failed", exc)
+                st.error(ASSIGN_FAILED_MESSAGE)
             else:
                 st.success(
                     "Operational identity assigned: customer "
@@ -259,8 +282,9 @@ with detail_col2:
         if st.button("Suspend Library", type="secondary"):
             try:
                 set_library_active_status(organization_id=library_organization_id, is_active=False)
-            except Exception as e:
-                st.error(f"Suspend failed: {type(e).__name__}: {e}")
+            except Exception as exc:
+                log_safe_exception(logger, "Library suspend failed", exc)
+                st.error(SUSPEND_FAILED_MESSAGE)
             else:
                 st.success("Library suspended.")
                 st.rerun()
@@ -273,8 +297,9 @@ with detail_col2:
         if st.button("Reactivate Library", type="primary"):
             try:
                 set_library_active_status(organization_id=library_organization_id, is_active=True)
-            except Exception as e:
-                st.error(f"Reactivate failed: {type(e).__name__}: {e}")
+            except Exception as exc:
+                log_safe_exception(logger, "Library reactivate failed", exc)
+                st.error(REACTIVATE_FAILED_MESSAGE)
             else:
                 st.success("Library reactivated.")
                 st.rerun()
@@ -353,7 +378,9 @@ if installations:
         )
         save_installation = st.form_submit_button("Save Installation", type="primary")
 
-    if save_installation:
+    if save_installation and not edit_name.strip():
+        st.error(INSTALLATION_NAME_REQUIRED_MESSAGE)
+    elif save_installation:
         try:
             update_collector_installation(
                 installation_id=selected_installation_id,
@@ -363,8 +390,9 @@ if installations:
                 collector_version=edit_version,
                 status=edit_status,
             )
-        except Exception as e:
-            st.error(f"Update failed: {type(e).__name__}: {e}")
+        except Exception as exc:
+            log_safe_exception(logger, "Collector installation update failed", exc)
+            st.error(INSTALLATION_UPDATE_FAILED_MESSAGE)
         else:
             st.success("Installation updated.")
             st.rerun()
@@ -393,8 +421,9 @@ if installations:
             )
         except EnrollmentError as e:
             st.error(f"Cannot generate an enrollment code: {e.reason.replace('_', ' ')}.")
-        except Exception as e:
-            st.error(f"Enrollment code generation failed: {type(e).__name__}: {e}")
+        except Exception as exc:
+            log_safe_exception(logger, "Enrollment code generation failed", exc)
+            st.error(ENROLLMENT_CODE_FAILED_MESSAGE)
         else:
             # Shown once, in this run only: deliberately NOT kept in session state,
             # so it is gone the next time the page refreshes.
@@ -428,7 +457,9 @@ if pd.notna(primary_branch_id):
             new_version = st.text_input("Collector version", value=COLLECTOR_VERSION)
             add_installation = st.form_submit_button("Add Installation")
 
-        if add_installation:
+        if add_installation and not new_name.strip():
+            st.error(INSTALLATION_NAME_REQUIRED_MESSAGE)
+        elif add_installation:
             try:
                 create_collector_installation(
                     organization_id=organization_id,
@@ -438,8 +469,9 @@ if pd.notna(primary_branch_id):
                     collector_version=new_version,
                     status="provisioning",
                 )
-            except Exception as e:
-                st.error(f"Create failed: {type(e).__name__}: {e}")
+            except Exception as exc:
+                log_safe_exception(logger, "Collector installation creation failed", exc)
+                st.error(INSTALLATION_ADD_FAILED_MESSAGE)
             else:
                 st.success("Installation added.")
                 st.rerun()

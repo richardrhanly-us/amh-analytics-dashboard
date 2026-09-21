@@ -36,6 +36,16 @@ LOCKOUT_MINUTES = 15
 PASSWORD_RESET_MINUTES = 30
 PASSWORD_RESET_TOKEN_BYTES = 32
 
+
+class UserAlreadyExistsError(ValueError):
+    """create_user refused a duplicate email. Still a ValueError, so existing handlers keep
+    working; the admin UI shows its fixed message and relays no other ValueError's text."""
+
+    MESSAGE = "A user with that email already exists."
+
+    def __init__(self) -> None:
+        super().__init__(self.MESSAGE)
+
 #***************************************************************
 #
 #  Function:     log_auth_event
@@ -841,7 +851,7 @@ def create_user(email: str, password: str, full_name: str = "") -> dict[str, Any
             message="User already exists.",
             metadata={"reason": "duplicate_email"},
         )
-        raise ValueError("A user with that email already exists.")
+        raise UserAlreadyExistsError()
 
     # Insert the new user with an active status and hashed password.
     sql = text("""

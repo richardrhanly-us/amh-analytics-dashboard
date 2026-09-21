@@ -208,3 +208,32 @@ in the Streamlit Cloud dashboard, which isn't visible from this repo at all.
 Before pinning or upgrading a dependency, confirm that dropdown matches 3.11
 (or whatever version is intentionally set) rather than assuming it matches
 local/CI.
+
+## streamlit error display
+
+Streamlit's default (`client.showErrorDetails = "full"`) shows an uncaught exception's type, message
+and traceback in the browser. A database driver's message quotes the SQL, bound values, connection
+string and failing row, so the repository pins the setting in
+[`.streamlit/config.toml`](../.streamlit/config.toml):
+
+```toml
+[client]
+showErrorDetails = "none"
+```
+
+Users then see only "This app has encountered an error". This is covered by
+`tests/test_streamlit_error_details.py`.
+
+- **The file only applies when Streamlit is started from the repository root** (`streamlit run
+  src/app.py`, as in the README and devcontainer; the Super Admin app likewise). Streamlit reads
+  `$CWD/.streamlit/config.toml`, not a path relative to the script, so a launch from another directory
+  silently falls back to `"full"`.
+- **It can be overridden from outside the repository.** An environment variable
+  (`STREAMLIT_CLIENT_SHOW_ERROR_DETAILS`) or a `--client.showErrorDetails` flag given to `streamlit run`
+  outranks the file. Never set either to `full` in production; use it for one local debugging run only.
+- **Only the browser is redacted.** Streamlit still logs the full uncaught exception, message
+  included, to the server log ("Manage app" on Streamlit Cloud), so treat those logs as sensitive.
+- **After each deployment, verify it on the live app** (this cannot be checked from the repo): make a
+  page raise a deliberate error in a non-production copy, or check that the hosting platform's own
+  settings do not override `client.showErrorDetails`, and confirm the page shows only the generic
+  message.
