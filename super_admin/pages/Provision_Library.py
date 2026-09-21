@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sys
@@ -27,6 +28,7 @@ if ROOT_DIR not in sys.path:
 from super_auth import require_super_admin
 
 from collector import __version__ as COLLECTOR_VERSION
+from services.privacy_hardening import log_safe_exception
 from services.tenant_service import (
     assign_operational_identity,
     build_collector_agent_config,
@@ -34,6 +36,20 @@ from services.tenant_service import (
     create_organization_with_primary_branch,
     format_collector_install_parameters,
 )
+
+logger = logging.getLogger("sortview.super_admin.provision")
+
+# Failures are logged as a safe summary (log_safe_exception: error type, SQLSTATE, code location --
+# never the message) and shown as fixed text. The exception's own text is never shown or kept:
+# a database driver's message quotes SQL, bound values and the failing row, and
+# `operational_error` is stored in st.session_state and rendered by st.json.
+PROVISION_FAILED_MESSAGE = (
+    "Library provisioning could not be completed. Check Manage Libraries in case the library "
+    "already exists, then try again. If this keeps happening, contact SortView support."
+)
+# Stable codes, stored where the exception text used to be.
+OPERATIONAL_STAGE_FAILED = "operational_identity_assignment_failed"
+INSTALLATION_RECORD_FAILED = "installation_record_creation_failed"
 
 st.set_page_config(
     page_title="Provision Library",
@@ -95,8 +111,9 @@ def run_operational_stage(
     Collector config from the MAPPED operational IDs (never the SaaS IDs).
 
     Returns (operational_identity, agent_config, error). On any failure the
-    identity and config are None and error describes it; assignment is atomic
-    and idempotent, so this can simply be run again.
+    identity and config are None and error is the stable code
+    OPERATIONAL_STAGE_FAILED (never exception text); assignment is atomic and
+    idempotent, so this can simply be run again.
     """
     try:
         identity = assign_operational_identity(
@@ -111,8 +128,9 @@ def run_operational_stage(
             raw_rejects_file=config_inputs["raw_rejects_file"],
             raw_acs_file=config_inputs["raw_acs_file"],
         )
-    except Exception as e:
-        return None, None, f"{type(e).__name__}: {e}"
+    except Exception as exc:
+        log_safe_exception(logger, "Operational identity stage failed", exc)
+        return None, None, OPERATIONAL_STAGE_FAILED
 
     return identity, agent_config, None
 
@@ -251,8 +269,9 @@ if submitted:
             org_settings=org_settings,
             branch_settings=branch_settings,
         )
-    except Exception as e:
-        st.error(f"Provisioning failed: {type(e).__name__}: {e}")
+    except Exception as exc:
+        log_safe_exception(logger, "Library provisioning failed", exc)
+        st.error(PROVISION_FAILED_MESSAGE)
         st.stop()
 
     organization = result["organization"]
@@ -276,8 +295,9 @@ if submitted:
                 collector_version=installation_version,
                 status="provisioning",
             )
-        except Exception as e:
-            installation_error = f"{type(e).__name__}: {e}"
+        except Exception as exc:
+            log_safe_exception(logger, "Collector installation record creation failed", exc)
+            installation_error = INSTALLATION_RECORD_FAILED
 
     # Stage 2: operational identity. The SaaS tenant above is already
     # committed, so a failure here must not hide it -- it is reported as
@@ -308,16 +328,16 @@ if submitted:
     if operational_error:
         st.warning(
             "SaaS organization and branch were created, but operational "
-            f"provisioning is INCOMPLETE ({operational_error}). Retry below or "
-            "from Manage Libraries."
+            "provisioning is INCOMPLETE. Retry below or from Manage Libraries. "
+            "If it keeps failing, contact SortView support."
         )
     else:
         st.success("Library provisioned.")
     if installation_error:
         st.warning(
-            "Library provisioned, but the installation record could not be created "
-            f"({installation_error}). Add it from Manage Libraries to get the Installation "
-            "ID the on-site installer needs."
+            "Library provisioned, but the installation record could not be created. "
+            "Add it from Manage Libraries to get the Installation ID the on-site "
+            "installer needs."
         )
     elif not create_installation:
         st.info(

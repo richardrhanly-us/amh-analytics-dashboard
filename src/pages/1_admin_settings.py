@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import streamlit as st
@@ -10,8 +11,19 @@ from services.access_service import get_org_branches, get_user_memberships
 from services.app_ui_service import apply_page_chrome
 from services.entitlement_service import build_entitlement_context
 from services.permission_service import can_manage_settings
+from services.privacy_hardening import log_safe_exception
 from services.sidebar_service import render_main_sidebar
 from services.tenant_service import get_effective_settings
+
+logger = logging.getLogger("sortview.admin_settings")
+
+# Fixed, support-safe failure messages. A failure is logged as a safe summary (log_safe_exception:
+# error type, SQLSTATE, code location -- never the message); the exception's own text is never
+# shown, because a database driver's message quotes SQL, bound values and the failing row.
+_SUPPORT_HINT = "If this keeps happening, contact SortView support."
+SETTINGS_LOAD_FAILED_MESSAGE = f"Settings could not be loaded right now. Please try again in a few minutes. {_SUPPORT_HINT}"
+SETTINGS_SAVE_FAILED_MESSAGE = f"Settings could not be saved. Please try again in a few minutes. {_SUPPORT_HINT}"
+SETTINGS_PREVIEW_FAILED_MESSAGE = "The settings preview could not be loaded right now. Please try again in a few minutes."
 
 st.set_page_config(
     page_title="Admin Settings",
@@ -344,8 +356,9 @@ try:
         org_slug=selected_org_slug,
         branch_slug=selected_branch_slug,
     )
-except Exception as e:
-    st.error(f"Could not load settings from database: {type(e).__name__}: {e}")
+except Exception as exc:
+    log_safe_exception(logger, "Admin settings load failed", exc)
+    st.error(SETTINGS_LOAD_FAILED_MESSAGE)
     st.stop()
 
 library_settings = settings.get("library", {})
@@ -611,8 +624,9 @@ with st.form("admin_settings_form"):
             )
             st.success("Settings saved to database.")
             st.rerun()
-        except Exception as e:
-            st.error(f"Could not save settings to database: {type(e).__name__}: {e}")
+        except Exception as exc:
+            log_safe_exception(logger, "Admin settings save failed", exc)
+            st.error(SETTINGS_SAVE_FAILED_MESSAGE)
 
 with st.expander("Current DB Preview", expanded=False):
     try:
@@ -626,5 +640,6 @@ with st.expander("Current DB Preview", expanded=False):
                 str(preview_settings["security"].get("admin_password", ""))
             )
         st.json(preview_settings)
-    except Exception as e:
-        st.error(f"Could not load preview from database: {type(e).__name__}: {e}")
+    except Exception as exc:
+        log_safe_exception(logger, "Admin settings preview failed", exc)
+        st.error(SETTINGS_PREVIEW_FAILED_MESSAGE)

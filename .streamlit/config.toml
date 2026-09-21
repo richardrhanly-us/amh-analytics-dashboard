@@ -1,0 +1,13 @@
+# Streamlit configuration for SortView. Do NOT put secrets here: they belong in
+# .streamlit/secrets.toml (git-ignored) or the hosting platform's Secrets panel.
+#
+# Streamlit reads this file from the directory `streamlit run` is started in, so start the dashboard
+# and Super Admin from the repository root (see docs/deployment.md, "streamlit error display").
+
+[client]
+# Never show an uncaught exception's message, type or traceback in the browser -- the user sees only
+# "This app has encountered an error". A database driver's exception message quotes the SQL, bound
+# values, connection string and failing row, and Streamlit's default ("full") would put them on the
+# page. The full details are still recorded in the server logs. To debug locally, override it for one
+# run with the environment variable STREAMLIT_CLIENT_SHOW_ERROR_DETAILS=full; never set that in production.
+showErrorDetails = "none"
