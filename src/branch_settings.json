@@ -4,10 +4,6 @@
     "branch_name": "Main Branch",
     "system_name": "Tech Logic UltraSort"
   },
-  "security": {
-    "admin_enabled": true,
-    "admin_password": "78666"
-  },
   "transit": {
     "home_branch_label": "Main",
     "destinations": [

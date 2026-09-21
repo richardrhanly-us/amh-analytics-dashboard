@@ -8,14 +8,27 @@ from sqlalchemy import text
 
 from database import get_engine
 from services.access_service import get_org_branches, get_user_memberships
+from services.admin_lock_service import (
+    build_security_settings,
+    has_admin_password,
+    is_legacy_plaintext,
+    public_security_view,
+    verify_admin_password,
+)
 from services.app_ui_service import apply_page_chrome
 from services.entitlement_service import build_entitlement_context
 from services.permission_service import can_manage_settings
-from services.privacy_hardening import log_safe_exception
+from services.privacy_hardening import (
+    install_streamlit_log_scrubber,
+    log_safe_exception,
+)
 from services.sidebar_service import render_main_sidebar
 from services.tenant_service import get_effective_settings
 
 logger = logging.getLogger("sortview.admin_settings")
+
+# Keep an uncaught page exception's text out of Streamlit's own server log (see services/privacy_hardening.py).
+install_streamlit_log_scrubber()
 
 # Fixed, support-safe failure messages. A failure is logged as a safe summary (log_safe_exception:
 # error type, SQLSTATE, code location -- never the message); the exception's own text is never
@@ -39,10 +52,9 @@ DEFAULT_SETTINGS = {
         "branch_name": "Main Branch",
         "system_name": "Tech Logic UltraSort",
     },
+    # No password key: a new organization has no admin lock until an admin sets one (stored only as a hash).
     "security": {
         "admin_enabled": True,
-        # Empty default in a settings template, not a real credential.
-        "admin_password": "",  # nosec B105
     },
     "transit": {
         "home_branch_label": "Main",
@@ -87,10 +99,6 @@ def deep_merge_defaults(base: dict, defaults: dict) -> dict:
 
 def lines_to_list(text: str) -> list[str]:
     return [line.strip() for line in text.splitlines() if line.strip()]
-
-
-def mask_password(value: str) -> str:
-    return "" if not value else "********"
 
 
 def _get_settings_rows(org_slug: str, branch_slug: str) -> dict[str, Any]:
@@ -183,10 +191,14 @@ def save_settings(org_slug: str, branch_slug: str, settings: dict) -> None:
     org_payload.update({
         "library_name": settings["library"]["library_name"].strip(),
         "system_name": settings["library"]["system_name"].strip(),
-        "security": {
-            "admin_enabled": bool(settings["security"]["admin_enabled"]),
-            "admin_password": settings["security"]["admin_password"],
-        },
+        # Only a hash is ever stored. A blank new password keeps the current one (a legacy plaintext value is
+        # converted to a hash of the same value here), so saving settings never removes or exposes the lock.
+        "security": build_security_settings(
+            enabled=bool(settings["security"]["admin_enabled"]),
+            new_password=settings["security"]["new_password"],
+            remove_password=bool(settings["security"]["remove_password"]),
+            current=current_org_settings.get("security"),
+        ),
         "transit": {
             "home_branch_label": settings["transit"]["home_branch_label"].strip(),
             "destinations": list(settings["transit"]["destinations"]),
@@ -348,8 +360,10 @@ render_main_sidebar(
 selected_org_slug = st.session_state["selected_org_slug"]
 selected_branch_slug = st.session_state["selected_branch_slug"]
 
-if "admin_authenticated" not in st.session_state:
-    st.session_state["admin_authenticated"] = False
+# Unlocking is remembered for THIS user in THIS organization only. (It used to be one global boolean, so
+# unlocking one organization -- or a different user signing in on the same browser session -- unlocked all.)
+unlock_scope = (auth_user["id"], selected_org_slug)
+admin_unlocked = st.session_state.get("admin_unlocked_scope") == unlock_scope
 
 try:
     settings = load_settings(
@@ -368,13 +382,13 @@ internal_routing = settings.get("internal_routing", {})
 account_settings = settings.get("account_settings", {})
 
 admin_enabled = bool(security_settings.get("admin_enabled", True))
-stored_password = str(security_settings.get("admin_password", ""))
+password_is_set = has_admin_password(security_settings)
 
 st.caption("SortView Admin")
 st.title("Admin Settings")
 st.caption("Manage branch configuration, routing rules, transit labels, and future account settings.")
 
-if admin_enabled and stored_password and not st.session_state["admin_authenticated"]:
+if admin_enabled and password_is_set and not admin_unlocked:
     st.info("Admin access required.")
 
     entered_password = st.text_input("Admin password", type="password")
@@ -383,8 +397,8 @@ if admin_enabled and stored_password and not st.session_state["admin_authenticat
 
     with unlock_col1:
         if st.button("Unlock", type="primary", width="stretch"):
-            if entered_password == stored_password:
-                st.session_state["admin_authenticated"] = True
+            if verify_admin_password(entered_password, security_settings):
+                st.session_state["admin_unlocked_scope"] = unlock_scope
                 st.rerun()
             else:
                 st.error("Incorrect password.")
@@ -395,16 +409,22 @@ top_col1, top_col2 = st.columns([1, 6])
 
 with top_col1:
     if admin_enabled and st.button("Lock", width="stretch"):
-        st.session_state["admin_authenticated"] = False
+        st.session_state.pop("admin_unlocked_scope", None)
         st.rerun()
 
 with top_col2:
-    if admin_enabled and stored_password:
+    if admin_enabled and password_is_set:
         st.success("Admin access granted.")
-    elif admin_enabled and not stored_password:
+    elif admin_enabled and not password_is_set:
         st.warning("Admin password protection is enabled, but no password is currently set.")
     else:
         st.success("Admin password protection is currently disabled.")
+
+if is_legacy_plaintext(security_settings):
+    st.warning(
+        "This organization's admin password is stored in an outdated, unprotected format. "
+        "Save settings once to secure it; the password itself does not change."
+    )
 
 with st.form("admin_settings_form"):
     st.subheader("Library")
@@ -442,11 +462,17 @@ with st.form("admin_settings_form"):
         )
 
     with sec_col2:
-        admin_password = st.text_input(
-            "Admin password",
-            value=stored_password,
+        # Never pre-filled: only a hash is stored, and the stored password is not sent to the browser.
+        new_admin_password = st.text_input(
+            "New admin password",
+            value="",
             type="password",
-            help="Leave blank only if you intentionally want no password set.",
+            help="Leave blank to keep the current password.",
+        )
+        remove_admin_password = st.checkbox(
+            "Remove the admin password",
+            value=False,
+            disabled=not password_is_set,
         )
 
     st.divider()
@@ -592,7 +618,8 @@ with st.form("admin_settings_form"):
             },
             "security": {
                 "admin_enabled": bool(admin_enabled_form),
-                "admin_password": admin_password,
+                "new_password": new_admin_password,
+                "remove_password": bool(remove_admin_password),
             },
             "transit": {
                 "home_branch_label": home_branch_label.strip(),
@@ -634,11 +661,8 @@ with st.expander("Current DB Preview", expanded=False):
             org_slug=selected_org_slug,
             branch_slug=selected_branch_slug,
         )
-        if "security" in preview_settings:
-            preview_settings["security"] = dict(preview_settings["security"])
-            preview_settings["security"]["admin_password"] = mask_password(
-                str(preview_settings["security"].get("admin_password", ""))
-            )
+        # Only whether the lock is on and a password is set -- never the password or its hash.
+        preview_settings["security"] = public_security_view(preview_settings.get("security"))
         st.json(preview_settings)
     except Exception as exc:
         log_safe_exception(logger, "Admin settings preview failed", exc)

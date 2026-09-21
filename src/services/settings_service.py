@@ -4,6 +4,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from services.admin_lock_service import without_security
 from services.privacy_hardening import log_safe_exception
 from services.tenant_service import get_effective_settings
 
@@ -51,7 +52,8 @@ def load_branch_settings(settings_file: Path) -> dict:
 
 
 def load_app_settings_from_file(settings_file: Path) -> dict:
-    branch_settings = load_branch_settings(settings_file)
+    # The `security` block (the Admin Settings lock) is never part of the dashboard's cached settings.
+    branch_settings = without_security(load_branch_settings(settings_file))
 
     library_settings = branch_settings.get("library", {})
     transit_settings = branch_settings.get("transit", {})
@@ -112,7 +114,11 @@ def load_app_settings_from_file(settings_file: Path) -> dict:
 
 def load_app_settings_from_db(org_slug: str, branch_slug: str | None = None) -> dict:
     effective = get_effective_settings(org_slug=org_slug, branch_slug=branch_slug)
-    settings = effective.get("settings", {}) or {}
+    # This dict is cached process-wide (st.cache_data) and built for every user of the organization, so the
+    # `security` block (the Admin Settings lock -- a hash, or a legacy plaintext password) is dropped from it.
+    # Only the Admin Settings page reads that block, straight from the database, when it verifies an unlock.
+    settings = without_security(effective.get("settings"))
+    effective = {**effective, "settings": settings}
 
     transit_settings = settings.get("transit", {})
     internal_routing = settings.get("internal_routing", {})
