@@ -1,7 +1,10 @@
+import logging
 import os
 import sys
 
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import pytest
+
+ROOT_DIR =os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC_DIR = os.path.join(ROOT_DIR, "src")
 
 # src/services/*.py import their sibling modules top-level style (e.g.
@@ -36,3 +39,13 @@ os.environ.setdefault("SORTVIEW_API_TOKEN", "test-agent-token-placeholder")
 # currently has a real SENTRY_DSN configured.
 os.environ["SENTRY_DSN"] = ""
 os.environ["SENTRY_ENVIRONMENT"] = "test"
+
+
+@pytest.fixture(autouse=True)
+def _restore_log_record_factory():
+    # Every Streamlit entry script calls services.privacy_hardening.install_streamlit_log_scrubber(), which replaces the
+    # PROCESS-WIDE log-record factory. Running a page under AppTest would otherwise leave it installed for every later
+    # test in the run, making tests that inspect raw Streamlit log records depend on test order.
+    original = logging.getLogRecordFactory()
+    yield
+    logging.setLogRecordFactory(original)

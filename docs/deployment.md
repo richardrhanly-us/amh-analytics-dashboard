@@ -231,9 +231,36 @@ Users then see only "This app has encountered an error". This is covered by
 - **It can be overridden from outside the repository.** An environment variable
   (`STREAMLIT_CLIENT_SHOW_ERROR_DETAILS`) or a `--client.showErrorDetails` flag given to `streamlit run`
   outranks the file. Never set either to `full` in production; use it for one local debugging run only.
-- **Only the browser is redacted.** Streamlit still logs the full uncaught exception, message
-  included, to the server log ("Manage app" on Streamlit Cloud), so treat those logs as sensitive.
+- **Streamlit's server log is scrubbed separately.** `showErrorDetails` only controls the browser: Streamlit
+  always logs the whole uncaught exception, message included, before deciding what the browser sees (on a
+  `requirements.txt`-only install such as production, as `Uncaught app execution` on stderr; where the optional
+  `rich` package is installed, as a console print to stdout). Every Streamlit entry script therefore calls
+  `install_streamlit_log_scrubber()` (`src/services/privacy_hardening.py`) first, which rewrites those log
+  records to the exception type, SQLSTATE and code location -- never the message -- and turns the `rich`
+  print off. `tests/test_streamlit_log_scrubbing.py` covers it, including a guard that fails if a new entry
+  script (`src/app.py`, `src/pages/*`, `super_admin/**`) does not install it.
+- **What that does not cover:** output written before the scrubber is installed in a process's first script run
+  (for example an import failure), text written by other means (`print`, other libraries' own loggers, the
+  hosting platform's infrastructure logs), and the message arguments of Streamlit log lines that are not
+  exception records. Treat the hosting log as sensitive regardless.
 - **After each deployment, verify it on the live app** (this cannot be checked from the repo): make a
-  page raise a deliberate error in a non-production copy, or check that the hosting platform's own
-  settings do not override `client.showErrorDetails`, and confirm the page shows only the generic
-  message.
+  page raise a deliberate error in a non-production copy, confirm the page shows only the generic message,
+  then read the hosting log ("Manage app" on Streamlit Cloud) and confirm it shows
+  `Uncaught app execution | error_type=... at=...` and NOT the exception's message. Also check that the
+  hosting platform's own settings do not override `client.showErrorDetails`, and that the Super Admin
+  app is started from the repository root.
+
+## admin settings password
+
+The Admin Settings page asks an owner/admin for an extra "admin password" before it shows the settings form.
+It is per organization, is not the login system (`app_users` has its own hashed passwords), and protects only
+that page. It is stored in `organization_settings.settings_json` under `security` as a salted one-way hash
+(`admin_password_hash`, the same werkzeug scheme as user passwords); the page never pre-fills it and the
+dashboard's cached settings never contain the `security` block.
+
+- **Older organizations may still hold a plaintext `security.admin_password`.** It keeps working (so nobody is
+  locked out) and the page shows a notice; the next time an owner/admin saves Admin Settings the plaintext is
+  replaced by a hash of the same password. Until then it remains in that organization's `settings_json`.
+- **Rolling back to a version before this change** reads only `admin_password`, so an organization whose
+  password has already been converted would have no lock until an admin sets one again.
+- The lock has no attempt limit; it is a second prompt behind a signed-in owner/admin, not a login.

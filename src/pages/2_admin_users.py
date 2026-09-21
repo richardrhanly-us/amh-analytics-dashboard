@@ -7,6 +7,7 @@ from services.access_service import get_org_branches, get_user_memberships
 from services.app_ui_service import apply_page_chrome
 from services.entitlement_service import build_entitlement_context
 from services.permission_service import can_manage_settings
+from services.privacy_hardening import install_streamlit_log_scrubber
 from services.sidebar_service import render_main_sidebar
 from services.user_admin_service import (
     ALLOWED_MEMBERSHIP_ROLES,
@@ -16,6 +17,9 @@ from services.user_admin_service import (
     set_user_active,
     update_org_user_role,
 )
+
+# Keep an uncaught page exception's text out of Streamlit's own server log (see services/privacy_hardening.py).
+install_streamlit_log_scrubber()
 
 st.set_page_config(
     page_title="Admin Users",

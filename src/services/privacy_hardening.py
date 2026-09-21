@@ -6,6 +6,7 @@ server from creating SECONDARY exposure paths for whatever a request carries:
 
   * scrub_sentry_event / build_sentry_options -- what may reach the error tracker;
   * safe_exception_summary / log_safe_exception -- what an exception may write to the application log;
+  * install_streamlit_log_scrubber -- what Streamlit's own log of an UNCAUGHT page exception may contain;
   * safe_validation_errors / safe_validation_body -- what a 422 response may say back to the caller;
   * api_docs_kwargs -- whether the API publishes its own schema.
 
@@ -15,6 +16,7 @@ Sentry or a database. Nothing here removes data from the database or changes wha
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
@@ -193,6 +195,73 @@ def log_safe_exception(logger: logging.Logger, message: str, exc: BaseException)
     # `message` is a fixed string chosen by the caller, so it stays part of the log TEMPLATE (which is what the
     # error tracker groups on); the variable part is only the summary.
     logger.error(message.replace("%", "%%") + " | %s", safe_exception_summary(exc))
+
+
+# --- Streamlit's own log of an uncaught app exception ---------------------------------------------------------------
+
+# Streamlit logs every uncaught exception in a page script -- message, traceback and all -- before it decides what
+# the browser may see (`client.showErrorDetails`), and that log line is not ours: `_LOGGER.error("Uncaught app
+# execution", exc_info=ex)` on the `streamlit.error_util` logger (stderr), or, when the optional `rich` package is
+# installed, a console print that never touches `logging` (stdout). A database driver's message quotes SQL, bound
+# values and the failing row, so an unwrapped query failure would put them in the server log ("Manage app" on
+# Streamlit Cloud). The scrubber below rewrites those records before any handler formats them.
+
+_SCRUBBER_MARK = "_sortview_streamlit_exception_scrubber"
+# An uncaught app exception usually passes through several library frames before it reaches the page's own; keep enough
+# of them for the page frame to appear in the summary.
+_UNCAUGHT_SUMMARY_FRAMES = 8
+
+
+def _is_streamlit_logger(name: str) -> bool:
+    return name == "streamlit" or name.startswith("streamlit.")
+
+
+def _attached_exception(record: logging.LogRecord) -> BaseException | None:
+    info: Any = record.exc_info
+    if isinstance(info, BaseException):
+        return info
+    if isinstance(info, tuple) and len(info) == 3 and isinstance(info[1], BaseException):
+        return info[1]
+    return None
+
+
+def scrub_streamlit_log_record(record: logging.LogRecord) -> logging.LogRecord:
+    """For a record from one of Streamlit's own loggers that carries an exception, drop the exception (and so its message
+    and traceback text) and append `safe_exception_summary` -- type, SQLSTATE, code location -- to the log message. Every
+    other record is returned untouched."""
+    exc = _attached_exception(record) if _is_streamlit_logger(record.name) else None
+    if exc is not None:
+        record.msg = f"{record.getMessage()} | {safe_exception_summary(exc, max_frames=_UNCAUGHT_SUMMARY_FRAMES)}"
+        record.args = None
+        record.exc_info = None
+        record.exc_text = None
+    return record
+
+
+def install_streamlit_log_scrubber() -> None:
+    """Keep uncaught-exception text out of the process's log output. Idempotent; call it first in every Streamlit entry
+    script (a page opened by its own URL runs only that page's script, never `app.py`).
+
+    1. Wraps the log-record factory so Streamlit's records are scrubbed (`scrub_streamlit_log_record`) before any
+       handler sees them. It is scoped by logger name, so it does not depend on which Streamlit module logs, and it
+       cannot be bypassed by Streamlit's per-logger handlers or `propagate = False`.
+    2. Turns Streamlit's rich-traceback console print off (`logger.enableRich`), because that path writes the exception
+       straight to stdout and bypasses `logging`, so nothing above could scrub it.
+
+    It never raises: a failure here must not stop the page.
+    """
+    factory = logging.getLogRecordFactory()
+    if not getattr(factory, _SCRUBBER_MARK, False):
+        def scrubbing_factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
+            return scrub_streamlit_log_record(factory(*args, **kwargs))
+
+        setattr(scrubbing_factory, _SCRUBBER_MARK, True)
+        logging.setLogRecordFactory(scrubbing_factory)
+
+    with contextlib.suppress(Exception):
+        from streamlit import config
+
+        config.set_option("logger.enableRich", False)
 
 
 # --- validation errors ---------------------------------------------------------------------------------------------

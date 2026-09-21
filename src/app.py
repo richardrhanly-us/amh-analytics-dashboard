@@ -53,6 +53,7 @@ from services.permission_service import (
     can_view_internal_workflow,
     can_view_transits,
 )
+from services.privacy_hardening import install_streamlit_log_scrubber
 from services.readiness_service import get_branch_readiness
 from services.settings_service import load_runtime_settings
 from services.sidebar_service import render_main_sidebar
@@ -62,6 +63,9 @@ from views.reports_view import render_reports
 from views.transits_view import render_transits
 
 logger = logging.getLogger("sortview.app")
+
+# Keep an uncaught page exception's text out of Streamlit's own server log (see services/privacy_hardening.py).
+install_streamlit_log_scrubber()
 
 #***************************************************************
 # Page Configuration and Global Setup
