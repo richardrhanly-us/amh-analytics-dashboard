@@ -329,6 +329,81 @@ def test_the_validation_body_keeps_the_frameworks_detail_shape_and_adds_a_stable
     assert _leaked(body) == []
 
 
+# --- the location of a deep failure --------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("filename, expected", [
+    (r"C:\Users\dev\Projects\amh\src\services\auth_service.py", True),
+    ("/app/src/services/auth_service.py", True),
+    ("/mount/src/amh-analytics-dashboard/src/app.py", True),
+    (r"C:\Users\dev\Projects\amh\.venv\Lib\site-packages\sqlalchemy\engine\base.py", False),
+    ("/home/adminuser/venv/lib/python3.11/site-packages/streamlit/runtime/scriptrunner/exec_code.py", False),
+    ("/usr/lib/python3/dist-packages/psycopg2/__init__.py", False),
+    ("<frozen importlib._bootstrap>", False),
+    ("<string>", False),
+])
+def test_only_sortviews_own_frames_count_as_application_frames(filename, expected):
+    assert ph._is_application_frame(filename) is expected
+
+
+def test_a_standard_library_frame_is_not_an_application_frame():
+    import json as stdlib_module
+
+    assert ph._is_application_frame(stdlib_module.__file__) is False
+
+
+# A stand-in for SQLAlchemy/psycopg2: code whose FILENAME is under site-packages, ten frames deep.
+_LIBRARY_SOURCE = "def _library_call(depth, error):\n    if depth == 0:\n        raise error\n    _library_call(depth - 1, error)\n"
+_library_namespace: dict = {}
+exec(  # nosec B102 - test-only, fixed source
+    compile(_LIBRARY_SOURCE, "/venv/lib/python3.11/site-packages/fakedb/engine.py", "exec"), _library_namespace
+)
+
+
+def _application_entry_point():
+    # this frame is far outside the innermost few, as SQLAlchemy's connect path makes it
+    _library_namespace["_library_call"](9, _DriverError(f'invalid input syntax: "{PATRON}" Failing row contains ({RAW})'))
+
+
+def test_the_summary_names_sortview_code_even_when_the_failure_is_many_frames_deep():
+    try:
+        _application_entry_point()
+    except _DriverError as exc:
+        summary = ph.safe_exception_summary(exc)
+
+    assert "at=" in summary and "_library_call" in summary
+    assert "app=" in summary and "_application_entry_point" in summary  # the caller is named although 10 frames out
+    assert _leaked(summary) == []
+
+
+def test_a_real_database_connection_failure_is_located_in_the_calling_code_without_its_message():
+    from sqlalchemy import create_engine, text
+
+    def load_the_settings_page():
+        engine = create_engine(f"postgresql://canary_user:{DB_PASSWORD}@127.0.0.1:1/canary_db", connect_args={"connect_timeout": 2})
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+
+    try:
+        load_the_settings_page()
+    except Exception as exc:
+        summary = ph.safe_exception_summary(exc)
+
+    assert "error_type=sqlalchemy.exc.OperationalError" in summary and "cause_type=psycopg2.OperationalError" in summary
+    assert "app=" in summary and "load_the_settings_page" in summary  # SQLAlchemy's own frames alone would not say this
+    assert _leaked(summary) == [] and "canary_user" not in summary and "canary_db" not in summary
+
+
+def test_the_application_frame_count_can_be_turned_off_and_the_at_field_is_unchanged():
+    try:
+        _application_entry_point()
+    except _DriverError as exc:
+        with_app = ph.safe_exception_summary(exc)
+        without_app = ph.safe_exception_summary(exc, app_frames=0)
+
+    assert "app=" not in without_app
+    assert with_app.split(" app=")[0] == without_app  # the existing `at=` field is byte-for-byte what it was
+
+
 # --- API schema exposure -------------------------------------------------------------------------------------------
 
 def test_the_api_docs_are_off_by_default_and_on_only_when_asked():

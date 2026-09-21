@@ -243,8 +243,10 @@ Users then see only "This app has encountered an error". This is covered by
   (for example an import failure), text written by other means (`print`, other libraries' own loggers, the
   hosting platform's infrastructure logs), and the message arguments of Streamlit log lines that are not
   exception records. Treat the hosting log as sensitive regardless.
-- **After each deployment, verify it on the live app** (this cannot be checked from the repo): make a
-  page raise a deliberate error in a non-production copy, confirm the page shows only the generic message,
+- **After each deployment, verify it on the live app** (this cannot be checked from the repo). The full,
+  step-by-step procedure -- a standalone canary app plus copies of the two real apps, with pass/fail criteria
+  and log search strings -- is in [`production-verification-runbook.md`](production-verification-runbook.md), Part 2.
+  In short: make a page raise a deliberate error in a non-production copy, confirm the page shows only the generic message,
   then read the hosting log ("Manage app" on Streamlit Cloud) and confirm it shows
   `Uncaught app execution | error_type=... at=...` and NOT the exception's message. Also check that the
   hosting platform's own settings do not override `client.showErrorDetails`, and that the Super Admin
@@ -261,6 +263,9 @@ dashboard's cached settings never contain the `security` block.
 - **Older organizations may still hold a plaintext `security.admin_password`.** It keeps working (so nobody is
   locked out) and the page shows a notice; the next time an owner/admin saves Admin Settings the plaintext is
   replaced by a hash of the same password. Until then it remains in that organization's `settings_json`.
+  `scripts/admin_lock_inventory.sql` (read-only) finds such rows and `scripts/migrate_admin_lock_hashes.py`
+  (dry run by default) converts them in one controlled step; see
+  [`production-verification-runbook.md`](production-verification-runbook.md), Part 1.
 - **Rolling back to a version before this change** reads only `admin_password`, so an organization whose
   password has already been converted would have no lock until an admin sets one again.
 - The lock has no attempt limit; it is a second prompt behind a signed-in owner/admin, not a login.

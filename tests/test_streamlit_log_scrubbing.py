@@ -129,14 +129,17 @@ def test_an_uncaught_exception_record_is_reduced_to_type_sqlstate_and_location(s
     assert "cause_type=" in output  # ...and what it was raised from
 
 
-def _library_frames(depth: int) -> None:
-    if depth == 0:
-        raise backend_error()
-    _library_frames(depth - 1)
+# A stand-in for SQLAlchemy/psycopg2: code whose FILENAME is under site-packages, twelve frames deep.
+_LIBRARY_NAMESPACE: dict = {}
+exec(  # nosec B102 - test-only, fixed source
+    compile("def descend(depth, error):\n    if depth == 0:\n        raise error\n    descend(depth - 1, error)\n",
+            "/venv/lib/python3.11/site-packages/fakedb/engine.py", "exec"),
+    _LIBRARY_NAMESPACE,
+)
 
 
 def _the_page_script() -> None:
-    _library_frames(6)  # the page's own frame sits below six library frames, as it does under SQLAlchemy/pandas
+    _LIBRARY_NAMESPACE["descend"](11, backend_error())  # the page's own frame sits far below the innermost frames
 
 
 def test_the_summary_reaches_the_pages_own_frame_through_deep_library_frames(scrubber_installed):
@@ -147,8 +150,10 @@ def test_the_summary_reaches_the_pages_own_frame_through_deep_library_frames(scr
     except Exception as exc:
         logger.error("Uncaught app execution", exc_info=exc)
 
-    assert "_the_page_script" in stream.getvalue()  # a shorter window would show only library frames
-    assert _leaks(stream.getvalue(), LOG_FRAGMENTS) == []
+    output = stream.getvalue()
+    assert " app=" in output and "_the_page_script" in output.split(" app=")[1]  # named in SortView's own frames
+    assert "_the_page_script" not in output.split(" app=")[0]  # ...though the innermost frames are all library code
+    assert _leaks(output, LOG_FRAGMENTS) == []
 
 
 def test_the_scrub_covers_logger_exception_and_any_streamlit_logger(scrubber_installed):

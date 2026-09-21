@@ -20,6 +20,7 @@ import contextlib
 import logging
 import os
 import re
+import sysconfig
 import traceback
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -169,11 +170,30 @@ def _sqlstate(exc: BaseException) -> str | None:
     return None
 
 
-def safe_exception_summary(exc: BaseException, *, max_frames: int = 5) -> str:
+_STDLIB_DIR = sysconfig.get_paths().get("stdlib", "").replace("\\", "/")
+
+
+def _is_application_frame(filename: str) -> bool:
+    """A frame from SortView's own code, as opposed to a library (site-packages), the standard library, or generated code."""
+    path = filename.replace("\\", "/")
+    if path.startswith("<") or "/site-packages/" in path or "/dist-packages/" in path:
+        return False
+    return not (_STDLIB_DIR and path.startswith(_STDLIB_DIR + "/"))
+
+
+def _frame_text(frame: traceback.FrameSummary) -> str:
+    return f"{os.path.basename(frame.filename)}:{frame.lineno}:{frame.name}"
+
+
+def safe_exception_summary(exc: BaseException, *, max_frames: int = 5, app_frames: int = 5) -> str:
     """Type, SQLSTATE and code location of an exception -- NEVER its message. Database drivers put the failing
     row and the offending value in the message (`DETAIL: Failing row contains (...)`, `invalid input syntax for
     type timestamp: "<value>"`), and SQLAlchemy's `hide_parameters` only hides its own `[parameters: ...]` block,
-    not the driver's text. So the message is not logged at all."""
+    not the driver's text. So the message is not logged at all.
+
+    `at=` is the innermost `max_frames` frames. A database failure is usually 10+ SQLAlchemy/driver frames deep, so
+    those alone would never name the SortView code that made the call: `app=` therefore adds up to `app_frames` of
+    SortView's OWN frames (not site-packages, not the standard library) from further out, innermost first."""
     parts = [f"error_type={type(exc).__module__}.{type(exc).__qualname__}"]
     state = _sqlstate(exc)
     if state:
@@ -181,11 +201,14 @@ def safe_exception_summary(exc: BaseException, *, max_frames: int = 5) -> str:
     cause = exc.__cause__ or exc.__context__
     if cause is not None:
         parts.append(f"cause_type={type(cause).__module__}.{type(cause).__qualname__}")
-    frames = traceback.extract_tb(exc.__traceback__)[-max_frames:]
+    every_frame = traceback.extract_tb(exc.__traceback__)
+    frames = every_frame[-max_frames:]
     if frames:
-        parts.append("at=" + " < ".join(
-            f"{os.path.basename(f.filename)}:{f.lineno}:{f.name}" for f in reversed(frames)
-        ))
+        parts.append("at=" + " < ".join(_frame_text(f) for f in reversed(frames)))
+    outer = every_frame[: len(every_frame) - len(frames)]
+    own = [f for f in outer if _is_application_frame(f.filename)][-app_frames:] if app_frames > 0 else []
+    if own:
+        parts.append("app=" + " < ".join(_frame_text(f) for f in reversed(own)))
     return " ".join(parts)
 
 
@@ -207,9 +230,10 @@ def log_safe_exception(logger: logging.Logger, message: str, exc: BaseException)
 # Streamlit Cloud). The scrubber below rewrites those records before any handler formats them.
 
 _SCRUBBER_MARK = "_sortview_streamlit_exception_scrubber"
-# An uncaught app exception usually passes through several library frames before it reaches the page's own; keep enough
-# of them for the page frame to appear in the summary.
-_UNCAUGHT_SUMMARY_FRAMES = 8
+# An uncaught app exception usually passes through many library frames before it reaches the page's own, so the summary
+# lists the innermost few (`at=`) AND SortView's own frames further out (`app=`, see safe_exception_summary).
+_UNCAUGHT_SUMMARY_FRAMES = 4
+_UNCAUGHT_APP_FRAMES = 6
 
 
 def _is_streamlit_logger(name: str) -> bool:
@@ -231,11 +255,17 @@ def scrub_streamlit_log_record(record: logging.LogRecord) -> logging.LogRecord:
     other record is returned untouched."""
     exc = _attached_exception(record) if _is_streamlit_logger(record.name) else None
     if exc is not None:
-        record.msg = f"{record.getMessage()} | {safe_exception_summary(exc, max_frames=_UNCAUGHT_SUMMARY_FRAMES)}"
+        summary = safe_exception_summary(exc, max_frames=_UNCAUGHT_SUMMARY_FRAMES, app_frames=_UNCAUGHT_APP_FRAMES)
+        record.msg = f"{record.getMessage()} | {summary}"
         record.args = None
         record.exc_info = None
         record.exc_text = None
     return record
+
+
+def is_streamlit_log_scrubber_installed() -> bool:
+    """Whether this process's log-record factory is the scrubbing one (for the redaction canary's diagnostics)."""
+    return bool(getattr(logging.getLogRecordFactory(), _SCRUBBER_MARK, False))
 
 
 def install_streamlit_log_scrubber() -> None:
