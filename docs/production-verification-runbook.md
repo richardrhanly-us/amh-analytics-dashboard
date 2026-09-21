@@ -222,3 +222,38 @@ platform's own request log).
 - Streamlit fragments (`st.fragment`) were not exercised; callbacks were.
 - A different Streamlit version than the one pinned: the tests cover 1.52.0 and 1.63.0. After any Streamlit upgrade,
   re-run `tests/test_streamlit_log_scrubbing.py`, `tests/test_real_apps_redaction.py` and this checklist.
+
+## 2.6 Recorded result -- hosted canary check (Streamlit Community Cloud)
+
+Run on a temporary, non-production canary app (2.2 A) on Streamlit Community Cloud. Recorded 2026-09-21.
+
+**Effective configuration reported by the app**
+
+| Item | Value |
+|---|---|
+| Streamlit version | 1.63.0 |
+| `log_scrubber_installed` | `true` |
+| `logger.enableRich` | `false` |
+| `client.showErrorDetails` (effective) | `"false"` -- the repository config requests `"none"` (see follow-up) |
+
+**Canary paths (checklist items 2-4)**
+
+| Path | Browser | Hosting log |
+|---|---|---|
+| Database-style `sqlalchemy.exc.DataError` | exception message redacted | only safe metadata: error type, SQLSTATE, file/line/function path |
+| Plain `RuntimeError` | exception message redacted | only safe metadata |
+| Button-callback `RuntimeError` | exception message redacted | only safe metadata |
+
+For all three, none of the synthetic canary values appeared in the hosting log: password, database URL, token,
+patron/card value, e-mail, SQL text, bound value, driver message, failing-row content.
+
+**Result: hosted exception redaction and log scrubbing verification PASSED for all three canary paths.**
+
+**Follow-up (hardening, not a failed redaction test).** Community Cloud's effective `client.showErrorDetails` was
+`"false"`, not the `"none"` requested in `.streamlit/config.toml`, and it still exposed traceback/source context.
+No secret-redaction check failed. Where the platform's value comes from was not investigated here; find out and
+get `"none"` (or confirm that `"false"` is the strongest setting Community Cloud allows) as a separate task.
+
+**Not covered by this record:** the two real-app checks (2.2 B, checklist items 5-7) and checklist items 8-9.
+
+**Clean up (2.4):** the temporary canary app is to be deleted after this record is committed.
