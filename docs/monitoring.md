@@ -16,8 +16,14 @@ GitHub Actions workflow (`.github/workflows/uptime-monitoring.yml`):
   itself can't tell you anything once the backend is actually down.
 
 - **Pipeline health** (`scripts/check_pipeline_health.py`) -- queries
-  `pipeline_status` for every branch with `branches.status = 'active'` and
-  flags a branch if any of the following is true:
+  `pipeline_status` for every monitored branch. A branch is monitored only
+  when all of these hold:
+  - its organization's status is `active` or `trial`,
+  - its own `branches.status` is `active`, and
+  - at least one Collector installation for that organization and branch has
+    `collector_installations.status = 'active'`.
+
+  A monitored branch is flagged if any of the following is true:
   - it has no `pipeline_status` row at all (never reported),
   - its `updated_at` is older than `SORTVIEW_PIPELINE_STALE_MINUTES`, or
   - its latest `status` starts with `failed`.

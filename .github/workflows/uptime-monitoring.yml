@@ -51,7 +51,7 @@ jobs:
           python -m pip install --upgrade pip &&
           pip install sqlalchemy==2.0.51 psycopg2-binary==2.9.12
 
-      - name: Check every active branch is still reporting in
+      - name: Check every monitored branch is still reporting in
         env:
           DATABASE_URL: ${{ secrets.SORTVIEW_MONITOR_DATABASE_URL }}
           SORTVIEW_PIPELINE_STALE_MINUTES: ${{ vars.SORTVIEW_PIPELINE_STALE_MINUTES }}

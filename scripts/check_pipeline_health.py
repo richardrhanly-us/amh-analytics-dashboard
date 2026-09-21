@@ -1,7 +1,7 @@
-"""Checks whether every active branch's AMH pipeline is still reporting in.
+"""Checks whether every monitored branch's AMH pipeline is still reporting in.
 
-Reads pipeline_status for every active branch of an active or trial
-organization and flags branches where the
+Reads pipeline_status for every monitored branch (see SCOPE) and flags
+branches where the
 most recent report is older than SORTVIEW_PIPELINE_STALE_MINUTES, has never
 reported at all, or reported an unhealthy status. Two vocabularies can be
 live on the same row during Continuous Ingestion Phase 0's parallel
@@ -13,12 +13,28 @@ haven't. Meant to run on a schedule (a GitHub Actions cron job by default)
 so a dead agent or a stalled AMH machine gets noticed without a human
 staring at the dashboard's pipeline-status panel.
 
-SCOPE: only organizations whose status is active or trial, and only their
-active branches, are evaluated. A suspended or cancelled organization is
-intentionally non-operational -- the API rejects its Collector traffic (see
-main.authenticate_agent), so it stops heartbeating by design and must not
-raise stale/never-reported alerts. Those organizations are excluded entirely,
-not merely downgraded. pipeline_status is only ever read here, never modified.
+SCOPE: a branch is evaluated only when ALL of these hold:
+  1. its organization's status is 'active' or 'trial';
+  2. the branch's own status is 'active'; and
+  3. at least one collector_installations row for that SaaS organization and
+     branch has status = 'active'.
+A suspended or cancelled organization is intentionally non-operational -- the
+API rejects its Collector traffic (see main.authenticate_agent), so it stops
+heartbeating by design and must not raise stale/never-reported alerts. Likewise
+a Collector installation has its own lifecycle (provisioning / active /
+inactive / retired): a branch whose installations are all inactive, retired or
+still provisioning -- or that has none -- is not expected to be reporting, so
+its old (or absent) pipeline_status row must not alert, even though the branch
+itself stays active for future use. Those branches are excluded entirely, not
+merely downgraded.
+
+The installation condition is an EXISTS, not a JOIN: a branch may have several
+Collector installations, and more than one active one must not produce
+duplicate results for the branch. collector_installations.organization_id and
+branch_id are SaaS ids (organizations.id / branches.id), matched as such.
+pipeline_status is still bridged ONLY through the operational ids
+(o.operational_customer_id / b.operational_branch_id) -- never the SaaS ids.
+pipeline_status is only ever read here, never modified.
 
 SORTVIEW_PIPELINE_STALE_MINUTES has no single correct value -- it depends on
 how often each branch's AMH agent is actually scheduled to run, which lives
@@ -89,6 +105,13 @@ def find_unhealthy_branches(
                AND ps.branch_id = b.operational_branch_id
             WHERE b.status = 'active'
               AND o.status IN ('active', 'trial')
+              AND EXISTS (
+                  SELECT 1
+                  FROM collector_installations ci
+                  WHERE ci.organization_id = o.id
+                    AND ci.branch_id = b.id
+                    AND ci.status = 'active'
+              )
             ORDER BY o.name, b.name
         """)
     ).mappings().all()
@@ -187,7 +210,7 @@ def main() -> None:
 
     if not unhealthy:
         print(
-            f"All active branches reported within the last {stale_minutes} "
+            f"All monitored branches reported within the last {stale_minutes} "
             "minute(s) with no failed runs."
         )
         return
