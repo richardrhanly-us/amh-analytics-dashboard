@@ -381,6 +381,10 @@ _SAFE_MESSAGES = {
     "extra_forbidden": "Unexpected field",
     "datetime_parsing": "Input should be a valid datetime",
     "datetime_type": "Input should be a valid datetime",
+    # Contract v2 (services/ingest_v2_models.py): custom error types, each with a fixed message.
+    "timestamp_format": "Timestamp must be ISO-8601 with a UTC offset",
+    "timestamp_range": "Timestamp is outside the accepted range",
+    "too_many_events": "Too many events in one request",
 }
 _GENERIC_MESSAGE = "Invalid value"
 
@@ -388,9 +392,13 @@ _SAFE_LOC_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 _MAX_REPORTED_ERRORS = 20
 
 
-def _safe_loc(loc: Any) -> list[int | str]:
+def _safe_loc(loc: Any, kind: str = "") -> list[int | str]:
     """A location is field names and list indexes. A string that is not a plain identifier could be a
-    caller-supplied dictionary key or field name, so it is not echoed."""
+    caller-supplied dictionary key or field name, so it is not echoed.
+
+    For an `extra_forbidden` error the LAST element is, by definition, the name the CALLER supplied for a field the model
+    does not have -- and a plain-looking one (`P2300000000003`, a card number used as a key) passes the identifier test
+    above. It is never echoed, whatever it looks like: the parents in the location are the server's own field names."""
     safe: list[int | str] = []
     for element in loc if isinstance(loc, (list, tuple)) else []:
         if isinstance(element, bool):
@@ -399,6 +407,8 @@ def _safe_loc(loc: Any) -> list[int | str]:
             safe.append(element)
         else:
             safe.append("<key>")
+    if kind == "extra_forbidden" and safe:
+        safe[-1] = "<key>"
     return safe
 
 
@@ -409,7 +419,7 @@ def safe_validation_errors(errors: Sequence[Mapping[str, Any]]) -> list[dict[str
     for error in list(errors)[:_MAX_REPORTED_ERRORS]:
         kind = str(error.get("type") or "")
         safe.append({
-            "loc": _safe_loc(error.get("loc")),
+            "loc": _safe_loc(error.get("loc"), kind),
             "type": kind if re.fullmatch(r"[a-z_0-9.]{1,64}", kind) else "invalid",
             "msg": _SAFE_MESSAGES.get(kind, _GENERIC_MESSAGE),
         })

@@ -3,24 +3,33 @@ import json
 import logging
 import os
 import re
+from collections.abc import Callable
 from typing import Literal, NoReturn
 
 import sentry_sdk
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import APIRouter, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field, SecretStr
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from sqlalchemy import create_engine, text
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
 from src.services.collector_enrollment_service import (
     PUBLIC_ENROLLMENT_ERROR,
     EnrollmentError,
     redeem_enrollment_code,
+)
+from src.services.ingest_v2_models import StatusV2Request, UploadV2Request
+from src.services.ingest_v2_service import (
+    EventConflict,
+    ingest_key_problem,
+    record_heartbeat,
+    store_events,
 )
 from src.services.privacy_hardening import (
     api_docs_kwargs,
@@ -543,6 +552,17 @@ def bound_installation_unusable_reason(token_row) -> str | None:
 
 
 def authenticate_agent(conn, authorization: str | None, customer_id: int, branch_id: int):
+    """v1: the request names its own (customer_id, branch_id) and the token must match it."""
+    return _authenticate_agent(conn, authorization, (customer_id, branch_id))
+
+
+def authenticate_agent_token(conn, authorization: str | None):
+    """Contract v2: the request names NO tenant. Every gate of `authenticate_agent` applies, and the tenant is whatever the
+    token itself is scoped to (`token_row["customer_id"]`, `token_row["branch_id"]`) -- nothing a payload says."""
+    return _authenticate_agent(conn, authorization, None)
+
+
+def _authenticate_agent(conn, authorization: str | None, expected_scope: tuple[int, int] | None):
     bearer_token = get_bearer_token(authorization)
 
     token_row = conn.execute(
@@ -556,7 +576,9 @@ def authenticate_agent(conn, authorization: str | None, customer_id: int, branch
     if not token_row["is_active"]:
         raise HTTPException(status_code=403, detail="Agent token is inactive")
 
-    if int(token_row["customer_id"]) != int(customer_id) or int(token_row["branch_id"]) != int(branch_id):
+    if expected_scope is not None and (
+        int(token_row["customer_id"]) != int(expected_scope[0]) or int(token_row["branch_id"]) != int(expected_scope[1])
+    ):
         raise HTTPException(status_code=403, detail="Token scope does not match customer_id / branch_id")
 
     # Authenticated, but not authorized to ingest while the tenant is
@@ -945,3 +967,167 @@ def collector_enroll(request: Request, data: CollectorEnrollRequest):
 
     # The body carries a credential: never cacheable.
     return JSONResponse(content=result, headers={"Cache-Control": "no-store"})
+
+
+#***************************************************************
+# Privacy Contract v2 (docs/contract-v2-design.md)
+#
+# POST /v2/upload (events) and POST /v2/status (heartbeat) run ALONGSIDE the v1 routes above, which are unchanged. They are
+# dark unless SORTVIEW_V2_INGEST_ENABLED=true, and even then a request needs an ACTIVE key_id registered to the token's own
+# tenant. The tenant comes only from the token; a payload has no tenant field to override it with.
+#***************************************************************
+
+V2_INGEST_ENABLED = os.getenv("SORTVIEW_V2_INGEST_ENABLED", "false").strip().lower() == "true"
+
+# 1000 events at roughly 300 bytes each is about 300 KB; a heartbeat is a few hundred bytes. Both guards below cover
+# a declared Content-Length AND a chunked request that declares none.
+V2_UPLOAD_MAX_BODY_BYTES = 1024 * 1024
+V2_STATUS_MAX_BODY_BYTES = 16 * 1024
+
+V2_KEY_NOT_AUTHORIZED_DETAIL = "Ingest key is not authorized"
+
+
+async def _read_bounded_body(request: Request, limit: int) -> bytes:
+    """Reads the request body, refusing (413) as soon as it exceeds `limit` -- whether the client declared a size or
+    streamed chunks with none. The v1 MaxBodySizeMiddleware trusts Content-Length alone; a chunked body slips past it."""
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        try:
+            declared_size = int(declared)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length") from None
+        if declared_size < 0 or declared_size > limit:
+            raise HTTPException(status_code=413, detail="Request body too large")
+
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > limit:
+            raise HTTPException(status_code=413, detail="Request body too large")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _replay_receive(body: bytes):
+    sent = False
+
+    async def receive():
+        nonlocal sent
+        if sent:
+            return {"type": "http.disconnect"}
+        sent = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    return receive
+
+
+def _v2_route_class(limit_of: Callable[[], int]) -> type[APIRoute]:
+    """A route class for the v2 endpoints: (1) 404 unless the feature flag is on -- before anything is read; (2) a bounded
+    body read; (3) the body handed on to FastAPI's normal validation, so a bad request takes the ONE hardened 422 path."""
+
+    class V2BoundedRoute(APIRoute):
+        def get_route_handler(self) -> Callable:
+            original = super().get_route_handler()
+
+            async def handler(request: Request) -> Response:
+                if not V2_INGEST_ENABLED:
+                    raise HTTPException(status_code=404, detail="Not Found")
+                body = await _read_bounded_body(request, limit_of())
+                return await original(Request(request.scope, _replay_receive(body)))
+
+            return handler
+
+    return V2BoundedRoute
+
+
+def _require_ingest_key(conn, token_row, key_id: str) -> None:
+    """The request's key must be registered, ACTIVE, and the token's own tenant's. Unknown, retired and wrong-tenant keys
+    get the same generic 403; the reason (and the validated, non-secret key_id) is only logged."""
+    problem = ingest_key_problem(conn, token_row["customer_id"], token_row["branch_id"], key_id)
+    if problem is not None:
+        logger.warning(
+            "Agent request rejected, ingest key not usable | token_id=%s customer_id=%s branch_id=%s key_id=%s reason=%s",
+            token_row["id"], token_row["customer_id"], token_row["branch_id"], key_id, problem,
+        )
+        raise HTTPException(status_code=403, detail=V2_KEY_NOT_AUTHORIZED_DETAIL)
+
+
+v2_upload_router = APIRouter(route_class=_v2_route_class(lambda: V2_UPLOAD_MAX_BODY_BYTES))
+v2_status_router = APIRouter(route_class=_v2_route_class(lambda: V2_STATUS_MAX_BODY_BYTES))
+
+
+@v2_upload_router.post("/v2/upload")
+@limiter.limit(UPLOAD_RATE_LIMIT, key_func=get_agent_rate_limit_key)
+def upload_v2(request: Request, data: UploadV2Request, authorization: str | None = Header(default=None)):
+    token_row = None
+    try:
+        if not (data.checkins or data.rejects or data.acs_holds):
+            raise HTTPException(status_code=400, detail="No upload events provided")
+
+        with engine.begin() as conn:
+            token_row = authenticate_agent_token(conn, authorization)
+            _require_ingest_key(conn, token_row, data.key_id)
+            counts = store_events(
+                conn,
+                customer_id=int(token_row["customer_id"]),
+                branch_id=int(token_row["branch_id"]),
+                key_id=data.key_id,
+                checkins=data.checkins,
+                rejects=data.rejects,
+                acs_holds=data.acs_holds,
+            )
+
+        return {"status": "success", "contract_version": 2, **counts}
+
+    except HTTPException:
+        raise
+    except EventConflict as conflict:
+        # Positions and counts only -- never an event key, a value or the request body.
+        logger.warning(
+            "V2 upload rejected, event conflict | token_id=%s customer_id=%s branch_id=%s key_id=%s conflicts=%s",
+            token_row["id"] if token_row else None,
+            token_row["customer_id"] if token_row else None,
+            token_row["branch_id"] if token_row else None,
+            data.key_id,
+            {kind: len(positions) for kind, positions in conflict.conflicts.items()},
+        )
+        return JSONResponse(
+            status_code=409,
+            content={
+                "code": "event_conflict",
+                "detail": "An event identity arrived with different content; nothing was stored",
+                "conflicts": conflict.conflicts,
+            },
+        )
+    except Exception as exc:
+        log_safe_exception(logger, "V2 upload failed", exc)
+        sentry_sdk.capture_exception(exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from None
+
+
+@v2_status_router.post("/v2/status")
+@limiter.limit(UPLOAD_RATE_LIMIT, key_func=get_agent_rate_limit_key)
+def status_v2(request: Request, data: StatusV2Request, authorization: str | None = Header(default=None)):
+    try:
+        with engine.begin() as conn:
+            token_row = authenticate_agent_token(conn, authorization)
+            _require_ingest_key(conn, token_row, data.key_id)
+            stored = record_heartbeat(
+                conn, customer_id=int(token_row["customer_id"]), branch_id=int(token_row["branch_id"]), data=data
+            )
+            if not stored:  # the key was retired between the check and the write
+                raise HTTPException(status_code=403, detail=V2_KEY_NOT_AUTHORIZED_DETAIL)
+
+        return {"status": "success", "contract_version": 2}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log_safe_exception(logger, "V2 status upload failed", exc)
+        sentry_sdk.capture_exception(exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from None
+
+
+app.include_router(v2_upload_router)
+app.include_router(v2_status_router)
