@@ -147,6 +147,7 @@ scheduled task environment for the agent, CI secrets for the pipeline.
 | `SORTVIEW_ENROLL_RATE_LIMIT` | backend | optional | `10/minute` (per client address, `POST /collector/enroll`) |
 | `SORTVIEW_MAX_REQUEST_BODY_BYTES` | backend | optional | `5242880` (5 MB) |
 | `SORTVIEW_ALLOWED_ORIGINS` | backend | optional | `http://localhost:8501,http://127.0.0.1:8501` |
+| `SORTVIEW_API_DOCS_ENABLED` | backend | optional | `false` (`/docs`, `/redoc` and `/openapi.json` are not served; set `true` for local development only) |
 | `SORTVIEW_DEMO_MODE_ENABLED` | dashboard | optional | `false` |
 | `SORTVIEW_GUEST_EMAIL` | dashboard | required if demo mode on | -- |
 | `SORTVIEW_GUEST_PASSWORD` | dashboard | required if demo mode on | -- |

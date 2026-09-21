@@ -7,6 +7,7 @@ from typing import Literal, NoReturn
 
 import sentry_sdk
 from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, SecretStr
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -21,6 +22,13 @@ from src.services.collector_enrollment_service import (
     EnrollmentError,
     redeem_enrollment_code,
 )
+from src.services.privacy_hardening import (
+    api_docs_kwargs,
+    build_sentry_options,
+    log_safe_exception,
+    safe_validation_body,
+    safe_validation_errors,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,12 +40,9 @@ SENTRY_DSN = os.getenv("SENTRY_DSN")
 SENTRY_ENVIRONMENT = os.getenv("SENTRY_ENVIRONMENT", "development")
 
 if SENTRY_DSN:
-    sentry_sdk.init(
-        dsn=SENTRY_DSN,
-        environment=SENTRY_ENVIRONMENT,
-        send_default_pii=False,
-        traces_sample_rate=0.0,
-    )
+    # Every privacy-relevant option (no local variables, no request bodies, event scrubbing) is set in
+    # build_sentry_options -- a v1 upload body and its frame locals carry patron_id / raw_message.
+    sentry_sdk.init(**build_sentry_options(SENTRY_DSN, SENTRY_ENVIRONMENT))
     logger.info(
         "Sentry error tracking enabled | environment=%s",
         SENTRY_ENVIRONMENT,
@@ -86,9 +91,29 @@ def get_agent_rate_limit_key(request: Request) -> str:
 
 limiter = Limiter(key_func=get_remote_address)
 
-app = FastAPI()
+# The interactive docs and the OpenAPI schema publish every field the API accepts, so they are off unless a
+# developer opts in (SORTVIEW_API_DOCS_ENABLED=true). Production never sets it.
+API_DOCS_ENABLED = os.getenv("SORTVIEW_API_DOCS_ENABLED", "false").strip().lower() == "true"
+
+app = FastAPI(**api_docs_kwargs(API_DOCS_ENABLED))
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+
+
+@app.exception_handler(RequestValidationError)
+async def safe_request_validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """FastAPI's default 422 body echoes the submitted value of every failing field (`input`) -- and for a
+    missing field, the whole row it was missing from. Under the v1 contract that row can hold `patron_id` /
+    `raw_message`, and the Collector logs the first 500 characters of an unexpected response body and reports
+    it back as `last_error`. This handler answers with WHERE and WHAT KIND only: same 422 status and the same
+    `detail` list shape, plus a stable `code`, and never the submitted value."""
+    errors = exc.errors()
+    logger.warning(
+        "Request validation failed | path=%s errors=%s",
+        request.url.path,
+        [f"{'.'.join(str(p) for p in e['loc'])}:{e['type']}" for e in safe_validation_errors(errors)],
+    )
+    return JSONResponse(status_code=422, content=safe_validation_body(errors))
 
 ALLOWED_ORIGINS = [
     origin.strip()
@@ -145,6 +170,9 @@ engine = create_engine(
     pool_recycle=300,
     connect_args={"sslmode": "require"},
     future=True,
+    # A database error's text otherwise ends with `[parameters: {...}]` -- every bound value of the failing
+    # statement, i.e. a whole uploaded row (patron_id, raw_message, barcode) or the bearer token.
+    hide_parameters=True,
 )
 
 
@@ -838,7 +866,8 @@ def upload(request: Request, data: UploadRequest, authorization: str | None = He
     except HTTPException:
         raise
     except Exception as exc:
-        logger.exception("Upload failed")
+        # Not logger.exception: the exception text of a database error quotes the failing row.
+        log_safe_exception(logger, "Upload failed", exc)
         sentry_sdk.capture_exception(exc)
         raise HTTPException(
     status_code=500,
@@ -878,7 +907,7 @@ def upload_pipeline_status(request: Request, data: PipelineStatusRequest, author
     except HTTPException:
         raise
     except Exception as exc:
-        logger.exception("Pipeline status upload failed")
+        log_safe_exception(logger, "Pipeline status upload failed", exc)
         sentry_sdk.capture_exception(exc)
         raise HTTPException(
     status_code=500,
@@ -910,7 +939,7 @@ def collector_enroll(request: Request, data: CollectorEnrollRequest):
         )
         raise HTTPException(status_code=400, detail=PUBLIC_ENROLLMENT_ERROR) from None
     except Exception as exc:
-        logger.exception("Collector enrollment failed")
+        log_safe_exception(logger, "Collector enrollment failed", exc)
         sentry_sdk.capture_exception(exc)
         raise HTTPException(status_code=500, detail="Internal server error") from None
 

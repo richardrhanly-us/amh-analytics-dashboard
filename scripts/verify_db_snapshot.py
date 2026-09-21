@@ -105,6 +105,7 @@ def main() -> None:
     engine = create_engine(
         get_database_url(args.database_url),
         connect_args={"sslmode": "require"},
+        hide_parameters=True,
     )
 
     with engine.connect() as conn:

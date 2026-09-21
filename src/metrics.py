@@ -519,6 +519,28 @@ def build_roi_payload(
 #
 #***************************************************************
 
+# The summary's supporting dataframes are handed to the view layer and cached in
+# session context. They used to be the classifier's working frames -- including
+# patron_id, patron_name, patron_type and the whole raw SIP2 message. Privacy
+# containment (Step 2): only these non-identifying columns leave this function.
+# (The classification itself, above, still reads the patron fields until it
+# moves to the collector.)
+_SUMMARY_FRAME_COLUMNS = (
+    "datetime",
+    "message_code",
+    "barcode",
+    "destination",
+    "is_hold",
+    "is_ill",
+    "is_programming",
+    "is_collection_services",
+)
+
+
+def _summary_frame(frame):
+    return frame[[c for c in _SUMMARY_FRAME_COLUMNS if c in frame.columns]].copy()
+
+
 def build_acs_item_summary(
     acs_df,
     transit_labels,
@@ -726,9 +748,9 @@ def build_acs_item_summary(
         "collection_services_total": len(collection_services_df),
         "ill_main": ill_main_count,
         "ill_by_branch": ill_by_branch,
-        "items_df": items,
-        "holds_df": public_holds_df,
-        "ill_df": ill_df,
-        "programming_df": programming_df,
-        "collection_services_df": collection_services_df,
+        "items_df": _summary_frame(items),
+        "holds_df": _summary_frame(public_holds_df),
+        "ill_df": _summary_frame(ill_df),
+        "programming_df": _summary_frame(programming_df),
+        "collection_services_df": _summary_frame(collection_services_df),
     }

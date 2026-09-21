@@ -203,7 +203,7 @@ def main() -> None:
     )
     stale_after = datetime.now(UTC) - timedelta(minutes=stale_minutes)
 
-    engine = create_engine(get_database_url(), connect_args={"sslmode": "require"})
+    engine = create_engine(get_database_url(), connect_args={"sslmode": "require"}, hide_parameters=True)
 
     with engine.connect() as conn:
         unhealthy = find_unhealthy_branches(conn, stale_after)

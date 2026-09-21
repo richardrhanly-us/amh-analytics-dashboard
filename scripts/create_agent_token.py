@@ -233,7 +233,7 @@ def main() -> None:
             "--execute requires a database URL: set DATABASE_URL or pass --execute postgresql://..."
         )
 
-    engine = create_engine(database_url, connect_args={"sslmode": "require"})
+    engine = create_engine(database_url, connect_args={"sslmode": "require"}, hide_parameters=True)
     with engine.begin() as conn:
         # Validate BEFORE showing any token, so a rejected pair never yields a
         # raw token that was never stored.
