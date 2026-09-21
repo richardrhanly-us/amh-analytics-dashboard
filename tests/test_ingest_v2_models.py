@@ -23,6 +23,7 @@ from src.services import ingest_v2_models as models
 from src.services import ingest_v2_service as service
 from src.services.ingest_v2_models import (
     AcsHoldEvent,
+    AcsNonHoldEvent,
     CheckinEvent,
     RejectEvent,
     StatusV2Request,
@@ -55,9 +56,15 @@ def reject(n=1, **overrides):
 
 
 def acs_hold(n=1, **overrides):
-    event = {"event_key": hmac_like(n), "event_time": when(minutes=5), "item_key": hmac_like(n + 1000),
+    event = {"state": "hold", "event_key": hmac_like(n), "event_time": when(minutes=5), "item_key": hmac_like(n + 1000),
              "destination": "library_express", "is_ill": False, "is_branch_services": False,
              "is_collection_services": True}
+    event.update(overrides)
+    return event
+
+
+def acs_non_hold(n=1, state="non_hold_101", **overrides):
+    event = {"state": state, "event_key": hmac_like(n), "event_time": when(minutes=5), "item_key": hmac_like(n + 1000)}
     event.update(overrides)
     return event
 
@@ -84,9 +91,9 @@ def rejected(model, payload) -> list[str]:
 # --- valid shapes ----------------------------------------------------------------------------------------------------
 
 def test_the_three_event_shapes_and_the_envelope_are_accepted():
-    request = UploadV2Request.model_validate(upload(checkins=[checkin()], rejects=[reject(2)], acs_holds=[acs_hold(3)]))
+    request = UploadV2Request.model_validate(upload(checkins=[checkin()], rejects=[reject(2)], acs_items=[acs_hold(3)]))
 
-    assert (len(request.checkins), len(request.rejects), len(request.acs_holds)) == (1, 1, 1)
+    assert (len(request.checkins), len(request.rejects), len(request.acs_items)) == (1, 1, 1)
     assert request.contract_version == 2 and request.key_id == KEY_ID
 
 
@@ -105,7 +112,7 @@ def test_an_acs_hold_may_carry_an_opaque_random_ruleset_id():
 def test_the_lists_default_to_empty_so_a_request_may_carry_one_kind():
     request = UploadV2Request.model_validate({"contract_version": 2, "key_id": KEY_ID, "rejects": [reject()]})
 
-    assert request.checkins == [] and request.acs_holds == []
+    assert request.checkins == [] and request.acs_items == []
 
 
 # --- extra="forbid": nothing outside the allowlist is ever accepted --------------------------------------------------
@@ -121,9 +128,9 @@ def test_every_prohibited_field_is_rejected_on_the_envelope(field):
 
 
 @pytest.mark.parametrize("field", PROHIBITED)
-@pytest.mark.parametrize("builder,list_name", [(checkin, "checkins"), (reject, "rejects"), (acs_hold, "acs_holds")])
+@pytest.mark.parametrize("builder,list_name", [(checkin, "checkins"), (reject, "rejects"), (acs_hold, "acs_items")])
 def test_every_prohibited_field_is_rejected_inside_every_event(field, builder, list_name):
-    lists = {"checkins": [], "rejects": [], "acs_holds": [], list_name: [builder(**{field: "CANARY-VALUE"})]}
+    lists = {"checkins": [], "rejects": [], "acs_items": [], list_name: [builder(**{field: "CANARY-VALUE"})]}
     assert rejected(UploadV2Request, upload(**lists)) == ["extra_forbidden"]
 
 
@@ -146,7 +153,7 @@ def _all_v2_models():
 def test_every_v2_model_is_strict_frozen_and_forbids_extra_fields():
     found = _all_v2_models()
 
-    assert {m.__name__ for m in found} == {"_V2Model", "CheckinEvent", "RejectEvent", "AcsHoldEvent", "UploadV2Request",
+    assert {m.__name__ for m in found} == {"_V2Model", "CheckinEvent", "RejectEvent", "AcsHoldEvent", "AcsNonHoldEvent", "UploadV2Request",
                                           "StatusV2Request"}
     for model in found:
         assert model.model_config.get("extra") == "forbid", model
@@ -166,13 +173,15 @@ def test_the_persisted_columns_of_each_event_are_exactly_its_model_fields():
     # (and the migration) on purpose, or this fails.
     assert set(CheckinEvent.model_fields) == set(service.CHECKIN_COLUMNS)
     assert set(RejectEvent.model_fields) == set(service.REJECT_COLUMNS)
-    assert set(AcsHoldEvent.model_fields) == set(service.ACS_HOLD_COLUMNS)
+    # one table holds both ACS variants, so its columns are the union of the two variants' fields
+    assert set(AcsHoldEvent.model_fields) | set(AcsNonHoldEvent.model_fields) == set(service.ACS_ITEM_COLUMNS)
 
 
 def test_the_row_builders_produce_exactly_the_declared_columns():
     assert set(service.checkin_row(CheckinEvent.model_validate(checkin()))) == set(service.CHECKIN_COLUMNS)
     assert set(service.reject_row(RejectEvent.model_validate(reject()))) == set(service.REJECT_COLUMNS)
-    assert set(service.acs_hold_row(AcsHoldEvent.model_validate(acs_hold()))) == set(service.ACS_HOLD_COLUMNS)
+    assert set(service.acs_item_row(AcsHoldEvent.model_validate(acs_hold()))) == set(service.ACS_ITEM_COLUMNS)
+    assert set(service.acs_item_row(AcsNonHoldEvent.model_validate(acs_non_hold()))) == set(service.ACS_ITEM_COLUMNS)
 
 
 def test_the_persistence_code_never_calls_model_dump():
@@ -361,16 +370,16 @@ def test_a_reject_needs_an_error_class():
 
 # --- bounds: at most 1000 events in TOTAL ---------------------------------------------------------------------------
 
-def _batch(checkins, rejects, acs_holds):
+def _batch(checkins, rejects, acs_items):
     return upload(checkins=[checkin(i) for i in range(checkins)], rejects=[reject(5000 + i) for i in range(rejects)],
-                  acs_holds=[acs_hold(9000 + i) for i in range(acs_holds)])
+                  acs_items=[acs_hold(9000 + i) for i in range(acs_items)])
 
 
 @pytest.mark.parametrize("sizes", [(1000, 0, 0), (0, 1000, 0), (0, 0, 1000), (400, 300, 300), (334, 333, 333)])
 def test_exactly_one_thousand_events_in_total_are_accepted(sizes):
     request = UploadV2Request.model_validate(_batch(*sizes))
 
-    assert len(request.checkins) + len(request.rejects) + len(request.acs_holds) == 1000
+    assert len(request.checkins) + len(request.rejects) + len(request.acs_items) == 1000
 
 
 @pytest.mark.parametrize("sizes", [(334, 333, 334), (500, 500, 1), (1, 1000, 0), (0, 0, 1001)])
@@ -468,7 +477,7 @@ def test_the_validation_error_types_are_fixed_and_carry_no_submitted_value_in_th
 
 
 def test_the_models_round_trip_through_json_the_way_a_request_arrives():
-    body = json.dumps(upload(rejects=[reject(2)], acs_holds=[acs_hold(3)]))
+    body = json.dumps(upload(rejects=[reject(2)], acs_items=[acs_hold(3)]))
 
     request = UploadV2Request.model_validate(json.loads(body))
 
@@ -511,7 +520,7 @@ def test_no_request_model_has_a_field_that_could_carry_a_secret(field):
     assert rejected(UploadV2Request, upload(**{field: "CANARY-HMAC-SECRET"})) == ["extra_forbidden"]
     assert rejected(UploadV2Request, upload(checkins=[checkin(**{field: "CANARY-HMAC-SECRET"})])) == ["extra_forbidden"]
     assert rejected(UploadV2Request, upload(checkins=[], rejects=[reject(**{field: "CANARY-HMAC-SECRET"})])) == ["extra_forbidden"]
-    assert rejected(UploadV2Request, upload(checkins=[], acs_holds=[acs_hold(**{field: "CANARY-HMAC-SECRET"})])) == ["extra_forbidden"]
+    assert rejected(UploadV2Request, upload(checkins=[], acs_items=[acs_hold(**{field: "CANARY-HMAC-SECRET"})])) == ["extra_forbidden"]
     assert rejected(StatusV2Request, status(**{field: "CANARY-HMAC-SECRET"})) == ["extra_forbidden"]
 
 
@@ -550,3 +559,100 @@ def test_the_only_thing_ever_generated_is_a_random_uuid_label():
     source = (Path(__file__).resolve().parent.parent / "src/services/ingest_v2_service.py").read_text(encoding="utf-8")
 
     assert source.count("uuid.uuid4()") == 1  # the key_id, and nothing else, is generated
+
+
+# --- ACS item events: the closed derived state and the two shapes ---------------------------------------------------------
+
+def test_the_acs_item_state_enum_is_exactly_hold_non_hold_101_other_code10():
+    assert models.ACS_ITEM_STATES == ("hold", "non_hold_101", "other_code10")
+    assert models.NON_HOLD_STATES == ("non_hold_101", "other_code10")
+    assert get_args(AcsHoldEvent.model_fields["state"].annotation) == ("hold",)
+    assert get_args(AcsNonHoldEvent.model_fields["state"].annotation) == models.NON_HOLD_STATES  # the tuple and the type agree
+
+
+def test_a_hold_carries_its_derived_fields_and_a_non_hold_carries_only_what_retraction_needs():
+    assert set(AcsHoldEvent.model_fields) == {"state", "event_key", "event_time", "item_key", "destination", "is_ill",
+                                              "is_branch_services", "is_collection_services", "ruleset_id"}
+    assert set(AcsNonHoldEvent.model_fields) == {"state", "event_key", "event_time", "item_key"}
+
+
+def test_each_state_is_accepted_and_lands_on_its_own_shape():
+    request = UploadV2Request.model_validate(upload(checkins=[], acs_items=[
+        acs_hold(1), acs_non_hold(2, "non_hold_101"), acs_non_hold(3, "other_code10")]))
+
+    hold, non_hold_101, other = request.acs_items
+    assert isinstance(hold, AcsHoldEvent) and hold.state == "hold"
+    assert isinstance(non_hold_101, AcsNonHoldEvent) and non_hold_101.state == "non_hold_101"
+    assert isinstance(other, AcsNonHoldEvent) and other.state == "other_code10"
+
+
+@pytest.mark.parametrize("field", ["destination", "is_ill", "is_branch_services", "is_collection_services", "ruleset_id"])
+@pytest.mark.parametrize("state", models.NON_HOLD_STATES)
+@pytest.mark.parametrize("value", ["unknown", "main", "", False, True, None, 0, RULESET_ID])
+def test_a_non_hold_can_carry_no_hold_field_not_even_a_dummy_value(state, field, value):
+    # No placeholder is ever invented to fit the hold shape: a non-hold record has NONE of these fields, so even `None`,
+    # `False` and "unknown" are refused.
+    assert rejected(UploadV2Request, upload(checkins=[], acs_items=[acs_non_hold(1, state, **{field: value})])) == ["extra_forbidden"]
+
+
+@pytest.mark.parametrize("field", ["state", "destination", "is_ill", "is_branch_services", "is_collection_services"])
+def test_a_hold_needs_its_state_and_every_derived_field(field):
+    event = acs_hold()
+    del event[field]
+
+    types = rejected(UploadV2Request, upload(checkins=[], acs_items=[event]))
+
+    assert types == (["union_tag_not_found"] if field == "state" else ["missing"])
+
+
+@pytest.mark.parametrize("value", ["64", "message_64", "patron", "patron_info", "Hold", "HOLD", "hold ", "non_hold", "not_hold",
+                                   "other", "other_code_10", "nonhold101", "101", "10", "101YNY", "", None, 1, True, ["hold"], {"s": 1}])
+def test_a_state_outside_the_closed_enum_is_refused_and_message_64_is_never_a_state(value):
+    types = rejected(UploadV2Request, upload(checkins=[], acs_items=[acs_non_hold(1, value)]))
+
+    assert types == ["union_tag_invalid"]
+
+
+@pytest.mark.parametrize("field", ["message_code", "raw_message_code", "code", "msg_code", "raw_message", "message", "patron_id",
+                                   "patron_name", "patron_card", "card_number", "barcode", "title", "source_event_id", "source_file"])
+@pytest.mark.parametrize("state", models.ACS_ITEM_STATES)
+def test_no_acs_item_can_carry_a_raw_message_code_a_patron_or_an_identifier(state, field):
+    event = acs_hold(1) if state == "hold" else acs_non_hold(1, state)
+    event[field] = "CANARY-VALUE"
+
+    assert rejected(UploadV2Request, upload(checkins=[], acs_items=[event])) == ["extra_forbidden"]
+
+
+def test_the_step_3_list_name_is_gone_a_hold_only_list_is_no_longer_part_of_the_contract():
+    body = {"contract_version": 2, "key_id": KEY_ID, "acs_holds": [acs_hold()]}
+
+    assert rejected(UploadV2Request, body) == ["extra_forbidden"]
+
+
+def test_acs_items_count_toward_the_thousand_event_total():
+    def batch(checkins, rejects, items):
+        return upload(checkins=[checkin(i) for i in range(checkins)], rejects=[reject(5000 + i) for i in range(rejects)],
+                      acs_items=[acs_hold(9000 + i) if i % 2 else acs_non_hold(9000 + i, "other_code10") for i in range(items)])
+
+    assert len(UploadV2Request.model_validate(batch(400, 300, 300)).acs_items) == 300
+    assert rejected(UploadV2Request, batch(400, 300, 301)) == ["too_many_events"]
+    assert rejected(UploadV2Request, batch(0, 0, 1001)) == ["too_long"]
+
+
+def test_the_row_of_a_non_hold_has_null_for_every_hold_only_column_and_the_hold_row_has_them_all():
+    hold_row = service.acs_item_row(AcsHoldEvent.model_validate(acs_hold(1, is_ill=True, ruleset_id=RULESET_ID)))
+    non_hold_row = service.acs_item_row(AcsNonHoldEvent.model_validate(acs_non_hold(2, "other_code10")))
+    hold_only = {"destination", "is_ill", "is_branch_services", "is_collection_services", "ruleset_id"}
+
+    assert set(hold_row) == set(non_hold_row) == set(service.ACS_ITEM_COLUMNS)
+    assert {k for k, v in non_hold_row.items() if v is None} == hold_only  # NULL, not "", not False, not "unknown"
+    assert hold_row["state"] == "hold" and hold_row["is_ill"] is True and hold_row["ruleset_id"] == RULESET_ID
+    assert non_hold_row["state"] == "other_code10"
+
+
+def test_no_acs_model_declares_a_raw_message_code_or_any_patron_or_identifier_field():
+    forbidden = {"message_code", "raw_message_code", "code", "message", "raw_message", "patron_id", "patron_name", "patron_card",
+                 "barcode", "title", "source_event_id", "source_file", "customer_id", "branch_id"}
+
+    for model in (AcsHoldEvent, AcsNonHoldEvent):
+        assert forbidden.isdisjoint(model.model_fields), model

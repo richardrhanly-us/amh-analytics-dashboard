@@ -24,14 +24,22 @@ from typing import Any
 
 from sqlalchemy import bindparam, text
 
-from .ingest_v2_models import AcsHoldEvent, CheckinEvent, RejectEvent, StatusV2Request
+from .ingest_v2_models import (
+    AcsHoldEvent,
+    AcsNonHoldEvent,
+    CheckinEvent,
+    RejectEvent,
+    StatusV2Request,
+)
 
 ALGORITHM = "hmac-sha256-v1"
 
 # Explicit insert columns, per table (tenant columns and `received_at` are added by the statement, not by the model).
 CHECKIN_COLUMNS = ("event_key", "event_time", "item_key", "destination", "bin")
 REJECT_COLUMNS = ("event_key", "event_time", "error_class", "item_key")
-ACS_HOLD_COLUMNS = ("event_key", "event_time", "item_key", "destination", "is_ill", "is_branch_services",
+# ONE table holds every ACS item record: a hold carries all of these; a non-hold carries only event_key, event_time, state and
+# item_key, and its other columns are stored as NULL (never a placeholder value).
+ACS_ITEM_COLUMNS = ("event_key", "event_time", "state", "item_key", "destination", "is_ill", "is_branch_services",
                     "is_collection_services", "ruleset_id")
 
 _INSERT_CHUNK = 200  # rows per INSERT statement: bounded statement size, whatever the request holds
@@ -48,7 +56,7 @@ class _Kind:
 KINDS = (
     _Kind("checkins", "checkin_events", CHECKIN_COLUMNS),
     _Kind("rejects", "reject_events", REJECT_COLUMNS),
-    _Kind("acs_holds", "acs_hold_events", ACS_HOLD_COLUMNS),
+    _Kind("acs_items", "acs_item_events", ACS_ITEM_COLUMNS),
 )
 
 
@@ -77,14 +85,24 @@ def reject_row(event: RejectEvent) -> dict[str, Any]:
             "item_key": event.item_key}
 
 
-def acs_hold_row(event: AcsHoldEvent) -> dict[str, Any]:
-    return {"event_key": event.event_key, "event_time": _iso(event.event_time), "item_key": event.item_key,
-            "destination": event.destination, "is_ill": event.is_ill, "is_branch_services": event.is_branch_services,
-            "is_collection_services": event.is_collection_services, "ruleset_id": event.ruleset_id}
+def acs_item_row(event: AcsHoldEvent | AcsNonHoldEvent) -> dict[str, Any]:
+    """A hold stores its derived fields. A non-hold stores NULL for each of them: the columns it does not have are never filled
+    with an invented value. Fields are read by name from the event; nothing is dumped generically."""
+    row: dict[str, Any] = {
+        "event_key": event.event_key, "event_time": _iso(event.event_time), "state": event.state, "item_key": event.item_key,
+        "destination": None, "is_ill": None, "is_branch_services": None, "is_collection_services": None, "ruleset_id": None,
+    }
+    if isinstance(event, AcsHoldEvent):
+        row["destination"] = event.destination
+        row["is_ill"] = event.is_ill
+        row["is_branch_services"] = event.is_branch_services
+        row["is_collection_services"] = event.is_collection_services
+        row["ruleset_id"] = event.ruleset_id
+    return row
 
 
 _ROW_BUILDERS: dict[str, Callable[[Any], dict[str, Any]]] = {
-    "checkins": checkin_row, "rejects": reject_row, "acs_holds": acs_hold_row,
+    "checkins": checkin_row, "rejects": reject_row, "acs_items": acs_item_row,
 }
 
 
@@ -226,10 +244,10 @@ def _store_kind(conn, kind: _Kind, rows: list[dict[str, Any]], customer_id: int,
 
 
 def store_events(conn, *, customer_id: int, branch_id: int, key_id: str, checkins: list[CheckinEvent],
-                 rejects: list[RejectEvent], acs_holds: list[AcsHoldEvent]) -> dict[str, int]:
+                 rejects: list[RejectEvent], acs_items: list[AcsHoldEvent | AcsNonHoldEvent]) -> dict[str, int]:
     """Stores every event of one request for the token's tenant. Identical resends are idempotent; the same identity with
     different content raises EventConflict (the caller's transaction then stores nothing). Returns the response counts."""
-    lists: dict[str, list[Any]] = {"checkins": checkins, "rejects": rejects, "acs_holds": acs_holds}
+    lists: dict[str, list[Any]] = {"checkins": checkins, "rejects": rejects, "acs_items": acs_items}
     counts: dict[str, int] = {}
     conflicts: dict[str, list[int]] = {}
     for kind in KINDS:

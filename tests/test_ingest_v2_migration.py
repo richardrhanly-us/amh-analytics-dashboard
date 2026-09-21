@@ -83,13 +83,16 @@ def _column_names(ddl: str) -> list[str]:
 
 # --- chain ---------------------------------------------------------------------------------------------------------
 
-def test_the_migration_chains_from_the_previous_head_and_is_the_single_head():
+def test_the_migration_chains_from_the_previous_head_and_history_stays_one_linear_chain():
+    # This file tests Step 3's revision d3f1a8c95b27 exactly as it was merged. Later revisions (the ACS item-event amendment,
+    # e5a2c7b93d14) extend the chain; they are tested in test_ingest_v2_acs_items_migration.py.
     script = _script_directory()
     revision = script.get_revision(REVISION)
 
     assert revision is not None and revision.down_revision == PREVIOUS_HEAD
-    assert script.get_heads() == [REVISION]  # one linear history, and this migration is its head
-    assert [r.revision for r in script.walk_revisions()][:2] == [REVISION, PREVIOUS_HEAD]
+    assert len(script.get_heads()) == 1  # one linear history
+    revisions = [r.revision for r in script.walk_revisions()]
+    assert revisions.index(REVISION) == revisions.index(PREVIOUS_HEAD) - 1  # d3f1... sits directly on b4e91...
 
 
 # --- purely additive -------------------------------------------------------------------------------------------------

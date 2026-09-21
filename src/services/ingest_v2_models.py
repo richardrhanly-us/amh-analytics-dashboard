@@ -65,6 +65,14 @@ LastErrorClass = Literal[
     "retryable_infra", "auth_failure", "permanent_rejection", "source_unavailable", "configuration_error", "other",
 ]
 
+# The derived state of one ACS item record (message code 10). It is NOT the raw message code, which never leaves the collector:
+#   hold          a 101 record that is hold-positive (`101YNY`)
+#   non_hold_101  a 101 record that is not a hold
+#   other_code10  any other code-10 record: ignored by Overview, but it takes part in Live Today's latest-record-wins rule
+# (Message-64 patron records are never events at all.)
+ACS_ITEM_STATES = ("hold", "non_hold_101", "other_code10")
+NON_HOLD_STATES = ("non_hold_101", "other_code10")
+
 MAX_COUNTER = 10_000_000
 
 # --- timestamps: ISO-8601 WITH an offset, and nothing else -------------------------------------------------------
@@ -140,6 +148,10 @@ class RejectEvent(_V2Model):
 
 
 class AcsHoldEvent(_V2Model):
+    """An ACS item record that is hold-positive (`101YNY`). It carries the collector-derived classification; nothing else about
+    the record (no barcode, patron, title, raw message or raw message code) is here."""
+
+    state: Literal["hold"]
     event_key: HmacKey
     event_time: AwareTimestamp
     item_key: HmacKey
@@ -150,16 +162,31 @@ class AcsHoldEvent(_V2Model):
     ruleset_id: RulesetId | None = None
 
 
+class AcsNonHoldEvent(_V2Model):
+    """An ACS item record that is NOT a hold. It exists only so a later record can retract an earlier hold (the dashboard's
+    latest-record-wins rule), so it carries exactly what retraction needs. There is deliberately no destination, no
+    classification flag and no ruleset here -- and `extra="forbid"` means none can be sent, so no dummy value is ever
+    invented to fit the hold shape."""
+
+    state: Literal["non_hold_101", "other_code10"]
+    event_key: HmacKey
+    event_time: AwareTimestamp
+    item_key: HmacKey
+
+
+AcsItemEvent = Annotated[AcsHoldEvent | AcsNonHoldEvent, Field(discriminator="state")]
+
+
 class UploadV2Request(_V2Model):
     contract_version: ContractVersion
     key_id: KeyId
     checkins: list[CheckinEvent] = Field(default_factory=list, max_length=MAX_EVENTS_PER_LIST)
     rejects: list[RejectEvent] = Field(default_factory=list, max_length=MAX_EVENTS_PER_LIST)
-    acs_holds: list[AcsHoldEvent] = Field(default_factory=list, max_length=MAX_EVENTS_PER_LIST)
+    acs_items: list[AcsItemEvent] = Field(default_factory=list, max_length=MAX_EVENTS_PER_LIST)
 
     @model_validator(mode="after")
     def _total_is_bounded(self) -> UploadV2Request:
-        if len(self.checkins) + len(self.rejects) + len(self.acs_holds) > MAX_EVENTS_TOTAL:
+        if len(self.checkins) + len(self.rejects) + len(self.acs_items) > MAX_EVENTS_TOTAL:
             raise PydanticCustomError("too_many_events", "Too many events in one request")
         return self
 

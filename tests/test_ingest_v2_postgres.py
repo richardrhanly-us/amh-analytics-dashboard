@@ -41,6 +41,7 @@ import main
 from src.services import ingest_v2_service as service
 from src.services.ingest_v2_models import (
     AcsHoldEvent,
+    AcsNonHoldEvent,
     CheckinEvent,
     RejectEvent,
     StatusV2Request,
@@ -49,7 +50,9 @@ from src.services.ingest_v2_models import (
 ROOT = Path(__file__).resolve().parent.parent
 ADMIN_URL = os.environ.get("SORTVIEW_TEST_POSTGRES_URL")
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
-PREVIOUS_HEAD = "b4e91d7a3c58"
+PREVIOUS_HEAD = "b4e91d7a3c58"      # the head before Contract v2 existed
+STEP3_HEAD = "d3f1a8c95b27"         # Step 3 as merged: acs_hold_events
+HEAD = "e5a2c7b93d14"               # the ACS item-event amendment: acs_item_events
 
 pytestmark = pytest.mark.skipif(
     not ADMIN_URL, reason="SORTVIEW_TEST_POSTGRES_URL is not set (opt-in PostgreSQL migration tests)"
@@ -61,8 +64,8 @@ TOKEN = "CANARY-V2-PG-BEARER-TOKEN-3101"
 OTHER_TOKEN = "CANARY-V2-PG-OTHER-TOKEN-3102"
 _HASH_EXPR = "encode(digest(:token, 'sha256'), 'hex')"
 _BUILTIN_SHA256_EXPR = "encode(sha256(convert_to(:token, 'UTF8')), 'hex')"  # pgcrypto is not on every throwaway server
-V2_TABLES = ("checkin_events", "reject_events", "acs_hold_events", "ingest_key_ids")
-EVENT_TABLES = ("checkin_events", "reject_events", "acs_hold_events")
+V2_TABLES = ("checkin_events", "reject_events", "acs_item_events", "ingest_key_ids")
+EVENT_TABLES = ("checkin_events", "reject_events", "acs_item_events")
 V1_TABLES = ("checkins", "rejects", "acs_events", "checkins_clean", "rejects_clean", "pipeline_status", "agent_tokens",
              "organizations", "branches", "customers", "collector_installations", "collector_enrollment_codes")
 PROHIBITED = {"barcode", "barcode_key", "title", "patron_id", "raw_message", "message", "error_message", "source_event_id",
@@ -107,9 +110,15 @@ def reject(n=1, **overrides):
 
 
 def acs_hold(n=1, **overrides):
-    event = {"event_key": hmac_like(n), "event_time": when(minutes=5), "item_key": hmac_like(n + 1000),
+    event = {"state": "hold", "event_key": hmac_like(n), "event_time": when(minutes=5), "item_key": hmac_like(n + 1000),
              "destination": "library_express", "is_ill": False, "is_branch_services": False, "is_collection_services": True,
              "ruleset_id": "0a1b2c3d-4e5f-4a6b-9c7d-8e9f0a1b2c3d"}
+    event.update(overrides)
+    return event
+
+
+def acs_non_hold(n=1, state="non_hold_101", **overrides):
+    event = {"state": state, "event_key": hmac_like(n), "event_time": when(minutes=5), "item_key": hmac_like(n + 1000)}
     event.update(overrides)
     return event
 
@@ -170,7 +179,7 @@ def pg_url():
 
 def _seed_tenants(engine) -> None:
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE checkin_events, reject_events, acs_hold_events, ingest_key_ids, checkins, rejects, "
+        conn.execute(text("TRUNCATE checkin_events, reject_events, acs_item_events, ingest_key_ids, checkins, rejects, "
                           "acs_events, checkins_clean, rejects_clean, agent_tokens, branches, organizations, customers "
                           "RESTART IDENTITY CASCADE"))
         for org_id, customer, branch, slug in ((1, CUSTOMER, BRANCH, "lib"), (2, OTHER_CUSTOMER, OTHER_BRANCH, "other")):
@@ -235,8 +244,8 @@ def test_the_four_tables_exist_and_the_event_tables_have_exactly_the_approved_co
                                                        "item_key", "destination", "bin", "received_at"}
     assert set(_columns(engine, "reject_events")) == {"id", "customer_id", "branch_id", "key_id", "event_key", "event_time",
                                                       "error_class", "item_key", "received_at"}
-    assert set(_columns(engine, "acs_hold_events")) == {"id", "customer_id", "branch_id", "key_id", "event_key", "event_time",
-                                                        "item_key", "destination", "is_ill", "is_branch_services",
+    assert set(_columns(engine, "acs_item_events")) == {"id", "customer_id", "branch_id", "key_id", "event_key", "event_time",
+                                                        "state", "item_key", "destination", "is_ill", "is_branch_services",
                                                         "is_collection_services", "ruleset_id", "received_at"}
     assert scalar(engine, "SELECT count(*) FROM ingest_key_ids") == 4
 
@@ -356,9 +365,9 @@ def test_the_database_rejects_a_bad_acs_hold(engine, override):
     values = {"c": CUSTOMER, "b": BRANCH, "k": KEY, "e": hmac_like(1), "item": hmac_like(2), "dest": "main", "ruleset": None}
     values.update(override)
     with pytest.raises(IntegrityError), engine.begin() as conn:
-        conn.execute(text("INSERT INTO acs_hold_events (customer_id, branch_id, key_id, event_key, event_time, item_key, destination, "
-                          "is_ill, is_branch_services, is_collection_services, ruleset_id) "
-                          "VALUES (:c, :b, :k, :e, now(), :item, :dest, false, false, false, :ruleset)"), values)
+        conn.execute(text("INSERT INTO acs_item_events (customer_id, branch_id, key_id, event_key, event_time, state, item_key, "
+                          "destination, is_ill, is_branch_services, is_collection_services, ruleset_id) "
+                          "VALUES (:c, :b, :k, :e, now(), 'hold', :item, :dest, false, false, false, :ruleset)"), values)
 
 
 def test_the_registry_lifecycle_and_heartbeat_columns_are_constrained(engine):
@@ -420,12 +429,12 @@ def timezone_of(hours: int):
 # 3. Storage on PostgreSQL: idempotent resend, conflicts, volume, concurrency
 # =====================================================================================================================
 
-def _store(engine, checkins=(), rejects=(), acs_holds=(), key=KEY, customer=CUSTOMER, branch=BRANCH):
+def _store(engine, checkins=(), rejects=(), acs_items=(), key=KEY, customer=CUSTOMER, branch=BRANCH):
     with engine.begin() as conn:
         return service.store_events(
             conn, customer_id=customer, branch_id=branch, key_id=key,
             checkins=[CheckinEvent.model_validate(e) for e in checkins], rejects=[RejectEvent.model_validate(e) for e in rejects],
-            acs_holds=[AcsHoldEvent.model_validate(e) for e in acs_holds])
+            acs_items=[AcsHoldEvent.model_validate(e) for e in acs_items])
 
 
 def test_storage_is_idempotent_and_detects_a_content_change(engine):
@@ -434,10 +443,10 @@ def test_storage_is_idempotent_and_detects_a_content_change(engine):
 
     assert first["checkins_inserted"] == 2 and again["checkins_inserted"] == 0 and again["checkins_duplicates"] == 2
     assert (scalar(engine, "SELECT count(*) FROM checkin_events"), scalar(engine, "SELECT count(*) FROM reject_events"),
-            scalar(engine, "SELECT count(*) FROM acs_hold_events")) == (2, 1, 1)
+            scalar(engine, "SELECT count(*) FROM acs_item_events")) == (2, 1, 1)
     for kind, build, change in (("checkins", checkin, {"bin": "9"}), ("rejects", reject, {"error_class": "other"}),
-                                ("acs_holds", acs_hold, {"is_ill": True})):
-        n = {"checkins": 1, "rejects": 3, "acs_holds": 4}[kind]
+                                ("acs_items", acs_hold, {"is_ill": True})):
+        n = {"checkins": 1, "rejects": 3, "acs_items": 4}[kind]
         with pytest.raises(service.EventConflict) as caught:
             _store(engine, **{kind: [{**build(n), **change}]})
         assert caught.value.conflicts == {kind: [0]}
@@ -456,7 +465,7 @@ def test_a_full_thousand_events_are_stored_in_chunks(engine):
     result = _store(engine, [checkin(i) for i in range(500)], [reject(5000 + i) for i in range(250)],
                     [acs_hold(9000 + i) for i in range(250)])
 
-    assert (result["checkins_inserted"], result["rejects_inserted"], result["acs_holds_inserted"]) == (500, 250, 250)
+    assert (result["checkins_inserted"], result["rejects_inserted"], result["acs_items_inserted"]) == (500, 250, 250)
     assert _store(engine, [checkin(i) for i in range(500)])["checkins_duplicates"] == 500  # and the resend is idempotent
 
 
@@ -516,7 +525,7 @@ def test_concurrent_events_with_the_same_identity_and_different_content_never_lo
 # =====================================================================================================================
 
 def test_an_upload_and_a_resend_through_the_endpoint(api, engine):
-    body = upload(checkins=[checkin(1), checkin(2)], rejects=[reject(3)], acs_holds=[acs_hold(4)])
+    body = upload(checkins=[checkin(1), checkin(2)], rejects=[reject(3)], acs_items=[acs_hold(4)])
 
     first = post_upload(api, body)
     again = post_upload(api, body)
@@ -524,7 +533,7 @@ def test_an_upload_and_a_resend_through_the_endpoint(api, engine):
     assert first.status_code == again.status_code == 200
     assert first.json()["checkins_inserted"] == 2 and again.json()["checkins_duplicates"] == 2
     assert scalar(engine, "SELECT count(*) FROM checkin_events") == 2
-    assert rows(engine, "SELECT DISTINCT customer_id, branch_id, key_id FROM acs_hold_events") == [(CUSTOMER, BRANCH, KEY)]
+    assert rows(engine, "SELECT DISTINCT customer_id, branch_id, key_id FROM acs_item_events") == [(CUSTOMER, BRANCH, KEY)]
 
 
 def test_the_endpoint_answers_a_conflict_with_409_and_stores_nothing_more(api, engine):
@@ -576,7 +585,7 @@ def test_a_heartbeat_for_a_retired_or_foreign_key_is_refused(api, engine):
 # =====================================================================================================================
 
 def test_v2_requests_write_nothing_to_a_v1_table_and_fire_no_v1_trigger(api, engine):
-    body = upload(checkins=[checkin(1), checkin(2)], rejects=[reject(3)], acs_holds=[acs_hold(4)])
+    body = upload(checkins=[checkin(1), checkin(2)], rejects=[reject(3)], acs_items=[acs_hold(4)])
     post_upload(api, body)
     post_upload(api, body)
     post_upload(api, upload(checkins=[checkin(1, bin="9")]))
@@ -654,7 +663,7 @@ def test_upgrade_downgrade_upgrade_is_clean_and_the_downgrade_leaves_v1_alone():
         engine = create_engine(db.url)
         v1_before = _v1_snapshot(engine)
 
-        down = _alembic(db.url, "downgrade", "-1")
+        down = _alembic(db.url, "downgrade", PREVIOUS_HEAD)  # both v2 revisions: the amendment, then Step 3
         assert down.returncode == 0, down.stderr[-2000:]
         assert rows(engine, "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = ANY(:n)", n=list(V2_TABLES)) == []
         assert _v1_snapshot(engine) == v1_before
@@ -671,7 +680,7 @@ def test_upgrade_downgrade_upgrade_is_clean_and_the_downgrade_leaves_v1_alone():
 def test_the_migration_history_is_one_linear_chain_ending_at_the_new_head(pg_url):
     engine = create_engine(pg_url)
 
-    assert scalar(engine, "SELECT version_num FROM alembic_version") == "d3f1a8c95b27"
+    assert scalar(engine, "SELECT version_num FROM alembic_version") == HEAD
     engine.dispose()
 
 
@@ -691,3 +700,254 @@ def test_record_heartbeat_writes_a_full_snapshot_and_only_for_an_active_matching
     assert rows(engine, "SELECT health_status, last_error_class, pending_outbox_count FROM ingest_key_ids WHERE key_id = :k", k=KEY) == [
         ("healthy", None, None)]
     assert send(RETIRED_KEY) is False and send(OTHER_KEY) is False and send(key_id(0xDEAD)) is False
+
+
+# =====================================================================================================================
+# 8. ACS item events: the shape the database itself enforces
+# =====================================================================================================================
+
+def test_state_is_required_and_only_a_hold_has_the_hold_only_columns(engine):
+    columns = _columns(engine, "acs_item_events")
+
+    assert columns["state"][1] == "NO"  # NOT NULL
+    for hold_only in ("destination", "is_ill", "is_branch_services", "is_collection_services", "ruleset_id"):
+        assert columns[hold_only][1] == "YES", hold_only  # nullable: a non-hold stores NULL
+    for required in ("event_key", "event_time", "item_key", "key_id", "customer_id", "branch_id"):
+        assert columns[required][1] == "NO", required
+
+
+def test_the_acs_item_table_and_its_dependent_objects_carry_the_new_name_and_none_keep_the_old_one(engine):
+    names = [r[0] for r in rows(engine, "SELECT indexname FROM pg_indexes WHERE tablename = 'acs_item_events'")]
+    names += [r[0] for r in rows(engine, "SELECT conname FROM pg_constraint WHERE conrelid = 'acs_item_events'::regclass")]
+    names += [r[0] for r in rows(engine, "SELECT relname FROM pg_class WHERE relkind = 'S' AND relname LIKE 'acs_%'")]
+
+    assert not [n for n in names if "acs_hold" in n], names
+    assert scalar(engine, "SELECT to_regclass('acs_hold_events')") is None
+    assert {"acs_item_events_event_identity_uidx", "acs_item_events_scope_time_idx", "acs_item_events_scope_item_time_idx",
+            "acs_item_events_state_chk", "acs_item_events_state_shape_chk"} <= set(names)
+
+
+def test_the_stored_columns_are_exactly_the_model_fields_plus_the_infrastructure_columns(engine):
+    model_fields = set(AcsHoldEvent.model_fields) | set(AcsNonHoldEvent.model_fields)
+
+    assert set(_columns(engine, "acs_item_events")) == model_fields | {"id", "customer_id", "branch_id", "key_id", "received_at"}
+    assert set(_columns(engine, "acs_item_events")).isdisjoint(PROHIBITED | {"message_code", "raw_message_code", "message_type"})
+
+
+def _insert_item(conn, **overrides):
+    values = {"c": CUSTOMER, "b": BRANCH, "k": KEY, "e": hmac_like(1), "item": hmac_like(2), "state": "hold", "dest": "main",
+              "ill": False, "bs": False, "cs": False, "rs": None}
+    values.update(overrides)
+    conn.execute(text("INSERT INTO acs_item_events (customer_id, branch_id, key_id, event_key, event_time, state, item_key, "
+                      "destination, is_ill, is_branch_services, is_collection_services, ruleset_id) "
+                      "VALUES (:c, :b, :k, :e, now(), :state, :item, :dest, :ill, :bs, :cs, :rs)"), values)
+
+
+NON_HOLD_SHAPE = {"dest": None, "ill": None, "bs": None, "cs": None, "rs": None}
+
+
+def test_the_database_accepts_a_hold_and_both_non_hold_states_in_their_own_shape(engine):
+    with engine.begin() as conn:
+        _insert_item(conn, e=hmac_like(1))
+        _insert_item(conn, e=hmac_like(2), state="non_hold_101", **NON_HOLD_SHAPE)
+        _insert_item(conn, e=hmac_like(3), state="other_code10", **NON_HOLD_SHAPE)
+
+    assert rows(engine, "SELECT state, destination, is_ill, ruleset_id FROM acs_item_events ORDER BY id") == [
+        ("hold", "main", False, None), ("non_hold_101", None, None, None), ("other_code10", None, None, None)]
+
+
+@pytest.mark.parametrize("override", [
+    {"state": "64", **NON_HOLD_SHAPE}, {"state": "patron", **NON_HOLD_SHAPE}, {"state": "message_64", **NON_HOLD_SHAPE},
+    {"state": "hold "}, {"state": "HOLD"}, {"state": "non_hold", **NON_HOLD_SHAPE}, {"state": "10"}, {"state": ""}, {"state": None},
+])
+def test_the_database_rejects_a_state_outside_the_closed_enum(engine, override):
+    with pytest.raises(IntegrityError), engine.begin() as conn:
+        _insert_item(conn, **override)
+
+
+@pytest.mark.parametrize("field,value", [("dest", "unknown"), ("dest", "main"), ("ill", False), ("ill", True), ("bs", False),
+                                         ("cs", False), ("rs", "0a1b2c3d-4e5f-4a6b-9c7d-8e9f0a1b2c3d")])
+@pytest.mark.parametrize("state", ["non_hold_101", "other_code10"])
+def test_the_database_rejects_a_non_hold_that_carries_a_dummy_hold_field(engine, state, field, value):
+    with pytest.raises(IntegrityError) as caught, engine.begin() as conn:
+        _insert_item(conn, state=state, **{**NON_HOLD_SHAPE, field: value})
+
+    assert "state_shape_chk" in str(caught.value.orig)
+
+
+@pytest.mark.parametrize("missing", ["dest", "ill", "bs", "cs"])
+def test_the_database_rejects_a_hold_missing_a_derived_field(engine, missing):
+    with pytest.raises(IntegrityError) as caught, engine.begin() as conn:
+        _insert_item(conn, **{missing: None})
+
+    assert "state_shape_chk" in str(caught.value.orig)
+
+
+def test_a_hold_may_have_no_ruleset_id_but_the_database_still_checks_its_format(engine):
+    with engine.begin() as conn:
+        _insert_item(conn, e=hmac_like(1), rs=None)
+        _insert_item(conn, e=hmac_like(2), rs="0a1b2c3d-4e5f-4a6b-9c7d-8e9f0a1b2c3d")
+    with pytest.raises(IntegrityError), engine.begin() as conn:
+        _insert_item(conn, e=hmac_like(3), rs="ruleset-2026")
+
+
+def test_the_dedup_identity_still_holds_for_every_state(engine):
+    with engine.begin() as conn:
+        _insert_item(conn, state="non_hold_101", **NON_HOLD_SHAPE)
+    with pytest.raises(IntegrityError), engine.begin() as conn:
+        _insert_item(conn)  # same tenant + key_id + event_key, whatever the state or content
+
+
+# =====================================================================================================================
+# 9. ACS item events on PostgreSQL: storage, ordering and the retraction sequences
+# =====================================================================================================================
+
+def _store_items(engine, items, key=KEY):
+    with engine.begin() as conn:
+        return service.store_events(conn, customer_id=CUSTOMER, branch_id=BRANCH, key_id=key, checkins=[], rejects=[],
+                                    acs_items=[AcsHoldEvent.model_validate(i) if i["state"] == "hold" else AcsNonHoldEvent.model_validate(i)
+                                               for i in items])
+
+
+def test_a_non_hold_is_stored_with_nulls_and_a_state_change_under_one_identity_is_a_conflict(engine):
+    _store_items(engine, [acs_hold(1), acs_non_hold(2, "non_hold_101"), acs_non_hold(3, "other_code10")])
+
+    assert rows(engine, "SELECT state, destination, is_ill, ruleset_id FROM acs_item_events ORDER BY id")[1:] == [
+        ("non_hold_101", None, None, None), ("other_code10", None, None, None)]
+    assert _store_items(engine, [acs_non_hold(2, "non_hold_101")])["acs_items_duplicates"] == 1  # identical resend
+    with pytest.raises(service.EventConflict) as caught:
+        _store_items(engine, [acs_non_hold(2, "other_code10")])
+    assert caught.value.conflicts == {"acs_items": [0]}
+
+
+def test_ids_follow_send_order_on_postgres_so_they_are_a_deterministic_tiebreak(engine):
+    same, item = when(hours=1), hmac_like(555)
+    _store_items(engine, [acs_hold(1, event_time=same, item_key=item), acs_non_hold(2, "non_hold_101", event_time=same, item_key=item),
+                          acs_hold(3, event_time=same, item_key=item)])
+    _store_items(engine, [acs_non_hold(4, "other_code10", event_time=same, item_key=item)])
+
+    ordered = rows(engine, "SELECT event_key FROM acs_item_events WHERE item_key = :i ORDER BY event_time, id", i=item)
+    assert [r[0] for r in ordered] == [hmac_like(n) for n in (1, 2, 3, 4)]
+
+
+def _latest(engine, states):
+    latest = {}
+    for state, item in rows(engine, "SELECT state, item_key FROM acs_item_events ORDER BY event_time, id"):
+        if state in states:
+            latest[item] = state
+    return sorted(latest.values())
+
+
+def test_the_hold_then_other_code10_sequence_differs_between_overview_and_live_today_on_postgres(api, engine):
+    item = hmac_like(900)
+    body = upload(checkins=[], acs_items=[acs_hold(1, item_key=item, event_time=when(hours=3)),
+                                          acs_non_hold(2, "other_code10", item_key=item, event_time=when(hours=2))])
+
+    assert post_upload(api, body).status_code == 200
+
+    assert _latest(engine, {"hold", "non_hold_101"}) == ["hold"]                    # Overview ignores other_code10
+    assert _latest(engine, {"hold", "non_hold_101", "other_code10"}) == ["other_code10"]  # Live Today: the latest code-10 record wins
+
+
+@pytest.mark.parametrize("later_state,overview,live", [("non_hold_101", "non_hold_101", "non_hold_101"),
+                                                       ("other_code10", "hold", "other_code10"), ("hold", "hold", "hold")])
+def test_a_later_record_retracts_a_hold_exactly_as_each_dashboard_path_does(api, engine, later_state, overview, live):
+    item = hmac_like(901)
+    later = acs_hold(2, item_key=item, event_time=when(hours=1)) if later_state == "hold" \
+        else acs_non_hold(2, later_state, item_key=item, event_time=when(hours=1))
+
+    assert post_upload(api, upload(checkins=[], acs_items=[acs_hold(1, item_key=item, event_time=when(hours=2)), later])).status_code == 200
+
+    assert _latest(engine, {"hold", "non_hold_101"}) == [overview]
+    assert _latest(engine, {"hold", "non_hold_101", "other_code10"}) == [live]
+
+
+def test_an_acs_item_upload_writes_nothing_to_a_v1_table_and_fires_no_trigger(api, engine):
+    assert post_upload(api, upload(checkins=[], acs_items=[acs_hold(1), acs_non_hold(2, "other_code10")])).status_code == 200
+
+    for table in ("acs_events", "checkins", "rejects", "checkins_clean", "rejects_clean", "pipeline_status"):
+        assert scalar(engine, f"SELECT count(*) FROM {table}") == 0, table  # nosec B608
+
+
+# =====================================================================================================================
+# 10. The amendment migration over Step 3 data, and its downgrade
+# =====================================================================================================================
+
+def _seed_step3(engine) -> None:
+    """A database at Step 3's revision, with a tenant, a key and three hold rows in the OLD table shape."""
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO customers (id, name) VALUES (10, 'c')"))
+        conn.execute(text("INSERT INTO organizations (id, slug, name, status, operational_customer_id) VALUES (1, 'l', 'l', 'active', 10)"))
+        conn.execute(text("INSERT INTO branches (id, organization_id, slug, name, operational_branch_id) VALUES (1, 1, 'm', 'm', 1)"))
+        conn.execute(text("INSERT INTO ingest_key_ids (key_id, customer_id, branch_id) VALUES (:k, 10, 1)"), {"k": KEY})
+        for n, dest in ((1, "main"), (2, "westside"), (3, "library_express")):
+            conn.execute(text("INSERT INTO acs_hold_events (customer_id, branch_id, key_id, event_key, event_time, item_key, destination, "
+                              "is_ill, is_branch_services, is_collection_services, ruleset_id) "
+                              "VALUES (10, 1, :k, :e, now(), :i, :d, :ill, false, false, NULL)"),
+                         {"k": KEY, "e": hmac_like(n), "i": hmac_like(n + 100), "d": dest, "ill": n == 2})
+
+
+def test_the_amendment_converts_existing_step_3_holds_in_place_and_touches_nothing_else():
+    with Throwaway(STEP3_HEAD) as db:
+        engine = create_engine(db.url)
+        _seed_step3(engine)
+        before = rows(engine, "SELECT id, customer_id, branch_id, key_id, event_key, event_time, item_key, destination, is_ill, "
+                              "is_branch_services, is_collection_services, ruleset_id, received_at FROM acs_hold_events ORDER BY id")
+        v1_before = _v1_snapshot(engine)
+        other_v2_before = {t: rows(engine, f"SELECT * FROM {t} ORDER BY id") for t in ("checkin_events", "reject_events", "ingest_key_ids")}  # nosec B608
+
+        up = _alembic(db.url, "upgrade", "head")
+        assert up.returncode == 0, up.stderr[-2000:]
+
+        after = rows(engine, "SELECT id, customer_id, branch_id, key_id, event_key, event_time, item_key, destination, is_ill, "
+                             "is_branch_services, is_collection_services, ruleset_id, received_at FROM acs_item_events ORDER BY id")
+        assert after == before  # every row, id and timestamp preserved
+        assert rows(engine, "SELECT DISTINCT state FROM acs_item_events") == [("hold",)]  # existing rows are all holds
+        assert _v1_snapshot(engine) == v1_before  # not one v1 object changed
+        assert {t: rows(engine, f"SELECT * FROM {t} ORDER BY id") for t in other_v2_before} == other_v2_before  # nosec B608
+        with pytest.raises(IntegrityError), engine.begin() as conn:  # the identity index survived the rename
+            _insert_item(conn, e=hmac_like(1), item=hmac_like(101), dest="main")
+        engine.dispose()
+
+
+def test_the_downgrade_refuses_while_a_non_hold_row_exists_and_leaves_everything_intact():
+    with Throwaway("head") as db:
+        engine = create_engine(db.url)
+        _seed_tenants(engine)
+        with engine.begin() as conn:
+            _insert_item(conn, e=hmac_like(1))
+            _insert_item(conn, e=hmac_like(2), state="non_hold_101", **NON_HOLD_SHAPE)
+        before = rows(engine, "SELECT * FROM acs_item_events ORDER BY id")
+
+        down = _alembic(db.url, "downgrade", "-1")
+
+        assert down.returncode != 0 and "cannot downgrade" in down.stderr
+        assert rows(engine, "SELECT * FROM acs_item_events ORDER BY id") == before  # nothing destroyed
+        assert scalar(engine, "SELECT version_num FROM alembic_version") == HEAD
+        assert scalar(engine, "SELECT to_regclass('acs_hold_events')") is None
+        engine.dispose()
+
+
+def test_the_downgrade_restores_step_3_exactly_when_only_holds_exist_and_the_upgrade_reapplies():
+    with Throwaway("head") as db:
+        engine = create_engine(db.url)
+        _seed_tenants(engine)
+        with engine.begin() as conn:
+            _insert_item(conn, e=hmac_like(1))
+            _insert_item(conn, e=hmac_like(2), dest="westside", ill=True)
+        holds = rows(engine, "SELECT id, event_key, destination, is_ill FROM acs_item_events ORDER BY id")
+
+        down = _alembic(db.url, "downgrade", "-1")
+        assert down.returncode == 0, down.stderr[-2000:]
+        assert scalar(engine, "SELECT version_num FROM alembic_version") == STEP3_HEAD
+        assert rows(engine, "SELECT id, event_key, destination, is_ill FROM acs_hold_events ORDER BY id") == holds
+        assert "state" not in _columns(engine, "acs_hold_events")
+        assert _columns(engine, "acs_hold_events")["destination"][1] == "NO"  # NOT NULL again
+        assert scalar(engine, "SELECT to_regclass('acs_item_events')") is None
+        step3_indexes = {r[0] for r in rows(engine, "SELECT indexname FROM pg_indexes WHERE tablename = 'acs_hold_events'")}
+        assert {"acs_hold_events_event_identity_uidx", "acs_hold_events_scope_time_idx", "acs_hold_events_scope_item_idx"} <= step3_indexes
+
+        up = _alembic(db.url, "upgrade", "head")
+        assert up.returncode == 0, up.stderr[-2000:]
+        assert rows(engine, "SELECT id, event_key, destination, is_ill FROM acs_item_events ORDER BY id") == holds
+        engine.dispose()
