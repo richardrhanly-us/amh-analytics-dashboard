@@ -385,6 +385,10 @@ _SAFE_MESSAGES = {
     "timestamp_format": "Timestamp must be ISO-8601 with a UTC offset",
     "timestamp_range": "Timestamp is outside the accepted range",
     "too_many_events": "Too many events in one request",
+    # A discriminated union (the v2 ACS item `state`): the tag is missing, or is not one of the allowed values. The submitted
+    # tag is never part of the message.
+    "union_tag_invalid": "Input is not one of the allowed values",
+    "union_tag_not_found": "Field required",
 }
 _GENERIC_MESSAGE = "Invalid value"
 

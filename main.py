@@ -1062,7 +1062,7 @@ v2_status_router = APIRouter(route_class=_v2_route_class(lambda: V2_STATUS_MAX_B
 def upload_v2(request: Request, data: UploadV2Request, authorization: str | None = Header(default=None)):
     token_row = None
     try:
-        if not (data.checkins or data.rejects or data.acs_holds):
+        if not (data.checkins or data.rejects or data.acs_items):
             raise HTTPException(status_code=400, detail="No upload events provided")
 
         with engine.begin() as conn:
@@ -1075,7 +1075,7 @@ def upload_v2(request: Request, data: UploadV2Request, authorization: str | None
                 key_id=data.key_id,
                 checkins=data.checkins,
                 rejects=data.rejects,
-                acs_holds=data.acs_holds,
+                acs_items=data.acs_items,
             )
 
         return {"status": "success", "contract_version": 2, **counts}
