@@ -93,6 +93,8 @@ def get_engine() -> Engine:
             pool_recycle=300,
             connect_args={"sslmode": "require"},
             future=True,
+            # Keeps bound values (a loaded/queried row's data) out of database error text and logs.
+            hide_parameters=True,
         )
 
     return _engine

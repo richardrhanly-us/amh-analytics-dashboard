@@ -22,6 +22,7 @@ import streamlit as st
 from sqlalchemy import text
 
 from database import get_engine
+from services.privacy_hardening import log_safe_exception
 
 #***************************************************************
 # File Paths and Logger Setup
@@ -69,6 +70,40 @@ ACS_BRANCH_COLUMN = os.getenv("SORTVIEW_ACS_BRANCH_COLUMN", "branch_id")
 
 PIPELINE_ORG_COLUMN = os.getenv("SORTVIEW_PIPELINE_ORG_COLUMN", "customer_id")
 PIPELINE_BRANCH_COLUMN = os.getenv("SORTVIEW_PIPELINE_BRANCH_COLUMN", "branch_id")
+
+
+#***************************************************************
+# ACS Columns Loaded Into Dashboard Memory (privacy containment, Step 2)
+#
+# acs_events used to be read with SELECT *, pulling every stored column --
+# including ones nothing uses -- into the app's memory and its 15-minute
+# st.cache_data cache. Only the columns below are loaded now.
+#
+# TEMPORARY, under the v1 Collector contract: patron_id and raw_message are
+# STILL loaded, and ONLY because the current cloud-side classifier in
+# metrics.build_acs_item_summary still reads them:
+#   raw_message -- the "101"/"101YNY" hold prefixes, the "|AE"/"|PT"
+#                  patron-name/type fields of message 64, the ILL keyword
+#                  test, and the configured "|DA<name>|" service patterns;
+#   patron_id   -- the join key from an item message to its message-64
+#                  patron record.
+# Both go away when classification moves to the collector (Contract v2);
+# the barcode is likewise only for its distinct-item de-duplication.
+# Not loaded any more: id, customer_id, branch_id, title, barcode_key,
+# source_file, source_event_id, created_at (no consumer reads them).
+# checkins/rejects are still read with SELECT * (no patron fields; a later
+# step narrows them with the v2 dashboard migration).
+#***************************************************************
+
+ACS_LOAD_COLUMNS = (
+    "event_time",
+    "message_code",
+    "barcode",
+    "destination",
+    "patron_id",
+    "raw_message",
+)
+ACS_PATRON_COLUMNS_STILL_LOADED = ("patron_id", "raw_message")
 
 
 #***************************************************************
@@ -180,29 +215,36 @@ def _show_db_error_once(key, message):
 #
 #***************************************************************
 
+# What a user sees when data cannot be loaded. Deliberately generic: a database
+# error's text can contain the SQL statement, bound values, the connection string
+# or host, and schema names, none of which belong on a customer's screen. The
+# detail goes to the application log instead, as a structured summary (see
+# privacy_hardening.log_safe_exception).
+DATA_LOAD_FAILED_MESSAGE = (
+    "Dashboard data could not be loaded right now. Please try again in a few "
+    "minutes. If this keeps happening, contact SortView support."
+)
+
+
 def _read_table(query, params=None):
     try:
         engine = get_engine()
-    except Exception:
-        logger.exception("Database engine creation failed")
-        _show_db_error_once(
-            "engine_creation",
-            "Database connection failed. Check DATABASE_URL and Neon connectivity."
-        )
+    except Exception as exc:
+        log_safe_exception(logger, "Database engine creation failed", exc)
+        _show_db_error_once("engine_creation", DATA_LOAD_FAILED_MESSAGE)
         return pd.DataFrame()
 
     try:
         return pd.read_sql(text(query), engine, params=params or {})
-    except Exception as e:
-        logger.exception(
-            "Database query failed | params=%s | query=%s",
-            params or {},
-            query,
+    except Exception as exc:
+        # The query text is our own statement (placeholders, no values); only the
+        # NAMES of the bound parameters are logged, never their values.
+        log_safe_exception(
+            logger,
+            f"Database query failed | params={sorted(params or {})} | query={' '.join(str(query).split())}",
+            exc,
         )
-        _show_db_error_once(
-            "query_failed",
-            f"Database query failed while loading dashboard data: {e}"
-        )
+        _show_db_error_once("query_failed", DATA_LOAD_FAILED_MESSAGE)
         return pd.DataFrame()
 
 
@@ -406,28 +448,34 @@ def _today_filter_sql():
 #               org_column - Organization/customer column name.
 #               branch_column - Branch column name.
 #               live_only - Boolean flag for loading only today's data.
+#               columns - Optional explicit column names to SELECT
+#                         (each validated like every other identifier);
+#                         None keeps the historical SELECT *.
 #
 #  Returns:     str - SQL query string.
 #
 #***************************************************************
 
-def _scoped_query(table_name, org_column, branch_column, live_only=False):
+def _scoped_query(table_name, org_column, branch_column, live_only=False, columns=None):
     org_column = _safe_identifier(org_column)
     branch_column = _safe_identifier(branch_column)
     table_name = _safe_identifier(table_name)
+    select_list = "*" if columns is None else ", ".join(_safe_identifier(c) for c in columns)
 
     if live_only:
         live_template = """
-            SELECT *
+            SELECT {select_list}
             FROM {table_name}
             WHERE {org_column} = :org_slug
               AND {branch_column} = :branch_slug
               AND event_time::date = {today_filter}
             ORDER BY event_time
         """
-        # table_name/org_column/branch_column pass through _safe_identifier()
-        # allowlist above; org_slug/branch_slug stay bound parameters.
+        # table_name/org_column/branch_column/select_list pass through the
+        # _safe_identifier() allowlist above; org_slug/branch_slug stay bound
+        # parameters.
         return live_template.format(  # nosec B608
+            select_list=select_list,
             table_name=table_name,
             org_column=org_column,
             branch_column=branch_column,
@@ -435,15 +483,17 @@ def _scoped_query(table_name, org_column, branch_column, live_only=False):
         )
 
     range_template = """
-        SELECT *
+        SELECT {select_list}
         FROM {table_name}
         WHERE {org_column} = :org_slug
           AND {branch_column} = :branch_slug
         ORDER BY event_time
     """
-    # table_name/org_column/branch_column pass through _safe_identifier()
-    # allowlist above; org_slug/branch_slug stay bound parameters.
+    # table_name/org_column/branch_column/select_list pass through the
+    # _safe_identifier() allowlist above; org_slug/branch_slug stay bound
+    # parameters.
     return range_template.format(  # nosec B608
+        select_list=select_list,
         table_name=table_name,
         org_column=org_column,
         branch_column=branch_column,
@@ -580,6 +630,7 @@ def _load_acs_history_from_db(org_slug, branch_slug):
         org_column=ACS_ORG_COLUMN,
         branch_column=ACS_BRANCH_COLUMN,
         live_only=False,
+        columns=ACS_LOAD_COLUMNS,
     )
     df = _read_table(query, params=params)
     return _normalize_acs_df(df)
@@ -607,6 +658,7 @@ def _load_acs_live_from_db(org_slug, branch_slug):
         org_column=ACS_ORG_COLUMN,
         branch_column=ACS_BRANCH_COLUMN,
         live_only=True,
+        columns=ACS_LOAD_COLUMNS,
     )
     df = _read_table(query, params=params)
     return _normalize_acs_df(df)

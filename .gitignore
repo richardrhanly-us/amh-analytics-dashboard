@@ -39,3 +39,12 @@ agent/SortViewAgent - What is currently sitting on the AMH computer/
 .pyinstaller-venv/
 build/
 dist/
+
+# Local directories that must never be staged.
+# SortViewAgent/ is a local snapshot of the deployed legacy AMH agent, including its
+# processed data files -- which hold patron data. Never commit it.
+/SortViewAgent/
+# release/ is generated Collector build output. Nothing tracked depends on it:
+# collector/build_release.py writes wherever --output points (releases are kept
+# outside the repository), and no test, script or doc reads a top-level release/.
+/release/
