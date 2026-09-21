@@ -137,7 +137,9 @@ SQL-side encryption is deliberately not used -- and because it can prove its own
 | Every Streamlit entry script installs the scrubber before anything else | guard in `tests/test_streamlit_log_scrubbing.py` | repo |
 | The same on Streamlit **1.63.0** (the pinned production version) without `rich` | those suites re-run against the pinned dependency set | repo |
 | The hosting platform starts the app from the repository root (so the file is found) | **cannot be proved from the repo** | **hosting** |
-| The platform does not override `client.showErrorDetails` (an environment variable or `--client.showErrorDetails` flag outranks the file) | **cannot be proved from the repo** | **hosting** |
+| Whether the platform overrides `client.showErrorDetails` at startup (an environment variable or `--client.showErrorDetails` flag outranks the file) | **it does, on Streamlit Community Cloud**: the platform [documents](https://docs.streamlit.io/deploy/streamlit-community-cloud/status) forcing the legacy `false`, and the hosted canary confirmed it (2.6) | **hosting** |
+| Every entry script then pins `client.showErrorDetails` to `"none"` in code, over whatever the host set (unconditional, no opt-out), on Streamlit 1.63.0 with `false` supplied by environment variable and by flag | `tests/test_streamlit_error_details_enforcement.py`, `tests/test_real_apps_redaction.py` (main + Super Admin), `tests/test_redaction_canary_app.py` | repo |
+| That Community Cloud lets the in-code `"none"` win over its startup value | **cannot be proved from the repo**: a hosted canary run (checklist item 1 and 2 below) | **hosting** |
 | The platform captures only the process's stdout/stderr, and its log viewer shows the scrubbed line | **cannot be proved from the repo** | **hosting** |
 | The Super Admin app's launch command and working directory | not documented anywhere in the repo | **hosting** |
 | Import-time failures on a cold start, before the scrubber runs; text from other libraries' loggers or `print`; the platform's own infrastructure logs | not covered by the scrubber | residual |
@@ -151,7 +153,7 @@ release under test). Do not change the production apps' secrets or settings. Del
 
 - Main file: `scripts/redaction_canary/app.py`.
 - Secret/environment variable: `SORTVIEW_REDACTION_CANARY_ENABLED = "true"`. Without it the app is inert.
-- It shows an **Effective configuration** panel and three buttons that each raise an uncaught exception whose message
+- It shows an **Effective configuration** panel (the value at startup, before SortView's enforcement, and the effective value after it) and three buttons that each raise an uncaught exception whose message
   contains: a fake password, database URL, API token, patron/card number and e-mail, a fake SQL statement and bound
   value, and `Failing row contains (...)`. All values start with `CANARY-` / `canary-` / `canary_`.
 
@@ -171,17 +173,23 @@ Record the result of each line. **Any FAIL means redaction is not effective on t
 **On the canary app (A):**
 
 1. Open the app. The **Effective configuration** panel must show
-   - `client.showErrorDetails` = `none`, and `client.showErrorDetails defined in` = a path ending
-     `.streamlit/config.toml`;
+   - **at startup (before enforcement)**: the value the platform started Streamlit with. On Streamlit Community Cloud this
+     is `false`, defined in `command-line argument or environment variable` -- that is the platform's documented setting,
+     not a failure, and the panel must not hide it. Anywhere the repository file is found and nothing overrides it, it is
+     `none`, defined in a path ending `.streamlit/config.toml`;
+   - **effective (after enforcement)** = `none`, defined in `<user defined>` (SortView set it in code). **FAIL if it is
+     anything else** -- the in-code pin did not take effect on this platform (and the browser check in item 2 will show
+     the exception type and a traceback);
    - `repository_config_file_in_working_directory` = `true`;
    - `log_scrubber_installed` = `true`, `logger.enableRich` = `false`.
-   - FAIL if `defined in` says `command-line argument or environment variable` (the platform overrides it),
-     or `<default>` / value `full` (the file is not being found -- wrong working directory).
+   - Startup `<default>` / `full` means the file is not being found (wrong working directory) or a host set `full`;
+     the effective value must still be `none`, but find out why.
 2. Click each of the three buttons in turn, noting the time of each click. For **each**, the browser must show only
    *"This app has encountered an error. The original error message is redacted to prevent data leaks..."* --
    **no** exception message, **no** exception type (`RuntimeError`, `DataError`), **no** traceback, and none of the
    canaries (password, token, database URL, card number, e-mail, SQL, bound value). Also check the browser's developer
-   tools network/WebSocket messages if you can: the same must hold.
+   tools network/WebSocket messages if you can: the same must hold. **No traceback or source-code context** either: the
+   `false` Community Cloud starts with would still show them, so this is what proves the in-code `none` won.
 3. Open the platform's log view (Streamlit Community Cloud: the app's **Manage app** panel, per Streamlit's own message).
    For each click there must be one line of the form
    `Uncaught app execution | error_type=<type> [sqlstate=22P02] [cause_type=...] at=... app=...app.py:<line>:raise_...`
@@ -203,7 +211,8 @@ Record the result of each line. **Any FAIL means redaction is not effective on t
 **Also confirm:**
 
 8. The platform's settings/secrets for these apps set no `STREAMLIT_CLIENT_SHOW_ERROR_DETAILS` /
-   `--client.showErrorDetails`. (Check 1 detects an override; this is the manual cross-check.)
+   `--client.showErrorDetails` of their own. (Check 1's startup line detects a host value; the platform's own `false` is
+   expected and is overridden in code, so this is now a cross-check, not a pass criterion.)
 9. Note the Python and Streamlit versions the platform reports; they should match `requirements.txt`
    (`streamlit==1.63.0`; Python 3.11 -- see "python version" in `docs/deployment.md`).
 
@@ -251,8 +260,18 @@ patron/card value, e-mail, SQL text, bound value, driver message, failing-row co
 
 **Follow-up (hardening, not a failed redaction test).** Community Cloud's effective `client.showErrorDetails` was
 `"false"`, not the `"none"` requested in `.streamlit/config.toml`, and it still exposed traceback/source context.
-No secret-redaction check failed. Where the platform's value comes from was not investigated here; find out and
-get `"none"` (or confirm that `"false"` is the strongest setting Community Cloud allows) as a separate task.
+No secret-redaction check failed.
+
+**Cause and fix.** Streamlit Community Cloud
+[documents](https://docs.streamlit.io/deploy/streamlit-community-cloud/status) that it forces
+`client.showErrorDetails = false` at startup, regardless of `config.toml`. In Streamlit 1.63.0 `false` is an alias of
+`"stacktrace"`: generic message, but the exception type and traceback are sent to the browser. Streamlit reads the option
+in-process each time it marshals an exception and lets a script set it, so `install_streamlit_log_scrubber()` now calls
+`enforce_streamlit_error_details()`, which sets `"none"` through `st.set_option` on every script run (unconditional, no
+opt-out; `.streamlit/config.toml` keeps `"none"` as well). The canary's panel now reports both the startup value and the
+effective value, so a hosted run should read *startup `false` (command-line argument or environment variable)* then
+*effective `none` (`<user defined>`)*. **Not yet verified on Community Cloud**: repeat checklist items 1-4 on a new,
+temporary canary deployment of the fixed code and record the result here.
 
 **Not covered by this record:** the two real-app checks (2.2 B, checklist items 5-7) and checklist items 8-9.
 

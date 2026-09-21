@@ -6,7 +6,8 @@ server from creating SECONDARY exposure paths for whatever a request carries:
 
   * scrub_sentry_event / build_sentry_options -- what may reach the error tracker;
   * safe_exception_summary / log_safe_exception -- what an exception may write to the application log;
-  * install_streamlit_log_scrubber -- what Streamlit's own log of an UNCAUGHT page exception may contain;
+  * install_streamlit_log_scrubber -- what Streamlit's own log of an UNCAUGHT page exception may contain (and, through
+    enforce_streamlit_error_details, that the browser sees only the generic error whatever the host configures);
   * safe_validation_errors / safe_validation_body -- what a 422 response may say back to the caller;
   * api_docs_kwargs -- whether the API publishes its own schema.
 
@@ -21,6 +22,7 @@ import logging
 import os
 import re
 import sysconfig
+import threading
 import traceback
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -268,15 +270,65 @@ def is_streamlit_log_scrubber_installed() -> bool:
     return bool(getattr(logging.getLogRecordFactory(), _SCRUBBER_MARK, False))
 
 
+# --- what the browser may see of an uncaught page exception ---------------------------------------------------------
+
+# `client.showErrorDetails` decides what Streamlit sends the browser for an uncaught exception. "none" shows only the
+# generic message; the legacy "false" (which Streamlit Community Cloud forces at startup, over `.streamlit/config.toml`)
+# is "stacktrace": it still shows the exception TYPE and the traceback -- server file paths and source lines. A
+# `STREAMLIT_CLIENT_SHOW_ERROR_DETAILS` variable or a `--client.showErrorDetails` flag can do the same. The value is read
+# in-process each time an exception is marshalled, and `client.showErrorDetails` is one of the options a script may set,
+# so every entry script pins it to "none" here. It is unconditional: there is deliberately no way to turn details back on.
+_ERROR_DETAILS_OPTION = "client.showErrorDetails"
+_ERROR_DETAILS_ENFORCED = "none"
+_error_details_lock = threading.Lock()
+# What the option was, and where it was defined, the first time this process enforced it: the platform's value (e.g.
+# Community Cloud's "false"), kept because enforcement overwrites it. None until the first call.
+_error_details_startup: tuple[Any, str] | None = None
+
+
+def streamlit_error_details_startup() -> tuple[Any, str] | None:
+    """`(value, where_defined)` of `client.showErrorDetails` as it was before this process first enforced "none", or None
+    if enforcement has not run (or could not read it). For the redaction canary's diagnostics; not a secret."""
+    return _error_details_startup
+
+
+def enforce_streamlit_error_details() -> bool:
+    """Force `client.showErrorDetails` to "none" through Streamlit's supported `st.set_option`, whatever the platform, an
+    environment variable or a flag set it to. Idempotent (setting the same value again changes nothing) and safe to call
+    on every script run. Returns whether the effective value is "none" afterwards.
+
+    It never raises, and it never logs a configuration value or exception text: if the option cannot be set it writes a
+    fixed warning line and returns False (the repository's `.streamlit/config.toml` is still "none").
+    """
+    global _error_details_startup
+    enforced = False
+    try:
+        import streamlit as st
+        from streamlit import config
+
+        with _error_details_lock:
+            if _error_details_startup is None:
+                _error_details_startup = (config.get_option(_ERROR_DETAILS_OPTION), config.get_where_defined(_ERROR_DETAILS_OPTION))
+            st.set_option(_ERROR_DETAILS_OPTION, _ERROR_DETAILS_ENFORCED)
+            enforced = config.get_option(_ERROR_DETAILS_OPTION) == _ERROR_DETAILS_ENFORCED
+    except Exception:
+        enforced = False
+    if not enforced:
+        logging.getLogger(__name__).warning("Could not enforce Streamlit client.showErrorDetails=none")
+    return enforced
+
+
 def install_streamlit_log_scrubber() -> None:
-    """Keep uncaught-exception text out of the process's log output. Idempotent; call it first in every Streamlit entry
-    script (a page opened by its own URL runs only that page's script, never `app.py`).
+    """Keep uncaught-exception text out of the process's log output, and out of the browser. Idempotent; call it first in
+    every Streamlit entry script (a page opened by its own URL runs only that page's script, never `app.py`).
 
     1. Wraps the log-record factory so Streamlit's records are scrubbed (`scrub_streamlit_log_record`) before any
        handler sees them. It is scoped by logger name, so it does not depend on which Streamlit module logs, and it
        cannot be bypassed by Streamlit's per-logger handlers or `propagate = False`.
     2. Turns Streamlit's rich-traceback console print off (`logger.enableRich`), because that path writes the exception
        straight to stdout and bypasses `logging`, so nothing above could scrub it.
+    3. Pins `client.showErrorDetails` to "none" (`enforce_streamlit_error_details`) on EVERY call, outside the
+       already-installed check above, so a later script run re-applies it.
 
     It never raises: a failure here must not stop the page.
     """
@@ -292,6 +344,8 @@ def install_streamlit_log_scrubber() -> None:
         from streamlit import config
 
         config.set_option("logger.enableRich", False)
+
+    enforce_streamlit_error_details()
 
 
 # --- validation errors ---------------------------------------------------------------------------------------------

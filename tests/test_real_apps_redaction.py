@@ -11,11 +11,15 @@ What it proves about each app (the repository half of "the deployed apps redact"
   * the browser payload holds only the generic error -- no message, no exception type, no traceback, no canary;
   * the process's own output (stdout and stderr) holds no canary and no connection-string text;
   * the log still names the failure: exception type and the SortView frames that made the call;
-  * the control: with the redaction setting overridden to `full` the SAME exception carries the canary host, so the
-    assertions above could fail.
+  * the control: with the redaction setting overridden to `full` (and SortView's in-code enforcement switched off inside the
+    probe) the SAME exception carries the canary host, so the assertions above could fail;
+  * under a simulated Streamlit Community Cloud -- `client.showErrorDetails=false` supplied at startup, by environment variable
+    or by flag -- the browser payload still holds no exception type, no traceback and only the generic message, because every
+    entry script's `install_streamlit_log_scrubber()` pins the setting to "none". The control there: with the enforcement
+    switched off, `false` does show the type and traceback.
 
 What it cannot prove: what a hosting platform does with the output, whether the deployed app is started from the
-repository root, or whether the platform overrides `client.showErrorDetails`. See docs/production-verification-runbook.md.
+repository root, or whether Community Cloud lets the in-code enforcement win over its startup value. See docs/production-verification-runbook.md.
 
 Every value is a SYNTHETIC canary.
 """
@@ -51,14 +55,19 @@ from streamlit import logger as streamlit_logger
 from streamlit.testing.v1 import AppTest
 from streamlit.web import bootstrap, cli
 
-script, cli_env = sys.argv[1], json.loads(sys.argv[2])
+script, cli_env, cli_args, enforcement_off = sys.argv[1], json.loads(sys.argv[2]), json.loads(sys.argv[3]), sys.argv[4] == "off"
 sys.path.insert(0, os.path.dirname(script))  # what `streamlit run` does: the script's own folder is importable
 
 # Start Streamlit as `streamlit run <script>` does (real argument, environment and config loading); only the server is stubbed.
 bootstrap.run = lambda *args, **kwargs: None
-started = CliRunner().invoke(cli.main, ["run", script, "--server.headless=true"], env=cli_env)
+started = CliRunner().invoke(cli.main, ["run", script, "--server.headless=true", *cli_args], env=cli_env)
 assert started.exit_code == 0, started.output
 streamlit_logger.update_formatter()  # CliRunner swaps stderr while it runs; rebuild the handlers on the real streams
+if enforcement_off:  # CONTROL ONLY: what the app would do without SortView's `client.showErrorDetails` pin
+    sys.path.insert(0, os.path.join(os.getcwd(), "src"))
+    from services import privacy_hardening
+
+    privacy_hardening.enforce_streamlit_error_details = lambda: True
 
 at = AppTest.from_file(script, default_timeout=120)
 at.run()
@@ -70,33 +79,38 @@ password.input("not-a-real-password")
 (submit,) = [b for b in at.button if b.label == "Log In"]
 submit.click()
 at.run()
-print("PROBE_JSON=" + json.dumps({"exceptions": [MessageToDict(e.proto) for e in at.exception]}))
+from streamlit import config
+
+print("PROBE_JSON=" + json.dumps({"exceptions": [MessageToDict(e.proto) for e in at.exception],
+                                  "effective": config.get_option("client.showErrorDetails")}))
 '''
 
 
 class Run:
-    def __init__(self, exceptions: list[dict], stdout: str, stderr: str):
-        self.exceptions, self.stdout, self.stderr = exceptions, stdout, stderr
+    def __init__(self, exceptions: list[dict], stdout: str, stderr: str, effective: str):
+        self.exceptions, self.stdout, self.stderr, self.effective = exceptions, stdout, stderr, effective
 
     @property
     def output(self) -> str:
         return self.stdout + "\n" + self.stderr
 
 
-def _run(tmp_path: Path, script: str, **cli_env: str) -> Run:
+def _run(tmp_path: Path, script: str, *, enforcement: bool = True, cli_args: tuple[str, ...] = (), **cli_env: str) -> Run:
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
     (tmp_path / "probe.py").write_text(PROBE, encoding="utf-8")
     env = {k: v for k, v in os.environ.items() if not k.upper().startswith("STREAMLIT_") and k != "PYTHONPATH"}
     env.update({"HOME": str(home), "USERPROFILE": str(home), "PYTHONDONTWRITEBYTECODE": "1", "DATABASE_URL": DATABASE_URL})
     result = subprocess.run(
-        [sys.executable, "-B", str(tmp_path / "probe.py"), str(ROOT / script), json.dumps(cli_env)],
+        [sys.executable, "-B", str(tmp_path / "probe.py"), str(ROOT / script), json.dumps(cli_env),
+         json.dumps(list(cli_args)), "on" if enforcement else "off"],
         cwd=ROOT, env=env, capture_output=True, text=True, timeout=300, check=False,
     )
     lines = [line for line in result.stdout.splitlines() if line.startswith("PROBE_JSON=")]
     assert len(lines) == 1, f"probe failed:\n{result.stdout[-1500:]}\n{result.stderr[-1500:]}"
     stdout = "\n".join(line for line in result.stdout.splitlines() if not line.startswith("PROBE_JSON="))
-    return Run(json.loads(lines[0].removeprefix("PROBE_JSON="))["exceptions"], stdout, result.stderr)
+    probe = json.loads(lines[0].removeprefix("PROBE_JSON="))
+    return Run(probe["exceptions"], stdout, result.stderr, probe["effective"])
 
 
 def _leaks(text: str) -> list[str]:
@@ -117,7 +131,28 @@ def app_run(request, tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def unredacted_control(tmp_path_factory):
-    return _run(tmp_path_factory.mktemp("control"), "src/app.py", STREAMLIT_CLIENT_SHOW_ERROR_DETAILS="full")
+    return _run(tmp_path_factory.mktemp("control"), "src/app.py", enforcement=False, STREAMLIT_CLIENT_SHOW_ERROR_DETAILS="full")
+
+
+CLOUD_STARTUPS = {  # how a host can hand `false` to `streamlit run`: Community Cloud forces it at startup
+    "env-false": {"STREAMLIT_CLIENT_SHOW_ERROR_DETAILS": "false"},
+    "flag-false": {"cli_args": ("--client.showErrorDetails=false",)},
+}
+
+
+@pytest.fixture(scope="module", params=[(app, startup) for app in APPS for startup in CLOUD_STARTUPS],
+                ids=[f"{app}-{startup}" for app in APPS for startup in CLOUD_STARTUPS])
+def cloud_run(request, tmp_path_factory):
+    app, startup = request.param
+    script, _ = APPS[app]
+    return _run(tmp_path_factory.mktemp(f"{app}-{startup}"), script, **CLOUD_STARTUPS[startup])
+
+
+@pytest.fixture(scope="module", params=list(APPS))
+def cloud_control(request, tmp_path_factory):
+    script, _ = APPS[request.param]
+    return _run(tmp_path_factory.mktemp(f"control-{request.param}"), script, enforcement=False,
+                STREAMLIT_CLIENT_SHOW_ERROR_DETAILS="false")
 
 
 def test_the_browser_gets_only_the_generic_error(app_run):
@@ -151,3 +186,30 @@ def test_control_with_redaction_overridden_the_same_exception_carries_the_canary
 
     assert HOST in json.dumps(exception)  # the exception text really does contain the value; redaction is what hides it
     assert "type" in exception or "stackTrace" in exception
+
+
+# --- simulated Streamlit Community Cloud: `client.showErrorDetails=false` supplied at startup ---------------------------------
+
+def test_under_cloud_false_the_browser_still_gets_no_type_no_traceback_and_only_the_generic_message(cloud_run):
+    (exception,) = cloud_run.exceptions  # exactly one error element: the failure is not swallowed
+
+    assert cloud_run.effective == "none"  # SortView's entry script pinned it over the host's `false`
+    assert "This app has encountered an error" in exception["message"] and "redacted" in exception["message"]
+    assert "type" not in exception and "stackTrace" not in exception
+    assert _leaks(json.dumps(exception)) == []
+
+
+def test_under_cloud_false_the_log_is_unchanged(cloud_run):
+    line = next(line for line in cloud_run.stderr.splitlines() if "Uncaught app execution" in line)
+
+    assert "error_type=sqlalchemy.exc.OperationalError" in line  # the scrubbed log line is exactly as without the override
+    assert _leaks(cloud_run.output) == []
+
+
+def test_control_under_cloud_false_without_the_enforcement_the_type_and_traceback_reach_the_browser(cloud_control):
+    (exception,) = cloud_control.exceptions
+
+    assert cloud_control.effective == "false"
+    assert "This app has encountered an error" in exception["message"]  # `false` still redacts the message...
+    assert exception["type"] == "sqlalchemy.exc.OperationalError"  # ...but not the exception type
+    assert exception["stackTrace"]  # ...or the traceback (file paths, source lines)
