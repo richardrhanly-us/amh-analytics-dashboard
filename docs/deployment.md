@@ -243,8 +243,9 @@ Users then see only "This app has encountered an error". This is covered by
   `config.toml` setting stays as the repository-level default; the code pin is in addition to it. If the pin cannot
   be applied the app logs one fixed line, `Could not enforce Streamlit client.showErrorDetails=none`, and carries on.
   Tests: `tests/test_streamlit_error_details_enforcement.py`, `tests/test_real_apps_redaction.py`,
-  `tests/test_redaction_canary_app.py`. Whether Community Cloud lets the in-code value win over its startup value can
-  only be shown on a hosted canary (runbook, 2.3 item 1).
+  `tests/test_redaction_canary_app.py`. Verified on Streamlit Community Cloud (2026-09-21, hosted canary): Cloud's
+  startup value was `false`, SortView's runtime enforcement changed the effective value to `none`, and the hosted
+  verification passed (runbook, 2.6).
 - **Streamlit's server log is scrubbed separately.** `showErrorDetails` only controls the browser: Streamlit
   always logs the whole uncaught exception, message included, before deciding what the browser sees (on a
   `requirements.txt`-only install such as production, as `Uncaught app execution` on stderr; where the optional

@@ -139,7 +139,7 @@ SQL-side encryption is deliberately not used -- and because it can prove its own
 | The hosting platform starts the app from the repository root (so the file is found) | **cannot be proved from the repo** | **hosting** |
 | Whether the platform overrides `client.showErrorDetails` at startup (an environment variable or `--client.showErrorDetails` flag outranks the file) | **it does, on Streamlit Community Cloud**: the platform [documents](https://docs.streamlit.io/deploy/streamlit-community-cloud/status) forcing the legacy `false`, and the hosted canary confirmed it (2.6) | **hosting** |
 | Every entry script then pins `client.showErrorDetails` to `"none"` in code, over whatever the host set (unconditional, no opt-out), on Streamlit 1.63.0 with `false` supplied by environment variable and by flag | `tests/test_streamlit_error_details_enforcement.py`, `tests/test_real_apps_redaction.py` (main + Super Admin), `tests/test_redaction_canary_app.py` | repo |
-| That Community Cloud lets the in-code `"none"` win over its startup value | **cannot be proved from the repo**: a hosted canary run (checklist item 1 and 2 below) | **hosting** |
+| That Community Cloud lets the in-code `"none"` win over its startup value | **it does**: verified on a hosted canary, PASSED and CLOSED (2.6, final hosted verification) | **hosting** |
 | The platform captures only the process's stdout/stderr, and its log viewer shows the scrubbed line | **cannot be proved from the repo** | **hosting** |
 | The Super Admin app's launch command and working directory | not documented anywhere in the repo | **hosting** |
 | Import-time failures on a cold start, before the scrubber runs; text from other libraries' loggers or `print`; the platform's own infrastructure logs | not covered by the scrubber | residual |
@@ -270,9 +270,28 @@ in-process each time it marshals an exception and lets a script set it, so `inst
 `enforce_streamlit_error_details()`, which sets `"none"` through `st.set_option` on every script run (unconditional, no
 opt-out; `.streamlit/config.toml` keeps `"none"` as well). The canary's panel now reports both the startup value and the
 effective value, so a hosted run should read *startup `false` (command-line argument or environment variable)* then
-*effective `none` (`<user defined>`)*. **Not yet verified on Community Cloud**: repeat checklist items 1-4 on a new,
-temporary canary deployment of the fixed code and record the result here.
+*effective `none` (`<user defined>`)*. That was then verified on Community Cloud (next block).
+
+**Final hosted verification (after the runtime enforcement was merged): PASSED and CLOSED.** Checklist items 1-4 were
+repeated on a new temporary, non-production canary app (2.2 A) on Streamlit Community Cloud. Verified 2026-09-21.
+
+| Item | Value |
+|---|---|
+| Streamlit version | 1.63.0 |
+| `client.showErrorDetails` at startup (before enforcement) | `"false"`, defined in `command-line argument or environment variable` (Community Cloud's own setting) |
+| `client.showErrorDetails` effective (after enforcement) | `"none"`, defined in `<user defined>` -- SortView's runtime enforcement overrode the platform's value |
+| `logger.enableRich` | `false` |
+| `log_scrubber_installed` | `true` |
+
+| Path | Browser | Hosting log |
+|---|---|---|
+| Database-style `sqlalchemy.exc.DataError` | only the generic redacted error message; no exception type, no traceback, no file path/source line, no synthetic sensitive values | only safe metadata: error type, SQLSTATE, safe location information |
+| Plain `RuntimeError` | only the generic redacted error message; no exception type or traceback; no synthetic sensitive values | only safe metadata |
+| Button-callback `RuntimeError` | only the generic redacted error message; no exception type or traceback; no synthetic sensitive values | only safe metadata |
+
+**Result: Streamlit Community Cloud error-detail hardening verification PASSED and CLOSED.** The exception type and
+traceback exposure recorded in the follow-up above no longer occurs on any of the three canary paths.
 
 **Not covered by this record:** the two real-app checks (2.2 B, checklist items 5-7) and checklist items 8-9.
 
-**Clean up (2.4):** the temporary canary app is to be deleted after this record is committed.
+**Clean up (2.4):** the temporary canary apps were deleted after verification, including the one used for the final hosted verification.
