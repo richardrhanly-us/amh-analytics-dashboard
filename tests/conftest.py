@@ -49,3 +49,20 @@ def _restore_log_record_factory():
     original = logging.getLogRecordFactory()
     yield
     logging.setLogRecordFactory(original)
+
+
+@pytest.fixture(autouse=True)
+def _restore_streamlit_error_details():
+    # install_streamlit_log_scrubber() also pins Streamlit's PROCESS-WIDE `client.showErrorDetails` to "none" and remembers the
+    # value it replaced (services.privacy_hardening.enforce_streamlit_error_details). Put both back after each test, for the
+    # same reason as the log-record factory above: no test may depend on what an earlier one left behind.
+    from streamlit import config
+
+    from services import privacy_hardening
+
+    option = "client.showErrorDetails"
+    value, where = config.get_option(option), config.get_where_defined(option)
+    startup = privacy_hardening._error_details_startup
+    yield
+    config.set_option(option, value, where)
+    privacy_hardening._error_details_startup = startup

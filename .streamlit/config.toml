@@ -8,6 +8,8 @@
 # Never show an uncaught exception's message, type or traceback in the browser -- the user sees only
 # "This app has encountered an error". A database driver's exception message quotes the SQL, bound
 # values, connection string and failing row, and Streamlit's default ("full") would put them on the
-# page. The full details are still recorded in the server logs. To debug locally, override it for one
-# run with the environment variable STREAMLIT_CLIENT_SHOW_ERROR_DETAILS=full; never set that in production.
+# page. The full details are still recorded in the server logs.
+# This file is only the repository-level default: a host can override it at startup (Streamlit Community Cloud forces
+# "false", which still shows the exception type and traceback), so every entry script also pins "none" in code
+# (services.privacy_hardening.enforce_streamlit_error_details) and an environment variable cannot turn details back on.
 showErrorDetails = "none"

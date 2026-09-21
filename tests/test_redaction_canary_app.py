@@ -4,7 +4,8 @@ The harness is deployed as its OWN non-production Streamlit app to prove, on the
 exception reaches neither the browser nor the hosting log (docs/production-verification-runbook.md). These tests prove the
 harness itself: inert unless enabled, isolated from the production apps, and -- when enabled -- behaving under the repository
 config and the log scrubber exactly as the runbook's pass criteria say, for a page error, a database-style error and an
-error raised inside a button callback.
+error raised inside a button callback -- including under a simulated Streamlit Community Cloud, which forces
+`client.showErrorDetails = false` at startup: the panel must show BOTH that startup value and the "none" SortView then enforces.
 
 Every value is a SYNTHETIC canary.
 """
@@ -47,10 +48,16 @@ from streamlit.testing.v1 import AppTest
 from streamlit.web import bootstrap, cli
 
 script, labels, cli_env = sys.argv[1], json.loads(sys.argv[2]), json.loads(sys.argv[3])
+enforcement_off = sys.argv[4] == "off"
 bootstrap.run = lambda *args, **kwargs: None
 started = CliRunner().invoke(cli.main, ["run", script, "--server.headless=true"], env=cli_env)
 assert started.exit_code == 0, started.output
 streamlit_logger.update_formatter()
+if enforcement_off:  # CONTROL ONLY: what the canary would do without SortView's `client.showErrorDetails` pin
+    sys.path.insert(0, os.path.join(os.getcwd(), "src"))
+    from services import privacy_hardening
+
+    privacy_hardening.enforce_streamlit_error_details = lambda: True
 
 at = AppTest.from_file(script, default_timeout=120)
 at.run()
@@ -79,7 +86,7 @@ class Run:
         return self.stdout + "\n" + self.stderr
 
 
-def _run(tmp_path: Path, *, enabled: bool, labels=(), **cli_env: str) -> Run:
+def _run(tmp_path: Path, *, enabled: bool, labels=(), enforcement: bool = True, **cli_env: str) -> Run:
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
     (tmp_path / "probe.py").write_text(PROBE, encoding="utf-8")
@@ -89,7 +96,8 @@ def _run(tmp_path: Path, *, enabled: bool, labels=(), **cli_env: str) -> Run:
     if enabled:
         env["SORTVIEW_REDACTION_CANARY_ENABLED"] = "true"
     result = subprocess.run(
-        [sys.executable, "-B", str(tmp_path / "probe.py"), str(APP), json.dumps(list(labels)), json.dumps(cli_env)],
+        [sys.executable, "-B", str(tmp_path / "probe.py"), str(APP), json.dumps(list(labels)), json.dumps(cli_env),
+         "on" if enforcement else "off"],
         cwd=ROOT, env=env, capture_output=True, text=True, timeout=300, check=False,
     )
     lines = [line for line in result.stdout.splitlines() if line.startswith("PROBE_JSON=")]
@@ -114,8 +122,22 @@ def enabled_run(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def unredacted_run(tmp_path_factory):
-    return _run(tmp_path_factory.mktemp("unredacted"), enabled=True, labels=["Raise a plain error"],
+    # CONTROL: the override to `full` with SortView's enforcement switched off inside the probe.
+    return _run(tmp_path_factory.mktemp("unredacted"), enabled=True, labels=["Raise a plain error"], enforcement=False,
                 STREAMLIT_CLIENT_SHOW_ERROR_DETAILS="full")
+
+
+@pytest.fixture(scope="module")
+def cloud_false_run(tmp_path_factory):
+    # What Streamlit Community Cloud does: `client.showErrorDetails=false` handed to `streamlit run`, over the repository file.
+    return _run(tmp_path_factory.mktemp("cloud_false"), enabled=True, labels=list(TRIGGERS),
+                STREAMLIT_CLIENT_SHOW_ERROR_DETAILS="false")
+
+
+STARTUP = "client.showErrorDetails at startup (before enforcement)"
+STARTUP_WHERE = "client.showErrorDetails at startup defined in"
+EFFECTIVE = "client.showErrorDetails effective (after enforcement)"
+EFFECTIVE_WHERE = "client.showErrorDetails effective defined in"
 
 
 # --- the harness is inert and isolated ----------------------------------------------------------------------------------
@@ -160,8 +182,9 @@ def test_the_effective_configuration_shows_the_repository_setting_and_the_scrubb
     (diagnostics,) = enabled_run.result["diagnostics"]
 
     assert enabled_run.result["initial_exceptions"] == 0
-    assert diagnostics["client.showErrorDetails"] == "none"
-    assert Path(diagnostics["client.showErrorDetails defined in"]) == CONFIG  # from the tracked file, not an override
+    assert diagnostics[STARTUP] == "none"
+    assert Path(diagnostics[STARTUP_WHERE]) == CONFIG  # at startup: from the tracked file, not an override
+    assert diagnostics[EFFECTIVE] == "none" and diagnostics[EFFECTIVE_WHERE] == "<user defined>"  # then pinned in code
     assert diagnostics["repository_config_file_in_working_directory"] is True
     assert Path(diagnostics["working_directory"]) == ROOT
     assert diagnostics["log_scrubber_installed"] is True and diagnostics["logger.enableRich"] is False
@@ -192,15 +215,33 @@ def test_each_trigger_is_logged_as_type_and_location_only(enabled_run, label):
     assert extra in lines[0] and "app.py" in lines[0]
 
 
-def test_the_diagnostics_report_an_override_when_there_is_one(unredacted_run):
-    # The panel is how an operator detects a hosting-level override, so it must show the EFFECTIVE value and its source.
-    (diagnostics,) = unredacted_run.result["diagnostics"]
+def test_the_diagnostics_show_the_platform_value_and_the_enforced_value_under_cloud_false(cloud_false_run):
+    # The panel is how an operator sees what the platform supplied, so it must not hide it behind the enforced value: the
+    # hosted check reads "startup = false" followed by "effective = none".
+    (diagnostics,) = cloud_false_run.result["diagnostics"]
 
-    assert diagnostics["client.showErrorDetails"] == "full"
-    assert diagnostics["client.showErrorDetails defined in"] == "command-line argument or environment variable"
+    assert diagnostics[STARTUP] == "false"
+    assert diagnostics[STARTUP_WHERE] == "command-line argument or environment variable"
+    assert diagnostics[EFFECTIVE] == "none"
+    assert diagnostics[EFFECTIVE_WHERE] == "<user defined>"
+
+
+@pytest.mark.parametrize("label", list(TRIGGERS))
+def test_under_cloud_false_each_trigger_still_shows_the_browser_only_the_generic_error(cloud_false_run, label):
+    (exception,) = cloud_false_run.result["after"][label]
+
+    assert "This app has encountered an error" in exception["message"]
+    assert "type" not in exception and "stackTrace" not in exception  # `false` alone would have shown both
+    assert _leaks(json.dumps(exception)) == [] and "RuntimeError" not in json.dumps(exception)
+
+
+def test_under_cloud_false_the_process_output_is_still_scrubbed(cloud_false_run):
+    assert _leaks(cloud_false_run.output) == []
+    assert cloud_false_run.output.count("Uncaught app execution") == len(TRIGGERS)
 
 
 def test_control_with_redaction_overridden_the_browser_shows_every_canary(unredacted_run):
+    # (SortView's enforcement is switched off inside the probe: with it on, even `full` from the host ends as `none`.)
     (exception,) = unredacted_run.result["after"]["Raise a plain error"]
 
     assert [c for c in ("CANARY-DB-PASSWORD-LIVE-0001", "CANARY-API-TOKEN-LIVE-0002", "CANARY-PATRON-CARD-2300000000003",

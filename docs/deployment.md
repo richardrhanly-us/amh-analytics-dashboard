@@ -228,9 +228,23 @@ Users then see only "This app has encountered an error". This is covered by
   src/app.py`, as in the README and devcontainer; the Super Admin app likewise). Streamlit reads
   `$CWD/.streamlit/config.toml`, not a path relative to the script, so a launch from another directory
   silently falls back to `"full"`.
-- **It can be overridden from outside the repository.** An environment variable
-  (`STREAMLIT_CLIENT_SHOW_ERROR_DETAILS`) or a `--client.showErrorDetails` flag given to `streamlit run`
-  outranks the file. Never set either to `full` in production; use it for one local debugging run only.
+- **It can be overridden from outside the repository -- and Streamlit Community Cloud does.** An environment
+  variable (`STREAMLIT_CLIENT_SHOW_ERROR_DETAILS`) or a `--client.showErrorDetails` flag given to `streamlit run`
+  outranks the file. Community Cloud
+  [documents](https://docs.streamlit.io/deploy/streamlit-community-cloud/status) that it forces the legacy
+  `client.showErrorDetails = false` at startup regardless of `config.toml`; the hosted canary check confirmed the
+  effective value was `"false"`. In Streamlit 1.63.0 `false` is `"stacktrace"`: the message is redacted, but the
+  exception **type** and the **traceback** (server file paths and source lines) still reach the browser.
+- **So SortView enforces `"none"` in code, unconditionally.** `install_streamlit_log_scrubber()` calls
+  `enforce_streamlit_error_details()` (`src/services/privacy_hardening.py`), which sets `client.showErrorDetails`
+  to `"none"` through Streamlit's supported `st.set_option` on every script run, after whatever the platform, an
+  environment variable or a flag set at startup. There is deliberately **no opt-out**: `STREAMLIT_CLIENT_SHOW_ERROR_DETAILS=full`
+  no longer turns details back on in the apps. To debug an exception locally use the tests or a debugger. The
+  `config.toml` setting stays as the repository-level default; the code pin is in addition to it. If the pin cannot
+  be applied the app logs one fixed line, `Could not enforce Streamlit client.showErrorDetails=none`, and carries on.
+  Tests: `tests/test_streamlit_error_details_enforcement.py`, `tests/test_real_apps_redaction.py`,
+  `tests/test_redaction_canary_app.py`. Whether Community Cloud lets the in-code value win over its startup value can
+  only be shown on a hosted canary (runbook, 2.3 item 1).
 - **Streamlit's server log is scrubbed separately.** `showErrorDetails` only controls the browser: Streamlit
   always logs the whole uncaught exception, message included, before deciding what the browser sees (on a
   `requirements.txt`-only install such as production, as `Uncaught app execution` on stderr; where the optional
@@ -249,8 +263,8 @@ Users then see only "This app has encountered an error". This is covered by
   In short: make a page raise a deliberate error in a non-production copy, confirm the page shows only the generic message,
   then read the hosting log ("Manage app" on Streamlit Cloud) and confirm it shows
   `Uncaught app execution | error_type=... at=...` and NOT the exception's message. Also check that the
-  hosting platform's own settings do not override `client.showErrorDetails`, and that the Super Admin
-  app is started from the repository root.
+  canary's panel shows the platform's startup value (`false` on Community Cloud) and the enforced `none`, and that
+  the Super Admin app is started from the repository root.
 
 ## admin settings password
 

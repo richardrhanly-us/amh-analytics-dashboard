@@ -26,6 +26,7 @@ if str(ROOT_DIR / "src") not in sys.path:
 from services.privacy_hardening import (
     install_streamlit_log_scrubber,
     is_streamlit_log_scrubber_installed,
+    streamlit_error_details_startup,
 )
 
 # First, exactly as every real entry script does (see tests/test_streamlit_log_scrubbing.py).
@@ -83,12 +84,18 @@ def raise_in_callback() -> None:
 def diagnostics() -> dict:
     from streamlit import config
 
+    # SortView pins client.showErrorDetails to "none" in code (install_streamlit_log_scrubber), which overwrites whatever the
+    # platform or an environment variable set. So report BOTH: the value the process started with (Streamlit Community Cloud
+    # supplies "false") and the effective value after enforcement -- never only the latter, which would hide the platform.
+    startup = streamlit_error_details_startup()
     return {
         "streamlit_version": st.__version__,
         "working_directory": os.getcwd(),
         "repository_config_file_in_working_directory": Path(".streamlit/config.toml").is_file(),
-        "client.showErrorDetails": config.get_option("client.showErrorDetails"),
-        "client.showErrorDetails defined in": config.get_where_defined("client.showErrorDetails"),
+        "client.showErrorDetails at startup (before enforcement)": startup[0] if startup else None,
+        "client.showErrorDetails at startup defined in": startup[1] if startup else None,
+        "client.showErrorDetails effective (after enforcement)": config.get_option("client.showErrorDetails"),
+        "client.showErrorDetails effective defined in": config.get_where_defined("client.showErrorDetails"),
         "logger.enableRich": config.get_option("logger.enableRich"),
         "log_scrubber_installed": is_streamlit_log_scrubber_installed(),
     }
