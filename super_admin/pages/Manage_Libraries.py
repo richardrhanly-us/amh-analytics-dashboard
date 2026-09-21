@@ -38,7 +38,10 @@ from services.platform_admin_service import (
     list_libraries_with_status,
     set_library_active_status,
 )
-from services.privacy_hardening import log_safe_exception
+from services.privacy_hardening import (
+    install_streamlit_log_scrubber,
+    log_safe_exception,
+)
 from services.tenant_service import (
     COLLECTOR_INSTALLATION_STATUSES,
     assign_operational_identity,
@@ -50,6 +53,9 @@ from services.tenant_service import (
 )
 
 logger = logging.getLogger("sortview.super_admin.libraries")
+
+# Keep an uncaught page exception's text out of Streamlit's own server log (see services/privacy_hardening.py).
+install_streamlit_log_scrubber()
 
 # Fixed, support-safe failure messages. A failure is logged as a safe summary (log_safe_exception:
 # error type, SQLSTATE, code location -- never the message); the exception's own text is never

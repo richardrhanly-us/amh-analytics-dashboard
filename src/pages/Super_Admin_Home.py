@@ -4,6 +4,10 @@ import streamlit as st
 
 from services.app_ui_service import apply_page_chrome
 from services.platform_admin_service import is_platform_admin
+from services.privacy_hardening import install_streamlit_log_scrubber
+
+# Keep an uncaught page exception's text out of Streamlit's own server log (see services/privacy_hardening.py).
+install_streamlit_log_scrubber()
 
 st.set_page_config(
     page_title="Super Admin",

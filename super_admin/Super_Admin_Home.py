@@ -13,6 +13,11 @@ if SRC_DIR not in sys.path:
 
 from super_auth import require_super_admin
 
+from services.privacy_hardening import install_streamlit_log_scrubber
+
+# Keep an uncaught page exception's text out of Streamlit's own server log (see services/privacy_hardening.py).
+install_streamlit_log_scrubber()
+
 st.set_page_config(
     page_title="SortView Super Admin",
     page_icon="🛠️",

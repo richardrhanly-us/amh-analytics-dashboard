@@ -28,7 +28,10 @@ if ROOT_DIR not in sys.path:
 from super_auth import require_super_admin
 
 from collector import __version__ as COLLECTOR_VERSION
-from services.privacy_hardening import log_safe_exception
+from services.privacy_hardening import (
+    install_streamlit_log_scrubber,
+    log_safe_exception,
+)
 from services.tenant_service import (
     assign_operational_identity,
     build_collector_agent_config,
@@ -38,6 +41,9 @@ from services.tenant_service import (
 )
 
 logger = logging.getLogger("sortview.super_admin.provision")
+
+# Keep an uncaught page exception's text out of Streamlit's own server log (see services/privacy_hardening.py).
+install_streamlit_log_scrubber()
 
 # Failures are logged as a safe summary (log_safe_exception: error type, SQLSTATE, code location --
 # never the message) and shown as fixed text. The exception's own text is never shown or kept:
@@ -62,10 +68,10 @@ auth_user = require_super_admin()
 DEFAULT_ORG_SETTINGS = {
     "library_name": "",
     "system_name": "Tech Logic UltraSort",
+    # No password key: a new library has no admin lock until an admin sets one on the Admin Settings page,
+    # which stores only a hash.
     "security": {
         "admin_enabled": True,
-        # Empty default in a settings template, not a real credential.
-        "admin_password": "",  # nosec B105
     },
     "transit": {
         "home_branch_label": "Main",
