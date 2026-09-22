@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from services import auth_service
 from services.access_service import get_org_branches, get_user_memberships
 from services.app_ui_service import apply_page_chrome
 from services.entitlement_service import build_entitlement_context
@@ -34,6 +35,7 @@ if "auth_user" not in st.session_state or st.session_state["auth_user"] is None:
     st.stop()
 
 auth_user = st.session_state["auth_user"]
+auth_service.enforce_active_session(auth_user)
 user_memberships = get_user_memberships(auth_user["id"])
 
 if not user_memberships:

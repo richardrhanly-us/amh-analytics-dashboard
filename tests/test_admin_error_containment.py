@@ -205,6 +205,7 @@ def _patch_admin_preamble(monkeypatch):
     import services.entitlement_service as entitlement
     import services.permission_service as permission
     import services.sidebar_service as sidebar
+    from services import auth_service
 
     monkeypatch.setattr(access, "get_user_memberships",
                         lambda user_id: [{"organization_slug": "acme", "organization_name": "Acme"}])
@@ -213,6 +214,12 @@ def _patch_admin_preamble(monkeypatch):
     monkeypatch.setattr(entitlement, "build_entitlement_context", lambda user_id, org_slug: {})
     monkeypatch.setattr(permission, "can_manage_settings", lambda context: True)
     monkeypatch.setattr(sidebar, "render_main_sidebar", lambda **_kwargs: None)
+    # PRE-PILOT active-session guard: both admin pages now call
+    # auth_service.enforce_active_session() right after reading auth_user
+    # from session state, which queries auth_service's own get_engine()
+    # (a separate name binding from database.get_engine, so patching that
+    # alone doesn't reach it). This test's synthetic admin user is active.
+    monkeypatch.setattr(auth_service, "is_user_active", lambda user_id: True)
 
 
 ADMIN_SESSION = {"auth_user": {"id": 1, "email": "admin@example.invalid"}}

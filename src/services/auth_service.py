@@ -14,14 +14,19 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import streamlit as st
 from sqlalchemy import text
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from database import get_engine
+from services.privacy_hardening import log_safe_exception
+
+logger = logging.getLogger("sortview.auth")
 
 #***************************************************************
 # Authentication Settings
@@ -193,6 +198,85 @@ def get_user_by_id(user_id: int) -> dict[str, Any] | None:
     with engine.connect() as conn:
         row = conn.execute(sql, {"user_id": user_id}).mappings().first()
         return dict(row) if row else None
+
+
+#***************************************************************
+#
+#  Function:     is_user_active
+#
+#  Description: Checks whether an account is currently active. Used to
+#               re-validate an already-authenticated session on every
+#               rerun, since login-time checks alone do not detect a
+#               deactivation that happens after the session started.
+#               Deliberately uncached, matching user_can_access_org's
+#               reasoning: this is a security gate, not a display value.
+#
+#  Parameters:  user_id - Internal user ID to check.
+#
+#  Returns:     bool - True only when the user exists and is active;
+#                      False for an inactive or nonexistent user.
+#
+#***************************************************************
+
+def is_user_active(user_id: int) -> bool:
+    sql = text("""
+        SELECT is_active
+        FROM app_users
+        WHERE id = :user_id
+        LIMIT 1
+    """)
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(sql, {"user_id": user_id}).first()
+        return bool(row is not None and row[0])
+
+
+#***************************************************************
+#
+#  Function:     enforce_active_session
+#
+#  Description: Re-validates that the currently authenticated user is
+#               still active, and forcibly ends the session if not.
+#               Shared by every independent Streamlit entry-point
+#               script (app.py and each admin page) so a deactivation
+#               takes effect on an already-open tab without waiting for
+#               that tab to route back through app.py. Does nothing for
+#               an active user. Session revocation is fail-safe: audit
+#               logging is best-effort and can never leave the inactive
+#               user still authenticated if it raises.
+#
+#  Parameters:  auth_user - The authenticated user dict currently in
+#                           st.session_state["auth_user"].
+#
+#  Returns:     None. Calls st.stop() and halts the script if the
+#               account is no longer active.
+#
+#***************************************************************
+
+def enforce_active_session(auth_user: dict) -> None:
+    if is_user_active(auth_user["id"]):
+        return
+
+    try:
+        log_auth_event(
+            event_type="session_terminated_inactive",
+            is_success=True,
+            user_id=auth_user["id"],
+            email=auth_user.get("email"),
+            message="Session terminated: account is no longer active.",
+        )
+    except Exception as exc:
+        # Best-effort: the audit write must never keep an inactive user
+        # authenticated. Session revocation below still proceeds.
+        log_safe_exception(logger, "Failed to write session_terminated_inactive audit event", exc)
+
+    st.session_state["auth_user"] = None
+    st.session_state.pop("selected_org_slug", None)
+    st.session_state.pop("selected_branch_slug", None)
+
+    st.error("Your account has been deactivated. Please contact an administrator.")
+    st.stop()
 
 
 #***************************************************************
