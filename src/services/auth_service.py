@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -23,6 +24,9 @@ from sqlalchemy import text
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from database import get_engine
+from services.privacy_hardening import log_safe_exception
+
+logger = logging.getLogger("sortview.auth")
 
 #***************************************************************
 # Authentication Settings
@@ -238,7 +242,9 @@ def is_user_active(user_id: int) -> bool:
 #               script (app.py and each admin page) so a deactivation
 #               takes effect on an already-open tab without waiting for
 #               that tab to route back through app.py. Does nothing for
-#               an active user.
+#               an active user. Session revocation is fail-safe: audit
+#               logging is best-effort and can never leave the inactive
+#               user still authenticated if it raises.
 #
 #  Parameters:  auth_user - The authenticated user dict currently in
 #                           st.session_state["auth_user"].
@@ -252,13 +258,18 @@ def enforce_active_session(auth_user: dict) -> None:
     if is_user_active(auth_user["id"]):
         return
 
-    log_auth_event(
-        event_type="session_terminated_inactive",
-        is_success=True,
-        user_id=auth_user["id"],
-        email=auth_user.get("email"),
-        message="Session terminated: account is no longer active.",
-    )
+    try:
+        log_auth_event(
+            event_type="session_terminated_inactive",
+            is_success=True,
+            user_id=auth_user["id"],
+            email=auth_user.get("email"),
+            message="Session terminated: account is no longer active.",
+        )
+    except Exception as exc:
+        # Best-effort: the audit write must never keep an inactive user
+        # authenticated. Session revocation below still proceeds.
+        log_safe_exception(logger, "Failed to write session_terminated_inactive audit event", exc)
 
     st.session_state["auth_user"] = None
     st.session_state.pop("selected_org_slug", None)

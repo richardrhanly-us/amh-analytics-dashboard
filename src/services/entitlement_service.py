@@ -28,8 +28,10 @@ from database import get_engine
 # Role is deliberately NOT cached: it is the input to every permission
 # check (has_role/can_manage_settings/etc.), so build_entitlement_context
 # always calls the uncached get_org_role_for_user fresh on every call --
-# a role change (including deactivation-driven demotion) takes effect on
-# the very next rerun instead of remaining valid for up to this TTL.
+# a role change takes effect on the very next rerun instead of remaining
+# valid for up to this TTL. (Account deactivation is a separate mechanism,
+# enforced by auth_service.enforce_active_session -- it does not change
+# a user's role.)
 _ENTITLEMENT_CACHE_TTL_SECONDS = 120
 
 #***************************************************************

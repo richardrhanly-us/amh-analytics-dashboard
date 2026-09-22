@@ -604,14 +604,20 @@ def _enforce_active_session_script():
 ACTIVE_SESSION_USER = {"id": 1, "email": "user@example.com", "full_name": "Test User"}
 
 
-def _run_enforce_active_session(monkeypatch, *, active: bool, log_calls: list | None = None) -> AppTest:
+def _run_enforce_active_session(
+    monkeypatch, *, active: bool, log_calls: list | None = None, raise_on_log: bool = False,
+) -> AppTest:
     import services.auth_service as auth_service_flat
 
     monkeypatch.setattr(auth_service_flat, "is_user_active", lambda user_id: active)
-    monkeypatch.setattr(
-        auth_service_flat, "log_auth_event",
-        lambda **kwargs: (log_calls.append(kwargs) if log_calls is not None else None),
-    )
+
+    def fake_log_auth_event(**kwargs):
+        if log_calls is not None:
+            log_calls.append(kwargs)
+        if raise_on_log:
+            raise RuntimeError("audit log write failed")
+
+    monkeypatch.setattr(auth_service_flat, "log_auth_event", fake_log_auth_event)
 
     at = AppTest.from_function(_enforce_active_session_script, default_timeout=60)
     at.session_state["auth_user"] = dict(ACTIVE_SESSION_USER)
@@ -643,6 +649,22 @@ def test_enforce_active_session_writes_audit_event_for_inactive_account(monkeypa
     assert log_calls[0]["event_type"] == "session_terminated_inactive"
     assert log_calls[0]["user_id"] == 1
     assert log_calls[0]["is_success"] is True
+
+
+def test_enforce_active_session_still_revokes_when_audit_logging_raises(monkeypatch):
+    # Fail-safe requirement: session revocation must not depend on audit
+    # logging succeeding. log_auth_event raising must not leave the
+    # inactive user authenticated, and must not surface as an uncaught
+    # script exception (that would be its own leak).
+    at = _run_enforce_active_session(monkeypatch, active=False, raise_on_log=True)
+
+    assert at.session_state["auth_user"] is None
+    assert "selected_org_slug" not in at.session_state.filtered_state
+    assert "selected_branch_slug" not in at.session_state.filtered_state
+
+    rendered_markdown = [m.value for m in at.markdown]
+    assert "PROTECTED_CONTENT_RENDERED" not in rendered_markdown
+    assert any("deactivated" in e.value for e in at.error)
 
 
 def test_enforce_active_session_stops_before_protected_content_for_inactive_account(monkeypatch):
