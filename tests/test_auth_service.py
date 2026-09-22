@@ -2,6 +2,8 @@ import hashlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from db_fakes import FakeEngine, FakeQueryResult
+from streamlit.testing.v1 import AppTest
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from src.services import auth_service
@@ -551,3 +553,115 @@ def test_reset_password_success_clears_lockout_state(monkeypatch):
 
     assert "failed_login_attempts = 0" in update_call["sql"]
     assert "locked_until = NULL" in update_call["sql"]
+
+
+# --- is_user_active (PRE-PILOT: re-check on every rerun) ----------------
+
+def test_is_user_active_true_for_active_account(monkeypatch):
+    engine = FakeEngine([FakeQueryResult(first=(True,))])
+    monkeypatch.setattr(auth_service, "get_engine", lambda: engine)
+
+    assert auth_service.is_user_active(1) is True
+    assert engine.calls[0]["params"] == {"user_id": 1}
+
+
+def test_is_user_active_false_for_inactive_account(monkeypatch):
+    engine = FakeEngine([FakeQueryResult(first=(False,))])
+    monkeypatch.setattr(auth_service, "get_engine", lambda: engine)
+
+    assert auth_service.is_user_active(1) is False
+
+
+def test_is_user_active_false_for_nonexistent_user(monkeypatch):
+    engine = FakeEngine([FakeQueryResult(first=None)])
+    monkeypatch.setattr(auth_service, "get_engine", lambda: engine)
+
+    assert auth_service.is_user_active(999) is False
+
+
+# --- enforce_active_session (PRE-PILOT: cut off deactivated open sessions) --
+#
+# enforce_active_session touches real st.session_state / st.error / st.stop,
+# so (matching this codebase's existing convention for session-state-facing
+# code -- see test_admin_error_containment.py / test_dashboard_privacy_
+# containment.py) it's exercised through a real Streamlit script run via
+# AppTest.from_function rather than called directly. The script under test
+# must import auth_service the same "flat" way Streamlit itself loads it
+# (services.auth_service, matching src/ being the script root) -- importing
+# it as src.services.auth_service in this test module would bind a SEPARATE
+# module object and monkeypatching one would not affect the other.
+
+def _enforce_active_session_script():
+    import streamlit as st
+
+    from services import auth_service
+
+    auth_user = st.session_state["auth_user"]
+    auth_service.enforce_active_session(auth_user)
+    st.write("PROTECTED_CONTENT_RENDERED")
+
+
+ACTIVE_SESSION_USER = {"id": 1, "email": "user@example.com", "full_name": "Test User"}
+
+
+def _run_enforce_active_session(monkeypatch, *, active: bool, log_calls: list | None = None) -> AppTest:
+    import services.auth_service as auth_service_flat
+
+    monkeypatch.setattr(auth_service_flat, "is_user_active", lambda user_id: active)
+    monkeypatch.setattr(
+        auth_service_flat, "log_auth_event",
+        lambda **kwargs: (log_calls.append(kwargs) if log_calls is not None else None),
+    )
+
+    at = AppTest.from_function(_enforce_active_session_script, default_timeout=60)
+    at.session_state["auth_user"] = dict(ACTIVE_SESSION_USER)
+    at.session_state["selected_org_slug"] = "acme"
+    at.session_state["selected_branch_slug"] = "main"
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    return at
+
+
+def test_enforce_active_session_clears_auth_user_for_inactive_account(monkeypatch):
+    at = _run_enforce_active_session(monkeypatch, active=False)
+
+    assert at.session_state["auth_user"] is None
+
+
+def test_enforce_active_session_clears_org_and_branch_selection_for_inactive_account(monkeypatch):
+    at = _run_enforce_active_session(monkeypatch, active=False)
+
+    assert "selected_org_slug" not in at.session_state.filtered_state
+    assert "selected_branch_slug" not in at.session_state.filtered_state
+
+
+def test_enforce_active_session_writes_audit_event_for_inactive_account(monkeypatch):
+    log_calls: list = []
+    _run_enforce_active_session(monkeypatch, active=False, log_calls=log_calls)
+
+    assert len(log_calls) == 1
+    assert log_calls[0]["event_type"] == "session_terminated_inactive"
+    assert log_calls[0]["user_id"] == 1
+    assert log_calls[0]["is_success"] is True
+
+
+def test_enforce_active_session_stops_before_protected_content_for_inactive_account(monkeypatch):
+    at = _run_enforce_active_session(monkeypatch, active=False)
+
+    rendered_markdown = [m.value for m in at.markdown]
+    assert "PROTECTED_CONTENT_RENDERED" not in rendered_markdown
+    assert any("deactivated" in e.value for e in at.error)
+
+
+def test_enforce_active_session_does_nothing_for_active_account(monkeypatch):
+    log_calls: list = []
+    at = _run_enforce_active_session(monkeypatch, active=True, log_calls=log_calls)
+
+    # Active users are unaffected: session state is untouched, no audit
+    # event is written, and the page proceeds past the guard.
+    assert at.session_state["auth_user"] == ACTIVE_SESSION_USER
+    assert at.session_state["selected_org_slug"] == "acme"
+    assert at.session_state["selected_branch_slug"] == "main"
+    assert log_calls == []
+    assert [m.value for m in at.markdown] == ["PROTECTED_CONTENT_RENDERED"]
+    assert [e.value for e in at.error] == []

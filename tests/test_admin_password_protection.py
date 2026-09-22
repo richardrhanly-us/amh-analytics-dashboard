@@ -279,6 +279,7 @@ def _patch_page(monkeypatch, *, security_by_org: dict, engine: _Engine | None = 
     import services.permission_service as permission
     import services.sidebar_service as sidebar
     import services.tenant_service as tenant
+    from services import auth_service
 
     monkeypatch.setattr(access, "get_user_memberships", lambda user_id: list(ORGS.values()))
     monkeypatch.setattr(access, "get_org_branches",
@@ -289,6 +290,12 @@ def _patch_page(monkeypatch, *, security_by_org: dict, engine: _Engine | None = 
     monkeypatch.setattr(tenant, "get_effective_settings",
                         lambda org_slug, branch_slug=None: _effective(org_slug, branch_slug, security_by_org.get(org_slug)))
     monkeypatch.setattr(database, "get_engine", lambda: engine if engine is not None else _Engine())
+    # PRE-PILOT active-session guard: the settings page now calls
+    # auth_service.enforce_active_session() right after reading auth_user
+    # from session state, which queries auth_service's own get_engine()
+    # (a separate name binding from database.get_engine above, so that
+    # patch alone doesn't reach it). This test's synthetic user is active.
+    monkeypatch.setattr(auth_service, "is_user_active", lambda user_id: True)
 
 
 def _run(*, org="acme", user=USER, unlocked_for=None) -> AppTest:
