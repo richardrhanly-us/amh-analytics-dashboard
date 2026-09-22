@@ -281,6 +281,28 @@ def test_append_failure_message_never_contains_the_raw_exception_text(tmp_path, 
 
 
 # --- locking -----------------------------------------------------------
+#
+# _file_lock uses msvcrt.locking on win32 and fcntl.flock on POSIX (see
+# collector/run_audit.py's own CONCURRENCY section) -- real inter-process/
+# inter-thread mutual exclusion on both, not a real-lock-on-Windows-only,
+# no-op-elsewhere pair. These tests are written generically (no
+# `sys.platform` branching of their own) specifically so the SAME test
+# file exercises and verifies real locking semantics whichever platform
+# actually runs it -- this project's Windows dev/production runs, and
+# Linux CI, both get a real, meaningful assertion, not a skipped one.
+
+
+def test_file_lock_round_trips_immediately_when_uncontended(tmp_path):
+    """The most basic platform-agnostic proof the active primitive
+    (msvcrt on win32, fcntl on POSIX) actually acquires and releases: no
+    contention at all, so this must return promptly, and a second,
+    sequential acquire must also succeed (proving release genuinely freed
+    it rather than leaving it held)."""
+    lock_path = tmp_path / "runs.jsonl.lock"
+    with run_audit._file_lock(lock_path):
+        pass
+    with run_audit._file_lock(lock_path):
+        pass
 
 
 def test_file_lock_serializes_two_threads(tmp_path):
@@ -321,9 +343,8 @@ def test_file_lock_times_out_rather_than_hanging_forever(tmp_path):
     t.start()
     held.wait(timeout=5)
     try:
-        if run_audit.msvcrt is not None:
-            with pytest.raises(OSError), run_audit._file_lock(lock_path, timeout=0.2):
-                pass  # pragma: no cover
+        with pytest.raises(OSError), run_audit._file_lock(lock_path, timeout=0.2):
+            pass  # pragma: no cover
     finally:
         release.set()
         t.join(timeout=5)

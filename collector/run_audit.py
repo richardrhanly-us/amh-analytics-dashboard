@@ -47,14 +47,15 @@ collector/task_settings.py) already prevents two SCHEDULED runs from
 overlapping, but says nothing about an operator manually launching the
 collector by hand while a scheduled run is mid-flight. Rather than trust
 "a short append is probably atomic enough," every append and every prune
-takes a real, short-lived Windows file lock (`msvcrt.locking`, standard
-library, no third-party dependency) on a small sidecar `.lock` file next
-to the JSONL file itself -- never on the JSONL file's own handle, so
-ordinary buffered reads of runs.jsonl are never blocked by it. On a
-non-Windows interpreter (only relevant to this project's own test suite;
-the collector itself only ships for Windows) msvcrt does not exist, so
-the lock degrades to an in-process-only, best-effort no-op -- see
-_file_lock's own docstring for exactly what that does and does not cover.
+takes a real, short-lived OS-level file lock (standard library only, no
+third-party dependency) on a small sidecar `.lock` file next to the
+JSONL file itself -- never on the JSONL file's own handle, so ordinary
+buffered reads of runs.jsonl are never blocked by it. `msvcrt.locking` on
+Windows (the real, only shipped production target -- see
+collector/__init__.py); `fcntl.flock` on POSIX, so this module's own
+test suite exercises genuine inter-process/inter-thread mutual exclusion
+on Linux CI too, not a no-op stand-in -- see _file_lock's own docstring
+for the exact shape both share.
 
 RETENTION. 30 days, enforced as part of every append (not a separate
 scheduled job or subsystem): after appending, the file is re-read, any
@@ -96,6 +97,7 @@ import contextlib
 import json
 import logging
 import os
+import sys
 import tempfile
 import time
 import uuid
@@ -106,10 +108,22 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-try:
+# Deliberately not a try/except ImportError. mypy special-cases a literal
+# `sys.platform == "win32"` comparison: on whichever platform mypy itself
+# runs on, the OTHER branch is treated as unreachable and is not
+# type-checked at all, so typeshed's platform-gated attributes
+# (msvcrt.locking/LK_NBLCK/LK_UNLCK only exist in the stub under win32;
+# fcntl only exists under POSIX) never produce a "module has no
+# attribute" error on either platform. _acquire/_release below repeat
+# this same `if sys.platform == "win32":` check inline around each
+# platform's calls (not split into separate single-platform functions --
+# mypy's narrowing does not follow a call from one function into
+# another's body) -- see the module docstring's CONCURRENCY section for
+# why both branches are real locking, not a fallback pair.
+if sys.platform == "win32":
     import msvcrt
-except ImportError:  # pragma: no cover -- this project only ships the collector on Windows
-    msvcrt = None  # type: ignore[assignment]
+else:
+    import fcntl
 
 # See module docstring's CANONICAL PATH / PRE-CONFIG FALLBACK sections. A
 # plain module attribute, not a function's return value, so tests can
@@ -235,45 +249,66 @@ def build_record(
 # ---------------------------------------------------------------------
 
 
+def _acquire(fd: int, deadline: float) -> None:
+    """Blocks (via bounded non-blocking retry) until the advisory lock on
+    `fd` is held, or raises OSError once `deadline` (a time.monotonic()
+    value) passes. The msvcrt/fcntl calls are inlined here, each inside
+    its own literal `if sys.platform == "win32":` check, rather than
+    split into separate helper functions -- mypy's platform-unreachability
+    narrowing for a `sys.platform` comparison only applies to the code
+    lexically inside that same if/else, not to a function called from
+    within it, so keeping both branches in one function body (instead of
+    two single-platform functions) is what actually keeps this file
+    mypy-clean on both Windows and Linux without a `type: ignore`."""
+    while True:
+        try:
+            if sys.platform == "win32":
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, _LOCK_REGION_SIZE)
+            else:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(_LOCK_POLL_INTERVAL_SECONDS)
+
+
+def _release(fd: int) -> None:
+    """Best-effort unlock -- see _acquire's docstring for why both
+    platforms' calls are inlined in one function rather than split."""
+    with contextlib.suppress(OSError):
+        if sys.platform == "win32":
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, _LOCK_REGION_SIZE)
+        else:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+
+
 @contextlib.contextmanager
 def _file_lock(lock_path: Path, *, timeout: float = _LOCK_TIMEOUT_SECONDS) -> Iterator[None]:
     """A short-lived, real OS-level advisory lock on `lock_path` (a small
-    sidecar file, never runs.jsonl itself). On Windows (msvcrt available)
-    this genuinely serializes concurrent processes/threads -- verified by
-    this module's own tests via two threads racing for it. On a
-    non-Windows interpreter (msvcrt is None; this project only ships the
-    collector on Windows, so this branch exists purely so the test suite
-    can run on any dev machine) this degrades to an unlocked no-op: it
-    still opens/creates the sidecar file for symmetry, but provides NO
-    real mutual exclusion. That degradation is acceptable ONLY because
-    the real deployment target is Windows-only; it is not a general
-    cross-platform concurrency guarantee.
-
-    Blocks up to `timeout` seconds for the lock; on timeout, re-raises
-    the underlying OSError -- callers (append_run_record) catch this like
-    any other audit failure and never let it affect the collector's own
-    exit code.
+    sidecar file, never runs.jsonl itself) -- genuine inter-process (and
+    inter-thread) mutual exclusion on BOTH platforms this collector runs
+    or is tested on: `msvcrt.locking` on Windows (the real, only shipped
+    production target -- see collector/__init__.py), `fcntl.flock` on
+    POSIX (so Linux CI/dev exercises real locking semantics too, not a
+    no-op stand-in). Verified on each platform by this module's own
+    two-thread contention test. Both use the identical bounded-retry
+    shape: a non-blocking acquire attempt, retried every
+    _LOCK_POLL_INTERVAL_SECONDS until `timeout` elapses, then the
+    underlying OSError is re-raised -- callers (append_run_record) catch
+    this like any other audit failure and never let it affect the
+    collector's own exit code.
     """
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
+    deadline = time.monotonic() + timeout
     try:
-        if msvcrt is not None:
-            deadline = time.monotonic() + timeout
-            while True:
-                try:
-                    msvcrt.locking(fd, msvcrt.LK_NBLCK, _LOCK_REGION_SIZE)
-                    break
-                except OSError:
-                    if time.monotonic() >= deadline:
-                        raise
-                    time.sleep(_LOCK_POLL_INTERVAL_SECONDS)
+        _acquire(fd, deadline)
         try:
             yield
         finally:
-            if msvcrt is not None:
-                with contextlib.suppress(OSError):
-                    os.lseek(fd, 0, os.SEEK_SET)
-                    msvcrt.locking(fd, msvcrt.LK_UNLCK, _LOCK_REGION_SIZE)
+            _release(fd)
     finally:
         os.close(fd)
 
