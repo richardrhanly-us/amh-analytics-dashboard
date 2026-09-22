@@ -65,6 +65,9 @@ from __future__ import annotations
 #     it before anything is packaged.
 #   - collector/freeze/build_frozen.ps1: the freshly built executable's
 #     `version` output must equal this value, or the build fails.
-# 1.0.3 is the previously validated release; 1.0.4 adds guided one-time
-# enrollment and setup while preserving the existing Collector runtime.
-__version__ = "1.0.4"
+# 1.0.4 is the release validated and currently running in production at
+# NBPL (see docs/releases/collector-1.0.4.md); 1.0.5 adds local,
+# privacy-safe per-run audit logging (collector/run_audit.py) while
+# preserving the existing Collector runtime, protocol and upload
+# behavior unchanged -- new observability, not a new contract.
+__version__ = "1.0.5"

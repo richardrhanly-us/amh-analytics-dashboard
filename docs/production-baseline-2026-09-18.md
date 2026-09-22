@@ -98,6 +98,14 @@ Collector log:
 C:\ProgramData\SortViewCollector\logs\collector.log
 ```
 
+Run-history (local, privacy-safe, one line per invocation, 30-day
+retention -- see docs/collector-v1-admin-guide.md's "Reading
+logs/status" section for the full record shape and privacy contract):
+
+```text
+C:\ProgramData\SortViewCollector\logs\runs.jsonl
+```
+
 The production API token is not stored in the configuration file. It is provided through the machine-scope `SORTVIEW_API_TOKEN` environment variable.
 
 ---

@@ -17,6 +17,8 @@
   "status_path": "C:\\ProgramData\\SortViewCollector\\data\\status.json",
   "log_path": "C:\\ProgramData\\SortViewCollector\\logs\\collector.log",
 
+  "_comment_run_audit_path": "Optional, omitted here -- local, privacy-safe run-history JSONL (one line per invocation, 30-day retention, aggregate metadata only, no patron/item content). Defaults to <log_path's own directory>\\runs.jsonl automatically, so an existing config predating this key needs no edit at all. Only set this explicitly to put the file somewhere else. See docs/collector-v1-admin-guide.md's 'Reading logs/status' section.",
+
   "_comment_batching": "Optional, shown here at their defaults -- omit entirely to use the same values. max_records_per_batch matches the value already proven in months of live production use.",
   "max_records_per_batch": 1000,
   "http_connect_timeout": 10.0,

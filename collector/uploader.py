@@ -214,6 +214,16 @@ class UploadRunResult:
     checkins_inserted: int = 0
     rejects_inserted: int = 0
     acs_inserted: int = 0
+    # The HTTP status code of the last /upload attempt this run made --
+    # the failing one's, if any batch failed, otherwise the last
+    # successful one's (normally 200). None when zero batches were
+    # attempted (nothing new to upload) -- there is genuinely no HTTP call
+    # to report a status for in that case. Local-audit-logging metadata
+    # only (collector/run_audit.py); not part of the wire protocol to
+    # either the backend or the caller's own retry/state logic, both of
+    # which already worked entirely off `success`/`failure` before this
+    # field existed.
+    last_status_code: int | None = None
 
 
 def upload_records(
@@ -246,6 +256,7 @@ def upload_records(
                 checkins_inserted=checkins_inserted,
                 rejects_inserted=rejects_inserted,
                 acs_inserted=acs_inserted,
+                last_status_code=outcome.status_code,
             )
 
         last_body = outcome.body
@@ -263,6 +274,7 @@ def upload_records(
         checkins_inserted=checkins_inserted,
         rejects_inserted=rejects_inserted,
         acs_inserted=acs_inserted,
+        last_status_code=outcome.status_code,  # batches is non-empty here (see the early return above), so outcome is always bound
     )
 
 

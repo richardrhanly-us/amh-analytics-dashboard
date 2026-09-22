@@ -92,6 +92,7 @@ COLLECTOR_RUNTIME_FILES: tuple[str, ...] = (
     "collector/preflight.py",
     "collector/reader.py",
     "collector/run.py",
+    "collector/run_audit.py",
     "collector/state.py",
     "collector/support_info.py",
     "collector/task_settings.py",

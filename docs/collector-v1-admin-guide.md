@@ -376,6 +376,31 @@ as a scheduled run would.
   pipeline.
 - `<DataRoot>\data\status.json` -- the same report POSTed to
   `/upload-pipeline-status`.
+- `<DataRoot>\logs\runs.jsonl` -- local, privacy-safe run-history log
+  (Phase 1). One compact JSON object per line, one line per invocation
+  (a scheduled run, a manual run, or a run that failed before it could
+  even read its own config). Each line answers: when did this run start
+  and finish, how long did it take, did it succeed, how far did each
+  source's byte offset move, how many records were discovered and
+  actually uploaded, and -- if it failed -- which stage failed and a
+  short fixed failure code (never a raw error message). Example (values
+  illustrative):
+  ```json
+  {"run_id":"3f2a...","started_at":"2026-09-22T14:00:00.123456Z","finished_at":"2026-09-22T14:00:05.654321Z","duration_ms":5200,"result":"completed","collector_version":"1.0.5","sources":{"checkins":{"offset_before":18492340,"offset_after":18510291,"new_records":94,"uploaded":94}},"sources_missing":[],"sources_rotated":[],"sources_truncated":[],"http":{"upload_status":200,"pipeline_status":200},"failure_stage":null,"error_code":null}
+  ```
+  **Retained 30 days**, pruned automatically as part of writing each new
+  record -- no separate cleanup job or scheduled task needed. Contains
+  only aggregate counts, byte offsets, source *names* (e.g. `"checkins"`,
+  never a file path), HTTP status codes, and a small fixed failure-code
+  enum -- never a barcode, title, patron identifier, raw log/ACS content,
+  destination or error-message text, a token, or any credential. If audit
+  logging itself fails for any reason (e.g. the disk is full), the
+  Collector's own run is completely unaffected -- it still uploads,
+  still persists state, still exits with its normal code; only this one
+  local history file is missing that entry. A config that predates this
+  field (or a config with no `run_audit_path` key at all) still gets it
+  automatically, at `<DataRoot>\logs\runs.jsonl` by default -- no config
+  edit is required.
 - Support summary (version, install root, config path, task name, Python
   version, last status) without digging through files by hand:
 
@@ -480,7 +505,7 @@ manages that software, rather than working around it in the collector.
 | Inbound ports? | None. The collector never listens for or accepts inbound connections. |
 | Direct database access? | Never. `collector/preflight.py` explicitly verifies no database driver is even installed in the collector's own virtual environment and that `DATABASE_URL` is not set. |
 | Source files read? | Only the three configured Tech Logic files (`Checkins.txt`, `Rejects.txt`, `ACS Log.txt` by default), read-only. |
-| Files written? | Only inside its own install/data directories: `state.json`, `status.json`, its own rotating log file, and (once parser wiring is complete) cleaned CSV copies under `data\processed\`. |
+| Files written? | Only inside its own install/data directories: `state.json`, `status.json`, its own rotating log file, `logs\runs.jsonl` (local run-history, aggregate metadata only -- see Reading logs/status above), and (once parser wiring is complete) cleaned CSV copies under `data\processed\`. |
 | Run account? | SYSTEM by default -- no password to manage or expire, no dependency on any user staying logged in. |
 | Reboot behavior? | The Scheduled Task is registered to run whether anyone is logged in or not, and resumes automatically after reboot with no login required (`StartWhenAvailable`) -- see Reboot validation above for how to verify this on a specific machine. |
 | Secret storage? | A single Machine-scope Windows environment variable (`SORTVIEW_API_TOKEN`), set once via a provided script. Never in a file, never in Git, never logged. |
