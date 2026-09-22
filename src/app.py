@@ -265,6 +265,7 @@ if st.session_state["auth_user"] is None:
 SETTINGS_FILE = Path(__file__).parent / "branch_settings.json"
 
 auth_user = st.session_state["auth_user"]
+auth_service.enforce_active_session(auth_user)
 user_memberships = get_user_memberships(auth_user["id"])
 
 

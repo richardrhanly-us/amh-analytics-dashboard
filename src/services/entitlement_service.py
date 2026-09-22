@@ -22,13 +22,16 @@ from sqlalchemy import text
 
 from database import get_engine
 
-# build_entitlement_context (3 sequential queries: role, subscription,
-# entitlements) previously ran on every single Streamlit rerun -- every
-# auto-refresh tick, every nav click -- to answer a question (what plan/
-# role/features does this user+org have right now) that only actually
-# changes on an admin action. ttl=120 keeps that feeling live enough
-# while eliminating the repeat cost. Cache key is (user_id, org_slug),
-# so this is naturally tenant-scoped.
+# Subscription and plan-entitlement data only change on an admin action
+# (rare) and aren't security-sensitive to serve slightly stale, so they're
+# cached here (cache key is org_slug/plan_id, naturally tenant-scoped).
+# Role is deliberately NOT cached: it is the input to every permission
+# check (has_role/can_manage_settings/etc.), so build_entitlement_context
+# always calls the uncached get_org_role_for_user fresh on every call --
+# a role change takes effect on the very next rerun instead of remaining
+# valid for up to this TTL. (Account deactivation is a separate mechanism,
+# enforced by auth_service.enforce_active_session -- it does not change
+# a user's role.)
 _ENTITLEMENT_CACHE_TTL_SECONDS = 120
 
 #***************************************************************
@@ -83,6 +86,7 @@ def get_org_role_for_user(user_id: int, org_slug: str) -> str | None:
 #
 #***************************************************************
 
+@st.cache_data(ttl=_ENTITLEMENT_CACHE_TTL_SECONDS, show_spinner=False)
 def get_org_subscription(org_slug: str) -> dict[str, Any] | None:
     # Build the query used to load the organization's latest subscription.
     sql = text("""
@@ -127,6 +131,7 @@ def get_org_subscription(org_slug: str) -> dict[str, Any] | None:
 #
 #***************************************************************
 
+@st.cache_data(ttl=_ENTITLEMENT_CACHE_TTL_SECONDS, show_spinner=False)
 def get_plan_entitlements(plan_id: int) -> dict[str, dict[str, Any]]:
     # Build the query used to load feature entitlements for the plan.
     sql = text("""
@@ -168,7 +173,6 @@ def get_plan_entitlements(plan_id: int) -> dict[str, dict[str, Any]]:
 #
 #***************************************************************
 
-@st.cache_data(ttl=_ENTITLEMENT_CACHE_TTL_SECONDS, show_spinner=False)
 def build_entitlement_context(user_id: int, org_slug: str) -> dict[str, Any]:
     # Load the user's role and the organization's subscription.
     role = get_org_role_for_user(user_id=user_id, org_slug=org_slug)

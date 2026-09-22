@@ -5,15 +5,22 @@ from src.services import entitlement_service
 
 
 @pytest.fixture(autouse=True)
-def _clear_entitlement_cache():
-    # build_entitlement_context is now st.cache_data-wrapped (dashboard
-    # performance pass); several tests below call it with identical
-    # (user_id, org_slug) args against different monkeypatched fakes, so
-    # this must be cleared before/after every test or later tests would
-    # silently see an earlier test's cached result.
-    entitlement_service.build_entitlement_context.clear()
+def _clear_entitlement_caches():
+    # get_org_subscription/get_plan_entitlements are st.cache_data-wrapped
+    # (module-level cache, shared across tests in this process). Several
+    # tests below call them with identical args against different
+    # monkeypatched fakes, so this must be cleared before/after every test
+    # or a later test would silently see an earlier test's cached result.
+    #
+    # build_entitlement_context itself is deliberately NOT cached anymore
+    # (PRE-PILOT fix: role must always be fetched fresh so a role change or
+    # deactivation-driven demotion takes effect on the very next call, not
+    # after a TTL) -- so there is no cache to clear for it.
+    entitlement_service.get_org_subscription.clear()
+    entitlement_service.get_plan_entitlements.clear()
     yield
-    entitlement_service.build_entitlement_context.clear()
+    entitlement_service.get_org_subscription.clear()
+    entitlement_service.get_plan_entitlements.clear()
 
 
 # --- get_org_role_for_user ---------------------------------------------------
@@ -70,6 +77,22 @@ def test_get_org_subscription_returns_none_when_no_subscription(monkeypatch):
     assert entitlement_service.get_org_subscription(org_slug="acme") is None
 
 
+def test_get_org_subscription_is_cached_across_repeated_calls(monkeypatch):
+    # This is the piece that's still safe/useful to cache: subscription
+    # data only changes on a rare admin action. Proves the @st.cache_data
+    # decorator that moved onto this function (off of
+    # build_entitlement_context) actually caches repeated calls.
+    row = {"id": 10, "status": "active", "started_at": None, "ends_at": None,
+           "plan_id": 2, "plan_code": "pro", "plan_name": "Pro"}
+    engine = FakeEngine([FakeQueryResult(first=row)])
+    monkeypatch.setattr(entitlement_service, "get_engine", lambda: engine)
+
+    for _ in range(5):
+        assert entitlement_service.get_org_subscription(org_slug="acme") == row
+
+    assert len(engine.calls) == 1
+
+
 # --- get_plan_entitlements ----------------------------------------------------
 
 def test_get_plan_entitlements_builds_feature_keyed_dict(monkeypatch):
@@ -98,6 +121,20 @@ def test_get_plan_entitlements_coerces_enabled_to_bool(monkeypatch):
     assert entitlements["alerts"]["enabled"] is True
 
 
+def test_get_plan_entitlements_is_cached_across_repeated_calls(monkeypatch):
+    # Same reasoning as get_org_subscription: plan entitlements are safe
+    # and useful to keep cached, moved here off build_entitlement_context.
+    rows = [{"feature_key": "exports", "enabled": True, "limit_value": None}]
+    engine = FakeEngine([FakeQueryResult(all_rows=rows)])
+    monkeypatch.setattr(entitlement_service, "get_engine", lambda: engine)
+
+    expected = {"exports": {"enabled": True, "limit_value": None}}
+    for _ in range(5):
+        assert entitlement_service.get_plan_entitlements(plan_id=2) == expected
+
+    assert len(engine.calls) == 1
+
+
 # --- build_entitlement_context -----------------------------------------------
 
 def test_build_entitlement_context_combines_role_subscription_and_entitlements(monkeypatch):
@@ -116,6 +153,8 @@ def test_build_entitlement_context_combines_role_subscription_and_entitlements(m
 
     context = entitlement_service.build_entitlement_context(user_id=1, org_slug="acme")
 
+    # Return shape is unchanged by the PRE-PILOT caching fix.
+    assert set(context.keys()) == {"role", "subscription", "entitlements"}
     assert context["role"] == "manager"
     assert context["subscription"]["plan_id"] == 5
     assert context["entitlements"] == {"exports": {"enabled": True, "limit_value": None}}
@@ -149,14 +188,16 @@ def test_build_entitlement_context_no_role_means_no_membership(monkeypatch):
     assert context["role"] is None
 
 
-# --- cache scoping (dashboard performance pass) ------------------------------
+# --- PRE-PILOT fix: role must never be cached --------------------------------
 
-
-def test_build_entitlement_context_cache_hits_on_repeated_call_same_args(monkeypatch):
+def test_build_entitlement_context_calls_role_lookup_on_every_call(monkeypatch):
+    # Direct proof the @st.cache_data decorator is gone from
+    # build_entitlement_context: role lookup must run on every call, not
+    # just the first, even with identical (user_id, org_slug) args.
     calls = []
 
     def counting_role(user_id, org_slug):
-        calls.append(1)
+        calls.append((user_id, org_slug))
         return "manager"
 
     monkeypatch.setattr(entitlement_service, "get_org_role_for_user", counting_role)
@@ -165,29 +206,46 @@ def test_build_entitlement_context_cache_hits_on_repeated_call_same_args(monkeyp
     for _ in range(5):
         entitlement_service.build_entitlement_context(user_id=1, org_slug="acme")
 
-    assert len(calls) == 1
+    assert len(calls) == 5
 
 
-def test_build_entitlement_context_cache_is_scoped_per_user_and_org(monkeypatch):
-    # Two different (user_id, org_slug) pairs must never share a cache
-    # entry -- one user's role/entitlements can never leak into another
-    # user's or another org's context.
-    call_args = []
+def test_build_entitlement_context_reflects_role_change_on_next_call_with_no_clear(monkeypatch):
+    # This is the scenario the fix exists for: an admin is demoted (or
+    # deactivated, which downstream shows up as no usable role), and the
+    # very next call with identical args must see it -- no .clear() call,
+    # no TTL wait.
+    current_role = {"value": "admin"}
 
-    def role_for(user_id, org_slug):
-        call_args.append((user_id, org_slug))
-        return f"role-for-{user_id}-{org_slug}"
-
-    monkeypatch.setattr(entitlement_service, "get_org_role_for_user", role_for)
+    monkeypatch.setattr(
+        entitlement_service, "get_org_role_for_user",
+        lambda user_id, org_slug: current_role["value"],
+    )
     monkeypatch.setattr(entitlement_service, "get_org_subscription", lambda org_slug: None)
 
-    ctx_1 = entitlement_service.build_entitlement_context(user_id=1, org_slug="acme")
-    ctx_2 = entitlement_service.build_entitlement_context(user_id=2, org_slug="acme")
-    ctx_3 = entitlement_service.build_entitlement_context(user_id=1, org_slug="other-org")
+    first = entitlement_service.build_entitlement_context(user_id=1, org_slug="acme")
+    assert first["role"] == "admin"
 
-    assert len(call_args) == 3
-    assert ctx_1["role"] != ctx_2["role"]
-    assert ctx_1["role"] != ctx_3["role"]
+    current_role["value"] = "viewer"
+
+    second = entitlement_service.build_entitlement_context(user_id=1, org_slug="acme")
+    assert second["role"] == "viewer"
+
+
+def test_build_entitlement_context_shares_subscription_cache_across_users_same_org(monkeypatch):
+    # Subscription/entitlements caching (still on, and still useful) never
+    # depended on user_id -- two different users in the same org correctly
+    # share one cached lookup via the real get_org_subscription cache
+    # rather than each re-querying.
+    row = {"id": 1, "status": "active", "started_at": None, "ends_at": None,
+           "plan_id": None, "plan_code": None, "plan_name": None}
+    engine = FakeEngine([FakeQueryResult(first=row)])
+    monkeypatch.setattr(entitlement_service, "get_engine", lambda: engine)
+    monkeypatch.setattr(entitlement_service, "get_org_role_for_user", lambda user_id, org_slug: "viewer")
+
+    entitlement_service.build_entitlement_context(user_id=1, org_slug="acme")
+    entitlement_service.build_entitlement_context(user_id=2, org_slug="acme")
+
+    assert len(engine.calls) == 1
 
 
 # --- feature_enabled / feature_limit (module-local copies) --------------------

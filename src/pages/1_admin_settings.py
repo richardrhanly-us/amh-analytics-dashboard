@@ -7,6 +7,7 @@ import streamlit as st
 from sqlalchemy import text
 
 from database import get_engine
+from services import auth_service
 from services.access_service import get_org_branches, get_user_memberships
 from services.admin_lock_service import (
     build_security_settings,
@@ -291,6 +292,7 @@ if "auth_user" not in st.session_state or st.session_state["auth_user"] is None:
     st.stop()
 
 auth_user = st.session_state["auth_user"]
+auth_service.enforce_active_session(auth_user)
 user_memberships = get_user_memberships(auth_user["id"])
 
 if not user_memberships:
