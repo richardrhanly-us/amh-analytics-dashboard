@@ -211,6 +211,11 @@ def _patch_admin_preamble(monkeypatch):
                         lambda user_id: [{"organization_slug": "acme", "organization_name": "Acme"}])
     monkeypatch.setattr(access, "get_org_branches",
                         lambda org_slug: [{"branch_slug": "main", "branch_name": "Main", "is_primary": True}])
+    # Organization lifecycle policy: both admin pages now call
+    # access_service.get_org_access_mode() right after selecting the org,
+    # and block the whole page unless it returns "full". This test's
+    # synthetic org is unaffected by lifecycle status.
+    monkeypatch.setattr(access, "get_org_access_mode", lambda org_slug: "full")
     monkeypatch.setattr(entitlement, "build_entitlement_context", lambda user_id, org_slug: {})
     monkeypatch.setattr(permission, "can_manage_settings", lambda context: True)
     monkeypatch.setattr(sidebar, "render_main_sidebar", lambda **_kwargs: None)

@@ -101,6 +101,13 @@ def get_org_branches(org_slug: str) -> list[dict]:
 @st.cache_data(ttl=_CHROME_CACHE_TTL_SECONDS, show_spinner=False)
 def get_user_memberships(user_id: int) -> list[dict[str, Any]]:
     # Build the SQL query used to load the user's organization memberships.
+    # A cancelled organization is excluded here so it simply disappears from
+    # the user's org list (reusing app.py's existing "selected org not in
+    # the allowed list" self-healing clamp and its "no organizations" empty
+    # state) rather than needing new UI to represent a visible-but-blocked
+    # option. A suspended organization is deliberately still included --
+    # suspended customers retain read-only access, enforced by
+    # get_org_access_mode below, not by hiding the org from this list.
     sql = text("""
         SELECT
             m.organization_id,
@@ -112,6 +119,7 @@ def get_user_memberships(user_id: int) -> list[dict[str, Any]]:
         JOIN organizations o
           ON o.id = m.organization_id
         WHERE m.user_id = :user_id
+          AND o.status != 'cancelled'
         ORDER BY o.name
     """)
 
@@ -157,3 +165,49 @@ def user_can_access_org(user_id: int, org_slug: str) -> bool:
             {"user_id": user_id, "org_slug": org_slug},
         ).first()
         return row is not None
+
+
+#***************************************************************
+#
+#  Function:     get_org_access_mode
+#
+#  Description: Maps an organization's lifecycle status to the level of
+#               customer access it currently allows:
+#                   active / trial -> "full"      normal customer access
+#                   suspended      -> "read_only"  dashboard/history reads
+#                                                  allowed; admin mutations
+#                                                  blocked
+#                   cancelled, an unknown org, or any unrecognised status
+#                                  -> "blocked"    no customer access
+#               Deliberately uncached, matching user_can_access_org's
+#               reasoning: this is a security gate (it is what makes a
+#               cancelled organization fail closed for an already-open
+#               session), not a display value.
+#
+#  Parameters:  org_slug - Organization slug being checked.
+#
+#  Returns:     str - "full", "read_only", or "blocked".
+#
+#***************************************************************
+
+def get_org_access_mode(org_slug: str) -> str:
+    sql = text("""
+        SELECT status
+        FROM organizations
+        WHERE slug = :org_slug
+        LIMIT 1
+    """)
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(sql, {"org_slug": org_slug}).first()
+
+    if row is None:
+        return "blocked"
+
+    status = row[0]
+    if status in ("active", "trial"):
+        return "full"
+    if status == "suspended":
+        return "read_only"
+    return "blocked"

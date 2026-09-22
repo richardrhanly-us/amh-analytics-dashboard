@@ -4,7 +4,11 @@ import pandas as pd
 import streamlit as st
 
 from services import auth_service
-from services.access_service import get_org_branches, get_user_memberships
+from services.access_service import (
+    get_org_access_mode,
+    get_org_branches,
+    get_user_memberships,
+)
 from services.app_ui_service import apply_page_chrome
 from services.entitlement_service import build_entitlement_context
 from services.permission_service import can_manage_settings
@@ -51,6 +55,26 @@ if (
     st.session_state["selected_org_slug"] = allowed_org_slugs[0]
 
 selected_org_slug = st.session_state["selected_org_slug"]
+
+# This page is entirely administrative (user management), so anything
+# less than full access blocks the whole page rather than partially
+# rendering it -- matching the service-level enforcement in
+# user_admin_service's mutating functions, which independently refuse to
+# write regardless of whether this page-level gate is ever bypassed
+# (e.g. direct URL navigation).
+org_access_mode = get_org_access_mode(selected_org_slug)
+
+if org_access_mode == "read_only":
+    st.error(
+        "This organization's account is currently suspended. Settings and user "
+        "management are unavailable until it is reactivated by a platform "
+        "administrator."
+    )
+    st.stop()
+
+if org_access_mode == "blocked":
+    st.error("This organization is no longer available. Please contact an administrator.")
+    st.stop()
 
 org_options = {
     m["organization_name"]: m["organization_slug"]
@@ -181,6 +205,7 @@ if users:
 
     if update_status_submitted:
         result = set_user_active(
+            org_slug=selected_org_slug,
             user_id=selected_status_user_id,
             is_active=desired_status,
         )

@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import text
 
 from database import get_engine
-from services import auth_service
+from services import access_service, auth_service
 from services.privacy_hardening import log_safe_exception
 
 logger = logging.getLogger("sortview.user_admin")
@@ -67,6 +67,16 @@ def create_or_add_org_user(
     full_name: str,
     role: str,
 ) -> dict[str, Any]:
+    # Service-level enforcement, independent of the calling page's own
+    # gate: a suspended or cancelled organization can never gain a new
+    # user or membership here, even if this function is ever reached
+    # some other way.
+    if access_service.get_org_access_mode(org_slug) != "full":
+        return {
+            "ok": False,
+            "message": "This organization does not currently allow administrative changes.",
+        }
+
     org = _get_org_row(org_slug)
     if not org:
         return {
@@ -187,6 +197,15 @@ def create_or_add_org_user(
 
 
 def update_org_user_role(org_slug: str, user_id: int, role: str) -> dict[str, Any]:
+    # Service-level enforcement, independent of the calling page's own
+    # gate: a suspended or cancelled organization's roles can never be
+    # changed here, even if this function is ever reached some other way.
+    if access_service.get_org_access_mode(org_slug) != "full":
+        return {
+            "ok": False,
+            "message": "This organization does not currently allow administrative changes.",
+        }
+
     sql = text("""
         UPDATE memberships m
         SET role = :role
@@ -232,14 +251,60 @@ def update_org_user_role(org_slug: str, user_id: int, role: str) -> dict[str, An
     }
 
 
-def set_user_active(user_id: int, is_active: bool) -> dict[str, Any]:
+def set_user_active(org_slug: str, user_id: int, is_active: bool) -> dict[str, Any]:
+    """Activates/deactivates a user's account from an organization's admin page.
+
+    org_slug scopes WHO may be targeted from this admin surface: the
+    calling organization must currently have full access, and the target
+    user must actually be a member of that organization (added here so a
+    suspended/cancelled org can no longer reach this action, and so this
+    admin surface can no longer target a user outside the org being
+    administered). app_users.is_active itself remains a GLOBAL account
+    flag, exactly as before this change -- deactivating a user here
+    deactivates their account everywhere, not just in this organization.
+    Whether account access should instead be scoped per-organization
+    (rather than one global flag) is a separate, not-yet-made product/
+    security decision; this function does not redesign that.
+    """
+    # Service-level enforcement, independent of the calling page's own
+    # gate: a suspended or cancelled organization can never activate or
+    # deactivate a user here, even if this function is ever reached some
+    # other way.
+    if access_service.get_org_access_mode(org_slug) != "full":
+        return {
+            "ok": False,
+            "message": "This organization does not currently allow administrative changes.",
+        }
+
+    membership_check_sql = text("""
+        SELECT 1
+        FROM memberships m
+        JOIN organizations o
+          ON o.id = m.organization_id
+        WHERE o.slug = :org_slug
+          AND m.user_id = :user_id
+        LIMIT 1
+    """)
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        is_member = conn.execute(
+            membership_check_sql,
+            {"org_slug": org_slug, "user_id": user_id},
+        ).first()
+
+    if is_member is None:
+        return {
+            "ok": False,
+            "message": "That user is not a member of this organization.",
+        }
+
     sql = text("""
         UPDATE app_users
         SET is_active = :is_active
         WHERE id = :user_id
     """)
 
-    engine = get_engine()
     with engine.begin() as conn:
         result = conn.execute(
             sql,
@@ -263,6 +328,7 @@ def set_user_active(user_id: int, is_active: bool) -> dict[str, Any]:
         email=user["email"] if user else None,
         message="User status updated.",
         metadata={
+            "org_slug": org_slug,
             "is_active": is_active,
         },
     )
