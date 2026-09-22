@@ -226,7 +226,7 @@ DATA_LOAD_FAILED_MESSAGE = (
 )
 
 
-def _read_table(query, params=None):
+def _read_table(query, params=None, *, customer_id=None, branch_id=None):
     try:
         engine = get_engine()
     except Exception as exc:
@@ -235,7 +235,23 @@ def _read_table(query, params=None):
         return pd.DataFrame()
 
     try:
-        return pd.read_sql(text(query), engine, params=params or {})
+        # Tenant context (RLS) must be set on the SAME connection/transaction
+        # as the read that follows -- passing a bare Engine to pd.read_sql
+        # lets pandas check out its own connection internally, with no hook
+        # to set anything on it first. customer_id/branch_id are optional:
+        # information_schema callers (validate_tenant_schema) pass neither,
+        # and simply skip context-setting.
+        with engine.connect() as conn:
+            if customer_id is not None and branch_id is not None:
+                conn.execute(
+                    text("SELECT set_config('app.operational_customer_id', :v, true)"),
+                    {"v": str(customer_id)},
+                )
+                conn.execute(
+                    text("SELECT set_config('app.operational_branch_id', :v, true)"),
+                    {"v": str(branch_id)},
+                )
+            return pd.read_sql(text(query), conn, params=params or {})
     except Exception as exc:
         # The query text is our own statement (placeholders, no values); only the
         # NAMES of the bound parameters are logged, never their values.
@@ -523,7 +539,7 @@ def _load_checkins_history_from_db(org_slug, branch_slug):
         branch_column=CHECKINS_BRANCH_COLUMN,
         live_only=False,
     )
-    df = _read_table(query, params=params)
+    df = _read_table(query, params=params, customer_id=org_slug, branch_id=branch_slug)
     return _normalize_checkins_df(df)
 
 
@@ -550,7 +566,7 @@ def _load_checkins_live_from_db(org_slug, branch_slug):
         branch_column=CHECKINS_BRANCH_COLUMN,
         live_only=True,
     )
-    df = _read_table(query, params=params)
+    df = _read_table(query, params=params, customer_id=org_slug, branch_id=branch_slug)
     return _normalize_checkins_df(df)
 
 
@@ -577,7 +593,7 @@ def _load_rejects_history_from_db(org_slug, branch_slug):
         branch_column=REJECTS_BRANCH_COLUMN,
         live_only=False,
     )
-    df = _read_table(query, params=params)
+    df = _read_table(query, params=params, customer_id=org_slug, branch_id=branch_slug)
     return _normalize_rejects_df(df)
 
 
@@ -604,7 +620,7 @@ def _load_rejects_live_from_db(org_slug, branch_slug):
         branch_column=REJECTS_BRANCH_COLUMN,
         live_only=True,
     )
-    df = _read_table(query, params=params)
+    df = _read_table(query, params=params, customer_id=org_slug, branch_id=branch_slug)
     return _normalize_rejects_df(df)
 
 
@@ -632,7 +648,7 @@ def _load_acs_history_from_db(org_slug, branch_slug):
         live_only=False,
         columns=ACS_LOAD_COLUMNS,
     )
-    df = _read_table(query, params=params)
+    df = _read_table(query, params=params, customer_id=org_slug, branch_id=branch_slug)
     return _normalize_acs_df(df)
 
 
@@ -660,7 +676,7 @@ def _load_acs_live_from_db(org_slug, branch_slug):
         live_only=True,
         columns=ACS_LOAD_COLUMNS,
     )
-    df = _read_table(query, params=params)
+    df = _read_table(query, params=params, customer_id=org_slug, branch_id=branch_slug)
     return _normalize_acs_df(df)
 
 

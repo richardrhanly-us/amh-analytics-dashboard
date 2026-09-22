@@ -57,13 +57,22 @@ def _render(function_name: str) -> str:
 
 # --- chain -------------------------------------------------------------------------------------------------------------
 
-def test_the_amendment_is_a_new_revision_on_top_of_step_3_and_is_the_single_head():
+def test_the_amendment_is_a_new_revision_on_top_of_step_3_and_the_chain_stays_a_single_head():
     script = _script_directory()
     revision = script.get_revision(REVISION)
 
     assert revision is not None and revision.down_revision == STEP3
-    assert script.get_heads() == [REVISION]
-    assert [r.revision for r in script.walk_revisions()][:2] == [REVISION, STEP3]  # linear; Step 3's revision still exists as merged
+    # Not asserting REVISION itself is the current head: later migrations
+    # (e.g. the RLS phase 1 migration) legitimately extend the chain past
+    # it. What must still hold, and is what this test actually protects
+    # against, is that the amendment never forked the history -- there is
+    # still exactly one head overall.
+    assert len(script.get_heads()) == 1
+    # REVISION's own ancestry (not the tree's current head) sits directly
+    # on Step 3 with nothing else merged in between -- walking from
+    # REVISION specifically keeps this valid regardless of what's added on
+    # top of it later.
+    assert [r.revision for r in script.walk_revisions(base="base", head=REVISION)][:2] == [REVISION, STEP3]
 
 
 def test_step_3s_revision_still_creates_the_old_table_it_was_not_rewritten():
