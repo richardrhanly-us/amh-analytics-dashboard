@@ -72,11 +72,13 @@ is needed or planned for this.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from . import parsers, reader, state, uploader
@@ -317,18 +319,62 @@ def _build_logger(log_path) -> logging.Logger:
     return logger
 
 
+def _requested_contract_mode(config_path: str) -> str:
+    """"v1" (the default when `contract_mode` is absent) or "v2", read WITHOUT importing any v2 module: a build that does not ship Contract v2
+    must still run v1 exactly as before. Kept in step with collector/v2_config.py::read_contract_mode by a test."""
+    path = Path(config_path)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+    except (OSError, ValueError):
+        raw = None  # an unreadable config is reported by load_config, with its own message
+    mode = raw.get("contract_mode", "v1") if isinstance(raw, dict) else "v1"
+    if mode not in ("v1", "v2"):
+        raise ConfigError("config 'contract_mode' must be \"v1\" or \"v2\"")
+    return str(mode)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="SortView Collector -- one-shot scheduled run")
     parser.add_argument("--config", required=True, help="Path to the collector config JSON file")
+    parser.add_argument(
+        "--v2-dry-run",
+        action="store_true",
+        help="Contract v2: transform a bounded tail of each source and print only aggregate counts. Needs no API token, no server "
+        "registration and no persistent secret; makes no network call and writes no file",
+    )
     args = parser.parse_args(argv)
 
+    if args.v2_dry_run:
+        # The dry run is independent of every credential, so it is dispatched BEFORE the v1 configuration (which requires SORTVIEW_API_TOKEN).
+        try:
+            from .v2_run import main_v2_dry_run
+        except ModuleNotFoundError as exc:
+            if not (exc.name or "").startswith("collector"):
+                raise
+            print("Configuration error: this build does not include Contract v2", file=sys.stderr)
+            return 2
+        return main_v2_dry_run(args.config)
+
     try:
+        mode = _requested_contract_mode(args.config)
         cfg = load_config(args.config)
     except ConfigError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
 
     logger = _build_logger(cfg.log_path)
+    if mode == "v2":
+        # Contract v2 (privacy-safe) is opt-in; a config without contract_mode keeps running the v1 path below, unchanged.
+        try:
+            from .v2_run import (
+                main_v2,  # imported only when v2 is chosen: the v1 path never loads (or needs) the v2 modules
+            )
+        except ModuleNotFoundError as exc:
+            if not (exc.name or "").startswith("collector"):
+                raise
+            print("Configuration error: this build does not include Contract v2", file=sys.stderr)
+            return 2
+        return main_v2(cfg, args.config, logger=logger)
     if cfg.installation_id is None:
         logger.warning(
             "Config has no installation_id (legacy config): heartbeats will not update "

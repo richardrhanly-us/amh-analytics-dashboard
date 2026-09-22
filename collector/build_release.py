@@ -106,6 +106,24 @@ COLLECTOR_RUNTIME_FILES: tuple[str, ...] = (
 BUILD_ONLY_COLLECTOR_FILES: tuple[str, ...] = (
     "collector/deploy_manifest.py",
     "collector/build_release.py",
+    # Privacy Contract v2 (docs/collector-v2.md): NOT bundled yet. Shipping it is the separate release-integration step; until then a release
+    # runs v1 exactly as before (collector/run.py reads `contract_mode` and imports v2 lazily, so it does not need these files) and
+    # reports "this build does not include Contract v2" if a config asks for it. Move these to COLLECTOR_RUNTIME_FILES when that step lands.
+    "collector/v2_classify.py",
+    "collector/v2_config.py",
+    "collector/v2_events.py",
+    "collector/v2_identity.py",
+    "collector/v2_keys.py",
+    "collector/v2_normalize.py",
+    "collector/v2_patrons.py",
+    "collector/v2_quarantine.py",
+    "collector/v2_reader.py",
+    "collector/v2_rules.py",
+    "collector/v2_run.py",
+    "collector/v2_safe_errors.py",
+    "collector/v2_status.py",
+    "collector/v2_transform.py",
+    "collector/v2_uploader.py",
 )
 
 # (repo-relative source, bundle-relative destination) -- copied verbatim,
