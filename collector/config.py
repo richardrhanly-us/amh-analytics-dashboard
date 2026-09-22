@@ -59,6 +59,15 @@ class CollectorConfig:
     # collector_installations for it. Never inferred from branch/hostname.
     installation_id: int | None = None
 
+    # Local-only, privacy-safe run-history JSONL file (collector/run_audit.py).
+    # Optional so every already-deployed config -- which predates this field
+    # entirely -- keeps loading and running unmodified. load_config() below
+    # always resolves this to a concrete Path (log_path's own directory,
+    # `runs.jsonl`, unless the config explicitly overrides it); None here is
+    # only the dataclass-level fallback for a CollectorConfig built directly
+    # (e.g. in a test) rather than through load_config.
+    run_audit_path: Path | None = None
+
     def source(self, name: str) -> SourceConfig:
         for source_cfg in self.sources:
             if source_cfg.name == name:
@@ -145,6 +154,13 @@ def load_config(config_path: str | Path) -> CollectorConfig:
         "status_path": Path(raw["status_path"]),
         "log_path": Path(raw["log_path"]),
         "installation_id": _parse_installation_id(raw),
+        # Default: same directory as log_path, so an existing deployed
+        # config (which has never heard of this key) gets local run-audit
+        # logging automatically, right next to collector.log, with zero
+        # config changes required.
+        "run_audit_path": (
+            Path(str(raw["run_audit_path"])) if raw.get("run_audit_path") else Path(raw["log_path"]).parent / "runs.jsonl"
+        ),
     }
 
     defaults = CollectorConfig(**kwargs)

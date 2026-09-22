@@ -75,13 +75,14 @@ import argparse
 import json
 import logging
 import sys
+import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from . import parsers, reader, state, uploader
+from . import __version__, parsers, reader, run_audit, state, uploader
 from .config import CollectorConfig, ConfigError, load_config
 
 ParseFn = Callable[[list[str]], list[dict[str, Any]]]
@@ -136,6 +137,21 @@ def _passthrough_parse(lines: list[str]) -> list[dict[str, Any]]:
 class RunOutcome:
     exit_code: int
     status: dict[str, Any]
+    # Local-audit-logging metadata only (collector/run_audit.py) -- not
+    # part of state.json/status.json/the upload protocol, all of which
+    # already worked entirely off `status` before this field existed.
+    # {source_name: {"offset_before": int | None, "offset_after": int | None,
+    # "new_records": int, "uploaded": int}}, populated for every configured
+    # source that reached the per-source loop (empty {} for a run that
+    # failed before that loop started, e.g. a corrupt state file).
+    # new_records/uploaded are populated on BOTH the success and the
+    # upload-failure path -- parsing already happened before upload was
+    # even attempted, and UploadRunResult's *_inserted counters already
+    # correctly track partial delivery up to the failing batch, so both
+    # numbers are genuinely meaningful even when the run as a whole failed.
+    source_audit: dict[str, dict[str, int | None]] = field(default_factory=dict)
+    upload_status_code: int | None = None
+    pipeline_status_code: int | None = None
 
 
 def run_once(
@@ -184,10 +200,18 @@ def run_once(
     sources_missing: list[str] = []
     sources_rotated: list[str] = []
     sources_truncated: list[str] = []
+    # Local-audit-logging metadata only (collector/run_audit.py) -- the
+    # byte offset each configured source started this run at, captured for
+    # every configured source (even one that turns out missing/unreadable
+    # below) before anything else can happen to it this run. Not used by
+    # any state/upload/status logic, which already worked entirely off
+    # new_cursors before this existed.
+    offset_before_by_source: dict[str, int | None] = {}
 
     for source_cfg in cfg.sources:
         prior_source_state = state.get_source(prior_state, source_cfg.name)
         prior_cursor = _cursor_from_source_state(prior_source_state)
+        offset_before_by_source[source_cfg.name] = prior_cursor.offset if prior_cursor is not None else None
 
         result = reader.read_new_lines(source_cfg.path, prior_cursor)
 
@@ -224,6 +248,29 @@ def run_once(
     acs = records.get("acs", [])
 
     upload_result = uploader.upload_records(session, cfg, checkins, rejects, acs)
+
+    # Local-audit-logging metadata only -- see RunOutcome.source_audit.
+    # offset_after is None for a source that never got a new_cursors entry
+    # (missing/unreadable this run); new_records/uploaded are 0 for a
+    # source that isn't "checkins"/"rejects"/"acs" (there is no third
+    # counter to fall back to) but every configured source is guaranteed
+    # to be one of those three by the time this line runs -- run_once
+    # already raised ParserNotConfiguredError above otherwise.
+    new_records_by_source = {"checkins": len(checkins), "rejects": len(rejects), "acs": len(acs)}
+    uploaded_by_source = {
+        "checkins": upload_result.checkins_inserted,
+        "rejects": upload_result.rejects_inserted,
+        "acs": upload_result.acs_inserted,
+    }
+    source_audit: dict[str, dict[str, int | None]] = {
+        name: {
+            "offset_before": offset_before_by_source.get(name),
+            "offset_after": new_cursors[name].offset if name in new_cursors else None,
+            "new_records": new_records_by_source.get(name, 0),
+            "uploaded": uploaded_by_source.get(name, 0),
+        }
+        for name in offset_before_by_source
+    }
 
     if not upload_result.success:
         # THE multi-batch state semantics guarantee: state is NOT
@@ -262,7 +309,13 @@ def run_once(
         if not status_outcome.success:
             logger.warning("Best-effort status POST also failed: %s", status_outcome.error)
 
-        return RunOutcome(exit_code=1, status=failed_status)
+        return RunOutcome(
+            exit_code=1,
+            status=failed_status,
+            source_audit=source_audit,
+            upload_status_code=upload_result.last_status_code,
+            pipeline_status_code=status_outcome.status_code,
+        )
 
     # Every batch succeeded (or there was nothing to upload) -- now, and
     # only now, persist the new cursor for every source that was
@@ -297,7 +350,13 @@ def run_once(
         # a failed STATUS post never fails an otherwise-successful run.
         logger.warning("Best-effort status POST failed (run itself succeeded): %s", status_outcome.error)
 
-    return RunOutcome(exit_code=0, status=completed_status)
+    return RunOutcome(
+        exit_code=0,
+        status=completed_status,
+        source_audit=source_audit,
+        upload_status_code=upload_result.last_status_code,
+        pipeline_status_code=status_outcome.status_code,
+    )
 
 
 def _build_logger(log_path) -> logging.Logger:
@@ -333,6 +392,84 @@ def _requested_contract_mode(config_path: str) -> str:
     return str(mode)
 
 
+def _resolve_audit_path(cfg: CollectorConfig) -> Path:
+    """cfg.run_audit_path is always concrete when cfg came from
+    load_config (see collector/config.py) -- this fallback only matters
+    for a CollectorConfig built directly (e.g. a test) without going
+    through load_config at all."""
+    return cfg.run_audit_path if cfg.run_audit_path is not None else cfg.log_path.parent / "runs.jsonl"
+
+
+_UPLOAD_ERROR_CODES = {
+    run_audit.ErrorCode.RETRYABLE_INFRA.value,
+    run_audit.ErrorCode.AUTH_FAILURE.value,
+    run_audit.ErrorCode.PERMANENT_REJECTION.value,
+}
+
+
+def _write_run_audit_record(
+    *,
+    audit_path: Path,
+    logger: logging.Logger | None,
+    run_id: str,
+    started_at: str,
+    start_perf: float,
+    result: str,
+    collector_version: str,
+    source_audit: dict[str, dict[str, int | None]] | None = None,
+    sources_missing: list[str] | None = None,
+    sources_rotated: list[str] | None = None,
+    sources_truncated: list[str] | None = None,
+    upload_status: int | None = None,
+    pipeline_status: int | None = None,
+    failure_stage: str | None = None,
+    error_code: run_audit.ErrorCode | None = None,
+) -> None:
+    """Builds and appends exactly one audit record. NEVER raises -- a
+    problem here can never change main()'s return value, which every call
+    site below computes independently before or after calling this.
+    append_run_record already catches everything inside its own try
+    (including record serialization), but record BUILDING happens here,
+    outside that call -- so this function wraps its own body too, as a
+    second, independent layer of the same guarantee (defense in depth: a
+    bug in build_record's own logic must not be able to propagate any
+    more than a disk-full error can). duration_ms deliberately comes from
+    time.perf_counter() (a monotonic clock), never from subtracting the
+    two ISO timestamps -- see collector/run_audit.py's module docstring."""
+    try:
+        finished_at = run_audit.now_iso()
+        duration_ms = round((time.perf_counter() - start_perf) * 1000)
+        sources = {
+            name: run_audit.SourceAudit(
+                offset_before=fields.get("offset_before"),
+                offset_after=fields.get("offset_after"),
+                new_records=fields.get("new_records"),
+                uploaded=fields.get("uploaded"),
+            )
+            for name, fields in (source_audit or {}).items()
+        }
+        record = run_audit.build_record(
+            run_id=run_id,
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_ms=duration_ms,
+            result=result,
+            collector_version=collector_version,
+            sources=sources,
+            sources_missing=sources_missing,
+            sources_rotated=sources_rotated,
+            sources_truncated=sources_truncated,
+            upload_status=upload_status,
+            pipeline_status=pipeline_status,
+            failure_stage=failure_stage,
+            error_code=error_code,
+        )
+        run_audit.append_run_record(audit_path, record, logger=logger)
+    except Exception as exc:  # deliberately broad -- see docstring
+        if logger is not None:
+            logger.warning("Run-audit record could not be built (collector run itself is unaffected): %s", type(exc).__name__)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="SortView Collector -- one-shot scheduled run")
     parser.add_argument("--config", required=True, help="Path to the collector config JSON file")
@@ -345,7 +482,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.v2_dry_run:
-        # The dry run is independent of every credential, so it is dispatched BEFORE the v1 configuration (which requires SORTVIEW_API_TOKEN).
+        # No audit record for the dry run: it makes no network call and
+        # writes no file by its own explicit, documented design (see the
+        # --help text above) -- adding one here would break that contract,
+        # and nothing was actually collected to have an audit trail of.
         try:
             from .v2_run import main_v2_dry_run
         except ModuleNotFoundError as exc:
@@ -355,16 +495,40 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         return main_v2_dry_run(args.config)
 
+    run_id = run_audit.new_run_id()
+    started_at = run_audit.now_iso()
+    start_perf = time.perf_counter()
+
     try:
         mode = _requested_contract_mode(args.config)
         cfg = load_config(args.config)
     except ConfigError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
+        # cfg does not exist yet -- this is exactly the case
+        # DEFAULT_FALLBACK_AUDIT_PATH exists for (see collector/run_audit.py's
+        # PRE-CONFIG FALLBACK section): a config-load failure is never
+        # invisible to the audit trail just because there was no cfg to
+        # derive a path from.
+        _write_run_audit_record(
+            audit_path=run_audit.DEFAULT_FALLBACK_AUDIT_PATH,
+            logger=None,  # _build_logger needs cfg.log_path, which doesn't exist yet either
+            run_id=run_id,
+            started_at=started_at,
+            start_perf=start_perf,
+            result="failed_config",
+            collector_version=__version__,
+            failure_stage="config",
+            error_code=run_audit.ErrorCode.CONFIG_INVALID,
+        )
         return 2
 
     logger = _build_logger(cfg.log_path)
+    audit_path = _resolve_audit_path(cfg)
+
     if mode == "v2":
-        # Contract v2 (privacy-safe) is opt-in; a config without contract_mode keeps running the v1 path below, unchanged.
+        # Contract v2 has its own separate status/protocol machinery
+        # (collector/v2_status.py) and is out of scope for this v1-only
+        # Phase 1 -- deliberately no audit record on this path.
         try:
             from .v2_run import (
                 main_v2,  # imported only when v2 is chosen: the v1 path never loads (or needs) the v2 modules
@@ -385,23 +549,78 @@ def main(argv: Sequence[str] | None = None) -> int:
         session = uploader.build_session()
         parse_fns = parsers.build_production_parse_fns(customer_id=cfg.customer_id, branch_id=cfg.branch_id)
         outcome = run_once(cfg, session=session, parse_fns=parse_fns, logger=logger)
+
+        result = str(outcome.status.get("status", "unknown"))
+        failure_stage: str | None = None
+        error_code: run_audit.ErrorCode | None = None
+        if result == "failed_upload":
+            failure_stage = "upload"
+            category = outcome.status.get("last_failure_category")
+            if category in _UPLOAD_ERROR_CODES:
+                error_code = run_audit.ErrorCode(category)
+        elif result == "failed_corrupt_state":
+            failure_stage = "state"
+            error_code = run_audit.ErrorCode.STATE_CORRUPT
+
+        _write_run_audit_record(
+            audit_path=audit_path,
+            logger=logger,
+            run_id=run_id,
+            started_at=started_at,
+            start_perf=start_perf,
+            result=result,
+            collector_version=__version__,
+            source_audit=outcome.source_audit,
+            sources_missing=outcome.status.get("sources_missing"),
+            sources_rotated=outcome.status.get("sources_rotated"),
+            sources_truncated=outcome.status.get("sources_truncated"),
+            upload_status=outcome.upload_status_code,
+            pipeline_status=outcome.pipeline_status_code,
+            failure_stage=failure_stage,
+            error_code=error_code,
+        )
         return outcome.exit_code
     except ParserNotConfiguredError as exc:
         # Distinct from the generic crash handler below: this is an
         # expected, actionable configuration/deployment-readiness
         # condition (exit code 2, same family as a bad --config or a
         # missing token), never a data or network failure. See module
-        # docstring's FAIL CLOSED section.
+        # docstring's FAIL CLOSED section. cfg already exists by this
+        # point (assigned above, before this try), so the audit record
+        # uses cfg's own resolved path, not the pre-config fallback.
         logger.error("Refusing to run: %s", exc)
         print(f"Configuration error: {exc}", file=sys.stderr)
+        _write_run_audit_record(
+            audit_path=audit_path,
+            logger=logger,
+            run_id=run_id,
+            started_at=started_at,
+            start_perf=start_perf,
+            result="failed_parser_not_configured",
+            collector_version=__version__,
+            failure_stage="parser_wiring",
+            error_code=run_audit.ErrorCode.PARSER_NOT_CONFIGURED,
+        )
         return 2
     except Exception:
         # Belt-and-braces: anything that escapes run_once's own handling
         # (a genuine bug, not a classified upload/state failure) must
         # still exit nonzero -- never let an unanticipated exception
         # produce a silent/ambiguous exit code. Mirrors agent/main.py's
-        # own fail-fast exit-code contract.
+        # own fail-fast exit-code contract. cfg exists here too, same
+        # reasoning as the ParserNotConfiguredError branch above.
         logger.exception("Collector run crashed with an unhandled exception")
+        _write_run_audit_record(
+            audit_path=audit_path,
+            logger=logger,
+            run_id=run_id,
+            started_at=started_at,
+            start_perf=start_perf,
+            result="failed_unhandled",
+            collector_version=__version__,
+            failure_stage="unhandled",
+            error_code=run_audit.ErrorCode.UNHANDLED_EXCEPTION,
+        )
         return 1
 
 
