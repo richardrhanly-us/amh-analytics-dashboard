@@ -86,8 +86,12 @@ def _dpapi(function_name: str, data: bytes) -> bytes:
         buffer = ctypes.create_string_buffer(raw, len(raw))
         return DataBlob(len(raw), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_char))), buffer
 
-    crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    win_dll = getattr(ctypes, "WinDLL", None)
+    if win_dll is None:
+        raise SecretStoreError("secret_store_unavailable")
+
+    crypt32 = win_dll("crypt32", use_last_error=True)
+    kernel32 = win_dll("kernel32", use_last_error=True)
     kernel32.LocalFree.argtypes = [ctypes.c_void_p]
     function = getattr(crypt32, function_name)
     blob_pointer = ctypes.POINTER(DataBlob)
