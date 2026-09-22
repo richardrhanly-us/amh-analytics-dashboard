@@ -8,7 +8,11 @@ from sqlalchemy import text
 
 from database import get_engine
 from services import auth_service
-from services.access_service import get_org_branches, get_user_memberships
+from services.access_service import (
+    get_org_access_mode,
+    get_org_branches,
+    get_user_memberships,
+)
 from services.admin_lock_service import (
     build_security_settings,
     has_admin_password,
@@ -183,6 +187,12 @@ def load_settings(org_slug: str, branch_slug: str) -> dict:
 
 
 def save_settings(org_slug: str, branch_slug: str, settings: dict) -> None:
+    # Service-level enforcement, independent of the page-level gate above:
+    # a suspended or cancelled organization's settings can never be written
+    # here, even if this function is ever reached some other way.
+    if get_org_access_mode(org_slug) != "full":
+        raise RuntimeError(f"Organization '{org_slug}' does not have full access; settings save refused")
+
     row_state = _get_settings_rows(org_slug=org_slug, branch_slug=branch_slug)
 
     current_org_settings = dict(row_state["org_settings_json"] or {})
@@ -308,6 +318,25 @@ if (
     st.session_state["selected_org_slug"] = allowed_org_slugs[0]
 
 selected_org_slug = st.session_state["selected_org_slug"]
+
+# This page is entirely administrative (settings, the admin lock), so
+# anything less than full access blocks the whole page rather than
+# partially rendering it -- matching the service-level enforcement in
+# save_settings() below, which independently refuses to write regardless
+# of whether this page-level gate is ever bypassed (e.g. direct URL nav).
+org_access_mode = get_org_access_mode(selected_org_slug)
+
+if org_access_mode == "read_only":
+    st.error(
+        "This organization's account is currently suspended. Settings and user "
+        "management are unavailable until it is reactivated by a platform "
+        "administrator."
+    )
+    st.stop()
+
+if org_access_mode == "blocked":
+    st.error("This organization is no longer available. Please contact an administrator.")
+    st.stop()
 
 org_options = {
     m["organization_name"]: m["organization_slug"]

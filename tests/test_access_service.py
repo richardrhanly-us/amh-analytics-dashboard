@@ -71,6 +71,23 @@ def test_get_user_memberships_empty_for_user_with_no_orgs(monkeypatch):
     assert access_service.get_user_memberships(user_id=999) == []
 
 
+def test_get_user_memberships_sql_excludes_cancelled_organizations(monkeypatch):
+    # Lifecycle policy: a cancelled organization disappears from a user's
+    # org list entirely (reusing app.py's existing "selected org not in
+    # the allowed list" clamp), rather than needing new UI to represent a
+    # visible-but-blocked option. Suspended organizations are NOT excluded
+    # here -- suspended customers retain read-only access, enforced by
+    # get_org_access_mode, not by hiding the org from this list.
+    engine = FakeEngine([FakeQueryResult(all_rows=[])])
+    monkeypatch.setattr(access_service, "get_engine", lambda: engine)
+
+    access_service.get_user_memberships(user_id=1)
+
+    sql = engine.calls[0]["sql"]
+    assert "o.status != 'cancelled'" in sql
+    assert "suspended" not in sql.lower()
+
+
 # --- user_can_access_org (the tenant-isolation gate) ------------------------
 
 def test_user_can_access_org_true_when_membership_row_exists(monkeypatch):
@@ -179,3 +196,62 @@ def test_get_user_memberships_cache_is_scoped_per_user(monkeypatch):
 
     assert len(engine.calls) == 2
     assert user_1_memberships != user_2_memberships
+
+
+# --- get_org_access_mode (organization lifecycle policy) ---------------------
+
+@pytest.mark.parametrize("status", ["active", "trial"])
+def test_get_org_access_mode_full_for_active_or_trial(monkeypatch, status):
+    engine = FakeEngine([FakeQueryResult(first=(status,))])
+    monkeypatch.setattr(access_service, "get_engine", lambda: engine)
+
+    assert access_service.get_org_access_mode(org_slug="acme") == "full"
+
+
+def test_get_org_access_mode_read_only_for_suspended(monkeypatch):
+    engine = FakeEngine([FakeQueryResult(first=("suspended",))])
+    monkeypatch.setattr(access_service, "get_engine", lambda: engine)
+
+    assert access_service.get_org_access_mode(org_slug="acme") == "read_only"
+
+
+def test_get_org_access_mode_blocked_for_cancelled(monkeypatch):
+    engine = FakeEngine([FakeQueryResult(first=("cancelled",))])
+    monkeypatch.setattr(access_service, "get_engine", lambda: engine)
+
+    assert access_service.get_org_access_mode(org_slug="acme") == "blocked"
+
+
+def test_get_org_access_mode_blocked_for_unknown_org(monkeypatch):
+    # No matching organizations row at all -- fail closed, not "full".
+    engine = FakeEngine([FakeQueryResult(first=None)])
+    monkeypatch.setattr(access_service, "get_engine", lambda: engine)
+
+    assert access_service.get_org_access_mode(org_slug="does-not-exist") == "blocked"
+
+
+def test_get_org_access_mode_blocked_for_unrecognised_status(monkeypatch):
+    # A status outside the known four (e.g. a future/typo'd value) must
+    # fail closed to "blocked", never silently default to "full".
+    engine = FakeEngine([FakeQueryResult(first=("inactive",))])
+    monkeypatch.setattr(access_service, "get_engine", lambda: engine)
+
+    assert access_service.get_org_access_mode(org_slug="acme") == "blocked"
+
+
+def test_get_org_access_mode_is_never_cached(monkeypatch):
+    # Security gate, same reasoning as user_can_access_org: an
+    # already-open session must see a cancellation take effect on the
+    # very next call, not after a cache TTL.
+    engine = FakeEngine([
+        FakeQueryResult(first=("active",)),
+        FakeQueryResult(first=("cancelled",)),
+    ])
+    monkeypatch.setattr(access_service, "get_engine", lambda: engine)
+
+    first = access_service.get_org_access_mode(org_slug="acme")
+    second = access_service.get_org_access_mode(org_slug="acme")
+
+    assert first == "full"
+    assert second == "blocked"
+    assert len(engine.calls) == 2

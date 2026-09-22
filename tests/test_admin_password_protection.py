@@ -284,6 +284,11 @@ def _patch_page(monkeypatch, *, security_by_org: dict, engine: _Engine | None = 
     monkeypatch.setattr(access, "get_user_memberships", lambda user_id: list(ORGS.values()))
     monkeypatch.setattr(access, "get_org_branches",
                         lambda org_slug: [{"branch_slug": "main", "branch_name": "Main", "is_primary": True}])
+    # Organization lifecycle policy: the settings page now calls
+    # access_service.get_org_access_mode() right after selecting the org,
+    # and blocks the whole page unless it returns "full". Both synthetic
+    # orgs in this file are unaffected by lifecycle status.
+    monkeypatch.setattr(access, "get_org_access_mode", lambda org_slug: "full")
     monkeypatch.setattr(entitlement, "build_entitlement_context", lambda user_id, org_slug: {})
     monkeypatch.setattr(permission, "can_manage_settings", lambda context: True)
     monkeypatch.setattr(sidebar, "render_main_sidebar", lambda **_kwargs: None)

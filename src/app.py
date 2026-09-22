@@ -34,6 +34,7 @@ from data_loader import (
 )
 from services import auth_service
 from services.access_service import (
+    get_org_access_mode,
     get_org_branches,
     get_user_memberships,
     user_can_access_org,
@@ -310,6 +311,43 @@ org_options = {
 
 
 #***************************************************************
+# Organization Access Mode
+#
+# Determines whether the selected organization currently allows full
+# customer access, read-only access (suspended), or no access at all
+# (cancelled). Checked on every rerun (uncached) so an already-open
+# session fails closed as soon as an organization is cancelled, rather
+# than remaining valid until the org list's own cache expires. Placed
+# before any organization-scoped query (branches, settings, data) runs,
+# so a blocked organization's data is never queried at all.
+#***************************************************************
+
+org_access_mode = get_org_access_mode(selected_org_slug)
+
+if org_access_mode == "blocked":
+    st.error("This organization is no longer available. Please contact an administrator.")
+    with st.sidebar:
+        st.caption(auth_user["email"])
+        if st.button("Log out"):
+            auth_service.log_auth_event(
+                event_type="logout",
+                is_success=True,
+                user_id=auth_user["id"],
+                email=auth_user["email"],
+                message="User logged out.",
+                metadata={
+                    "selected_org_slug": st.session_state.get("selected_org_slug"),
+                    "selected_branch_slug": st.session_state.get("selected_branch_slug"),
+                },
+            )
+            st.session_state["auth_user"] = None
+            st.session_state.pop("selected_org_slug", None)
+            st.session_state.pop("selected_branch_slug", None)
+            st.rerun()
+    st.stop()
+
+
+#***************************************************************
 # Branch Selection
 #
 # Loads active branches for the selected organization and ensures
@@ -418,13 +456,20 @@ entitlement_context = build_entitlement_context(
     org_slug=selected_org_slug,
 )
 
-show_admin_button = can_manage_settings(entitlement_context)
+show_admin_button = can_manage_settings(entitlement_context) and org_access_mode == "full"
 reports_can_export = can_export(entitlement_context)
 reports_can_advanced = can_view_advanced_reports(entitlement_context)
 show_transits_tab = can_view_transits(entitlement_context)
 show_internal_workflow = can_view_internal_workflow(entitlement_context)
 
 show_header_admin_button = False
+
+if org_access_mode == "read_only":
+    st.info(
+        "This organization's account is currently suspended. Historical dashboard "
+        "data remains available, but settings and user management are unavailable "
+        "until it is reactivated."
+    )
 
 
 #***************************************************************
