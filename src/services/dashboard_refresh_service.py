@@ -84,3 +84,37 @@ def resolve_refresh_interval_seconds(raw_value: str | None) -> tuple[int, str | 
         )
 
     return parsed, None
+
+
+#***************************************************************
+#
+#  Function:     resolve_run_every_seconds
+#
+#  Description: Resolves the effective `run_every` value passed to Live
+#               Today's auto-refreshing st.fragment. Centralizes the two
+#               independent reasons auto-refresh can be off -- outside
+#               operating hours, or the user has explicitly paused it
+#               (WCAG 2.2.2 Pause, Stop, Hide) -- so app.py never has to
+#               combine them itself. A user-set pause always wins: it is
+#               honored the same whether or not the dashboard is
+#               currently inside operating hours.
+#
+#  Parameters:  is_operating_hours_now - Whether the current time falls
+#                           within the dashboard's active operating
+#                           window (see is_operating_hours).
+#               is_paused - Whether the user has paused live updates for
+#                           this session (see st.session_state).
+#               interval_seconds - The configured refresh cadence in
+#                           seconds (see resolve_refresh_interval_seconds).
+#
+#  Returns:     int | None - The interval to pass as st.fragment's
+#                      run_every, or None to disable auto-refresh.
+#
+#***************************************************************
+
+def resolve_run_every_seconds(
+    *, is_operating_hours_now: bool, is_paused: bool, interval_seconds: int
+) -> int | None:
+    if is_paused or not is_operating_hours_now:
+        return None
+    return interval_seconds
