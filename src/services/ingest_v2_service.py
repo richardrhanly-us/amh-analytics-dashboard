@@ -51,12 +51,51 @@ class _Kind:
     label: str  # the key used in the request and the response
     table: str
     columns: tuple[str, ...]
+    compare_columns: tuple[str, ...]
 
+
+CHECKIN_COMPARE_COLUMNS = (
+    "event_time",
+    "item_key",
+    "destination",
+    "bin",
+)
+
+REJECT_COMPARE_COLUMNS = (
+    "event_time",
+    "error_class",
+    "item_key",
+)
+
+ACS_ITEM_COMPARE_COLUMNS = (
+    "event_time",
+    "state",
+    "item_key",
+    "destination",
+    "is_ill",
+    "is_branch_services",
+    "is_collection_services",
+)
 
 KINDS = (
-    _Kind("checkins", "checkin_events", CHECKIN_COLUMNS),
-    _Kind("rejects", "reject_events", REJECT_COLUMNS),
-    _Kind("acs_items", "acs_item_events", ACS_ITEM_COLUMNS),
+    _Kind(
+        "checkins",
+        "checkin_events",
+        CHECKIN_COLUMNS,
+        CHECKIN_COMPARE_COLUMNS,
+    ),
+    _Kind(
+        "rejects",
+        "reject_events",
+        REJECT_COLUMNS,
+        REJECT_COMPARE_COLUMNS,
+    ),
+    _Kind(
+        "acs_items",
+        "acs_item_events",
+        ACS_ITEM_COLUMNS,
+        ACS_ITEM_COMPARE_COLUMNS,
+    ),
 )
 
 
@@ -178,7 +217,10 @@ def _comparable(column: str, value: Any) -> Any:
 
 
 def _content(kind: _Kind, row: dict[str, Any]) -> tuple:
-    return tuple(_comparable(column, row[column]) for column in kind.columns if column != "event_key")
+    return tuple(
+        _comparable(column, row[column])
+        for column in kind.compare_columns
+    )
 
 
 def _insert_sql(kind: _Kind, count: int) -> str:

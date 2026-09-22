@@ -462,12 +462,19 @@ def test_a_conflict_rolls_back_everything_the_request_wrote(engine):
 
 
 def test_a_full_thousand_events_are_stored_in_chunks(engine):
-    result = _store(engine, [checkin(i) for i in range(500)], [reject(5000 + i) for i in range(250)],
-                    [acs_hold(9000 + i) for i in range(250)])
+    checkins = [checkin(i) for i in range(500)]
+    rejects = [reject(5000 + i) for i in range(250)]
+    acs_items = [acs_hold(9000 + i) for i in range(250)]
 
-    assert (result["checkins_inserted"], result["rejects_inserted"], result["acs_items_inserted"]) == (500, 250, 250)
-    assert _store(engine, [checkin(i) for i in range(500)])["checkins_duplicates"] == 500  # and the resend is idempotent
+    result = _store(engine, checkins, rejects, acs_items)
 
+    assert (
+        result["checkins_inserted"],
+        result["rejects_inserted"],
+        result["acs_items_inserted"],
+    ) == (500, 250, 250)
+
+    assert _store(engine, checkins)["checkins_duplicates"] == 500
 
 def test_the_stored_rows_carry_the_token_tenant_the_key_and_a_receive_time(engine):
     _store(engine, [checkin(1)], [reject(2)], [acs_hold(3)])
@@ -480,11 +487,12 @@ def test_the_stored_rows_carry_the_token_tenant_the_key_and_a_receive_time(engin
 def test_concurrent_identical_events_store_one_row_and_all_succeed(engine):
     outcomes: list[object] = []
     gate = threading.Barrier(8)
+    identical = checkin(1)
 
     def worker():
         gate.wait()
         try:
-            outcomes.append(_store(engine, [checkin(1)])["checkins_inserted"])
+            outcomes.append(_store(engine, [identical])["checkins_inserted"])
         except Exception as exc:
             outcomes.append(exc)
 
@@ -808,6 +816,24 @@ def _store_items(engine, items, key=KEY):
                                     acs_items=[AcsHoldEvent.model_validate(i) if i["state"] == "hold" else AcsNonHoldEvent.model_validate(i)
                                                for i in items])
 
+def test_ruleset_only_change_is_an_idempotent_duplicate_on_postgres(engine):
+    original_ruleset = "0a1b2c3d-4e5f-4a6b-9c7d-8e9f0a1b2c3d"
+    new_ruleset = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+
+    original = acs_hold(1, ruleset_id=original_ruleset)
+    resend = acs_hold(1, ruleset_id=new_ruleset)
+
+    first = _store_items(engine, [original])
+    second = _store_items(engine, [resend])
+
+    assert first["acs_items_inserted"] == 1
+    assert second["acs_items_inserted"] == 0
+    assert second["acs_items_duplicates"] == 1
+
+    assert rows(
+        engine,
+        "SELECT ruleset_id FROM acs_item_events",
+    ) == [(original_ruleset,)]
 
 def test_a_non_hold_is_stored_with_nulls_and_a_state_change_under_one_identity_is_a_conflict(engine):
     _store_items(engine, [acs_hold(1), acs_non_hold(2, "non_hold_101"), acs_non_hold(3, "other_code10")])

@@ -446,6 +446,70 @@ def test_the_stored_row_is_exactly_the_event_in_utc(db):
     assert row[0] == hmac_like(1) and row[2] == hmac_like(1001) and row[3:] == ("unknown", "exception")
     assert datetime.fromisoformat(row[1]) == instant and datetime.fromisoformat(row[1]).utcoffset() == timedelta(0)
 
+def test_acs_resend_with_different_ruleset_id_is_an_idempotent_duplicate(db):
+    original_ruleset = "0a1b2c3d-4e5f-4a6b-9c7d-8e9f0a1b2c3d"
+    new_ruleset = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+
+    original = acs_hold(1, ruleset_id=original_ruleset)
+    resend = acs_hold(1, ruleset_id=new_ruleset)
+
+    first = post_upload(upload(checkins=[], acs_items=[original]))
+    second = post_upload(upload(checkins=[], acs_items=[resend]))
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    assert second.json()["acs_items_inserted"] == 0
+    assert second.json()["acs_items_duplicates"] == 1
+    assert db.count("acs_item_events") == 1
+
+def test_acs_ruleset_only_duplicate_does_not_replace_original_ruleset(db):
+    original_ruleset = "0a1b2c3d-4e5f-4a6b-9c7d-8e9f0a1b2c3d"
+    new_ruleset = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+
+    assert post_upload(
+        upload(
+            checkins=[],
+            acs_items=[acs_hold(1, ruleset_id=original_ruleset)],
+        )
+    ).status_code == 200
+
+    assert post_upload(
+        upload(
+            checkins=[],
+            acs_items=[acs_hold(1, ruleset_id=new_ruleset)],
+        )
+    ).status_code == 200
+
+    rows = db.rows(
+        "acs_item_events",
+        "ruleset_id",
+    )
+
+    assert rows == [(original_ruleset,)]
+
+def test_acs_same_event_key_with_different_destination_is_a_conflict(db):
+    original = acs_hold(1, destination="library_express")
+    changed = acs_hold(1, destination="main")
+
+    assert post_upload(upload(checkins=[], acs_items=[original])).status_code == 200
+
+    response = post_upload(upload(checkins=[], acs_items=[changed]))
+
+    assert response.status_code == 409
+    assert db.count("acs_item_events") == 1
+
+
+def test_acs_same_event_key_with_different_classification_flag_is_a_conflict(db):
+    original = acs_hold(1, is_ill=False)
+    changed = acs_hold(1, is_ill=True)
+
+    assert post_upload(upload(checkins=[], acs_items=[original])).status_code == 200
+
+    response = post_upload(upload(checkins=[], acs_items=[changed]))
+
+    assert response.status_code == 409
+    assert db.count("acs_item_events") == 1
 
 def timezone_of(hours: int):
     from datetime import timezone
@@ -504,14 +568,18 @@ def test_the_same_identity_under_another_tenant_is_a_different_event(db):
 
 
 CHANGES = [
-    ("checkins", checkin, {"destination": "main"}), ("checkins", checkin, {"bin": "9"}),
-    ("checkins", checkin, {"item_key": hmac_like(99)}), ("checkins", checkin, {"item_key": None}),
+    ("checkins", checkin, {"destination": "main"}),
+    ("checkins", checkin, {"bin": "9"}),
+    ("checkins", checkin, {"item_key": hmac_like(99)}),
+    ("checkins", checkin, {"item_key": None}),
     ("checkins", checkin, {"event_time": when(days=3)}),
-    ("rejects", reject, {"error_class": "routing_error"}), ("rejects", reject, {"item_key": None}),
+    ("rejects", reject, {"error_class": "routing_error"}),
+    ("rejects", reject, {"item_key": None}),
     ("rejects", reject, {"event_time": when(days=3)}),
-    ("acs_items", acs_hold, {"destination": "main"}), ("acs_items", acs_hold, {"is_ill": True}),
-    ("acs_items", acs_hold, {"is_branch_services": True}), ("acs_items", acs_hold, {"is_collection_services": False}),
-    ("acs_items", acs_hold, {"ruleset_id": "9e0f1a2b-3c4d-4e5f-8a6b-7c8d9e0f1a2b"}), ("acs_items", acs_hold, {"ruleset_id": None}),
+    ("acs_items", acs_hold, {"destination": "main"}),
+    ("acs_items", acs_hold, {"is_ill": True}),
+    ("acs_items", acs_hold, {"is_branch_services": True}),
+    ("acs_items", acs_hold, {"is_collection_services": False}),
     ("acs_items", acs_hold, {"item_key": hmac_like(98)}),
 ]
 

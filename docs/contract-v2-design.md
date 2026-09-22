@@ -240,8 +240,9 @@ derived field. An unknown or missing `state` is a 422 (`union_tag_invalid` / `un
 of the submitted tag. There is no `state` for message-64 records, so they cannot be sent.
 
 `event_key` remains an opaque HMAC over a deterministic versioned canonical form of the **same privacy-safe fields** (for a
-non-hold: version/kind, `event_time`, `item_key`, `state`; for a hold: those plus destination, the three flags and the ruleset id
-or none). The raw line, barcode, patron identifiers, title and raw message code never take part. The server does not compute it and
+non-hold: version/kind, `event_time`, `item_key`, `state`; for a hold: those plus destination and the three flags. The `ruleset_id`
+is provenance in the payload and is NOT part of the key; a later correction of a hold, sent when a patron profile arrives after it, adds a
+local `revision` counter greater than 0, see `docs/collector-v2.md`. The raw line, barcode, patron identifiers, title and raw message code never take part. The server does not compute it and
 cannot verify it (section 7); the collector step will. Because `state` is part of the identity, changing a record's state under one
 `event_key` is a conflict (409), not a silent overwrite.
 
