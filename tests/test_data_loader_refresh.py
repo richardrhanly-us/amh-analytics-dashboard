@@ -44,7 +44,7 @@ def _clear_loader_caches():
 def counting_read_table(monkeypatch):
     calls = []
 
-    def fake_read_table(query, params=None):
+    def fake_read_table(query, params=None, *, customer_id=None, branch_id=None):
         calls.append((query, params))
         return pd.DataFrame()
 

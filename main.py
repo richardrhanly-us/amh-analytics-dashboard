@@ -614,6 +614,24 @@ def _authenticate_agent(conn, authorization: str | None, expected_scope: tuple[i
         {"id": token_row["id"]},
     )
 
+    # RLS tenant context (transaction-local, same conn every v1/v2 endpoint
+    # already threads through this function's caller) -- set only after the
+    # token has been fully validated above, using its own authenticated
+    # scope, never a payload value. set_config() is PostgreSQL-only; SQLite
+    # (used by unit tests) has no RLS to enforce and no such function --
+    # same dialect guard already used by collector_enrollment_service's
+    # _lock_suffix for the identical PG-only-behavior-on-a-conn-that-might-
+    # be-SQLite situation.
+    if getattr(getattr(conn, "dialect", None), "name", "") == "postgresql":
+        conn.execute(
+            text("SELECT set_config('app.operational_customer_id', :v, true)"),
+            {"v": str(token_row["customer_id"])},
+        )
+        conn.execute(
+            text("SELECT set_config('app.operational_branch_id', :v, true)"),
+            {"v": str(token_row["branch_id"])},
+        )
+
     return token_row
 
 

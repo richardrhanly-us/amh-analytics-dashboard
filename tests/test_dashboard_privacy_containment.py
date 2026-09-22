@@ -278,7 +278,10 @@ def test_every_column_the_classifier_reads_is_still_loaded():
 @pytest.fixture
 def captured_queries(monkeypatch):
     calls = []
-    monkeypatch.setattr(dl, "_read_table", lambda query, params=None: calls.append((" ".join(query.split()), params)) or pd.DataFrame())
+    monkeypatch.setattr(
+        dl, "_read_table",
+        lambda query, params=None, **_kwargs: calls.append((" ".join(query.split()), params)) or pd.DataFrame(),
+    )
     return calls
 
 
@@ -338,7 +341,7 @@ def test_the_explicit_query_is_valid_sql_and_returns_only_those_columns_from_a_f
 def test_rows_loaded_with_only_the_explicit_columns_classify_exactly_as_before(monkeypatch):
     """The whole loader -> normaliser -> classifier path on the reduced column set: the aggregates do not change."""
     full = pd.DataFrame(synthetic_acs_rows()).rename(columns={"datetime": "event_time"})
-    monkeypatch.setattr(dl, "_read_table", lambda query, params=None: full[list(dl.ACS_LOAD_COLUMNS)].copy())
+    monkeypatch.setattr(dl, "_read_table", lambda query, params=None, **_kwargs: full[list(dl.ACS_LOAD_COLUMNS)].copy())
 
     loaded = dl._load_acs_history_from_db(10, 1)
 
@@ -391,8 +394,25 @@ def _data_load_failure_script():
                                f"({c['row']}) on host {c['host']}")
                 raise DataError(f"INSERT INTO {c['table']} ({c['column']}) VALUES (%(v)s)", {"v": c["value"]}, orig)
 
+            # _read_table now opens an explicit Connection (engine.connect())
+            # rather than passing the bare Engine to pd.read_sql, so the
+            # fake engine here needs a working connect() context manager --
+            # a bare object() (with no connect() at all) would fail before
+            # ever reaching the monkeypatched pd.read_sql below, which
+            # would no longer be exercising the "driver" case it's named for.
+            class _FakeConn:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_exc):
+                    return False
+
+            class _FakeEngine:
+                def connect(self):
+                    return _FakeConn()
+
             pd.read_sql = failing_read_sql
-            dl.get_engine = lambda: object()
+            dl.get_engine = lambda: _FakeEngine()
         frame = dl._read_table(f"SELECT {c['column']} FROM {c['table']} WHERE tenant = :tenant", {"tenant": c["value"]})
         st.session_state["frame_is_empty"] = bool(frame.empty)
     finally:
@@ -447,7 +467,22 @@ def test_a_failed_data_load_is_logged_as_a_safe_summary_without_values_or_driver
 
         monkeypatch.setattr(dl, "get_engine", broken_engine)
     else:
-        monkeypatch.setattr(dl, "get_engine", lambda: object())
+        # _read_table opens an explicit Connection (engine.connect()) rather
+        # than passing the bare Engine to pd.read_sql, so the fake engine
+        # needs a working connect() context manager -- a bare object() would
+        # fail before ever reaching the monkeypatched pd.read_sql below.
+        class _FakeConn:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exc):
+                return False
+
+        class _FakeEngine:
+            def connect(self):
+                return _FakeConn()
+
+        monkeypatch.setattr(dl, "get_engine", lambda: _FakeEngine())
 
         def failing_read_sql(*_a, **_k):
             orig = PgError(f'invalid input syntax: "{DB_CANARIES["value"]}" Failing row contains ({DB_CANARIES["row"]}) '
