@@ -267,6 +267,7 @@ Problem Items: {problem_items:,}
                     "#6b7280",
                     value_font_size="1.7rem",
                     border_color="#93c5fd",
+                    value_is_html=True,
                 )
             else:
                 render_kpi_card(

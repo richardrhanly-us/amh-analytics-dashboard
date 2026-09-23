@@ -12,6 +12,9 @@
 #
 #***************************************************************
 
+import html
+import uuid
+
 import altair as alt
 import pandas as pd
 import streamlit as st
@@ -25,9 +28,38 @@ import streamlit as st
 #               subtitle, optional fill background, and custom styling
 #               options for dashboard metrics.
 #
-#  Parameters:  title - KPI card title.
-#               value - Main value displayed in the card.
+#               Accessibility (WCAG 1.3.1 Info and Relationships): the
+#               card's outer element carries role="group" with
+#               aria-labelledby pointing at the title and value elements'
+#               own ids, so assistive technology announces the two as one
+#               named group ("<title> <value>, group") instead of two
+#               unrelated pieces of text -- without duplicating that text
+#               into a separate aria-label, which would announce it
+#               twice. The subtitle is deliberately left OUT of that
+#               reference: it is still real, visible content inside the
+#               group and is read in its own normal position immediately
+#               after, so including it in the label too would be the
+#               exact kind of redundant double-announcement this design
+#               avoids elsewhere. ids are a fresh uuid4 per call, so
+#               rendering many cards on one page can never collide.
+#
+#               title and subtitle are always HTML-escaped -- both can
+#               carry organization-configured text (e.g. a transit
+#               destination label from Admin Settings), and this
+#               component has always rendered them via
+#               unsafe_allow_html=True, so unescaped admin-supplied text
+#               would previously have reached every viewer's page as raw
+#               HTML. value is escaped too UNLESS the caller explicitly
+#               passes value_is_html=True -- the one real, pre-existing
+#               use of that (ui_components.format_hour's small styled
+#               AM/PM span) is trusted, developer-authored HTML, never
+#               end-user or admin-supplied text.
+#
+#  Parameters:  title - KPI card title. Always escaped.
+#               value - Main value displayed in the card. Escaped unless
+#                       value_is_html=True.
 #               subtitle - Optional supporting text under the value.
+#                          Always escaped.
 #               subtitle_color - CSS color used for the subtitle.
 #               value_font_size - CSS font size for the main value.
 #               border_color - CSS border color for the card.
@@ -36,6 +68,12 @@ import streamlit as st
 #               fill_pct - Optional percentage used to fill the card
 #                          background from the bottom.
 #               fill_color - Optional CSS color for the fill area.
+#               value_is_html - Set True only when `value` is trusted,
+#                       pre-built HTML (e.g. ui_components.format_hour's
+#                       output) that must render as markup rather than
+#                       literal text. Never set this for organization-
+#                       configured or otherwise externally-influenced
+#                       text.
 #
 #  Returns:     None
 #
@@ -52,9 +90,21 @@ def render_kpi_card(
     value_wrap=False,
     fill_pct=None,
     fill_color=None,
+    value_is_html=False,
 ):
     # Use the active Streamlit theme to choose a default fill color.
     theme_base = st.get_option("theme.base") or "light"
+
+    # A fresh id pair per call -- never derived from title/value content,
+    # which can repeat across cards on the same page -- so aria-labelledby
+    # always references exactly one unambiguous title/value pair.
+    card_token = uuid.uuid4().hex
+    title_id = f"kpi-title-{card_token}"
+    value_id = f"kpi-value-{card_token}"
+
+    safe_title = html.escape(str(title))
+    safe_value = str(value) if value_is_html else html.escape(str(value))
+    safe_subtitle = html.escape(str(subtitle)) if subtitle else ""
 
     if fill_color is None:
         if theme_base == "dark":
@@ -102,12 +152,16 @@ def render_kpi_card(
             f'z-index:2;'
             f'opacity:0.82;'
             f'width:100%;'
-            f'">{subtitle}</div>'
+            f'">{safe_subtitle}</div>'
         )
 
-    # Build and render the full card HTML.
+    # Build and render the full card HTML. role="group" +
+    # aria-labelledby (referencing the title/value ids below, not a
+    # separate duplicated aria-label) is the only structural addition
+    # over the plain visual <div> this component has always rendered --
+    # see this function's own docstring for why.
     card_html = (
-        f'<div style="'
+        f'<div role="group" aria-labelledby="{title_id} {value_id}" style="'
         f'position:relative;'
         f'overflow:hidden;'
         f'border:1px solid {border_color};'
@@ -124,7 +178,7 @@ def render_kpi_card(
         f'box-shadow:0 1px 2px rgba(0, 0, 0, 0.08);'
         f'">'
         f'{fill_html}'
-        f'<div style="'
+        f'<div id="{title_id}" style="'
         f'font-size:1.08rem;'
         f'font-weight:600;'
         f'color:var(--text-color);'
@@ -132,8 +186,8 @@ def render_kpi_card(
         f'position:relative;'
         f'z-index:2;'
         f'opacity:0.80;'
-        f'">{title}</div>'
-        f'<div style="'
+        f'">{safe_title}</div>'
+        f'<div id="{value_id}" style="'
         f'font-size:{value_font_size};'
         f'font-weight:700;'
         f'color:{value_color};'
@@ -143,7 +197,7 @@ def render_kpi_card(
         f'word-break:{value_word_break};'
         f'position:relative;'
         f'z-index:2;'
-        f'">{value}</div>'
+        f'">{safe_value}</div>'
         f'{subtitle_html}'
         f'</div>'
     )
