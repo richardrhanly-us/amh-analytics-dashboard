@@ -42,6 +42,7 @@ from services.access_service import (
 from services.app_ui_service import apply_page_chrome, render_app_header
 from services.dashboard_refresh_service import (
     is_operating_hours,
+    resolve_live_data_cache_key,
     resolve_refresh_interval_seconds,
     resolve_run_every_seconds,
 )
@@ -624,6 +625,17 @@ if selected_customer_id is None or selected_branch_id is None:
 # run_every=...) scoped to only Live Today's live section: the rest of
 # the page (sidebar, chrome, historical views) now reruns only on a
 # genuine user interaction, never on a timer.
+#
+# Collector-cadence pass: the automatic poll interval defaults to 180s
+# (3 minutes, enforced as a hard minimum -- see
+# dashboard_refresh_service.MIN_REFRESH_SECONDS) because the production
+# scheduled Collector itself only runs every 15 minutes. Every automatic
+# poll still forces a fresh pipeline_status read (see the fragment below),
+# but checkins/rejects/ACS are only reloaded when that read reveals a NEW
+# successful Collector run (pipeline_status["last_run"] advanced) or the
+# user clicks "Refresh now" -- never on every tick, and never keyed off
+# pipeline_status["updated_at"], which continuous-agent heartbeat writes
+# also bump roughly every 60s independent of any real data change.
 #***************************************************************
 
 now_ct = datetime.now(APP_TZ)
@@ -743,9 +755,9 @@ today = now_ct.date()
 #***************************************************************
 # Live Today Auto-Refresh Pause Control
 #
-# WCAG 2.2.2 (Pause, Stop, Hide): Live Today's numbers move on their own
-# every few seconds during operating hours (see run_every below) with no
-# way to stop them, which can disorient a screen reader or low-vision/
+# WCAG 2.2.2 (Pause, Stop, Hide): Live Today's pipeline status checks
+# itself automatically during operating hours (see run_every below) with
+# no way to stop it, which can disorient a screen reader or low-vision/
 # cognitive-disability user who happens to be reading that section when
 # it re-renders. This gives the user an explicit, visible, real-text
 # (never icon-only) control to turn that off for their own session.
@@ -774,6 +786,8 @@ if selected_view == "Live Today":
             st.session_state[LIVE_TODAY_PAUSE_KEY] = True
             st.rerun()
 
+    st.caption(f"Automatic status check every {refresh_interval_seconds // 60} minutes")
+
 live_today_run_every = resolve_run_every_seconds(
     is_operating_hours_now=is_operating_hours(now_ct),
     is_paused=live_today_paused,
@@ -782,16 +796,32 @@ live_today_run_every = resolve_run_every_seconds(
 
 
 #***************************************************************
+# Live Today Refresh State (tenant-scoped)
+#
+# Tracks, per (customer, branch), the manual Refresh now counter and
+# never anything from another tenant. Keyed by the operational
+# customer/branch IDs -- the same scope already used for every live
+# loader call below -- so switching organization or branch can never
+# reuse another tenant's manual-refresh counter (see
+# dashboard_refresh_service.resolve_live_data_cache_key, which combines
+# this with the freshly-loaded pipeline_status["last_run"] on every
+# fragment run).
+#***************************************************************
+
+LIVE_TODAY_REFRESH_STATE_KEY = "_live_today_refresh_state"
+
+
+#***************************************************************
 # View Rendering
 #
 # Routes the user to the selected dashboard section. Live Today is the
-# only section whose numbers need to move every few seconds, so it is
-# the only section wrapped in an auto-refreshing st.fragment -- see the
-# comment on _render_live_today for exactly what that buys.
+# only section that checks itself automatically, so it is the only
+# section wrapped in an auto-refreshing st.fragment -- see the comment on
+# _render_live_today for exactly what that buys.
 # Overview/Reports/Transits build their context once per genuine
 # interaction (nav click, filter/date/branch change) and never rerun on
 # a timer at all: an all-time-history report gains nothing from
-# recomputing itself every 10 seconds while nobody is even looking at it,
+# recomputing itself every 3 minutes while nobody is even looking at it,
 # and every dashboard section shares the same underlying data anyway
 # once a real rerun does happen.
 #***************************************************************
@@ -805,46 +835,79 @@ def _render_live_today():
     # st_autorefresh-driven full-script rerun, which re-ran all of that
     # every ~10 seconds regardless of which section was even visible.
     #
-    # live_tick is this fragment's own local, monotonically increasing
-    # counter (distinct from any outer refresh_count) used purely to bust
-    # the live loaders' cache key each time this fragment reruns -- the
-    # loaders themselves are still ttl=900, but a fresh tick forces a real
-    # read on every fragment rerun instead of serving a stale cache hit.
+    # poll_tick is this fragment's own local, monotonically increasing
+    # counter used purely to force load_pipeline_status to actually query
+    # on every fragment run (automatic poll or manual Refresh now) --
+    # pipeline_status is cheap (a single-row lookup) and its freshness is
+    # exactly what the poll exists to check, so it always gets a real
+    # read here regardless of its own ttl=60.
     tick_key = "_live_today_fragment_tick"
     st.session_state[tick_key] = st.session_state.get(tick_key, 0) + 1
-    live_tick = st.session_state[tick_key]
+    poll_tick = st.session_state[tick_key]
 
     pipeline_status = load_pipeline_status(
         org_slug=selected_customer_id,
         branch_slug=selected_branch_id,
         mtime=None,
-        refresh_count=live_tick,
+        refresh_count=poll_tick,
     )
 
-    status_mtime = "0"
-    if pipeline_status:
-        status_updated_at = pipeline_status.get("updated_at")
-        if status_updated_at:
-            status_mtime = str(status_updated_at)
+    # Tenant-scoped manual-refresh counter -- see the module-level
+    # LIVE_TODAY_REFRESH_STATE_KEY comment above.
+    tenant_key = (selected_customer_id, selected_branch_id)
+    refresh_state_by_tenant = st.session_state.setdefault(LIVE_TODAY_REFRESH_STATE_KEY, {})
+    tenant_refresh_state = refresh_state_by_tenant.setdefault(tenant_key, {"manual_refresh_count": 0})
+
+    # last_run only advances when the scheduled Collector completes a run
+    # successfully (collector/run.py's run_once) -- never on a failed
+    # attempt (last_attempt advances instead) and never on a
+    # continuous-agent heartbeat write (those only touch health_status/
+    # updated_at, never last_run -- see main.py's
+    # _PIPELINE_STATUS_HEARTBEAT_FIELDS). Missing/empty pipeline_status
+    # (e.g. a brand-new tenant, or a failed status read) is handled the
+    # same as "no successful run yet" rather than raising.
+    last_run = pipeline_status.get("last_run") if pipeline_status else None
+
+    # Unchanged across fragment reruns (same last_run, same manual-refresh
+    # count) -> identical key -> load_checkins_df/load_rejects_df/
+    # load_acs_df all hit their own cache, no DB read. A new successful
+    # Collector run OR a manual Refresh now click changes this key ->
+    # a real read on all three. Deliberately NOT derived from
+    # pipeline_status["updated_at"] -- see resolve_live_data_cache_key's
+    # own docstring for why.
+    live_data_key = resolve_live_data_cache_key(
+        last_run=last_run,
+        manual_refresh_count=tenant_refresh_state["manual_refresh_count"],
+    )
 
     df_live_raw = load_checkins_df(
         org_slug=selected_customer_id,
         branch_slug=selected_branch_id,
-        mtime=status_mtime,
-        refresh_count=live_tick,
+        mtime=None,
+        refresh_count=live_data_key,
     )
     rejects_live_raw = load_rejects_df(
         org_slug=selected_customer_id,
         branch_slug=selected_branch_id,
-        mtime=status_mtime,
-        refresh_count=live_tick,
+        mtime=None,
+        refresh_count=live_data_key,
     )
     acs_live_raw = load_acs_df(
         org_slug=selected_customer_id,
         branch_slug=selected_branch_id,
-        mtime=status_mtime,
-        refresh_count=live_tick,
+        mtime=None,
+        refresh_count=live_data_key,
     )
+
+    def _handle_refresh_now():
+        # Bumping this (tenant-scoped) counter changes live_data_key on
+        # the NEXT fragment run -- exactly the same "flip session_state,
+        # then st.rerun()" pattern the Pause/Resume control above already
+        # uses. poll_tick above already forces a fresh pipeline_status
+        # read on every fragment run regardless of why it reran, so a
+        # manual Refresh now click gets both a fresh status read and a
+        # forced live-data reload without any extra branching here.
+        tenant_refresh_state["manual_refresh_count"] += 1
 
     live_view_context = build_dashboard_context(
         df_live_raw=df_live_raw,
@@ -854,7 +917,7 @@ def _render_live_today():
         acs_live_raw=acs_live_raw,
         acs_history_raw=acs_history_raw,
         pipeline_status=pipeline_status,
-        refresh_count=live_tick,
+        refresh_count=poll_tick,
         start_date=start_date,
         end_date=end_date,
         today=today,
@@ -875,6 +938,7 @@ def _render_live_today():
 
     live_view_context["live_today_args"]["can_view_internal_workflow"] = show_internal_workflow
     live_view_context["live_today_args"]["can_view_transits"] = show_transits_tab
+    live_view_context["live_today_args"]["on_refresh_now"] = _handle_refresh_now
 
     if live_view_context["no_today_data"]:
         st.info("No checkins have been ingested yet for today. Live dashboard is showing the current day only.")

@@ -91,6 +91,7 @@ def render_kpi_card(
     fill_pct=None,
     fill_color=None,
     value_is_html=False,
+    subtitle_is_html=False,
 ):
     # Use the active Streamlit theme to choose a default fill color.
     theme_base = st.get_option("theme.base") or "light"
@@ -104,7 +105,11 @@ def render_kpi_card(
 
     safe_title = html.escape(str(title))
     safe_value = str(value) if value_is_html else html.escape(str(value))
-    safe_subtitle = html.escape(str(subtitle)) if subtitle else ""
+    safe_subtitle = (
+        str(subtitle)
+        if subtitle and subtitle_is_html
+        else html.escape(str(subtitle)) if subtitle else ""
+    )
 
     if fill_color is None:
         if theme_base == "dark":

@@ -13,7 +13,8 @@ from ui_components import (
 
 def render_live_today(
     today,
-    refresh_count,
+    refresh_count,  # kept for call-site/context-dict compatibility; no longer read here
+    on_refresh_now,
     pipeline_status_label,
     pipeline_status_color,
     pipeline_status_bg,
@@ -88,18 +89,14 @@ def render_live_today(
     with col1:
         st.header(f"{today.strftime('%A, %b %d')}")
 
-        if st.button("Refresh Live Data"):
-            # Pre-existing, manual, global cache clear -- wipes every
-            # tenant/session's cached data on the server, not just this
-            # one. Out of scope for Continuous Ingestion Phase 4 (which
-            # only touches the automatic refresh_count-driven cadence in
-            # app.py/data_loader.py), but worth a note now that the
-            # automatic refresh is much faster (as low as 10s): this
-            # button is a much bigger hammer than the interval users can
-            # already just wait out, and is a candidate to revisit if it
-            # turns out to be needed/used often post-Phase-4.
-            st.cache_data.clear()
-            st.session_state["last_refresh_count"] = refresh_count
+        if st.button("Refresh now"):
+            # Tenant-scoped manual refresh (app.py's on_refresh_now
+            # callback) -- forces a fresh pipeline_status read and a
+            # real checkins/rejects/ACS reload for this tenant only, on
+            # the next fragment run. Deliberately not a whole-cache wipe,
+            # which would also clear every other tenant/session's
+            # unrelated cached data on the server.
+            on_refresh_now()
             st.rerun()
 
     with col2:
@@ -256,6 +253,7 @@ Problem Items: {problem_items:,}
                 "#6b7280",
                 value_font_size="2.2rem",
                 border_color="#93c5fd",
+                subtitle_is_html=True,
             )
 
         with ops3:

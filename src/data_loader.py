@@ -698,8 +698,9 @@ def _load_acs_live_from_db(org_slug, branch_slug):
 # Continuous Ingestion Phase 4: deliberately does NOT take refresh_count
 # or mtime. This is an all-time, unbounded history query (see
 # _load_checkins_history_from_db / _scoped_query) -- tying it to the live
-# refresh cadence would re-run it every refresh tick (as fast as every
-# 10s) for data that doesn't need sub-minute freshness, and mtime would
+# refresh cadence would re-run it every automatic poll (every 180s by
+# default -- see dashboard_refresh_service.DEFAULT_REFRESH_SECONDS) for
+# data that doesn't need that kind of freshness, and mtime would
 # reintroduce the same problem via pipeline_status.updated_at, which the
 # Phase 3 heartbeat now touches roughly every 60s on any cut-over branch.
 # This loader relies solely on its own ttl=900 (15 min) instead.

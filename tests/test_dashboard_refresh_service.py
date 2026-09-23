@@ -1,6 +1,7 @@
-"""Tests for src/services/dashboard_refresh_service.py -- the Phase 4
-live refresh interval resolver and operating-hours gate. Pure functions,
-no Streamlit runtime or DB access needed.
+"""Tests for src/services/dashboard_refresh_service.py -- the Live Today
+automatic refresh interval resolver, operating-hours gate, and live-data
+cache-key identity (Collector-cadence-aligned refresh redesign). Pure
+functions, no Streamlit runtime or DB access needed.
 """
 
 from datetime import datetime
@@ -8,7 +9,9 @@ from zoneinfo import ZoneInfo
 
 from services.dashboard_refresh_service import (
     DEFAULT_REFRESH_SECONDS,
+    MIN_REFRESH_SECONDS,
     is_operating_hours,
+    resolve_live_data_cache_key,
     resolve_refresh_interval_seconds,
     resolve_run_every_seconds,
 )
@@ -16,70 +19,166 @@ from services.dashboard_refresh_service import (
 APP_TZ = ZoneInfo("America/Chicago")
 
 
-def test_default_is_ten_seconds():
-    assert DEFAULT_REFRESH_SECONDS == 10
+# --- resolve_refresh_interval_seconds ---------------------------------------
+#
+# Aligned with the production scheduled Collector's own 15-minute cadence:
+# default and hard-minimum automatic poll interval is 180s (3 minutes) --
+# see requirement #1 (default is 180s) and #4 (env override behavior).
+
+
+def test_default_is_180_seconds():
+    assert DEFAULT_REFRESH_SECONDS == 180
+
+
+def test_minimum_is_180_seconds():
+    assert MIN_REFRESH_SECONDS == 180
 
 
 def test_missing_env_value_falls_back_to_default():
     seconds, warning = resolve_refresh_interval_seconds(None)
-    assert seconds == 10
+    assert seconds == 180
     assert warning is None
 
 
 def test_empty_string_env_value_falls_back_to_default():
     seconds, warning = resolve_refresh_interval_seconds("")
-    assert seconds == 10
+    assert seconds == 180
     assert warning is None
 
 
 def test_whitespace_only_env_value_falls_back_to_default():
     seconds, warning = resolve_refresh_interval_seconds("   ")
-    assert seconds == 10
+    assert seconds == 180
     assert warning is None
 
 
-def test_valid_positive_integer_overrides_default():
-    seconds, warning = resolve_refresh_interval_seconds("15")
-    assert seconds == 15
+def test_valid_value_at_the_minimum_is_accepted_unclamped():
+    seconds, warning = resolve_refresh_interval_seconds("180")
+    assert seconds == 180
+    assert warning is None
+
+
+def test_valid_value_above_the_minimum_overrides_default():
+    seconds, warning = resolve_refresh_interval_seconds("300")
+    assert seconds == 300
     assert warning is None
 
 
 def test_valid_value_with_surrounding_whitespace_is_trimmed():
-    seconds, warning = resolve_refresh_interval_seconds("  20  ")
-    assert seconds == 20
+    seconds, warning = resolve_refresh_interval_seconds("  240  ")
+    assert seconds == 240
     assert warning is None
+
+
+def test_below_minimum_positive_value_is_clamped_up_with_warning():
+    # Production cannot be accidentally regressed to fast polling (e.g. the
+    # old 10s default) -- any positive value below 180 is clamped UP to
+    # 180, not silently accepted, and a warning is produced either way.
+    seconds, warning = resolve_refresh_interval_seconds("10")
+    assert seconds == 180
+    assert warning is not None
+    assert "180" in warning
+
+
+def test_one_second_below_minimum_is_still_clamped():
+    seconds, warning = resolve_refresh_interval_seconds("179")
+    assert seconds == 180
+    assert warning is not None
 
 
 def test_zero_falls_back_safely_with_warning():
     seconds, warning = resolve_refresh_interval_seconds("0")
-    assert seconds == 10
+    assert seconds == 180
     assert warning is not None
     assert "0" in warning
 
 
 def test_negative_falls_back_safely_with_warning():
     seconds, warning = resolve_refresh_interval_seconds("-5")
-    assert seconds == 10
+    assert seconds == 180
     assert warning is not None
 
 
 def test_non_integer_falls_back_safely_with_warning():
     seconds, warning = resolve_refresh_interval_seconds("not-a-number")
-    assert seconds == 10
+    assert seconds == 180
     assert warning is not None
 
 
 def test_float_string_falls_back_safely_with_warning():
     # int("10.5") raises ValueError -- must not crash, must fall back.
     seconds, warning = resolve_refresh_interval_seconds("10.5")
-    assert seconds == 10
+    assert seconds == 180
     assert warning is not None
 
 
 def test_resolve_never_raises_on_arbitrary_garbage():
     for garbage in ["NaN", "Infinity", "--5", "1e10", "  ", "\t\n", "0x10"]:
         seconds, _warning = resolve_refresh_interval_seconds(garbage)
-        assert seconds > 0
+        assert seconds >= MIN_REFRESH_SECONDS
+
+
+def test_resolve_never_returns_below_the_minimum_for_any_input():
+    # Whatever is thrown at it -- unset, garbage, zero, negative, or a
+    # too-frequent positive value -- the resolved interval is never below
+    # MIN_REFRESH_SECONDS. This is the actual production-safety guarantee
+    # requested: no code path can regress polling below 180s.
+    for raw in [None, "", "  ", "1", "59", "179", "180", "181", "3600", "-100", "0", "garbage"]:
+        seconds, _warning = resolve_refresh_interval_seconds(raw)
+        assert seconds >= MIN_REFRESH_SECONDS
+
+
+# --- resolve_live_data_cache_key --------------------------------------------
+#
+# The successful-run identity + manual-refresh-counter cache key that
+# decides whether checkins/rejects/ACS actually reload. See requirements
+# #6-#9 for the exact reload/no-reload matrix this underpins (proven at
+# the data_loader cache level in test_data_loader_refresh.py).
+
+
+def test_cache_key_is_deterministic_for_the_same_inputs():
+    key_a = resolve_live_data_cache_key(last_run="2026-09-22T10:00:00", manual_refresh_count=0)
+    key_b = resolve_live_data_cache_key(last_run="2026-09-22T10:00:00", manual_refresh_count=0)
+    assert key_a == key_b
+
+
+def test_cache_key_changes_when_last_run_changes():
+    unchanged = resolve_live_data_cache_key(last_run="2026-09-22T10:00:00", manual_refresh_count=0)
+    changed = resolve_live_data_cache_key(last_run="2026-09-22T10:15:00", manual_refresh_count=0)
+    assert unchanged != changed
+
+
+def test_cache_key_changes_when_manual_refresh_count_changes():
+    before = resolve_live_data_cache_key(last_run="2026-09-22T10:00:00", manual_refresh_count=0)
+    after = resolve_live_data_cache_key(last_run="2026-09-22T10:00:00", manual_refresh_count=1)
+    assert before != after
+
+
+def test_cache_key_handles_none_last_run_without_raising():
+    # Missing pipeline_status, or a pipeline_status row whose Collector has
+    # never completed a successful run yet (last_run IS NULL).
+    key = resolve_live_data_cache_key(last_run=None, manual_refresh_count=0)
+    assert isinstance(key, str)
+
+
+def test_cache_key_is_stable_across_repeated_none_last_run():
+    # While no successful run has EVER happened, repeated automatic polls
+    # (each still passing last_run=None) must keep resolving to the exact
+    # same key -- otherwise a tenant with no completed run yet would
+    # reload live data on every single poll forever.
+    key_1 = resolve_live_data_cache_key(last_run=None, manual_refresh_count=0)
+    key_2 = resolve_live_data_cache_key(last_run=None, manual_refresh_count=0)
+    assert key_1 == key_2
+
+
+def test_cache_key_does_not_take_updated_at_or_last_attempt():
+    # Architectural guarantee, not just behavior: the function's signature
+    # itself has no way to accept updated_at or last_attempt, so neither
+    # can ever influence the key no matter what app.py passes.
+    import inspect
+
+    params = set(inspect.signature(resolve_live_data_cache_key).parameters)
+    assert params == {"last_run", "manual_refresh_count"}
 
 
 # --- is_operating_hours -----------------------------------------------------

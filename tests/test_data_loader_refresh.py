@@ -124,6 +124,119 @@ def test_pipeline_status_loader_misses_cache_on_new_refresh_count(counting_read_
     assert len(counting_read_table) == 2
 
 
+# --- behavioral: Collector-cadence live-data reload/no-reload matrix -------
+#
+# app.py no longer passes a raw ever-incrementing tick as refresh_count to
+# the three live loaders -- it passes
+# dashboard_refresh_service.resolve_live_data_cache_key(last_run,
+# manual_refresh_count), and mtime is always None (never derived from
+# pipeline_status["updated_at"], which continuous-agent heartbeat writes
+# also bump). These tests drive the REAL cache key builder against the
+# REAL loaders to prove the exact reload/no-reload matrix the refresh
+# redesign requires.
+
+from services.dashboard_refresh_service import resolve_live_data_cache_key
+
+LIVE_LOADERS = [dl.load_checkins_df, dl.load_rejects_df, dl.load_acs_df]
+
+
+@pytest.mark.parametrize("loader", LIVE_LOADERS)
+def test_unchanged_last_run_does_not_force_live_reload(loader, counting_read_table):
+    # Two automatic polls that both observe the same last_run (no new
+    # successful Collector run) must be a single real DB read, not two.
+    key = resolve_live_data_cache_key(last_run="2026-09-22T10:00:00", manual_refresh_count=0)
+    loader(org_slug=ORG, branch_slug=BRANCH, mtime=None, refresh_count=key)
+    loader(org_slug=ORG, branch_slug=BRANCH, mtime=None, refresh_count=key)
+
+    assert len(counting_read_table) == 1
+
+
+@pytest.mark.parametrize("loader", LIVE_LOADERS)
+def test_changed_last_run_forces_live_reload(loader, counting_read_table):
+    # A new successful Collector run (last_run advanced) must force a real
+    # reload of checkins/rejects/ACS.
+    key_1 = resolve_live_data_cache_key(last_run="2026-09-22T10:00:00", manual_refresh_count=0)
+    key_2 = resolve_live_data_cache_key(last_run="2026-09-22T10:15:00", manual_refresh_count=0)
+    loader(org_slug=ORG, branch_slug=BRANCH, mtime=None, refresh_count=key_1)
+    loader(org_slug=ORG, branch_slug=BRANCH, mtime=None, refresh_count=key_2)
+
+    assert len(counting_read_table) == 2
+
+
+@pytest.mark.parametrize("loader", LIVE_LOADERS)
+def test_heartbeat_only_updated_at_change_does_not_force_live_reload(loader, counting_read_table):
+    # Simulates two pipeline_status reads where only updated_at changed
+    # (a continuous-agent heartbeat write) -- last_run is identical both
+    # times, so only last_run (never updated_at) feeds the cache key.
+    status_poll_1 = {"last_run": "2026-09-22T10:00:00", "updated_at": "2026-09-22T10:00:05"}
+    status_poll_2 = {"last_run": "2026-09-22T10:00:00", "updated_at": "2026-09-22T10:01:03"}
+
+    key_1 = resolve_live_data_cache_key(last_run=status_poll_1["last_run"], manual_refresh_count=0)
+    key_2 = resolve_live_data_cache_key(last_run=status_poll_2["last_run"], manual_refresh_count=0)
+    assert key_1 == key_2
+
+    loader(org_slug=ORG, branch_slug=BRANCH, mtime=None, refresh_count=key_1)
+    loader(org_slug=ORG, branch_slug=BRANCH, mtime=None, refresh_count=key_2)
+
+    assert len(counting_read_table) == 1
+
+
+@pytest.mark.parametrize("loader", LIVE_LOADERS)
+def test_changed_last_attempt_alone_does_not_force_live_reload(loader, counting_read_table):
+    # A failed scheduled-Collector attempt advances last_attempt but never
+    # last_run -- must not force a live reload either.
+    status_poll_1 = {"last_run": "2026-09-22T10:00:00", "last_attempt": "2026-09-22T10:00:00"}
+    status_poll_2 = {"last_run": "2026-09-22T10:00:00", "last_attempt": "2026-09-22T10:15:00"}
+
+    key_1 = resolve_live_data_cache_key(last_run=status_poll_1["last_run"], manual_refresh_count=0)
+    key_2 = resolve_live_data_cache_key(last_run=status_poll_2["last_run"], manual_refresh_count=0)
+    assert key_1 == key_2
+
+    loader(org_slug=ORG, branch_slug=BRANCH, mtime=None, refresh_count=key_1)
+    loader(org_slug=ORG, branch_slug=BRANCH, mtime=None, refresh_count=key_2)
+
+    assert len(counting_read_table) == 1
+
+
+@pytest.mark.parametrize("loader", LIVE_LOADERS)
+def test_manual_refresh_forces_live_reload_even_with_unchanged_last_run(loader, counting_read_table):
+    # "Refresh now" must force a real reload even when the Collector has
+    # not produced a new successful run since the last poll.
+    key_before = resolve_live_data_cache_key(last_run="2026-09-22T10:00:00", manual_refresh_count=0)
+    key_after_manual_refresh = resolve_live_data_cache_key(last_run="2026-09-22T10:00:00", manual_refresh_count=1)
+
+    loader(org_slug=ORG, branch_slug=BRANCH, mtime=None, refresh_count=key_before)
+    loader(org_slug=ORG, branch_slug=BRANCH, mtime=None, refresh_count=key_after_manual_refresh)
+
+    assert len(counting_read_table) == 2
+
+
+def test_missing_pipeline_status_produces_a_stable_key_and_still_loads(counting_read_table):
+    # No pipeline_status row yet (brand-new tenant) or a failed status
+    # read: last_run is None both times -- must not crash, and repeated
+    # polls in that state must still hit cache (not hammer the DB forever
+    # while waiting for the very first successful Collector run).
+    key_1 = resolve_live_data_cache_key(last_run=None, manual_refresh_count=0)
+    key_2 = resolve_live_data_cache_key(last_run=None, manual_refresh_count=0)
+
+    df_1 = dl.load_checkins_df(org_slug=ORG, branch_slug=BRANCH, mtime=None, refresh_count=key_1)
+    df_2 = dl.load_checkins_df(org_slug=ORG, branch_slug=BRANCH, mtime=None, refresh_count=key_2)
+
+    assert len(counting_read_table) == 1
+    assert isinstance(df_1, pd.DataFrame)
+    assert isinstance(df_2, pd.DataFrame)
+
+
+def test_first_render_key_loads_live_data_correctly(counting_read_table):
+    # First-ever render for a tenant that already has a completed run:
+    # the very first cache key call must be a genuine read (empty cache),
+    # not silently skipped/served stale.
+    key = resolve_live_data_cache_key(last_run="2026-09-22T10:00:00", manual_refresh_count=0)
+    dl.load_checkins_df(org_slug=ORG, branch_slug=BRANCH, mtime=None, refresh_count=key)
+
+    assert len(counting_read_table) == 1
+
+
 # --- behavioral: historical loaders are NOT tied to the live cadence -------
 
 
@@ -170,8 +283,14 @@ def test_no_new_cache_data_clear_call_sites_in_data_loader():
     assert "cache_data.clear()" not in source
 
 
-def test_cache_data_clear_still_limited_to_one_pre_existing_call_site():
+def test_no_global_cache_data_clear_call_sites_in_live_today_view():
+    # The pre-existing "Refresh Live Data" button used to call
+    # st.cache_data.clear() directly (a global, cross-tenant cache wipe).
+    # The Collector-cadence refresh redesign replaced it with a
+    # tenant-scoped manual-refresh counter (app.py's on_refresh_now
+    # callback + dashboard_refresh_service.resolve_live_data_cache_key),
+    # so no call site here should ever clear the whole cache again.
     from views import live_today_view
 
     source = inspect.getsource(live_today_view)
-    assert source.count("st.cache_data.clear()") == 1
+    assert "st.cache_data.clear()" not in source
