@@ -536,7 +536,10 @@ Problem Items: {problem_items:,}
             y=alt.Y("checkins:Q", title="Checkins"),
             tooltip=["hour_label", "checkins"],
         )
-        .properties(height=250)
+        .properties(
+            height=250,
+            description="Line chart of today's checkins by hour, showing today's activity pattern so far.",
+        )
     )
 
     render_chart(checkins_hour_chart)
@@ -566,7 +569,10 @@ Problem Items: {problem_items:,}
                     y=alt.Y("checkins:Q", title="Checkins"),
                     tooltip=["bin_label", "checkins"],
                 )
-                .properties(height=350)
+                .properties(
+                    height=350,
+                    description="Bar chart of today's checkins grouped by sort bin, showing today's bin distribution.",
+                )
             )
 
             render_chart(today_bin_bar_chart)
@@ -618,7 +624,13 @@ Problem Items: {problem_items:,}
                     color=alt.Color("bin:N", title="Bin"),
                     tooltip=["hour_label", "bin", "checkins"],
                 )
-                .properties(height=350)
+                .properties(
+                    height=350,
+                    description=(
+                        "Line chart of today's checkins by hour, one line per sort "
+                        "bin, showing how bin volume changes throughout the day."
+                    ),
+                )
             )
 
             render_chart(live_bin_chart)

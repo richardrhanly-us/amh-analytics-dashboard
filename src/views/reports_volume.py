@@ -85,7 +85,9 @@ def render_volume_capacity_section(df, df_live_raw, df_history_raw, today, gated
                     "day_of_week",
                     "avg_items_per_day",
                     "Avg Checkins Per Day",
-                    "Day of Week"
+                    "Bar chart of the average number of checkins on each day of the "
+                    "week, averaged across the selected date range.",
+                    x_title="Day of Week"
                 )
                 render_chart(dow_chart)
     
@@ -165,7 +167,9 @@ def render_volume_capacity_section(df, df_live_raw, df_history_raw, today, gated
                 peak_hour_chart = build_hourly_bar_chart(
                     hour_summary.rename(columns={"avg_checkins": "avg_items_per_hour"}),
                     "avg_items_per_hour",
-                    "Avg Checkins Per Hour"
+                    "Avg Checkins Per Hour",
+                    "Bar chart of the average number of checkins in each hour of the day, "
+                    "averaged across the selected date range."
                 )
                 render_chart(peak_hour_chart)
             
@@ -242,7 +246,9 @@ def render_volume_capacity_section(df, df_live_raw, df_history_raw, today, gated
             throughput_chart = build_hourly_bar_chart(
                 avg_hourly_chart_df,
                 "avg_items_per_hour",
-                "Avg Checkins Per Hour"
+                "Avg Checkins Per Hour",
+                "Bar chart of average checkin throughput by hour of day, showing which "
+                "hours the sorter processes the most items on average."
             )
             render_chart(throughput_chart)
             
@@ -304,7 +310,9 @@ def render_volume_capacity_section(df, df_live_raw, df_history_raw, today, gated
                 "day_of_week",
                 "avg_checkins_per_day",
                 "Avg Checkins Per Day",
-                "Day of Week"
+                "Bar chart of average checkin throughput by day of the week, showing "
+                "which weekdays the sorter processes the most items on average.",
+                x_title="Day of Week"
             )
             render_chart(weekday_chart)
     
@@ -388,7 +396,15 @@ def render_volume_capacity_section(df, df_live_raw, df_history_raw, today, gated
                 value_name="items"
             )
     
-            compare_chart = build_hourly_line_chart(compare_long, "items", "Items", series_col="series")
+            compare_chart = build_hourly_line_chart(
+                compare_long,
+                "items",
+                "Items",
+                "Line chart comparing today's checkins by hour against the typical "
+                "hourly pattern from prior days, one line for today and one for the "
+                "typical pattern.",
+                series_col="series",
+            )
             render_chart(compare_chart)
     
             display_df = compare_df[["hour_label", "today", "typical", "delta"]].rename(

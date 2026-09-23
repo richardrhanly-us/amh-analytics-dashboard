@@ -343,7 +343,7 @@ def _everything(at: AppTest) -> str:
 
 
 def _unlock(at: AppTest, password: str) -> AppTest:
-    _field(at, "Admin password").input(password)
+    _field(at, "Admin password *").input(password)
     _button(at, "Unlock").click()
     return at.run()
 
