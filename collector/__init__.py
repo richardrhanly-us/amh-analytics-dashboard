@@ -70,4 +70,7 @@ from __future__ import annotations
 # privacy-safe per-run audit logging (collector/run_audit.py) while
 # preserving the existing Collector runtime, protocol and upload
 # behavior unchanged -- new observability, not a new contract.
-__version__ = "1.0.5"
+# 1.0.6 adds the Contract v2 runtime and privacy-safe mixed-era production
+# support. Contract v2 remains opt-in and disabled until explicitly configured
+# for a validated pilot installation.
+__version__ = "1.0.6"
