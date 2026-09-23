@@ -52,7 +52,8 @@ ADMIN_URL = os.environ.get("SORTVIEW_TEST_POSTGRES_URL")
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 PREVIOUS_HEAD = "b4e91d7a3c58"      # the head before Contract v2 existed
 STEP3_HEAD = "d3f1a8c95b27"         # Step 3 as merged: acs_hold_events
-HEAD = "0acba192bf69"               # RLS phase 1: RLS enabled on the seven operational-domain tables
+RLS_HEAD = "0acba192bf69"           # RLS phase 1: RLS enabled on the seven operational-domain tables
+HEAD = "f2a91c7d4e83"               # government-readiness audit: add v2_cutovers (purely additive, unrelated to v2 ingest)
 
 pytestmark = pytest.mark.skipif(
     not ADMIN_URL, reason="SORTVIEW_TEST_POSTGRES_URL is not set (opt-in PostgreSQL migration tests)"
@@ -945,15 +946,16 @@ def test_the_downgrade_refuses_while_a_non_hold_row_exists_and_leaves_everything
             _insert_item(conn, e=hmac_like(2), state="non_hold_101", **NON_HOLD_SHAPE)
         before = rows(engine, "SELECT * FROM acs_item_events ORDER BY id")
 
-        # -3, not -1: two migrations now sit on top of the ACS amendment
-        # (the RLS phase 1 migration, and below it the trigger-security
-        # fix), so reaching the amendment's own downgrade (the one that
-        # must refuse here) needs three steps. Confirmed empirically:
-        # alembic runs a multi-step downgrade as one overall transaction --
-        # when the last step raises, the earlier steps' (trivial) changes
-        # are rolled back too, not just the failing one. alembic_version is
-        # therefore left completely unchanged at HEAD.
-        down = _alembic(db.url, "downgrade", "-3")
+        # -4, not -1: three migrations now sit on top of the ACS amendment
+        # (v2_cutovers, and below it the RLS phase 1 migration, and below
+        # that the trigger-security fix), so reaching the amendment's own
+        # downgrade (the one that must refuse here) needs four steps.
+        # Confirmed empirically: alembic runs a multi-step downgrade as one
+        # overall transaction -- when the last step raises, the earlier
+        # steps' (trivial) changes are rolled back too, not just the
+        # failing one. alembic_version is therefore left completely
+        # unchanged at HEAD.
+        down = _alembic(db.url, "downgrade", "-4")
 
         assert down.returncode != 0 and "cannot downgrade" in down.stderr
         assert rows(engine, "SELECT * FROM acs_item_events ORDER BY id") == before  # nothing destroyed
@@ -971,11 +973,11 @@ def test_the_downgrade_restores_step_3_exactly_when_only_holds_exist_and_the_upg
             _insert_item(conn, e=hmac_like(2), dest="westside", ill=True)
         holds = rows(engine, "SELECT id, event_key, destination, is_ill FROM acs_item_events ORDER BY id")
 
-        # -3: undo the RLS phase 1 migration and the trigger-security fix
-        # (both trivial here) first, then the ACS amendment itself -- see
-        # the sibling refusal test above for why -1 alone no longer reaches
-        # the ACS amendment.
-        down = _alembic(db.url, "downgrade", "-3")
+        # -4: undo v2_cutovers, the RLS phase 1 migration, and the
+        # trigger-security fix (all three trivial here) first, then the ACS
+        # amendment itself -- see the sibling refusal test above for why -1
+        # alone no longer reaches the ACS amendment.
+        down = _alembic(db.url, "downgrade", "-4")
         assert down.returncode == 0, down.stderr[-2000:]
         assert scalar(engine, "SELECT version_num FROM alembic_version") == STEP3_HEAD
         assert rows(engine, "SELECT id, event_key, destination, is_ill FROM acs_hold_events ORDER BY id") == holds

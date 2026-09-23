@@ -31,7 +31,7 @@ from sqlalchemy.pool import StaticPool
 from starlette.requests import Request
 
 import main
-from metrics import build_acs_item_summary
+from metrics import build_acs_item_summary, prepare_todays_acs_snapshot
 from services import live_context_service as lcs
 from src.services import privacy_hardening as ph
 
@@ -1352,9 +1352,17 @@ def dashboard_live(records, monkeypatch):
         "today_peak_hour_count": 0, "today_peak_hour_pct": 0, "today_reject_rate": 0.0})
     monkeypatch.setattr(lcs, "_build_historical_baseline", lambda *a, **k: {
         "max_observed_hourly_throughput": 1, "historical_transit_pct_map": {}, "historical_daily_avg_reject": 0.0})
+    # Government-readiness audit: build_live_context now receives a pre-computed acs_item_summary instead of a raw
+    # ACS dataframe -- the "keep latest record per item among today's rows" preparation (metrics.prepare_todays_acs_snapshot)
+    # that build_live_context used to do internally is exactly what makes Live Today differ from Overview in the
+    # "later other_code10" case below, so it must still happen here, before classification, for this test to mean
+    # what it always meant.
+    acs_item_summary = build_acs_item_summary(prepare_todays_acs_snapshot(dashboard_frame(records)), **CLASSIFIER)
     context = lcs.build_live_context(
-        pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), dashboard_frame(records), {}, 0,
-        DAY0.date(), pd.Timestamp(DAY0), CLASSIFIER["transit_labels"], "Main", [], [], [], [], PALETTE)
+        df_live_raw=pd.DataFrame(), df_history_raw=pd.DataFrame(), rejects_live_raw=pd.DataFrame(),
+        rejects_history_raw=pd.DataFrame(), acs_item_summary=acs_item_summary, pipeline_status={}, refresh_count=0,
+        today=DAY0.date(), now_ct=pd.Timestamp(DAY0), transit_labels=CLASSIFIER["transit_labels"],
+        transit_home_label="Main", theme_palette=PALETTE)
     found = {}
 
     def walk(node, depth=0):

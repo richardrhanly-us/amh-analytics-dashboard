@@ -17,7 +17,7 @@ from metrics import get_today_metrics
 from reject_logic import simplify_error
 from services.filter_context_service import build_filtered_context
 from services.live_context_service import build_live_context
-from services.pipeline_context_service import build_pipeline_context
+from services.pipeline_context_service import build_v2_aware_pipeline_context
 from services.theme_service import get_theme_palette
 
 #***************************************************************
@@ -35,8 +35,20 @@ from services.theme_service import get_theme_palette
 #               df_history_raw - Historical checkin dataframe.
 #               rejects_live_raw - Live rejects dataframe.
 #               rejects_history_raw - Historical rejects dataframe.
-#               acs_live_raw - Live ACS dataframe.
-#               acs_history_raw - Historical ACS dataframe.
+#               acs_item_summary_live - Pre-computed today's ACS item
+#                   summary (metrics.build_acs_item_summary's return
+#                   shape), used by Live Today. Government-readiness
+#                   audit: computed by the caller (app.py, via
+#                   services.mixed_era_service) so this function never
+#                   needs to know whether the branch is v1-only or
+#                   mixed-era, or read a raw ACS dataframe itself.
+#               acs_item_summary_history - Pre-computed ACS item summary
+#                   for the active report range, used by Overview. Same
+#                   government-readiness audit note as above.
+#               v2_ingest_status - The tenant's latest Contract v2
+#                   heartbeat (data_loader.load_v2_ingest_status), or
+#                   None if it has never reported -- passed through to
+#                   the coexistence-aware pipeline status surface.
 #               pipeline_status - Latest pipeline status details.
 #               refresh_count - Streamlit auto-refresh counter.
 #               start_date - Start date for the active report range.
@@ -46,10 +58,6 @@ from services.theme_service import get_theme_palette
 #               app_tz - Application timezone.
 #               transit_labels - List of transit routing labels.
 #               transit_home_label - Label used for home branch routing.
-#               branch_services_names - Branch services destination names.
-#               collection_services_names - Collection services destination names.
-#               branch_services_da_patterns - Branch services destination patterns.
-#               collection_services_da_patterns - Collection services destination patterns.
 #               library_name - Display name for the library.
 #               branch_name - Display name for the selected branch.
 #               system_name - Display name for the library system.
@@ -65,8 +73,9 @@ def build_dashboard_context(
     df_history_raw,
     rejects_live_raw,
     rejects_history_raw,
-    acs_live_raw,
-    acs_history_raw,
+    acs_item_summary_live,
+    acs_item_summary_history,
+    v2_ingest_status,
     pipeline_status,
     refresh_count,
     start_date,
@@ -76,10 +85,6 @@ def build_dashboard_context(
     app_tz,
     transit_labels,
     transit_home_label,
-    branch_services_names,
-    collection_services_names,
-    branch_services_da_patterns,
-    collection_services_da_patterns,
     library_name,
     branch_name,
     system_name,
@@ -92,8 +97,6 @@ def build_dashboard_context(
     df_history_raw = df_history_raw.copy()
     rejects_live_raw = rejects_live_raw.copy()
     rejects_history_raw = rejects_history_raw.copy()
-    acs_live_raw = acs_live_raw.copy()
-    acs_history_raw = acs_history_raw.copy()
 
     # Add simplified reject error labels when reject error messages are available.
     # These simplified labels make the dashboard easier to read and summarize.
@@ -126,13 +129,17 @@ def build_dashboard_context(
     pipeline_ctx = {}
     live_ctx = None
     if needs_live_ctx:
-        # Build context related to pipeline health, freshness, and status display.
-        pipeline_ctx = build_pipeline_context(
-            pipeline_status=pipeline_status,
-            df_live_raw=df_live_raw,
-            now_ct=now_ct,
-            local_tz=app_tz,
-            theme_base=theme_base,
+        # Build context related to pipeline health, freshness, and status
+        # display. Delegates entirely to the pre-v2 behavior when the
+        # tenant has never reported a Contract v2 heartbeat (v2_ingest_status
+        # is None) -- see build_v2_aware_pipeline_context's own docstring.
+        pipeline_ctx = build_v2_aware_pipeline_context(
+            pipeline_status,
+            v2_ingest_status,
+            df_live_raw,
+            now_ct,
+            app_tz,
+            theme_base,
         )
 
         # Build live dashboard context for today's activity, live rejects,
@@ -142,17 +149,13 @@ def build_dashboard_context(
             df_history_raw=df_history_raw,
             rejects_live_raw=rejects_live_raw,
             rejects_history_raw=rejects_history_raw,
-            acs_live_raw=acs_live_raw,
+            acs_item_summary=acs_item_summary_live,
             pipeline_status=pipeline_status,
             refresh_count=refresh_count,
             today=today,
             now_ct=now_ct,
             transit_labels=transit_labels,
             transit_home_label=transit_home_label,
-            branch_services_names=branch_services_names,
-            collection_services_names=collection_services_names,
-            branch_services_da_patterns=branch_services_da_patterns,
-            collection_services_da_patterns=collection_services_da_patterns,
             theme_palette=theme_palette,
         )
         no_today_data = live_ctx["no_today_data"]
@@ -185,16 +188,12 @@ def build_dashboard_context(
         overview_args = {
             "df": filtered_ctx["df"],
             "rejects_df": filtered_ctx["rejects_df"],
-            "acs_history_raw": acs_history_raw,
+            "acs_item_summary": acs_item_summary_history,
             "start_date": start_date,
             "end_date": end_date,
             "date_range_text": filtered_ctx["date_range_text"],
             "TRANSIT_LABELS": transit_labels,
             "TRANSIT_HOME_LABEL": transit_home_label,
-            "BRANCH_SERVICES_NAMES": branch_services_names,
-            "COLLECTION_SERVICES_NAMES": collection_services_names,
-            "BRANCH_SERVICES_DA_PATTERNS": branch_services_da_patterns,
-            "COLLECTION_SERVICES_DA_PATTERNS": collection_services_da_patterns,
             "attention_title": filtered_ctx["attention_title"],
             "attention_text": filtered_ctx["attention_text"],
             "attention_color": filtered_ctx["attention_color"],

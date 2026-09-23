@@ -992,14 +992,18 @@ def test_a_build_without_v2_reports_it_clearly_instead_of_crashing(tmp_path, mon
     assert "does not include Contract v2" in capsys.readouterr().err
 
 
-def test_the_release_tool_does_not_bundle_the_v2_modules_yet():
-    """Release integration is a separate step: until it lands the v2 modules are declared, but not shipped."""
+def test_the_release_tool_now_bundles_the_v2_modules():
+    """Government-readiness audit, Part 6: release-packaging integration has landed -- the v2 modules moved from
+    BUILD_ONLY_COLLECTOR_FILES into COLLECTOR_RUNTIME_FILES (tests/test_v2_release_manifest.py has the full,
+    dedicated coverage of this move; this is a light cross-check from the v2 runtime's own test module). This alone
+    does not enable v2 in production: SORTVIEW_V2_INGEST_ENABLED and contract_mode's "v1" default are unchanged, and
+    no release has actually been rebuilt from this manifest yet."""
     from pathlib import Path
 
     from collector import build_release
     v2_files = {f"collector/{p.name}" for p in (Path(collector_run.__file__).parent).glob("v2_*.py")}
-    assert v2_files and v2_files <= set(build_release.BUILD_ONLY_COLLECTOR_FILES)
-    assert v2_files.isdisjoint(build_release.COLLECTOR_RUNTIME_FILES)
+    assert v2_files and v2_files <= set(build_release.COLLECTOR_RUNTIME_FILES)
+    assert v2_files.isdisjoint(build_release.BUILD_ONLY_COLLECTOR_FILES)
 
 
 # --- the dry run is independent of every credential ----------------------------------------------------------------------------------

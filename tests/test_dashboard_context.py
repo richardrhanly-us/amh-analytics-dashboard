@@ -26,8 +26,20 @@ def build_rejects_df(dates):
     })
 
 
-def empty_acs_df():
-    return pd.DataFrame(columns=["datetime", "message_code", "barcode", "raw_message", "destination"])
+def empty_acs_item_summary():
+    return {
+        "holds_total": 0,
+        "ill_total": 0,
+        "programming_total": 0,
+        "collection_services_total": 0,
+        "ill_main": 0,
+        "ill_by_branch": {},
+        "items_df": pd.DataFrame(),
+        "holds_df": pd.DataFrame(),
+        "ill_df": pd.DataFrame(),
+        "programming_df": pd.DataFrame(),
+        "collection_services_df": pd.DataFrame(),
+    }
 
 
 def base_kwargs(selected_view, with_today_data=True):
@@ -39,8 +51,9 @@ def base_kwargs(selected_view, with_today_data=True):
         "df_history_raw": build_checkins_df(history_dates),
         "rejects_live_raw": build_rejects_df(live_dates),
         "rejects_history_raw": build_rejects_df(history_dates),
-        "acs_live_raw": empty_acs_df(),
-        "acs_history_raw": empty_acs_df(),
+        "acs_item_summary_live": empty_acs_item_summary(),
+        "acs_item_summary_history": empty_acs_item_summary(),
+        "v2_ingest_status": None,
         "pipeline_status": {
             "status": "completed",
             "updated_at": "2026-03-30T12:00:00",
@@ -55,10 +68,6 @@ def base_kwargs(selected_view, with_today_data=True):
         "app_tz": APP_TZ,
         "transit_labels": ["Westside"],
         "transit_home_label": "Main",
-        "branch_services_names": [],
-        "collection_services_names": [],
-        "branch_services_da_patterns": [],
-        "collection_services_da_patterns": [],
         "library_name": "Test Library",
         "branch_name": "Main Branch",
         "system_name": "SortView",

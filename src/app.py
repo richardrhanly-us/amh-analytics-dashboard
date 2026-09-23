@@ -21,18 +21,14 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import streamlit as st
 
+import metrics
 from dashboard_context import build_dashboard_context
 from data_loader import (
-    load_acs_df,
-    load_acs_history_df,
-    load_checkins_df,
-    load_checkins_history_df,
     load_pipeline_status,
-    load_rejects_df,
-    load_rejects_history_df,
+    load_v2_ingest_status,
     validate_tenant_schema,
 )
-from services import auth_service
+from services import auth_service, mixed_era_service
 from services.access_service import (
     get_org_access_mode,
     get_org_branches,
@@ -650,27 +646,33 @@ if refresh_interval_warning:
 #***************************************************************
 # Historical Data Loading
 #
-# Loads historical checkin, reject, and ACS activity for the selected
+# Loads historical checkin and reject activity for the selected
 # tenant/branch. These are cheap to load on every rerun regardless of
-# which section is active: each loader has its own 900s TTL and does not
-# depend on any auto-refresh cadence (see data_loader.py), so this never
-# re-queries the database more often than once every 15 minutes no
-# matter how many times the script reruns in between.
+# which section is active: each underlying loader has its own 900s TTL
+# and does not depend on any auto-refresh cadence (see data_loader.py),
+# so this never re-queries the database more often than once every 15
+# minutes no matter how many times the script reruns in between.
+#
+# Government-readiness audit: these go through
+# services.mixed_era_service instead of calling data_loader's v1 loaders
+# directly. For a branch with no v2_cutovers record (the overwhelming
+# majority today) the result is byte-for-byte the same v1 history these
+# loaders always returned -- see mixed_era_service.py's module docstring.
+# Only a branch an operator has explicitly cut over to Contract v2 ever
+# sees a combined v1+v2 history here. ACS history is loaded (and
+# classified) further below, only when the Overview tab actually needs
+# it -- unchanged from the prior "only compute what the active tab needs"
+# behavior.
 #***************************************************************
 
-df_history_raw = load_checkins_history_df(
-    org_slug=selected_customer_id,
-    branch_slug=selected_branch_id,
+df_history_raw = mixed_era_service.build_mixed_checkins_df(
+    selected_customer_id,
+    selected_branch_id,
 )
 
-rejects_history_raw = load_rejects_history_df(
-    org_slug=selected_customer_id,
-    branch_slug=selected_branch_id,
-)
-
-acs_history_raw = load_acs_history_df(
-    org_slug=selected_customer_id,
-    branch_slug=selected_branch_id,
+rejects_history_raw = mixed_era_service.build_mixed_rejects_df(
+    selected_customer_id,
+    selected_branch_id,
 )
 
 
@@ -880,23 +882,42 @@ def _render_live_today():
         manual_refresh_count=tenant_refresh_state["manual_refresh_count"],
     )
 
-    df_live_raw = load_checkins_df(
-        org_slug=selected_customer_id,
-        branch_slug=selected_branch_id,
-        mtime=None,
+    # Government-readiness audit: these three go through
+    # services.mixed_era_service (a branch with no v2_cutovers record gets
+    # byte-for-byte the same v1 live data as before), with live_data_key
+    # threaded through exactly as it already was for the v1 loaders --
+    # a manual "Refresh now" click or a new Collector run still forces a
+    # real reload for a mixed-era branch, same as a v1-only one.
+    df_live_raw = mixed_era_service.build_mixed_checkins_live_df(
+        selected_customer_id,
+        selected_branch_id,
         refresh_count=live_data_key,
     )
-    rejects_live_raw = load_rejects_df(
-        org_slug=selected_customer_id,
-        branch_slug=selected_branch_id,
-        mtime=None,
+    rejects_live_raw = mixed_era_service.build_mixed_rejects_live_df(
+        selected_customer_id,
+        selected_branch_id,
         refresh_count=live_data_key,
     )
-    acs_live_raw = load_acs_df(
+    acs_item_summary_live = mixed_era_service.build_mixed_acs_item_summary_live(
+        selected_customer_id,
+        selected_branch_id,
+        TRANSIT_LABELS,
+        BRANCH_SERVICES_NAMES,
+        COLLECTION_SERVICES_NAMES,
+        BRANCH_SERVICES_DA_PATTERNS,
+        COLLECTION_SERVICES_DA_PATTERNS,
+        refresh_count=live_data_key,
+    )
+
+    # The tenant's latest Contract v2 heartbeat, if it has ever reported
+    # one -- feeds the coexistence-aware pipeline status surface so a
+    # branch that has moved to v2 does not read as stale just because its
+    # v1 Collector/agent stopped writing pipeline_status. None for a
+    # branch that has never used v2, which is the overwhelming majority
+    # today.
+    v2_ingest_status = load_v2_ingest_status(
         org_slug=selected_customer_id,
         branch_slug=selected_branch_id,
-        mtime=None,
-        refresh_count=live_data_key,
     )
 
     def _handle_refresh_now():
@@ -914,8 +935,9 @@ def _render_live_today():
         df_history_raw=df_history_raw,
         rejects_live_raw=rejects_live_raw,
         rejects_history_raw=rejects_history_raw,
-        acs_live_raw=acs_live_raw,
-        acs_history_raw=acs_history_raw,
+        acs_item_summary_live=acs_item_summary_live,
+        acs_item_summary_history=None,
+        v2_ingest_status=v2_ingest_status,
         pipeline_status=pipeline_status,
         refresh_count=poll_tick,
         start_date=start_date,
@@ -925,10 +947,6 @@ def _render_live_today():
         app_tz=APP_TZ,
         transit_labels=TRANSIT_LABELS,
         transit_home_label=TRANSIT_HOME_LABEL,
-        branch_services_names=BRANCH_SERVICES_NAMES,
-        collection_services_names=COLLECTION_SERVICES_NAMES,
-        branch_services_da_patterns=BRANCH_SERVICES_DA_PATTERNS,
-        collection_services_da_patterns=COLLECTION_SERVICES_DA_PATTERNS,
         library_name=LIBRARY_NAME,
         branch_name=BRANCH_NAME,
         system_name=SYSTEM_NAME,
@@ -952,22 +970,47 @@ else:
     # Overview/Reports/Transits never need sub-minute-fresh live data --
     # a plain, undecorated call (no refresh_count/mtime) relies solely on
     # these loaders' own 900s TTL, same as the historical loaders above.
-    df_live_raw = load_checkins_df(
-        org_slug=selected_customer_id,
-        branch_slug=selected_branch_id,
+    # Government-readiness audit: mixed-era aware, same as above -- a
+    # v1-only branch gets byte-for-byte the same v1 live data as before.
+    df_live_raw = mixed_era_service.build_mixed_checkins_live_df(
+        selected_customer_id,
+        selected_branch_id,
     )
-    rejects_live_raw = load_rejects_df(
-        org_slug=selected_customer_id,
-        branch_slug=selected_branch_id,
+    rejects_live_raw = mixed_era_service.build_mixed_rejects_live_df(
+        selected_customer_id,
+        selected_branch_id,
     )
+
+    # ACS history is classified only for Overview, and only when the
+    # viewer can actually see the Internal Workflow cards it feeds --
+    # unchanged "only compute what the active tab needs" behavior from
+    # before this round (see build_acs_item_summary's prior call site,
+    # now moved here from views/overview_view.py).
+    if selected_view == "Overview" and show_internal_workflow:
+        acs_item_summary_history = mixed_era_service.build_mixed_acs_item_summary(
+            selected_customer_id,
+            selected_branch_id,
+            start_date,
+            end_date,
+            TRANSIT_LABELS,
+            BRANCH_SERVICES_NAMES,
+            COLLECTION_SERVICES_NAMES,
+            BRANCH_SERVICES_DA_PATTERNS,
+            COLLECTION_SERVICES_DA_PATTERNS,
+        )
+    else:
+        acs_item_summary_history = metrics.build_acs_item_summary(
+            pd.DataFrame(), TRANSIT_LABELS, [], [], [], []
+        )
 
     context = build_dashboard_context(
         df_live_raw=df_live_raw,
         df_history_raw=df_history_raw,
         rejects_live_raw=rejects_live_raw,
         rejects_history_raw=rejects_history_raw,
-        acs_live_raw=pd.DataFrame(),
-        acs_history_raw=acs_history_raw,
+        acs_item_summary_live=None,
+        acs_item_summary_history=acs_item_summary_history,
+        v2_ingest_status=None,
         pipeline_status={},
         refresh_count=0,
         start_date=start_date,
@@ -977,10 +1020,6 @@ else:
         app_tz=APP_TZ,
         transit_labels=TRANSIT_LABELS,
         transit_home_label=TRANSIT_HOME_LABEL,
-        branch_services_names=BRANCH_SERVICES_NAMES,
-        collection_services_names=COLLECTION_SERVICES_NAMES,
-        branch_services_da_patterns=BRANCH_SERVICES_DA_PATTERNS,
-        collection_services_da_patterns=COLLECTION_SERVICES_DA_PATTERNS,
         library_name=LIBRARY_NAME,
         branch_name=BRANCH_NAME,
         system_name=SYSTEM_NAME,

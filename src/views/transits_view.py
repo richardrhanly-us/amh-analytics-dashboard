@@ -137,11 +137,17 @@ def render_transits(
     transit_reject_insight_text = transit_insight["text"]
     transit_reject_insight_color = transit_insight["color"]
 
+    # item_group_key is barcode for a v1 row and a Contract v2 item_key HMAC for a v2 row (see
+    # services/mixed_era_service.py) -- always present once base_df comes through the mixed-era loaders, so
+    # transit-linked reject cross-referencing still works for a mixed-era branch's post-cutover rows. Falls back to
+    # "barcode" for any caller (e.g. a test) that hands this view a plain v1-shaped dataframe without it.
+    reject_link_column = "item_group_key" if "item_group_key" in base_df.columns else "barcode"
     destination_reject_summary = get_destination_reject_summary(
         base_df,
         base_rejects_df,
         transit_summary,
-        valid_transit_destinations
+        valid_transit_destinations,
+        group_column=reject_link_column,
     )
 
     transit1, transit2, transit3, transit4 = st.columns(4)
@@ -563,8 +569,23 @@ def render_transits(
                 )
                 render_chart(no_agency_hourly_chart)
 
+            # GOVERNMENT-READINESS AUDIT -- INCOMPATIBLE EXPORT, DISCLOSED (not silently degraded): this report's
+            # whole purpose is letting staff physically locate a specific misrouted item, which fundamentally needs
+            # its real title/barcode. Contract v2 checkins never carry either field at all (title was never part of
+            # the v2 payload; "barcode" here is None by design for a v2 row -- v2 only has an HMAC item_key, which is
+            # not reversible to a real barcode and is never exposed in any view or export, per this round's
+            # requirements). There is no privacy-safe substitute that would actually let staff find the item, so a
+            # v2-era row in this specific report shows "Not available (Contract v2)" for both fields rather than a
+            # fabricated or misleading value. Every other column, and every v1-era row's Title/Barcode, is unaffected.
+            if "title" not in no_agency_df.columns:
+                no_agency_df["title"] = None
+            if "barcode" not in no_agency_df.columns:
+                no_agency_df["barcode"] = None
+
             no_agency_display = no_agency_df[["datetime", "title", "barcode", "destination"]].copy()
             no_agency_display["datetime"] = pd.to_datetime(no_agency_display["datetime"]).dt.strftime("%Y-%m-%d %I:%M %p")
+            no_agency_display["title"] = no_agency_display["title"].fillna("Not available (Contract v2)")
+            no_agency_display["barcode"] = no_agency_display["barcode"].fillna("Not available (Contract v2)")
             no_agency_display = no_agency_display.rename(columns={
                 "datetime": "Datetime",
                 "title": "Title",

@@ -84,6 +84,20 @@ PRODUCT_NAME = "SortView Collector"
 # Explicit, not a glob of collector/*.py -- see module docstring. Keep in
 # sync with tests/test_collector_build_release.py's own cross-check
 # against the directory's actual contents.
+#
+# Government-readiness audit, Part 6 (release packaging): the 15 Privacy
+# Contract v2 modules below moved here FROM BUILD_ONLY_COLLECTOR_FILES.
+# collector/run.py's `contract_mode` switch (docs/collector-v2.md) already
+# imports v2_run lazily and degrades gracefully (exit 2, "this build does
+# not include Contract v2") if that module is ever absent -- this change
+# is what makes it PRESENT instead, so a future release can actually run
+# v2 when a config asks for it. This alone does NOT enable v2 in
+# production: SORTVIEW_V2_INGEST_ENABLED is unchanged (still unset/false),
+# no release has been rebuilt or installed anywhere, and collector_config.json's
+# contract_mode still defaults to "v1" -- see the government-readiness
+# report for the remaining steps (a real 1.0.6 build, an onsite dry-run
+# validation, and an operator-issued ingest key) before any machine would
+# actually run v2.
 COLLECTOR_RUNTIME_FILES: tuple[str, ...] = (
     "collector/__init__.py",
     "collector/bootstrap_state.py",
@@ -97,19 +111,6 @@ COLLECTOR_RUNTIME_FILES: tuple[str, ...] = (
     "collector/support_info.py",
     "collector/task_settings.py",
     "collector/uploader.py",
-)
-
-# Files known to exist under collector/ that are deliberately NEVER
-# bundled -- build-time-only tooling. Used only by this module's own
-# tests to prove COLLECTOR_RUNTIME_FILES plus this set together account
-# for every *.py file collector/ actually contains (catches drift in
-# either direction: a forgotten addition, or an accidental inclusion).
-BUILD_ONLY_COLLECTOR_FILES: tuple[str, ...] = (
-    "collector/deploy_manifest.py",
-    "collector/build_release.py",
-    # Privacy Contract v2 (docs/collector-v2.md): NOT bundled yet. Shipping it is the separate release-integration step; until then a release
-    # runs v1 exactly as before (collector/run.py reads `contract_mode` and imports v2 lazily, so it does not need these files) and
-    # reports "this build does not include Contract v2" if a config asks for it. Move these to COLLECTOR_RUNTIME_FILES when that step lands.
     "collector/v2_classify.py",
     "collector/v2_config.py",
     "collector/v2_events.py",
@@ -125,6 +126,16 @@ BUILD_ONLY_COLLECTOR_FILES: tuple[str, ...] = (
     "collector/v2_status.py",
     "collector/v2_transform.py",
     "collector/v2_uploader.py",
+)
+
+# Files known to exist under collector/ that are deliberately NEVER
+# bundled -- build-time-only tooling. Used only by this module's own
+# tests to prove COLLECTOR_RUNTIME_FILES plus this set together account
+# for every *.py file collector/ actually contains (catches drift in
+# either direction: a forgotten addition, or an accidental inclusion).
+BUILD_ONLY_COLLECTOR_FILES: tuple[str, ...] = (
+    "collector/deploy_manifest.py",
+    "collector/build_release.py",
 )
 
 # (repo-relative source, bundle-relative destination) -- copied verbatim,

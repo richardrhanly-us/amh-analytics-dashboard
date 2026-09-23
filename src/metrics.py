@@ -491,6 +491,60 @@ def build_roi_payload(
 
 #***************************************************************
 #
+#  Function:     prepare_todays_acs_snapshot
+#
+#  Description: Prepares today's live ACS dataframe for classification by
+#               build_acs_item_summary: keeps only the latest record per
+#               item (message code "10") among today's rows while
+#               preserving non-item rows (patron records, message code
+#               "64") needed for the classifier's join. Extracted, with
+#               no behavior change, from the inline preparation Live
+#               Today used to do just before calling
+#               build_acs_item_summary -- see
+#               services/mixed_era_service.py for the Contract v2
+#               equivalent that reuses this same v1 preparation for the
+#               pre-cutover portion of a mixed-era branch.
+#
+#  Parameters:  acs_live_raw - Live (today-scoped) ACS event dataframe.
+#
+#  Returns:     DataFrame - Prepared ACS dataframe ready for
+#                           build_acs_item_summary.
+#
+#***************************************************************
+
+def prepare_todays_acs_snapshot(acs_live_raw):
+    today_acs_df = acs_live_raw.copy()
+
+    if len(today_acs_df) > 0 and "datetime" in today_acs_df.columns:
+        today_acs_df["datetime"] = pd.to_datetime(today_acs_df["datetime"], errors="coerce")
+        today_acs_df = today_acs_df.dropna(subset=["datetime"]).copy()
+
+        today_acs_latest_date = today_acs_df["datetime"].max().date()
+        today_acs_df = today_acs_df[today_acs_df["datetime"].dt.date == today_acs_latest_date].copy()
+
+    if "raw_message" in today_acs_df.columns:
+        today_acs_df["raw_message"] = today_acs_df["raw_message"].fillna("").astype(str).str.strip()
+
+    # For item message rows, keep only the latest row per barcode while preserving non-item rows.
+    if (
+        "barcode" in today_acs_df.columns
+        and "datetime" in today_acs_df.columns
+        and "message_code" in today_acs_df.columns
+    ):
+        item_rows = today_acs_df[today_acs_df["message_code"].astype(str).str.strip() == "10"].copy()
+        non_item_rows = today_acs_df[today_acs_df["message_code"].astype(str).str.strip() != "10"].copy()
+
+        if len(item_rows) > 0:
+            item_rows = item_rows.sort_values("datetime")
+            item_rows = item_rows.drop_duplicates(subset=["barcode"], keep="last")
+
+        today_acs_df = pd.concat([item_rows, non_item_rows], ignore_index=True)
+
+    return today_acs_df
+
+
+#***************************************************************
+#
 #  Function:     build_acs_item_summary
 #
 #  Description: Builds item-level summary metrics from ACS event data.

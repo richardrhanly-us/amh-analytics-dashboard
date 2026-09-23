@@ -86,6 +86,7 @@ def _overview_script():
     import pandas as pd
     import streamlit as st
 
+    import metrics
     import views.overview_view as overview
 
     kpis = []
@@ -99,12 +100,22 @@ def _overview_script():
     try:
         acs = pd.DataFrame(st.session_state["acs_rows"])
         acs["datetime"] = pd.to_datetime(acs["datetime"])
+        # Government-readiness audit: render_overview now receives a pre-computed acs_item_summary (the same shape
+        # app.py builds via services.mixed_era_service) instead of a raw ACS dataframe -- classification and the
+        # date-range filter both now happen before render_overview is ever called, mirroring production exactly.
+        acs_item_summary = metrics.build_acs_item_summary(
+            acs,
+            transit_labels=["Westside", "Library Express"],
+            branch_services_names=[st.session_state["programming_name"]],
+            collection_services_names=[st.session_state["collection_name"]],
+            branch_services_da_patterns=[],
+            collection_services_da_patterns=[st.session_state["collection_pattern"]],
+        )
         overview.render_overview(
             pd.DataFrame({"datetime": pd.to_datetime([])}),
             pd.DataFrame({"datetime": pd.to_datetime([]), "error_simple": []}),
-            acs, date(2026, 1, 1), date(2026, 1, 31), "Jan 2026", ["Westside", "Library Express"], "Main",
-            [st.session_state["programming_name"]], [st.session_state["collection_name"]], [],
-            [st.session_state["collection_pattern"]], "Attention", "text", "#6b7280", {}, {},
+            acs_item_summary, date(2026, 1, 1), date(2026, 1, 31), "Jan 2026", ["Westside", "Library Express"], "Main",
+            "Attention", "text", "#6b7280", {}, {},
             can_view_internal_workflow=st.session_state["internal_workflow"],
         )
     finally:
