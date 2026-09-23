@@ -58,9 +58,10 @@ def render_main_sidebar(
 
         with st.expander("Change password"):
             with st.form("change_password_form"):
-                current_password = st.text_input("Current password", type="password")
-                new_password = st.text_input("New password", type="password")
-                confirm_password = st.text_input("Confirm new password", type="password")
+                st.caption("* Required")
+                current_password = st.text_input("Current password *", type="password")
+                new_password = st.text_input("New password *", type="password")
+                confirm_password = st.text_input("Confirm new password *", type="password")
                 change_password_submitted = st.form_submit_button("Update password")
 
             if change_password_submitted:

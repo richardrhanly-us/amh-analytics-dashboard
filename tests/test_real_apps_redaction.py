@@ -72,8 +72,8 @@ if enforcement_off:  # CONTROL ONLY: what the app would do without SortView's `c
 at = AppTest.from_file(script, default_timeout=120)
 at.run()
 assert not at.exception, "the login page itself must render"
-(email,) = [t for t in at.text_input if t.label == "Email"]
-(password,) = [t for t in at.text_input if t.label == "Password"]
+(email,) = [t for t in at.text_input if t.label.startswith("Email")]
+(password,) = [t for t in at.text_input if t.label.startswith("Password")]
 email.input("nobody@example.invalid")
 password.input("not-a-real-password")
 (submit,) = [b for b in at.button if b.label == "Log In"]

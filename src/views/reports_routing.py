@@ -59,7 +59,14 @@ def render_routing_destinations_section(df, gated_csv_download):
                     y=alt.Y("count:Q", title="Items"),
                     tooltip=["destination", "count"]
                 )
-                .properties(height=350)
+                .properties(
+                    height=350,
+                    description=(
+                        "Bar chart of checkin counts grouped by destination for the "
+                        "selected date range, showing which destinations receive the "
+                        "most items."
+                    ),
+                )
             )
     
             render_chart(destination_chart)
@@ -222,7 +229,13 @@ def render_routing_destinations_section(df, gated_csv_download):
                             alt.Tooltip("total_checkins:Q", title="Total Checkins")
                         ]
                     )
-                    .properties(height=350)
+                    .properties(
+                        height=350,
+                        description=(
+                            "Line chart of average checkins per hour, one line per "
+                            "sorter bin, showing bin volume patterns throughout the day."
+                        ),
+                    )
                     .interactive(False)
                 )
     

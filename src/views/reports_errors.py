@@ -60,7 +60,14 @@ def render_errors_exceptions_section(df, rejects_df, gated_csv_download):
                     y=alt.Y("count:Q", title="Count"),
                     tooltip=["reason", "count"]
                 )
-                .properties(height=350)
+                .properties(
+                    height=350,
+                    description=(
+                        "Bar chart of reject counts grouped by reason for the "
+                        "selected date range, showing which failure reasons occur "
+                        "most often."
+                    ),
+                )
             )
     
             render_chart(reject_chart)
@@ -301,7 +308,9 @@ def render_errors_exceptions_section(df, rejects_df, gated_csv_download):
                     exception_chart = build_hourly_bar_chart(
                         hourly_exception_summary.rename(columns={"avg_exception_items": "avg_items_per_hour"}),
                         "avg_items_per_hour",
-                        "Avg Exception Items Per Hour"
+                        "Avg Exception Items Per Hour",
+                        "Bar chart of the average number of items routed to the exception bin "
+                        "in each hour of the day, averaged across the selected date range."
                     )
                     render_chart(exception_chart)
     

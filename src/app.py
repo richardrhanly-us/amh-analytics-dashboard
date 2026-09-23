@@ -155,12 +155,13 @@ if st.session_state["auth_user"] is None:
         st.title("Reset SortView Password")
 
         with st.form("reset_password_form"):
+            st.caption("* Required")
             new_password = st.text_input(
-                "New password",
+                "New password *",
                 type="password",
             )
             confirm_password = st.text_input(
-                "Confirm new password",
+                "Confirm new password *",
                 type="password",
             )
             reset_submitted = st.form_submit_button("Reset Password")
@@ -196,7 +197,8 @@ if st.session_state["auth_user"] is None:
         )
 
         with st.form("forgot_password_form"):
-            reset_email = st.text_input("Email")
+            st.caption("* Required")
+            reset_email = st.text_input("Email *")
             reset_requested = st.form_submit_button(
                 "Send Reset Link"
             )
@@ -234,8 +236,9 @@ if st.session_state["auth_user"] is None:
     st.title("SortView Login")
 
     with st.form("login_form"):
-        email = st.text_input("Email")
-        password = st.text_input("Password", type="password")
+        st.caption("* Required")
+        email = st.text_input("Email *")
+        password = st.text_input("Password *", type="password")
         submitted = st.form_submit_button("Log In")
 
     if submitted:

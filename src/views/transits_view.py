@@ -288,7 +288,9 @@ def render_transits(
                 transit_hourly_chart = build_hourly_bar_chart(
                     transit_hourly,
                     "transit_items",
-                    "Transit Items"
+                    "Transit Items",
+                    "Bar chart of the number of items transferred between branches in "
+                    "each hour of today, showing peak transit routing times."
                 )
                 render_chart(transit_hourly_chart)
 
@@ -334,7 +336,10 @@ def render_transits(
                 transit_hourly_chart = build_hourly_bar_chart(
                     transit_hourly.rename(columns={"Avg Transit Items Per Day": "avg_transit_items"}),
                     "avg_transit_items",
-                    "Avg Transit Items Per Hour"
+                    "Avg Transit Items Per Hour",
+                    "Bar chart of the average number of items transferred between "
+                    "branches in each hour of the day, averaged across the selected "
+                    "date range, showing peak transit routing times."
                 )
                 render_chart(transit_hourly_chart)
 
@@ -371,6 +376,8 @@ def render_transits(
                 "date",
                 "transit_items",
                 "Transit Items",
+                "Line chart comparing daily transit item volume to each destination "
+                "branch over the selected date range, one line per destination.",
                 series_col="transit_destination"
             )
             render_chart(transit_mix_chart)
@@ -404,7 +411,9 @@ def render_transits(
                 "destination",
                 "routing_pct",
                 "% of Total Items",
-                "Destination"
+                "Bar chart of the percentage of total checkins routed to each "
+                "destination branch over the selected date range.",
+                x_title="Destination"
             )
             render_chart(routing_distribution_chart)
 
@@ -445,6 +454,9 @@ def render_transits(
                 "date",
                 "routing_pct",
                 "% of Total Items",
+                "Line chart of the percentage of total checkins routed to each "
+                "destination branch each day over the selected date range, one "
+                "line per destination.",
                 series_col="destination"
             )
             render_chart(routing_pct_chart)
@@ -516,7 +528,12 @@ def render_transits(
                 no_agency_daily,
                 "date",
                 "count",
-                "No Agency Destination Items"
+                "No Agency Destination Items",
+                description=(
+                    "Line chart of items routed to \"No Agency Destination\" (missing "
+                    "destination routing) by day over the selected date range, "
+                    "highlighting trends in unresolved-destination items."
+                ),
             )
             render_chart(no_agency_daily_chart)
 
@@ -539,7 +556,10 @@ def render_transits(
                 no_agency_hourly_chart = build_hourly_bar_chart(
                     no_agency_hourly,
                     "count",
-                    "No Agency Destination Items"
+                    "No Agency Destination Items",
+                    "Bar chart of items routed to \"No Agency Destination\" (missing "
+                    "destination routing) by hour of day, showing when unresolved-"
+                    "destination items most often occur."
                 )
                 render_chart(no_agency_hourly_chart)
 

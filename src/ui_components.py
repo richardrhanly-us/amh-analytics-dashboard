@@ -443,9 +443,27 @@ def get_hour_range_df(start_hour=7, end_hour=20):
 #               fills missing hours with zero values so the x-axis
 #               remains consistent across dashboard views.
 #
+#               WCAG 1.1.1 Non-text Content: `description` becomes the
+#               Vega-Lite spec's top-level "description" property, which
+#               is NOT rendered as visible text (confirmed against the
+#               generated spec, not assumed) -- Vega-Lite documents this
+#               as analogous to an aria-label for the chart's outer
+#               element, so it gives assistive technology a real name for
+#               the chart without adding a second, visually-duplicated
+#               title on pages that already have a heading right above
+#               the chart (which is true almost everywhere this is
+#               called). Required, not optional, specifically so every
+#               call site is forced to write a real, specific sentence
+#               rather than this shared helper silently falling back to
+#               something generic.
+#
 #  Parameters:  df - Source dataframe containing hourly values.
 #               value_col - Numeric column to chart.
 #               title_y - Y-axis title.
+#               description - Required accessible description of what
+#                       this specific chart shows (see above). Must be
+#                       aggregate/summary text -- never raw row-level or
+#                       patron-adjacent data.
 #               start_hour - First hour to display.
 #               end_hour - Last hour to display.
 #
@@ -453,7 +471,7 @@ def get_hour_range_df(start_hour=7, end_hour=20):
 #
 #***************************************************************
 
-def build_hourly_bar_chart(df, value_col, title_y, start_hour=7, end_hour=20):
+def build_hourly_bar_chart(df, value_col, title_y, description, start_hour=7, end_hour=20):
     # Merge data against a complete hour range to keep missing hours visible.
     hour_base = get_hour_range_df(start_hour, end_hour)
     merged = hour_base.merge(df, on=["hour", "hour_label"], how="left").fillna(0)
@@ -471,7 +489,7 @@ def build_hourly_bar_chart(df, value_col, title_y, start_hour=7, end_hour=20):
             y=alt.Y(f"{value_col}:Q", title=title_y),
             tooltip=["hour_label", value_col],
         )
-        .properties(height=350)
+        .properties(height=350, description=description)
     )
     return chart
 
@@ -484,17 +502,26 @@ def build_hourly_bar_chart(df, value_col, title_y, start_hour=7, end_hour=20):
 #               The chart preserves the dataframe's category order
 #               when rendering the x-axis.
 #
+#               WCAG 1.1.1 Non-text Content: see build_hourly_bar_chart's
+#               own docstring for why `description` (required) becomes
+#               the Vega-Lite spec's non-visible "description" property
+#               rather than a second, visually-duplicated chart title.
+#
 #  Parameters:  df - Source dataframe.
 #               category_col - Column containing category labels.
 #               value_col - Numeric column to chart.
 #               y_title - Y-axis title.
+#               description - Required accessible description of what
+#                       this specific chart shows. Aggregate/summary text
+#                       only -- never raw row-level or patron-adjacent
+#                       data.
 #               x_title - Optional x-axis title.
 #
 #  Returns:     Chart - Altair bar chart object.
 #
 #***************************************************************
 
-def build_category_bar_chart(df, category_col, value_col, y_title, x_title=""):
+def build_category_bar_chart(df, category_col, value_col, y_title, description, x_title=""):
     chart = (
         alt.Chart(df)
         .mark_bar()
@@ -508,7 +535,7 @@ def build_category_bar_chart(df, category_col, value_col, y_title, x_title=""):
             y=alt.Y(f"{value_col}:Q", title=y_title),
             tooltip=[category_col, value_col],
         )
-        .properties(height=350)
+        .properties(height=350, description=description)
     )
     return chart
 
@@ -521,10 +548,19 @@ def build_category_bar_chart(df, category_col, value_col, y_title, x_title=""):
 #               The chart can optionally split the line by a series
 #               column for grouped comparisons.
 #
+#               WCAG 1.1.1 Non-text Content: see build_hourly_bar_chart's
+#               own docstring for why `description` (required) becomes
+#               the Vega-Lite spec's non-visible "description" property
+#               rather than a second, visually-duplicated chart title.
+#
 #  Parameters:  df - Source dataframe.
 #               date_col - Date column used for the x-axis.
 #               value_col - Numeric column used for the y-axis.
 #               y_title - Y-axis title.
+#               description - Required accessible description of what
+#                       this specific chart shows. Aggregate/summary text
+#                       only -- never raw row-level or patron-adjacent
+#                       data.
 #               series_col - Optional column used to split the line
 #                            into multiple series.
 #
@@ -532,7 +568,7 @@ def build_category_bar_chart(df, category_col, value_col, y_title, x_title=""):
 #
 #***************************************************************
 
-def build_date_line_chart(df, date_col, value_col, y_title, series_col=None):
+def build_date_line_chart(df, date_col, value_col, y_title, description, series_col=None):
     if series_col:
         chart = (
             alt.Chart(df)
@@ -547,7 +583,7 @@ def build_date_line_chart(df, date_col, value_col, y_title, series_col=None):
                 color=alt.Color(f"{series_col}:N"),
                 tooltip=[date_col, series_col, value_col],
             )
-            .properties(height=350)
+            .properties(height=350, description=description)
         )
     else:
         chart = (
@@ -562,7 +598,7 @@ def build_date_line_chart(df, date_col, value_col, y_title, series_col=None):
                 y=alt.Y(f"{value_col}:Q", title=y_title),
                 tooltip=[date_col, value_col],
             )
-            .properties(height=350)
+            .properties(height=350, description=description)
         )
     return chart
 
@@ -575,9 +611,21 @@ def build_date_line_chart(df, date_col, value_col, y_title, series_col=None):
 #               The chart uses a fixed Monday-through-Sunday order
 #               and can optionally split the line by a series column.
 #
+#               WCAG 1.1.1 Non-text Content: see build_hourly_bar_chart's
+#               own docstring for why `description` (required) becomes
+#               the Vega-Lite spec's non-visible "description" property
+#               rather than a second, visually-duplicated chart title.
+#               Not currently called anywhere in the app, but kept
+#               consistent with the other four builders in this family
+#               so a future caller is prompted for one too.
+#
 #  Parameters:  df - Source dataframe.
 #               weekday_col - Weekday label column used for the x-axis.
 #               value_col - Numeric column used for the y-axis.
+#               description - Required accessible description of what
+#                       this specific chart shows. Aggregate/summary text
+#                       only -- never raw row-level or patron-adjacent
+#                       data.
 #               series_col - Optional column used to split the line
 #                            into multiple series.
 #
@@ -585,7 +633,7 @@ def build_date_line_chart(df, date_col, value_col, y_title, series_col=None):
 #
 #***************************************************************
 
-def build_weekday_line_chart(df, weekday_col, value_col, series_col=None):
+def build_weekday_line_chart(df, weekday_col, value_col, description, series_col=None):
     weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
     if series_col:
@@ -603,7 +651,7 @@ def build_weekday_line_chart(df, weekday_col, value_col, series_col=None):
                 color=alt.Color(f"{series_col}:N"),
                 tooltip=[weekday_col, series_col, value_col],
             )
-            .properties(height=350)
+            .properties(height=350, description=description)
         )
     else:
         chart = (
@@ -619,7 +667,7 @@ def build_weekday_line_chart(df, weekday_col, value_col, series_col=None):
                 y=alt.Y(f"{value_col}:Q", title="Value"),
                 tooltip=[weekday_col, value_col],
             )
-            .properties(height=350)
+            .properties(height=350, description=description)
         )
     return chart
 
@@ -632,9 +680,18 @@ def build_weekday_line_chart(df, weekday_col, value_col, series_col=None):
 #               fills missing hours with zero values and can optionally
 #               split the line by a series column.
 #
+#               WCAG 1.1.1 Non-text Content: see build_hourly_bar_chart's
+#               own docstring for why `description` (required) becomes
+#               the Vega-Lite spec's non-visible "description" property
+#               rather than a second, visually-duplicated chart title.
+#
 #  Parameters:  df - Source dataframe containing hourly values.
 #               value_col - Numeric column used for the y-axis.
 #               title_y - Y-axis title.
+#               description - Required accessible description of what
+#                       this specific chart shows. Aggregate/summary text
+#                       only -- never raw row-level or patron-adjacent
+#                       data.
 #               series_col - Optional column used to split the line
 #                            into multiple series.
 #               start_hour - First hour to display.
@@ -644,7 +701,7 @@ def build_weekday_line_chart(df, weekday_col, value_col, series_col=None):
 #
 #***************************************************************
 
-def build_hourly_line_chart(df, value_col, title_y, series_col=None, start_hour=7, end_hour=20):
+def build_hourly_line_chart(df, value_col, title_y, description, series_col=None, start_hour=7, end_hour=20):
     hour_base = get_hour_range_df(start_hour, end_hour)
 
     if series_col:
@@ -673,7 +730,7 @@ def build_hourly_line_chart(df, value_col, title_y, series_col=None, start_hour=
                 color=alt.Color(f"{series_col}:N"),
                 tooltip=["hour_label", series_col, value_col],
             )
-            .properties(height=350)
+            .properties(height=350, description=description)
         )
     else:
         # Single-series version of the hourly line chart.
@@ -692,7 +749,7 @@ def build_hourly_line_chart(df, value_col, title_y, series_col=None, start_hour=
                 y=alt.Y(f"{value_col}:Q", title=title_y),
                 tooltip=["hour_label", value_col],
             )
-            .properties(height=350)
+            .properties(height=350, description=description)
         )
 
     return chart

@@ -422,7 +422,8 @@ st.caption("Manage branch configuration, routing rules, transit labels, and futu
 if admin_enabled and password_is_set and not admin_unlocked:
     st.info("Admin access required.")
 
-    entered_password = st.text_input("Admin password", type="password")
+    st.caption("* Required")
+    entered_password = st.text_input("Admin password *", type="password")
 
     unlock_col1, unlock_col2 = st.columns([1, 6])
 

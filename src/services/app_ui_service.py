@@ -96,8 +96,13 @@ def apply_page_chrome():
 #***************************************************************
 
 def render_app_header(library_name, branch_name, system_name, show_admin_button=True):
-    # Split the header into a large branding area and a small admin button area.
-    header_left, header_right = st.columns([12, 1])
+    # Split the header into a large branding area and an admin button area.
+    # Widened from the original [12, 1] (sized for an icon-only "⚙️"
+    # button) to give "⚙️ Admin Settings" 's real text room without
+    # wrapping -- see this button's own comment below for why it has
+    # visible text now (WCAG 4.1.2 Name, Role, Value / 2.4.6 Headings and
+    # Labels).
+    header_left, header_right = st.columns([10, 3])
 
     # Render the main title and selected system information.
     with header_left:
@@ -111,6 +116,10 @@ def render_app_header(library_name, branch_name, system_name, show_admin_button=
         )
 
     # Render the admin settings shortcut when the current user has access.
+    # Visible text, not an icon-only "⚙️" -- a bare emoji has no reliable
+    # accessible name (Streamlit's help= renders as a separate hover
+    # tooltip, never the button's own name), so the label itself must
+    # carry the meaning (WCAG 4.1.2 Name, Role, Value).
     with header_right:
-        if show_admin_button and st.button("⚙️", help="Admin Settings"):
+        if show_admin_button and st.button("⚙️ Admin Settings", help="Admin Settings"):
             st.switch_page("pages/1_admin_settings.py")
