@@ -488,6 +488,7 @@ def render_overview(
                 peak_avg_hour_value,
                 peak_avg_hour_subtitle,
                 "#6b7280",
+                value_is_html=True,
             )
         else:
             render_kpi_card(
@@ -495,6 +496,7 @@ def render_overview(
                 peak_total_hour_value,
                 peak_total_hour_subtitle,
                 "#6b7280",
+                value_is_html=True,
             )
 
     with row3_col2:
@@ -504,6 +506,7 @@ def render_overview(
                 fail_peak_avg_value,
                 fail_peak_avg_subtitle,
                 "#6b7280",
+                value_is_html=True,
             )
         else:
             render_kpi_card(
@@ -511,6 +514,7 @@ def render_overview(
                 fail_peak_total_value,
                 fail_peak_total_subtitle,
                 "#6b7280",
+                value_is_html=True,
             )
 
     with row3_col3:
