@@ -43,6 +43,7 @@ from services.app_ui_service import apply_page_chrome, render_app_header
 from services.dashboard_refresh_service import (
     is_operating_hours,
     resolve_refresh_interval_seconds,
+    resolve_run_every_seconds,
 )
 from services.email_service import send_password_reset_email
 from services.entitlement_service import build_entitlement_context
@@ -737,6 +738,47 @@ today = now_ct.date()
 
 
 #***************************************************************
+# Live Today Auto-Refresh Pause Control
+#
+# WCAG 2.2.2 (Pause, Stop, Hide): Live Today's numbers move on their own
+# every few seconds during operating hours (see run_every below) with no
+# way to stop them, which can disorient a screen reader or low-vision/
+# cognitive-disability user who happens to be reading that section when
+# it re-renders. This gives the user an explicit, visible, real-text
+# (never icon-only) control to turn that off for their own session.
+#
+# Defaults to NOT paused, i.e. the exact behavior that already existed
+# before this control was added: auto-refresh is on whenever the
+# dashboard is inside operating hours. A user's pause choice is stored in
+# st.session_state, so it survives reruns for the rest of this session,
+# and always wins over the operating-hours gate -- paused stays paused
+# even if the clock crosses into or out of operating hours.
+#***************************************************************
+
+LIVE_TODAY_PAUSE_KEY = "_live_today_auto_refresh_paused"
+if LIVE_TODAY_PAUSE_KEY not in st.session_state:
+    st.session_state[LIVE_TODAY_PAUSE_KEY] = False
+
+live_today_paused = st.session_state[LIVE_TODAY_PAUSE_KEY]
+
+if selected_view == "Live Today":
+    if live_today_paused:
+        if st.button("Resume live updates"):
+            st.session_state[LIVE_TODAY_PAUSE_KEY] = False
+            st.rerun()
+    else:
+        if st.button("Pause live updates"):
+            st.session_state[LIVE_TODAY_PAUSE_KEY] = True
+            st.rerun()
+
+live_today_run_every = resolve_run_every_seconds(
+    is_operating_hours_now=is_operating_hours(now_ct),
+    is_paused=live_today_paused,
+    interval_seconds=refresh_interval_seconds,
+)
+
+
+#***************************************************************
 # View Rendering
 #
 # Routes the user to the selected dashboard section. Live Today is the
@@ -751,7 +793,7 @@ today = now_ct.date()
 # once a real rerun does happen.
 #***************************************************************
 
-@st.fragment(run_every=refresh_interval_seconds if is_operating_hours(now_ct) else None)
+@st.fragment(run_every=live_today_run_every)
 def _render_live_today():
     # This is the ONLY part of the dashboard that reruns on a timer.
     # Everything above (auth, entitlements, settings, schema validation,

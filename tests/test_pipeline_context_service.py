@@ -42,7 +42,7 @@ def test_health_status_healthy_maps_to_green():
         }
     )
     assert ctx["pipeline_status_label"] == "Pipeline Healthy"
-    assert ctx["pipeline_status_color"] == "#059669"
+    assert ctx["pipeline_status_color"] == "#047857"
 
 
 def test_health_status_degraded_maps_to_amber():
@@ -54,7 +54,7 @@ def test_health_status_degraded_maps_to_amber():
         }
     )
     assert ctx["pipeline_status_label"] == "Pipeline Degraded"
-    assert ctx["pipeline_status_color"] == "#d97706"
+    assert ctx["pipeline_status_color"] == "#92400e"
 
 
 def test_health_status_auth_failure_maps_to_red():
@@ -66,7 +66,7 @@ def test_health_status_auth_failure_maps_to_red():
         }
     )
     assert ctx["pipeline_status_label"] == "Pipeline Auth Failure"
-    assert ctx["pipeline_status_color"] == "#dc2626"
+    assert ctx["pipeline_status_color"] == "#b91c1c"
 
 
 def test_stale_health_status_does_not_override_newer_collector_status():

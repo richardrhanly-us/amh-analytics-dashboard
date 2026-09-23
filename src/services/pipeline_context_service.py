@@ -5,6 +5,47 @@ import pandas as pd
 
 from ui_components import format_relative_time
 
+# WCAG 2.1 AA (>=4.5:1, normal-size text) foreground/background pairs for
+# each pipeline-status family, one pair per Streamlit theme. The prior
+# values (kept here only as a record, never used) failed AA in 3 of 4
+# states -- as low as 3.07:1 for the degraded/running amber in light
+# mode. Every state still pairs its color with an explicit text label
+# (pipeline_status_label) -- color is reinforcement, never the only
+# signal. Dark-mode backgrounds are flat opaque colors, not the prior
+# alpha-blended rgba() tints: an rgba() background's true rendered
+# contrast depends on whatever is composited underneath it in the DOM,
+# which cannot be verified or asserted by a test -- a flat color can.
+# Exact ratios are computed and locked in by
+# tests/test_pipeline_status_contrast.py; change the two together.
+_STATUS_COLOR_PAIRS = {
+    # family: {theme: (foreground, background)}
+    "healthy": {
+        "light": ("#047857", "#ecfdf5"),  # 5.21:1
+        "dark": ("#34d399", "#052e1f"),  # 7.71:1
+    },
+    "degraded": {
+        "light": ("#92400e", "#fffbeb"),  # 6.84:1
+        "dark": ("#fbbf24", "#3a2405"),  # 8.77:1
+    },
+    "failed": {
+        "light": ("#b91c1c", "#fef2f2"),  # 5.91:1
+        "dark": ("#f87171", "#450a0a"),  # 5.84:1
+    },
+    "unknown": {
+        "light": ("#6b7280", "#f9fafb"),  # 4.63:1 -- already passed; left unchanged
+        "dark": ("#94a3b8", "#1e293b"),  # 5.71:1
+    },
+}
+
+
+def _status_colors(family: str, theme_base: str) -> tuple[str, str]:
+    """(foreground, background) for `family` ("healthy"/"degraded"/
+    "failed"/"unknown") under the given theme_base ("light"/"dark" --
+    anything else is treated as light, matching every other theme_base
+    check in this codebase)."""
+    theme_key = "dark" if theme_base == "dark" else "light"
+    return _STATUS_COLOR_PAIRS[family][theme_key]
+
 
 def _parse_status_datetime(value, local_tz):
     if not value:
@@ -29,8 +70,7 @@ def build_pipeline_context(pipeline_status, df_live_raw, now_ct, local_tz, theme
                 checkins_updated = latest_dt.tz_convert(local_tz)
 
     pipeline_status_label = "Unknown"
-    pipeline_status_color = "#6b7280"
-    pipeline_status_bg = "#f9fafb"
+    pipeline_status_color, pipeline_status_bg = _status_colors("unknown", theme_base)
 
     status_updated_dt = None
     last_run = None
@@ -121,21 +161,18 @@ def build_pipeline_context(pipeline_status, df_live_raw, now_ct, local_tz, theme
 
         if health_status == "healthy":
             pipeline_status_label = "Pipeline Healthy"
-            pipeline_status_color = "#059669"
-            pipeline_status_bg = "rgba(5, 150, 105, 0.14)" if theme_base == "dark" else "#ecfdf5"
+            pipeline_status_color, pipeline_status_bg = _status_colors("healthy", theme_base)
             pipeline_result_text = "Continuous agent reporting healthy"
         elif health_status == "degraded":
             pipeline_status_label = "Pipeline Degraded"
-            pipeline_status_color = "#d97706"
-            pipeline_status_bg = "rgba(217, 119, 6, 0.14)" if theme_base == "dark" else "#fffbeb"
+            pipeline_status_color, pipeline_status_bg = _status_colors("degraded", theme_base)
             pipeline_result_text = (
                 "Continuous agent reporting degraded -- backlog, quarantine, "
                 "or unresolved delivery failure"
             )
         elif health_status == "auth_failure":
             pipeline_status_label = "Pipeline Auth Failure"
-            pipeline_status_color = "#dc2626"
-            pipeline_status_bg = "rgba(220, 38, 38, 0.14)" if theme_base == "dark" else "#fef2f2"
+            pipeline_status_color, pipeline_status_bg = _status_colors("failed", theme_base)
             pipeline_result_text = "Continuous agent cannot authenticate -- check the agent token"
 
         pipeline_expanded = health_status != "healthy"
@@ -145,36 +182,30 @@ def build_pipeline_context(pipeline_status, df_live_raw, now_ct, local_tz, theme
 
         if pipeline_run_status == "completed":
             pipeline_status_label = "Pipeline Healthy"
-            pipeline_status_color = "#059669"
-            pipeline_status_bg = "rgba(5, 150, 105, 0.14)" if theme_base == "dark" else "#ecfdf5"
+            pipeline_status_color, pipeline_status_bg = _status_colors("healthy", theme_base)
             pipeline_result_text = (
                 f"Uploaded {uploaded_checkins_rows:,} new checkins and "
                 f"{uploaded_rejects_rows:,} new rejects this run"
             )
         elif pipeline_run_status == "completed_no_new_rows":
             pipeline_status_label = "Pipeline Healthy"
-            pipeline_status_color = "#059669"
-            pipeline_status_bg = "rgba(5, 150, 105, 0.14)" if theme_base == "dark" else "#ecfdf5"
+            pipeline_status_color, pipeline_status_bg = _status_colors("healthy", theme_base)
             pipeline_result_text = "Run completed, but no new rows were uploaded"
         elif pipeline_run_status == "skipped_no_source_changes":
             pipeline_status_label = "Pipeline Healthy"
-            pipeline_status_color = "#059669"
-            pipeline_status_bg = "rgba(5, 150, 105, 0.14)" if theme_base == "dark" else "#ecfdf5"
+            pipeline_status_color, pipeline_status_bg = _status_colors("healthy", theme_base)
             pipeline_result_text = "No new source changes detected this run"
         elif str(pipeline_run_status).startswith("failed"):
             pipeline_status_label = "Pipeline Failed"
-            pipeline_status_color = "#dc2626"
-            pipeline_status_bg = "rgba(220, 38, 38, 0.14)" if theme_base == "dark" else "#fef2f2"
+            pipeline_status_color, pipeline_status_bg = _status_colors("failed", theme_base)
             pipeline_result_text = "Latest run failed"
         elif pipeline_run_status == "started":
             pipeline_status_label = "Pipeline Running"
-            pipeline_status_color = "#d97706"
-            pipeline_status_bg = "rgba(217, 119, 6, 0.14)" if theme_base == "dark" else "#fffbeb"
+            pipeline_status_color, pipeline_status_bg = _status_colors("degraded", theme_base)
             pipeline_result_text = "Run in progress"
         else:
             pipeline_status_label = "Pipeline Status Unknown"
-            pipeline_status_color = "#94a3b8" if theme_base == "dark" else "#6b7280"
-            pipeline_status_bg = "rgba(148, 163, 184, 0.12)" if theme_base == "dark" else "#f9fafb"
+            pipeline_status_color, pipeline_status_bg = _status_colors("unknown", theme_base)
             pipeline_result_text = "Unknown"
 
         pipeline_expanded = pipeline_run_status not in [
