@@ -243,31 +243,40 @@ def get_transit_summary(df):
 #
 #  Parameters:  df - Checkin dataframe containing barcode, datetime,
 #                    and transit_destination columns.
+#               group_column - Column identifying the same physical item
+#                              across repeated scans. Defaults to
+#                              "barcode" (v1's identity); a mixed-era
+#                              caller with Contract v2 rows in the same
+#                              frame (whose only per-item identity is an
+#                              HMAC item_key, not a barcode) passes a
+#                              different column that holds the right
+#                              identity for each row's era. This does not
+#                              change any existing caller's behavior.
 #
 #  Returns:     DataFrame - Destination-level transit time observations.
 #
 #***************************************************************
 
-def compute_transit_times(df):
-    if "barcode" not in df.columns or len(df) == 0:
+def compute_transit_times(df, group_column="barcode"):
+    if group_column not in df.columns or len(df) == 0:
         return pd.DataFrame()
 
-    # Vectorized equivalent of the original per-barcode Python loop: for
-    # each barcode's scans in chronological order, the elapsed time since
+    # Vectorized equivalent of the original per-item Python loop: for
+    # each item's scans in chronological order, the elapsed time since
     # its own previous scan is a transit-time observation whenever the
     # current scan has a transit destination. groupby(...).shift(1) gives
-    # "the previous scan's datetime for this same barcode" in one pass
+    # "the previous scan's datetime for this same item" in one pass
     # instead of a Python-level iterrows() per row -- this was previously
     # one of the slowest operations on the Transits page (O(rows) Python
     # loop over the full date-range-filtered dataframe on every render).
-    work_df = df.sort_values(["barcode", "datetime"]).copy()
+    work_df = df.sort_values([group_column, "datetime"]).copy()
 
     if "transit_destination" in work_df.columns:
         current_dest = work_df["transit_destination"]
     else:
         current_dest = pd.Series([None] * len(work_df), index=work_df.index)
 
-    prev_time = work_df.groupby("barcode")["datetime"].shift(1)
+    prev_time = work_df.groupby(group_column)["datetime"].shift(1)
     delta_minutes = (work_df["datetime"] - prev_time).dt.total_seconds() / 60
 
     has_prev_scan = prev_time.notna()
@@ -479,23 +488,32 @@ def get_destination_weekday_mix(transit_df, weekday_order):
 #               rejects_df - Reject dataframe.
 #               transit_summary - Transit summary dataframe.
 #               valid_transit_destinations - List of destinations to include.
+#               group_column - Column identifying the same physical item
+#                              across checkins and rejects. Defaults to
+#                              "barcode" (v1's identity); a mixed-era
+#                              caller whose only per-item identity for a
+#                              Contract v2 row is an HMAC item_key (not a
+#                              barcode) passes a different column that
+#                              holds the right identity for each row's
+#                              era. This does not change any existing
+#                              caller's behavior.
 #
 #  Returns:     DataFrame - Transit destination reject diagnostics.
 #
 #***************************************************************
 
-def get_destination_reject_summary(df, rejects_df, transit_summary, valid_transit_destinations):
+def get_destination_reject_summary(df, rejects_df, transit_summary, valid_transit_destinations, group_column="barcode"):
     if len(df) == 0 or len(transit_summary) == 0:
         return pd.DataFrame()
 
-    if "barcode" not in df.columns:
+    if group_column not in df.columns:
         return pd.DataFrame()
 
     summary = transit_summary.copy()
 
     # If reject data is unavailable, return the transit summary with
     # zeroed reject diagnostic fields.
-    if len(rejects_df) == 0 or "barcode" not in rejects_df.columns:
+    if len(rejects_df) == 0 or group_column not in rejects_df.columns:
         summary["reject_count"] = 0
         summary["reject_rate_pct"] = 0.0
         summary["top_reject_reason"] = "None"
@@ -503,17 +521,17 @@ def get_destination_reject_summary(df, rejects_df, transit_summary, valid_transi
         summary["top_reason_pct_of_destination_rejects"] = 0.0
         return summary
 
-    # Map each barcode to its most recent known transit destination.
+    # Map each item to its most recent known transit destination.
     barcode_map = (
         df.sort_values("datetime")
-        .drop_duplicates(subset=["barcode"], keep="last")
-        [["barcode", "destination", "transit_destination"]]
+        .drop_duplicates(subset=[group_column], keep="last")
+        [[group_column, "destination", "transit_destination"]]
     )
 
     # Attach the most recent destination information to reject records.
     rejects_with_destination = rejects_df.merge(
         barcode_map,
-        on="barcode",
+        on=group_column,
         how="left",
     )
 

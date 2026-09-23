@@ -107,6 +107,40 @@ ACS_PATRON_COLUMNS_STILL_LOADED = ("patron_id", "raw_message")
 
 
 #***************************************************************
+# Contract v2 Loaders (checkin_events / reject_events / acs_item_events)
+#
+# These are the privacy-safe successors to checkins / rejects / acs_events
+# (docs/collector-v2.md, docs/contract-v2-design.md). They physically
+# cannot contain patron_id, raw_message, a raw barcode, or title -- the
+# columns simply do not exist on these tables (alembic d3f1a8c95b27,
+# e5a2c7b93d14). `item_key` is a per-event HMAC of the item's barcode, not
+# the barcode itself; it is loaded ONLY because internal grouping (the
+# same distinct-item de-duplication and transit-time pairing v1 already
+# does with a real barcode) needs a stable per-item identity, never
+# because anything renders it. No view/table/export in this codebase may
+# display item_key -- see tests/test_dashboard_privacy_containment.py's
+# style of canary test, extended for these tables.
+#
+# Feature-gated off in production (main.py: SORTVIEW_V2_INGEST_ENABLED)
+# and never read by the currently-wired dashboard views; see
+# src/services/mixed_era_service.py for the read model that actually
+# combines these with v1 history at a branch's recorded cutover.
+#***************************************************************
+
+CHECKIN_EVENTS_LOAD_COLUMNS = ("event_time", "item_key", "destination", "bin")
+REJECT_EVENTS_LOAD_COLUMNS = ("event_time", "item_key", "error_class")
+ACS_ITEM_EVENTS_LOAD_COLUMNS = (
+    "event_time",
+    "item_key",
+    "state",
+    "destination",
+    "is_ill",
+    "is_branch_services",
+    "is_collection_services",
+)
+
+
+#***************************************************************
 #
 #  Function:     get_file_mtime
 #
@@ -365,6 +399,98 @@ def _normalize_acs_df(df):
     ]:
         if col not in df.columns:
             df[col] = None
+
+    return df
+
+
+#***************************************************************
+#
+#  Function:     _normalize_checkin_events_df
+#
+#  Description: Standardizes checkin_events (Contract v2) dataframe
+#               columns. Creates a normalized datetime column; a v2 row
+#               has no barcode field, so a "barcode" column is always
+#               added as None (never a fabricated or reused HMAC value)
+#               so any code path shared with v1's shape can reference it
+#               without a KeyError.
+#
+#  Parameters:  df - checkin_events dataframe to normalize.
+#
+#  Returns:     DataFrame - Normalized checkin_events dataframe.
+#
+#***************************************************************
+
+def _normalize_checkin_events_df(df):
+    if df.empty:
+        return df
+
+    if "event_time" in df.columns:
+        df["datetime"] = pd.to_datetime(df["event_time"], errors="coerce")
+
+    if "barcode" not in df.columns:
+        df["barcode"] = None
+
+    return df
+
+
+#***************************************************************
+#
+#  Function:     _normalize_reject_events_df
+#
+#  Description: Standardizes reject_events (Contract v2) dataframe
+#               columns. Creates a normalized datetime column; a v2 row
+#               has no free-text error_message, so error_message is
+#               always the closed error_class enum value instead.
+#
+#  Parameters:  df - reject_events dataframe to normalize.
+#
+#  Returns:     DataFrame - Normalized reject_events dataframe.
+#
+#***************************************************************
+
+def _normalize_reject_events_df(df):
+    if df.empty:
+        return df
+
+    if "event_time" in df.columns:
+        df["datetime"] = pd.to_datetime(df["event_time"], errors="coerce")
+
+    if "barcode" not in df.columns:
+        df["barcode"] = None
+
+    if "error_message" not in df.columns:
+        df["error_message"] = df["error_class"] if "error_class" in df.columns else ""
+
+    return df
+
+
+#***************************************************************
+#
+#  Function:     _normalize_acs_item_events_df
+#
+#  Description: Standardizes acs_item_events (Contract v2) dataframe
+#               columns. Creates a normalized datetime column and an
+#               is_hold column derived from the closed `state` enum,
+#               matching v1's is_hold semantics (state == "hold" is
+#               exactly v1's raw_message.startswith("101YNY")).
+#
+#  Parameters:  df - acs_item_events dataframe to normalize.
+#
+#  Returns:     DataFrame - Normalized acs_item_events dataframe.
+#
+#***************************************************************
+
+def _normalize_acs_item_events_df(df):
+    if df.empty:
+        return df
+
+    if "event_time" in df.columns:
+        df["datetime"] = pd.to_datetime(df["event_time"], errors="coerce")
+
+    if "state" in df.columns:
+        df["is_hold"] = df["state"] == "hold"
+    else:
+        df["is_hold"] = False
 
     return df
 
@@ -678,6 +804,249 @@ def _load_acs_live_from_db(org_slug, branch_slug):
     )
     df = _read_table(query, params=params, customer_id=org_slug, branch_id=branch_slug)
     return _normalize_acs_df(df)
+
+
+#***************************************************************
+#
+#  Function:     _load_checkin_events_from_db / _load_reject_events_from_db /
+#               _load_acs_item_events_from_db
+#
+#  Description: Loads Contract v2 event records for the selected
+#               organization and branch from the database. Each has a
+#               `live_only` flag identical in meaning to the v1 loaders
+#               above. Unlike the v1 loaders, these read privacy-safe
+#               columns only (see CHECKIN_EVENTS_LOAD_COLUMNS etc.).
+#
+#  Parameters:  org_slug - Organization/customer identifier.
+#               branch_slug - Branch identifier.
+#               live_only - Boolean flag for loading only today's data.
+#
+#  Returns:     DataFrame - Normalized v2 event dataframe.
+#
+#***************************************************************
+
+def _load_checkin_events_from_db(org_slug, branch_slug, live_only=False):
+    params = {"org_slug": org_slug, "branch_slug": branch_slug}
+    query = _scoped_query(
+        table_name="checkin_events",
+        org_column=CHECKINS_ORG_COLUMN,
+        branch_column=CHECKINS_BRANCH_COLUMN,
+        live_only=live_only,
+        columns=CHECKIN_EVENTS_LOAD_COLUMNS,
+    )
+    df = _read_table(query, params=params, customer_id=org_slug, branch_id=branch_slug)
+    return _normalize_checkin_events_df(df)
+
+
+def _load_reject_events_from_db(org_slug, branch_slug, live_only=False):
+    params = {"org_slug": org_slug, "branch_slug": branch_slug}
+    query = _scoped_query(
+        table_name="reject_events",
+        org_column=REJECTS_ORG_COLUMN,
+        branch_column=REJECTS_BRANCH_COLUMN,
+        live_only=live_only,
+        columns=REJECT_EVENTS_LOAD_COLUMNS,
+    )
+    df = _read_table(query, params=params, customer_id=org_slug, branch_id=branch_slug)
+    return _normalize_reject_events_df(df)
+
+
+def _load_acs_item_events_from_db(org_slug, branch_slug, live_only=False):
+    params = {"org_slug": org_slug, "branch_slug": branch_slug}
+    query = _scoped_query(
+        table_name="acs_item_events",
+        org_column=ACS_ORG_COLUMN,
+        branch_column=ACS_BRANCH_COLUMN,
+        live_only=live_only,
+        columns=ACS_ITEM_EVENTS_LOAD_COLUMNS,
+    )
+    df = _read_table(query, params=params, customer_id=org_slug, branch_id=branch_slug)
+    return _normalize_acs_item_events_df(df)
+
+
+#***************************************************************
+#
+#  Function:     load_checkin_events_history_df / load_checkin_events_df /
+#               load_reject_events_history_df / load_reject_events_df /
+#               load_acs_item_events_history_df / load_acs_item_events_df
+#
+#  Description: Public cached loaders for Contract v2 event data, mirroring
+#               the v1 loaders' caching (ttl=900) and scope-validation
+#               behavior exactly. These do not replace or alter any v1
+#               loader; a branch with no v2 cutover on record simply never
+#               has a reason to call these (see
+#               src/services/mixed_era_service.py).
+#
+#  Parameters:  org_slug - Organization/customer identifier.
+#               branch_slug - Branch identifier.
+#
+#  Returns:     DataFrame - Historical or live v2 event dataframe.
+#
+#***************************************************************
+
+@st.cache_data(ttl=900, show_spinner=False)
+def load_checkin_events_history_df(org_slug, branch_slug):
+    try:
+        _require_scope(org_slug, branch_slug)
+    except ValueError as e:
+        st.error(str(e))
+        return pd.DataFrame()
+    return _load_checkin_events_from_db(org_slug, branch_slug, live_only=False)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def load_checkin_events_df(org_slug, branch_slug, refresh_count=0):
+    try:
+        _require_scope(org_slug, branch_slug)
+    except ValueError as e:
+        st.error(str(e))
+        return pd.DataFrame()
+    return _load_checkin_events_from_db(org_slug, branch_slug, live_only=True)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def load_reject_events_history_df(org_slug, branch_slug):
+    try:
+        _require_scope(org_slug, branch_slug)
+    except ValueError as e:
+        st.error(str(e))
+        return pd.DataFrame()
+    return _load_reject_events_from_db(org_slug, branch_slug, live_only=False)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def load_reject_events_df(org_slug, branch_slug, refresh_count=0):
+    try:
+        _require_scope(org_slug, branch_slug)
+    except ValueError as e:
+        st.error(str(e))
+        return pd.DataFrame()
+    return _load_reject_events_from_db(org_slug, branch_slug, live_only=True)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def load_acs_item_events_history_df(org_slug, branch_slug):
+    try:
+        _require_scope(org_slug, branch_slug)
+    except ValueError as e:
+        st.error(str(e))
+        return pd.DataFrame()
+    return _load_acs_item_events_from_db(org_slug, branch_slug, live_only=False)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def load_acs_item_events_df(org_slug, branch_slug, refresh_count=0):
+    try:
+        _require_scope(org_slug, branch_slug)
+    except ValueError as e:
+        st.error(str(e))
+        return pd.DataFrame()
+    return _load_acs_item_events_from_db(org_slug, branch_slug, live_only=True)
+
+
+#***************************************************************
+#
+#  Function:     load_v2_cutover
+#
+#  Description: Public cached loader for a branch's current effective
+#               Contract v2 cutover (v2_cutovers, alembic f2a91c7d4e83):
+#               the most recent recorded value, or None if the branch has
+#               no cutover on record, or its latest record is a rollback.
+#               A short ttl (60s, matching load_pipeline_status) keeps an
+#               operator's set/rollback action visible to the dashboard
+#               quickly during an active pilot.
+#
+#  Parameters:  org_slug - Organization/customer identifier.
+#               branch_slug - Branch identifier.
+#
+#  Returns:     Timestamp | None - The effective cutover instant (UTC),
+#                                 or None if the branch is v1-only.
+#
+#***************************************************************
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_v2_cutover(org_slug, branch_slug):
+    try:
+        _require_scope(org_slug, branch_slug)
+    except ValueError as e:
+        st.error(str(e))
+        return None
+
+    org_column = _safe_identifier(CHECKINS_ORG_COLUMN)
+    branch_column = _safe_identifier(CHECKINS_BRANCH_COLUMN)
+    query_template = """
+        SELECT cutover_at
+        FROM v2_cutovers
+        WHERE {org_column} = :org_slug
+          AND {branch_column} = :branch_slug
+        ORDER BY set_at DESC
+        LIMIT 1
+    """
+    # org_column/branch_column pass through _safe_identifier() allowlist above;
+    # org_slug/branch_slug stay bound parameters.
+    query = query_template.format(org_column=org_column, branch_column=branch_column)  # nosec B608
+    df = _read_table(query, params={"org_slug": org_slug, "branch_slug": branch_slug})
+
+    if df.empty:
+        return None
+
+    value = df.iloc[0]["cutover_at"]
+    return value if pd.notna(value) else None
+
+
+#***************************************************************
+#
+#  Function:     load_v2_ingest_status
+#
+#  Description: Public cached loader for a tenant's latest Contract v2
+#               heartbeat snapshot (ingest_key_ids), for the
+#               coexistence-aware health surface in
+#               src/services/pipeline_context_service.py. Returns None if
+#               the tenant has no active v2 key or no heartbeat has ever
+#               been recorded -- both mean "nothing to show from v2 yet",
+#               not an error.
+#
+#  Parameters:  org_slug - Organization/customer identifier.
+#               branch_slug - Branch identifier.
+#
+#  Returns:     dict | None - Latest v2 heartbeat fields, or None.
+#
+#***************************************************************
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_v2_ingest_status(org_slug, branch_slug):
+    try:
+        _require_scope(org_slug, branch_slug)
+    except ValueError as e:
+        st.error(str(e))
+        return None
+
+    org_column = _safe_identifier(CHECKINS_ORG_COLUMN)
+    branch_column = _safe_identifier(CHECKINS_BRANCH_COLUMN)
+    query_template = """
+        SELECT key_id, status AS key_status, health_status, last_error_class, pending_outbox_count,
+               quarantined_count, oldest_pending_event_at, last_success_at, watcher_last_active_at,
+               last_heartbeat_at
+        FROM ingest_key_ids
+        WHERE {org_column} = :org_slug
+          AND {branch_column} = :branch_slug
+          AND status = 'active'
+        ORDER BY last_heartbeat_at DESC NULLS LAST
+        LIMIT 1
+    """
+    # org_column/branch_column pass through _safe_identifier() allowlist above;
+    # org_slug/branch_slug stay bound parameters.
+    query = query_template.format(org_column=org_column, branch_column=branch_column)  # nosec B608
+    df = _read_table(query, params={"org_slug": org_slug, "branch_slug": branch_slug})
+
+    if df.empty:
+        return None
+
+    row = df.iloc[0].to_dict()
+    for key in ("oldest_pending_event_at", "last_success_at", "watcher_last_active_at", "last_heartbeat_at"):
+        value = row.get(key)
+        row[key] = value.isoformat() if pd.notna(value) and hasattr(value, "isoformat") else None
+    return row
 
 
 #***************************************************************

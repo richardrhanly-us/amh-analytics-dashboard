@@ -247,3 +247,98 @@ def build_pipeline_context(pipeline_status, df_live_raw, now_ct, local_tz, theme
         "problem_items": problem_items,
         "destination_breakdown_text": destination_breakdown_text,
     }
+
+
+#***************************************************************
+#
+#  Function:     build_v2_aware_pipeline_context
+#
+#  Description: Government-readiness audit, Part 5: the minimum
+#               coexistence-aware health behavior needed for a v2 pilot.
+#               A branch with no v2 heartbeat ever recorded (the
+#               overwhelming majority today, including every branch that
+#               has never been cut over) delegates ENTIRELY to
+#               build_pipeline_context, unchanged -- so an untouched v1
+#               historical branch's status stays exactly as understandable
+#               as it is today. Only once a branch's v2 key has actually
+#               reported at least one heartbeat does this function prefer
+#               that v2 status over v1's pipeline_status, so a branch that
+#               has moved to v2 does not read as "stale" merely because
+#               its v1 Collector/agent stopped writing pipeline_status.
+#
+#               This does not redesign monitoring generally -- it reuses
+#               the same status colors, labels and shape as
+#               build_pipeline_context, and touches nothing about how
+#               v1-only branches are shown.
+#
+#  Parameters:  pipeline_status - v1 pipeline_status row (see
+#                                 build_pipeline_context).
+#               v2_ingest_status - The tenant's latest v2 heartbeat
+#                                 (data_loader.load_v2_ingest_status), or
+#                                 None if it has never reported.
+#               df_live_raw - Live checkin dataframe (see
+#                            build_pipeline_context).
+#               now_ct - Current local time.
+#               local_tz - Local timezone.
+#               theme_base - "light" or "dark".
+#
+#  Returns:     dict - Same key shape as build_pipeline_context.
+#
+#***************************************************************
+
+_V2_HEALTH_STATUS_FAMILY = {
+    "healthy": "healthy",
+    "degraded": "degraded",
+    "error": "failed",
+}
+
+
+def build_v2_aware_pipeline_context(pipeline_status, v2_ingest_status, df_live_raw, now_ct, local_tz, theme_base):
+    if not v2_ingest_status:
+        return build_pipeline_context(pipeline_status, df_live_raw, now_ct, local_tz, theme_base)
+
+    base = build_pipeline_context(pipeline_status, df_live_raw, now_ct, local_tz, theme_base)
+
+    health_status = v2_ingest_status.get("health_status")
+    family = _V2_HEALTH_STATUS_FAMILY.get(health_status, "unknown")
+    pipeline_status_color, pipeline_status_bg = _status_colors(family, theme_base)
+
+    if family == "healthy":
+        pipeline_status_label = "Pipeline Healthy"
+        pipeline_result_text = "Contract v2 collector reporting healthy"
+    elif family == "degraded":
+        pipeline_status_label = "Pipeline Degraded"
+        pending = v2_ingest_status.get("pending_outbox_count")
+        quarantined = v2_ingest_status.get("quarantined_count")
+        pipeline_result_text = (
+            "Contract v2 collector reporting degraded -- "
+            f"pending {pending if pending is not None else 'unknown'}, "
+            f"quarantined {quarantined if quarantined is not None else 'unknown'}"
+        )
+    elif family == "failed":
+        last_error_class = v2_ingest_status.get("last_error_class")
+        pipeline_status_label = "Pipeline Auth Failure" if last_error_class == "auth_failure" else "Pipeline Failed"
+        pipeline_result_text = (
+            "Contract v2 collector cannot authenticate -- check the ingest key"
+            if last_error_class == "auth_failure"
+            else f"Contract v2 collector reporting an error (last_error_class={last_error_class or 'unknown'})"
+        )
+    else:
+        pipeline_status_label = "Pipeline Status Unknown"
+        pipeline_result_text = "No Contract v2 status has been recorded yet"
+
+    last_heartbeat_str = v2_ingest_status.get("last_heartbeat_at") or "N/A"
+    last_success_str = v2_ingest_status.get("last_success_at") or "N/A"
+
+    return {
+        **base,
+        "pipeline_status_label": pipeline_status_label,
+        "pipeline_status_color": pipeline_status_color,
+        "pipeline_status_bg": pipeline_status_bg,
+        "pipeline_expanded": family != "healthy",
+        "pipeline_result_text": pipeline_result_text,
+        "status_code_text": str(health_status or "unknown"),
+        "pipeline_status_written_str": last_heartbeat_str,
+        "pipeline_last_run_str": last_success_str,
+        "pipeline_source": "v2",
+    }

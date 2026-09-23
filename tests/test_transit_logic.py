@@ -207,3 +207,52 @@ def test_get_destination_driver_summary():
     assert "text" in result
     assert "color" in result
     assert isinstance(result["text"], str)
+
+
+# --- government-readiness audit: get_destination_reject_summary's group_column parameter ----------------------------
+
+def test_get_destination_reject_summary_group_column_defaults_to_barcode_unchanged():
+    # No group_column passed -- must behave exactly as before this round for every existing v1-only caller.
+    df = build_checkins_df()
+    rejects_df = build_rejects_df()
+    transit_summary = get_transit_summary(df)
+
+    default_call = get_destination_reject_summary(df, rejects_df, transit_summary, ["Westside", "Library Express"])
+    explicit_barcode_call = get_destination_reject_summary(
+        df, rejects_df, transit_summary, ["Westside", "Library Express"], group_column="barcode"
+    )
+
+    pd.testing.assert_frame_equal(default_call, explicit_barcode_call)
+
+
+def test_get_destination_reject_summary_uses_a_custom_group_column_for_mixed_era_items():
+    # A Contract v2 row's only per-item identity is item_group_key (an HMAC item_key), never a real barcode -- the
+    # cross-referencing this function does must still work when told to group by that column instead.
+    df = pd.DataFrame({
+        "item_group_key": ["v2-item-1", "v2-item-1"],
+        "datetime": pd.to_datetime(["2026-10-05 09:00", "2026-10-05 09:05"]),
+        "destination": ["Westside", "Westside"],
+        "transit_destination": ["Westside", "Westside"],
+    })
+    rejects_df = pd.DataFrame({
+        "item_group_key": ["v2-item-1"],
+        "datetime": pd.to_datetime(["2026-10-05 09:10"]),
+        "error_simple": ["Item Not Found"],
+    })
+    transit_summary = pd.DataFrame({"destination": ["Westside"], "transit_items": [2], "pct_of_total_items": [100.0]})
+
+    result = get_destination_reject_summary(
+        df, rejects_df, transit_summary, ["Westside"], group_column="item_group_key"
+    )
+
+    assert int(result.loc[result["destination"] == "Westside", "reject_count"].iloc[0]) == 1
+
+
+def test_get_destination_reject_summary_returns_empty_when_the_group_column_is_missing():
+    df = pd.DataFrame({"destination": ["Westside"], "datetime": pd.to_datetime(["2026-10-05"])})
+    transit_summary = pd.DataFrame({"destination": ["Westside"], "transit_items": [1]})
+
+    result = get_destination_reject_summary(
+        df, pd.DataFrame(), transit_summary, ["Westside"], group_column="item_group_key"
+    )
+    assert result.empty

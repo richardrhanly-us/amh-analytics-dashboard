@@ -61,12 +61,38 @@ a = Analysis(  # noqa: F821 (Analysis/PYZ/EXE/COLLECT are injected by PyInstalle
     # Belt-and-suspenders for the five subcommand targets -- see
     # dispatcher.py's own docstring for why these are expected to be
     # auto-discovered anyway (static from-imports, even inside if/elif).
+    #
+    # Government-readiness audit, Part 6: the 15 Privacy Contract v2
+    # modules are ALSO listed explicitly, belt-and-suspenders, because
+    # collector/run.py only reaches `from .v2_run import main_v2` inside a
+    # conditional branch (contract_mode == "v2") -- PyInstaller's static
+    # analyzer follows a module-level import reliably, but a
+    # function-local, conditional one is exactly the case this project's
+    # own module docstring above warns an exclude/include list cannot
+    # fully guarantee without a test. Listing every v2 module here removes
+    # the guesswork; tests/test_collector_freeze.py asserts all 15 are
+    # present.
     hiddenimports=[
         "collector.run",
         "collector.preflight",
         "collector.bootstrap_state",
         "collector.support_info",
         "collector.task_settings",
+        "collector.v2_classify",
+        "collector.v2_config",
+        "collector.v2_events",
+        "collector.v2_identity",
+        "collector.v2_keys",
+        "collector.v2_normalize",
+        "collector.v2_patrons",
+        "collector.v2_quarantine",
+        "collector.v2_reader",
+        "collector.v2_rules",
+        "collector.v2_run",
+        "collector.v2_safe_errors",
+        "collector.v2_status",
+        "collector.v2_transform",
+        "collector.v2_uploader",
     ],
     hookspath=[],
     hooksconfig={},

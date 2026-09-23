@@ -202,6 +202,96 @@ def retire_ingest_key(conn, key_id: str) -> bool:
     return result.rowcount == 1
 
 
+def latest_ingest_status(conn, customer_id: int, branch_id: int) -> dict[str, Any] | None:
+    """The most recent v2 heartbeat snapshot for a tenant's ACTIVE key, or None if it has none. Used only by the
+    dashboard's coexistence-aware health surface -- never by ingestion itself."""
+    row = conn.execute(
+        text("""
+            SELECT key_id, status AS key_status, health_status, last_error_class, pending_outbox_count,
+                   quarantined_count, oldest_pending_event_at, last_success_at, watcher_last_active_at,
+                   last_heartbeat_at
+            FROM ingest_key_ids
+            WHERE customer_id = :customer_id AND branch_id = :branch_id AND status = 'active'
+            ORDER BY last_heartbeat_at DESC NULLS LAST
+            LIMIT 1
+        """),
+        {"customer_id": customer_id, "branch_id": branch_id},
+    ).mappings().first()
+    return dict(row) if row is not None else None
+
+
+# --- v2 cutovers (mixed-era read-model boundary) -------------------------------------------------------------------
+
+def _mapped_operational_tenant(conn, customer_id: int, branch_id: int) -> bool:
+    """True if (customer_id, branch_id) is the fully mapped operational pair for some organization/branch -- the same
+    bridge issue_ingest_key uses, reused here so a cutover can never be recorded against an unmapped or mistyped
+    tenant pair."""
+    mapped = conn.execute(
+        text("""
+            SELECT 1
+            FROM organizations o
+            JOIN branches b ON b.organization_id = o.id
+            WHERE o.operational_customer_id = :customer_id
+              AND b.operational_branch_id = :branch_id
+        """),
+        {"customer_id": customer_id, "branch_id": branch_id},
+    ).first()
+    return mapped is not None
+
+
+def record_v2_cutover(
+    conn,
+    customer_id: int,
+    branch_id: int,
+    cutover_at: datetime | None,
+    set_by: str,
+    note: str | None = None,
+) -> int:
+    """Appends ONE new v2_cutovers row for a tenant -- the only way this table is ever written (see the migration's
+    docstring: never UPDATE, never DELETE). `cutover_at=None` records an explicit rollback to v1-only, distinguishable
+    from "never cut over" (no rows at all) by the mere presence of this row. Returns the new row's id.
+
+    Raises ValueError if the tenant is not the fully mapped operational pair, or if `set_by` is blank -- the same
+    guardrails issue_ingest_key applies, so a cutover can never be recorded for an unmapped tenant or an anonymous
+    operator."""
+    if not _mapped_operational_tenant(conn, customer_id, branch_id):
+        raise ValueError("customer_id / branch_id is not a mapped operational tenant")
+    if not (set_by or "").strip():
+        raise ValueError("set_by is required and cannot be blank")
+    row = conn.execute(
+        text("""
+            INSERT INTO v2_cutovers (customer_id, branch_id, cutover_at, set_by, note)
+            VALUES (:customer_id, :branch_id, :cutover_at, :set_by, :note)
+            RETURNING id
+        """),
+        {
+            "customer_id": customer_id,
+            "branch_id": branch_id,
+            "cutover_at": cutover_at,
+            "set_by": set_by.strip(),
+            "note": note,
+        },
+    ).first()
+    return int(row[0])
+
+
+def get_effective_v2_cutover(conn, customer_id: int, branch_id: int) -> datetime | None:
+    """The tenant's current mixed-era boundary: the `cutover_at` of its most recent v2_cutovers row by `set_at`, or
+    None if the branch has no row at all (never piloted) or its latest row is a rollback (`cutover_at IS NULL`).
+    Either None case means the same thing to a caller: read v1 only, exactly as before this table existed."""
+    row = conn.execute(
+        text("""
+            SELECT cutover_at
+            FROM v2_cutovers
+            WHERE customer_id = :customer_id AND branch_id = :branch_id
+            ORDER BY set_at DESC
+            LIMIT 1
+        """),
+        {"customer_id": customer_id, "branch_id": branch_id},
+    ).first()
+    return row[0] if row is not None else None
+
+
 # --- events -------------------------------------------------------------------------------------------------------
 
 def _comparable(column: str, value: Any) -> Any:

@@ -17,7 +17,6 @@ import streamlit as st
 
 from alerts import get_system_alerts
 from metrics import (
-    build_acs_item_summary,
     get_historical_reject_baseline,
     get_today_metrics,
 )
@@ -146,19 +145,19 @@ def _build_historical_baseline(df_history_raw, rejects_history_raw, today, trans
 #               df_history_raw - Historical checkin dataframe.
 #               rejects_live_raw - Live rejects dataframe.
 #               rejects_history_raw - Historical rejects dataframe.
-#               acs_live_raw - Live ACS dataframe.
+#               acs_item_summary - Pre-computed ACS item summary for today
+#                                  (metrics.build_acs_item_summary's return
+#                                  shape). Government-readiness audit: built
+#                                  by the caller (app.py, via
+#                                  services.mixed_era_service) so this
+#                                  function never needs to know whether the
+#                                  branch is v1-only or mixed-era.
 #               pipeline_status - Latest pipeline status dictionary.
 #               refresh_count - Streamlit auto-refresh counter.
 #               today - Current local date.
 #               now_ct - Current datetime in Central Time.
 #               transit_labels - List of configured transit destination labels.
 #               transit_home_label - Display label used for home/local routing.
-#               branch_services_names - Configured branch services names.
-#               collection_services_names - Configured collection services names.
-#               branch_services_da_patterns - Configured branch services
-#                                             destination patterns.
-#               collection_services_da_patterns - Configured collection
-#                                                 services destination patterns.
 #               theme_palette - Dictionary of theme-aware alert colors.
 #
 #  Returns:     dict - Live dashboard context containing no-today-data
@@ -172,17 +171,13 @@ def build_live_context(
     df_history_raw,
     rejects_live_raw,
     rejects_history_raw,
-    acs_live_raw,
+    acs_item_summary,
     pipeline_status,
     refresh_count,
     today,
     now_ct,
     transit_labels,
     transit_home_label,
-    branch_services_names,
-    collection_services_names,
-    branch_services_da_patterns,
-    collection_services_da_patterns,
     theme_palette,
 ):
     # Build today's base metrics from live checkin and reject data.
@@ -259,43 +254,13 @@ def build_live_context(
     else:
         today_hourly_checkins = pd.Series(dtype=int)
 
-    # Prepare live ACS data for today's hold and internal workflow summary.
-    today_acs_df = acs_live_raw.copy()
-
-    if len(today_acs_df) > 0 and "datetime" in today_acs_df.columns:
-        today_acs_df["datetime"] = pd.to_datetime(today_acs_df["datetime"], errors="coerce")
-        today_acs_df = today_acs_df.dropna(subset=["datetime"]).copy()
-
-        today_acs_latest_date = today_acs_df["datetime"].max().date()
-        today_acs_df = today_acs_df[today_acs_df["datetime"].dt.date == today_acs_latest_date].copy()
-
-    if "raw_message" in today_acs_df.columns:
-        today_acs_df["raw_message"] = today_acs_df["raw_message"].fillna("").astype(str).str.strip()
-
-    # For item message rows, keep only the latest row per barcode while preserving non-item rows.
-    if (
-        "barcode" in today_acs_df.columns
-        and "datetime" in today_acs_df.columns
-        and "message_code" in today_acs_df.columns
-    ):
-        item_rows = today_acs_df[today_acs_df["message_code"].astype(str).str.strip() == "10"].copy()
-        non_item_rows = today_acs_df[today_acs_df["message_code"].astype(str).str.strip() != "10"].copy()
-
-        if len(item_rows) > 0:
-            item_rows = item_rows.sort_values("datetime")
-            item_rows = item_rows.drop_duplicates(subset=["barcode"], keep="last")
-
-        today_acs_df = pd.concat([item_rows, non_item_rows], ignore_index=True)
-
-    # Build today's ACS item summary for holds, ILL, programming, and collection services.
-    acs_summary_today = build_acs_item_summary(
-        today_acs_df,
-        transit_labels=transit_labels,
-        branch_services_names=branch_services_names,
-        collection_services_names=collection_services_names,
-        branch_services_da_patterns=branch_services_da_patterns,
-        collection_services_da_patterns=collection_services_da_patterns,
-    )
+    # Today's ACS item summary (holds, ILL, programming, collection services)
+    # is computed by the caller (app.py, via services.mixed_era_service),
+    # which decides -- per the branch's v2_cutovers record -- whether to
+    # classify today's raw v1 ACS data alone (unchanged from before) or to
+    # also combine it with today's already-classified Contract v2 data.
+    # This function only consumes the result.
+    acs_summary_today = acs_item_summary
 
     # Pull ACS summary values into local variables for the Live Today view.
     today_holds = acs_summary_today["holds_total"]

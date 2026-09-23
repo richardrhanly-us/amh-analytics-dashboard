@@ -1,7 +1,7 @@
 import pandas as pd
 import streamlit as st
 
-from metrics import build_acs_item_summary, build_roi_payload
+from metrics import build_roi_payload
 from ui_components import (
     format_hour,
     format_ill_branch_subtitle,
@@ -12,16 +12,12 @@ from ui_components import (
 def render_overview(
     df,
     rejects_df,
-    acs_history_raw,
+    acs_item_summary,
     start_date,
     end_date,
     date_range_text,
     TRANSIT_LABELS,
     TRANSIT_HOME_LABEL,
-    BRANCH_SERVICES_NAMES,
-    COLLECTION_SERVICES_NAMES,
-    BRANCH_SERVICES_DA_PATTERNS,
-    COLLECTION_SERVICES_DA_PATTERNS,
     attention_title,
     attention_text,
     attention_color,
@@ -36,31 +32,17 @@ def render_overview(
         # ---------------------------------
         # Internal Workflow Summary
         # ---------------------------------
-        overview_acs_df = acs_history_raw.copy()
-    
-        if len(overview_acs_df) > 0 and "datetime" in overview_acs_df.columns:
-            overview_acs_df["datetime"] = pd.to_datetime(overview_acs_df["datetime"], errors="coerce")
-            overview_acs_df = overview_acs_df.dropna(subset=["datetime"]).copy()
-            overview_acs_df = overview_acs_df[
-                (overview_acs_df["datetime"].dt.date >= start_date) &
-                (overview_acs_df["datetime"].dt.date <= end_date)
-            ].copy()
-    
-        overview_acs_summary = build_acs_item_summary(
-            overview_acs_df,
-            transit_labels=TRANSIT_LABELS,
-            branch_services_names=BRANCH_SERVICES_NAMES,
-            collection_services_names=COLLECTION_SERVICES_NAMES,
-            branch_services_da_patterns=BRANCH_SERVICES_DA_PATTERNS,
-            collection_services_da_patterns=COLLECTION_SERVICES_DA_PATTERNS,
-        )
-    
-        overview_holds = overview_acs_summary["holds_total"]
-        overview_ill = overview_acs_summary["ill_total"]
-        overview_ill_main = overview_acs_summary["ill_main"]
-        overview_ill_by_branch = overview_acs_summary["ill_by_branch"]
-        overview_programming = overview_acs_summary["programming_total"]
-        overview_collection_services = overview_acs_summary["collection_services_total"]
+        # acs_item_summary is pre-computed by the caller (app.py, via
+        # services.mixed_era_service), already date-filtered to
+        # start_date/end_date and already classified for both a v1-only
+        # and a mixed-era branch alike -- see mixed_era_service.py's
+        # module docstring. This view never reads a raw ACS dataframe.
+        overview_holds = acs_item_summary["holds_total"]
+        overview_ill = acs_item_summary["ill_total"]
+        overview_ill_main = acs_item_summary["ill_main"]
+        overview_ill_by_branch = acs_item_summary["ill_by_branch"]
+        overview_programming = acs_item_summary["programming_total"]
+        overview_collection_services = acs_item_summary["collection_services_total"]
     
         st.markdown("### Internal Workflow")
         internal_overview_col1, internal_overview_col2, internal_overview_col3, internal_overview_col4 = st.columns(4)
