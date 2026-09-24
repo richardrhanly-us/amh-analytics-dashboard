@@ -21,13 +21,35 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import streamlit as st
 
+import importlib.util
+import sys
+
 import metrics
 from dashboard_context import build_dashboard_context
-from data_loader import (
-    load_pipeline_status,
-    load_v2_ingest_status,
-    validate_tenant_schema,
+
+_data_loader_spec = importlib.util.find_spec("data_loader")
+
+logging.error(
+    "IMPORT DIAG | python=%s | data_loader_origin=%s",
+    sys.version,
+    getattr(_data_loader_spec, "origin", None),
 )
+
+try:
+    from data_loader import (
+        load_pipeline_status,
+        load_v2_ingest_status,
+        validate_tenant_schema,
+    )
+except ImportError as exc:
+    logging.error(
+        "IMPORT DIAG FAILED | type=%s | module=%s | path=%s",
+        type(exc).__name__,
+        getattr(exc, "name", None),
+        getattr(exc, "path", None),
+    )
+    raise
+
 from services import auth_service, mixed_era_service
 from services.access_service import (
     get_org_access_mode,
