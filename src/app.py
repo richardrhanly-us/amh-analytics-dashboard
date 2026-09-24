@@ -23,7 +23,7 @@ import streamlit as st
 
 import metrics
 from dashboard_context import build_dashboard_context
-from data_loader import (
+from data_loader_diag import (
     load_pipeline_status,
     load_v2_ingest_status,
     validate_tenant_schema,
