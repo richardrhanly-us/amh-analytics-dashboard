@@ -28,7 +28,12 @@ from data_loader_diag import (
     load_v2_ingest_status,
     validate_tenant_schema,
 )
-from services import auth_service, mixed_era_service
+from services import (
+    auth_service,
+    cookie_service,
+    mixed_era_service,
+    persistent_auth_service,
+)
 from services.access_service import (
     get_org_access_mode,
     get_org_branches,
@@ -86,6 +91,11 @@ apply_page_chrome()
 if "auth_user" not in st.session_state:
     st.session_state["auth_user"] = None
 
+# A persistent-login cookie operation is staged during one script run and
+# actually mounted on the following render. Keep this near the top of every
+# run so login/logout paths that call st.rerun() cannot skip the browser write.
+cookie_service.render_cookie_writer()
+
 APP_TZ = ZoneInfo("America/Chicago")
 
 reset_token = st.query_params.get("reset_token")
@@ -110,14 +120,32 @@ if reset_token:
 # (e.g. the account is deactivated).
 #***************************************************************
 
-DEMO_MODE_ENABLED = os.getenv("SORTVIEW_DEMO_MODE_ENABLED", "false").strip().lower() == "true"
+DEMO_MODE_ENABLED = (
+    os.getenv("SORTVIEW_DEMO_MODE_ENABLED", "false").strip().lower() == "true"
+)
 GUEST_EMAIL = os.getenv("SORTVIEW_GUEST_EMAIL")
 GUEST_PASSWORD = os.getenv("SORTVIEW_GUEST_PASSWORD")
 
-if (
+guest_requested = (
     DEMO_MODE_ENABLED
-    and st.session_state["auth_user"] is None
     and st.query_params.get("guest") == "1"
+)
+
+# Restore only a normal authenticated user's persistent session.
+#
+# Password-reset links must always take precedence over an existing login.
+# Guest/demo visits deliberately bypass persistent-session restoration so the
+# public demo can never inherit a previously authenticated user's session.
+if (
+    st.session_state["auth_user"] is None
+    and not reset_token
+    and not guest_requested
+):
+    persistent_auth_service.restore_persistent_auth()
+
+if (
+    guest_requested
+    and st.session_state["auth_user"] is None
 ):
     if GUEST_EMAIL and GUEST_PASSWORD:
         guest_result = auth_service.authenticate_user(email=GUEST_EMAIL, password=GUEST_PASSWORD)
@@ -246,6 +274,11 @@ if st.session_state["auth_user"] is None:
 
         if result["ok"]:
             st.session_state["auth_user"] = result["user"]
+
+            persistent_auth_service.create_persistent_auth(
+                result["user"]["id"]
+            )
+
             st.rerun()
         else:
             st.error(result["message"])
