@@ -100,7 +100,7 @@ def test_restore_valid_session_sets_auth_user_and_current_token(monkeypatch):
     assert persistent_auth_service.st.session_state["auth_user"] == user
     assert (
         persistent_auth_service.st.session_state[
-            persistent_auth_service._TOKEN_STATE_KEY
+            persistent_auth_service._PERSISTENT_SESSION_STATE_KEY
         ]
         == "raw-token"
     )
@@ -129,7 +129,7 @@ def test_restore_invalid_session_stages_cookie_clear(monkeypatch):
     assert persistent_auth_service.restore_persistent_auth() is None
     assert calls == ["clear"]
     assert (
-        persistent_auth_service._TOKEN_STATE_KEY
+        persistent_auth_service._PERSISTENT_SESSION_STATE_KEY
         not in persistent_auth_service.st.session_state
     )
 
@@ -164,7 +164,7 @@ def test_create_persistent_auth_stores_token_and_stages_cookie(monkeypatch):
     }
     assert (
         persistent_auth_service.st.session_state[
-            persistent_auth_service._TOKEN_STATE_KEY
+            persistent_auth_service._PERSISTENT_SESSION_STATE_KEY
         ]
         == "new-token"
     )
@@ -177,7 +177,7 @@ def test_create_persistent_auth_stores_token_and_stages_cookie(monkeypatch):
 
 def test_clear_persistent_auth_revokes_current_token_and_clears_cookie(monkeypatch):
     persistent_auth_service.st.session_state[
-        persistent_auth_service._TOKEN_STATE_KEY
+        persistent_auth_service._PERSISTENT_SESSION_STATE_KEY
     ] = "raw-token"
 
     revoked = []
@@ -205,7 +205,7 @@ def test_clear_persistent_auth_revokes_current_token_and_clears_cookie(monkeypat
         is True
     )
     assert (
-        persistent_auth_service._TOKEN_STATE_KEY
+        persistent_auth_service._PERSISTENT_SESSION_STATE_KEY
         not in persistent_auth_service.st.session_state
     )
 
@@ -240,7 +240,7 @@ def test_clear_without_current_token_still_clears_browser_cookie(monkeypatch):
 
 def test_clear_all_for_current_user_revokes_all_and_clears_browser(monkeypatch):
     persistent_auth_service.st.session_state[
-        persistent_auth_service._TOKEN_STATE_KEY
+        persistent_auth_service._PERSISTENT_SESSION_STATE_KEY
     ] = "raw-token"
 
     users = []
@@ -269,6 +269,6 @@ def test_clear_all_for_current_user_revokes_all_and_clears_browser(monkeypatch):
         is True
     )
     assert (
-        persistent_auth_service._TOKEN_STATE_KEY
+        persistent_auth_service._PERSISTENT_SESSION_STATE_KEY
         not in persistent_auth_service.st.session_state
     )

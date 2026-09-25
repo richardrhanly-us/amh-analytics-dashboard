@@ -20,7 +20,7 @@ import streamlit as st
 
 from services import cookie_service, session_service
 
-_TOKEN_STATE_KEY = "_sortview_persistent_session_token"
+_PERSISTENT_SESSION_STATE_KEY = "_sortview_persistent_session"
 _SUPPRESS_RESTORE_KEY = "_sortview_suppress_cookie_restore"
 
 
@@ -47,12 +47,12 @@ def restore_persistent_auth() -> dict | None:
     user = session_service.validate_session(token)
 
     if user is None:
-        st.session_state.pop(_TOKEN_STATE_KEY, None)
+        st.session_state.pop(_PERSISTENT_SESSION_STATE_KEY, None)
         cookie_service.clear_session_cookie()
         return None
 
     st.session_state["auth_user"] = user
-    st.session_state[_TOKEN_STATE_KEY] = token
+    st.session_state[_PERSISTENT_SESSION_STATE_KEY] = token
     return user
 
 
@@ -65,7 +65,7 @@ def create_persistent_auth(user_id: int) -> dict:
 
     # An explicit successful login starts a new persistence lifecycle.
     st.session_state.pop(_SUPPRESS_RESTORE_KEY, None)
-    st.session_state[_TOKEN_STATE_KEY] = token
+    st.session_state[_PERSISTENT_SESSION_STATE_KEY] = token
 
     cookie_service.set_session_cookie(
         token,
@@ -83,7 +83,7 @@ def clear_persistent_auth() -> bool:
     """
     st.session_state[_SUPPRESS_RESTORE_KEY] = True
 
-    token = st.session_state.pop(_TOKEN_STATE_KEY, None)
+    token = st.session_state.pop(_PERSISTENT_SESSION_STATE_KEY, None)
 
     revoked = False
     if token:
@@ -104,7 +104,7 @@ def clear_all_persistent_auth_for_current_user(user_id: int) -> int:
     own session.
     """
     st.session_state[_SUPPRESS_RESTORE_KEY] = True
-    st.session_state.pop(_TOKEN_STATE_KEY, None)
+    st.session_state.pop(_PERSISTENT_SESSION_STATE_KEY, None)
 
     revoked_count = session_service.revoke_all_sessions_for_user(user_id)
     cookie_service.clear_session_cookie()
