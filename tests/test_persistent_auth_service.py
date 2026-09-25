@@ -37,7 +37,7 @@ def test_restore_returns_existing_auth_user_without_reading_cookie(monkeypatch):
 
     monkeypatch.setattr(
         persistent_auth_service.cookie_service,
-        "get_session_cookie",
+        "get_session_cookie_state",
         unexpected_cookie_read,
     )
 
@@ -55,23 +55,41 @@ def test_restore_honors_suppression_without_reading_cookie(monkeypatch):
 
     monkeypatch.setattr(
         persistent_auth_service.cookie_service,
-        "get_session_cookie",
+        "get_session_cookie_state",
         unexpected_cookie_read,
     )
 
     assert persistent_auth_service.restore_persistent_auth() is None
 
 
-def test_restore_returns_none_when_browser_has_no_cookie(monkeypatch):
+def test_restore_state_reports_ready_when_browser_has_no_cookie(monkeypatch):
     persistent_auth_service.st.session_state["auth_user"] = None
 
     monkeypatch.setattr(
         persistent_auth_service.cookie_service,
-        "get_session_cookie",
-        lambda: None,
+        "get_session_cookie_state",
+        lambda: (True, None),
     )
 
-    assert persistent_auth_service.restore_persistent_auth() is None
+    assert persistent_auth_service.restore_persistent_auth_state() == (
+        True,
+        None,
+    )
+
+
+def test_restore_state_reports_not_ready_before_browser_sync(monkeypatch):
+    persistent_auth_service.st.session_state["auth_user"] = None
+
+    monkeypatch.setattr(
+        persistent_auth_service.cookie_service,
+        "get_session_cookie_state",
+        lambda: (False, None),
+    )
+
+    assert persistent_auth_service.restore_persistent_auth_state() == (
+        False,
+        None,
+    )
 
 
 def test_restore_valid_session_sets_auth_user_and_current_token(monkeypatch):
@@ -85,8 +103,8 @@ def test_restore_valid_session_sets_auth_user_and_current_token(monkeypatch):
 
     monkeypatch.setattr(
         persistent_auth_service.cookie_service,
-        "get_session_cookie",
-        lambda: "raw-token",
+        "get_session_cookie_state",
+        lambda: (True, "raw-token"),
     )
     monkeypatch.setattr(
         persistent_auth_service.session_service,
@@ -112,8 +130,8 @@ def test_restore_invalid_session_stages_cookie_clear(monkeypatch):
 
     monkeypatch.setattr(
         persistent_auth_service.cookie_service,
-        "get_session_cookie",
-        lambda: "invalid-token",
+        "get_session_cookie_state",
+        lambda: (True, "invalid-token"),
     )
     monkeypatch.setattr(
         persistent_auth_service.session_service,

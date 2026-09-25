@@ -136,12 +136,22 @@ guest_requested = (
 # Password-reset links must always take precedence over an existing login.
 # Guest/demo visits deliberately bypass persistent-session restoration so the
 # public demo can never inherit a previously authenticated user's session.
+persistent_auth_ready = True
+
 if (
     st.session_state["auth_user"] is None
     and not reset_token
     and not guest_requested
 ):
-    persistent_auth_service.restore_persistent_auth()
+    persistent_auth_ready, _ = (
+        persistent_auth_service.restore_persistent_auth_state()
+    )
+
+# On a fresh browser load, the cookie reader needs one frontend sync before
+# Python can know whether a persistent session exists. Do not render the login
+# form during that unresolved first pass.
+if not persistent_auth_ready:
+    st.stop()
 
 if (
     guest_requested

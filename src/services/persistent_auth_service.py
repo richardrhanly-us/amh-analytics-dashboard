@@ -24,35 +24,52 @@ _PERSISTENT_SESSION_STATE_KEY = "_sortview_persistent_session"
 _SUPPRESS_RESTORE_KEY = "_sortview_suppress_cookie_restore"
 
 
-def restore_persistent_auth() -> dict | None:
-    """Restore auth_user from a valid persistent browser session.
+def restore_persistent_auth_state() -> tuple[bool, dict | None]:
+    """Return browser-reader readiness and the current/restored auth user.
 
-    Returns the current/restored auth user or None.
+    The first boolean distinguishes:
 
-    A suppression flag prevents an immediately-cleared/revoked token from
-    re-authenticating the user while the browser component is still
-    synchronizing its state after logout or forced termination.
+    - False: the browser cookie reader has not synchronized yet.
+    - True: browser state is known, whether or not a cookie exists.
+
+    Existing authenticated users and restore-suppressed sessions are already
+    resolved states and therefore return ready=True without reading the cookie.
     """
     existing_user = st.session_state.get("auth_user")
     if existing_user is not None:
-        return existing_user
+        return True, existing_user
 
     if st.session_state.get(_SUPPRESS_RESTORE_KEY):
-        return None
+        return True, None
 
-    token = cookie_service.get_session_cookie()
+    reader_ready, token = cookie_service.get_session_cookie_state()
+
+    if not reader_ready:
+        return False, None
+
     if not token:
-        return None
+        return True, None
 
     user = session_service.validate_session(token)
 
     if user is None:
         st.session_state.pop(_PERSISTENT_SESSION_STATE_KEY, None)
         cookie_service.clear_session_cookie()
-        return None
+        return True, None
 
     st.session_state["auth_user"] = user
     st.session_state[_PERSISTENT_SESSION_STATE_KEY] = token
+
+    return True, user
+
+
+def restore_persistent_auth() -> dict | None:
+    """Restore auth_user from a valid persistent browser session.
+
+    Compatibility wrapper for callers that do not need to distinguish browser
+    reader readiness from the absence of a persistent session.
+    """
+    _, user = restore_persistent_auth_state()
     return user
 
 

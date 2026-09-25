@@ -47,7 +47,27 @@ def test_cookie_name_falls_back_to_plain_name_when_not_secure(monkeypatch):
 
 # --- get_session_cookie ----------------------------------------------------
 
-def test_get_session_cookie_mounts_reader_and_returns_value(monkeypatch):
+def test_get_session_cookie_state_reports_not_ready_before_reader_sync(monkeypatch):
+    monkeypatch.setattr(
+        cookie_service,
+        "_COOKIE_READER",
+        lambda **kwargs: SimpleNamespace(value=None),
+    )
+
+    assert cookie_service.get_session_cookie_state() == (False, None)
+
+
+def test_get_session_cookie_state_reports_ready_without_cookie(monkeypatch):
+    monkeypatch.setattr(
+        cookie_service,
+        "_COOKIE_READER",
+        lambda **kwargs: SimpleNamespace(value=""),
+    )
+
+    assert cookie_service.get_session_cookie_state() == (True, None)
+
+
+def test_get_session_cookie_state_reports_ready_with_cookie(monkeypatch):
     monkeypatch.setenv("SORTVIEW_COOKIE_SECURE", "false")
     calls = []
 
@@ -61,7 +81,7 @@ def test_get_session_cookie_mounts_reader_and_returns_value(monkeypatch):
         fake_reader,
     )
 
-    assert cookie_service.get_session_cookie() == "abc123"
+    assert cookie_service.get_session_cookie_state() == (True, "abc123")
 
     assert len(calls) == 1
     assert calls[0]["key"] == "sortview_cookie_reader"
@@ -70,17 +90,39 @@ def test_get_session_cookie_mounts_reader_and_returns_value(monkeypatch):
     assert callable(calls[0]["on_value_change"])
 
 
-def test_get_session_cookie_returns_none_when_reader_reports_no_cookie(monkeypatch):
+def test_get_session_cookie_preserves_existing_token_api(monkeypatch):
     monkeypatch.setattr(
         cookie_service,
-        "_COOKIE_READER",
-        lambda **kwargs: SimpleNamespace(value=None),
+        "get_session_cookie_state",
+        lambda: (True, "abc123"),
+    )
+
+    assert cookie_service.get_session_cookie() == "abc123"
+
+
+def test_get_session_cookie_returns_none_when_ready_without_cookie(monkeypatch):
+    monkeypatch.setattr(
+        cookie_service,
+        "get_session_cookie_state",
+        lambda: (True, None),
     )
 
     assert cookie_service.get_session_cookie() is None
 
 
-def test_get_session_cookie_returns_none_on_component_error(monkeypatch):
+def test_get_session_cookie_returns_none_when_reader_not_ready(monkeypatch):
+    monkeypatch.setattr(
+        cookie_service,
+        "get_session_cookie_state",
+        lambda: (False, None),
+    )
+
+    assert cookie_service.get_session_cookie() is None
+
+
+def test_get_session_cookie_state_falls_back_to_no_cookie_on_component_error(
+    monkeypatch,
+):
     def raising_reader(**kwargs):
         raise RuntimeError("component unavailable")
 
@@ -90,7 +132,7 @@ def test_get_session_cookie_returns_none_on_component_error(monkeypatch):
         raising_reader,
     )
 
-    assert cookie_service.get_session_cookie() is None
+    assert cookie_service.get_session_cookie_state() == (True, None)
 
 
 # --- set_session_cookie / clear_session_cookie -----------------------------
