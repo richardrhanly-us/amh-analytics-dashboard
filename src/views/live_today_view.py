@@ -88,8 +88,8 @@ def render_live_today(
     can_view_internal_workflow=True,
 ):
     with st.container(key="sv_live_controls_row"):
-        pause_col, refresh_col, status_col, check_col = st.columns(
-            [1.25, 1.0, 2.4, 2.1]
+        pause_col, refresh_col, check_col, status_col = st.columns(
+            [1.25, 1.0, 2.1, 2.4]
         )
 
         with pause_col:
@@ -175,8 +175,13 @@ Problem Items: {problem_items:,}
                 st.caption(destination_breakdown_text)
 
         with check_col:
-            st.caption(
-                f"Automatic status check every {refresh_interval_minutes} minutes"
+            st.markdown(
+                f"""
+                <div class="sv-auto-check-text">
+                    Automatic status check every {refresh_interval_minutes} minutes
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
 
     if can_view_transits:

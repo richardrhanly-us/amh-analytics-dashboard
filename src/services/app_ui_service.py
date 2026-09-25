@@ -67,6 +67,14 @@ def apply_page_chrome():
     .st-key-sv_live_controls_row {
         margin-bottom: 0.5rem;
     }
+
+    .st-key-sv_live_controls_row .sv-auto-check-text {
+        color: #6b7280;
+        font-size: 0.95rem;
+        line-height: 1.2;
+        white-space: nowrap;
+        padding-top: 0.35rem;
+    }
     </style>
     """, unsafe_allow_html=True)
 
