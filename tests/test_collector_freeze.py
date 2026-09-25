@@ -79,17 +79,65 @@ def test_dispatcher_support_info_forwards_to_collector_support_info_main(capsys)
     assert "did NOT load" in capsys.readouterr().out
 
 
+def test_dispatcher_identity_collision_diag_forwards_to_collector_identity_collision_diag_main():
+    # Same not-mocked exit-code proof as the other subcommands: a nonexistent
+    # --config exercises the REAL collector.identity_collision_diag.main()
+    # config-error path (exit 2), proving argv was forwarded correctly.
+    exit_code = dispatcher.main(["identity-collision-diag", "--config", "does-not-exist.json"])
+    assert exit_code == 2
+
+
+@pytest.mark.parametrize("command", ["init", "check"])
+def test_dispatcher_v2_key_forwards_to_collector_v2_keys_main(command):
+    # Same not-mocked exit-code proof as the other subcommands: a nonexistent
+    # --config exercises the REAL collector.v2_keys.main() config-error path
+    # (exit 2), proving argv -- including the "init"/"check" positional
+    # command v2_keys.main parses itself -- was forwarded correctly. Never
+    # touches DPAPI or the ACL: a missing config is refused before either.
+    exit_code = dispatcher.main(["v2-key", command, "--config", "does-not-exist.json"])
+    assert exit_code == 2
+
+
+@pytest.mark.parametrize("command", ["init", "check"])
+def test_dispatcher_v2_key_as_a_real_source_invocation_matches(tmp_path, command):
+    # Real Windows subprocess proof (source-mode equivalent of
+    # `SortViewCollector.exe v2-key <command> --config <path>`): a fresh
+    # interpreter, a config that does not exist, so DPAPI/ACL code is never
+    # reached -- this proves the dispatcher forwards argv correctly end to
+    # end as a real process, not just via an in-process function call.
+    env = {k: v for k, v in os.environ.items() if k != "SORTVIEW_API_TOKEN"}
+    env["PYTHONPATH"] = str(REPO_ROOT)
+
+    result = subprocess.run(
+        [sys.executable, str(FREEZE_DIR / "dispatcher.py"), "v2-key", command, "--config", "does-not-exist.json"],
+        cwd=tmp_path, env=env, capture_output=True, text=True, check=False,
+    )
+
+    assert result.returncode == 2, result.stderr
+    assert "Configuration error" in result.stderr
+    assert list(tmp_path.iterdir()) == []  # nothing written -- refused before touching anything
+
+
 def test_dispatcher_default_argv_uses_sys_argv(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["SortViewCollector.exe", "bogus"])
     assert dispatcher.main() == 2
 
 
-def test_dispatcher_contains_all_six_subcommands():
+def test_dispatcher_contains_all_eight_subcommands():
     # task-xml added for the frozen release-bundle integration phase --
     # deployment/Task-Scheduler-XML generation, not Collector ingestion.
     # version added for release-version hardening -- a config-free report of
-    # collector.__version__; the five earlier subcommands are unchanged.
-    assert set(dispatcher._SUBCOMMANDS) == {"run", "preflight", "bootstrap", "support-info", "task-xml", "version"}
+    # collector.__version__. identity-collision-diag added so the onsite
+    # identical_identity_events diagnostic is reachable from a frozen install
+    # with no Python and no loose source files (see collector/identity_collision_diag.py).
+    # v2-key added so the AMH's Python-free frozen install can run the local
+    # DPAPI secret provisioning CLI docs/collector-v2.md already documents
+    # as `python -m collector.v2_keys init|check` (see collector/v2_keys.py);
+    # the five earlier subcommands are unchanged.
+    assert set(dispatcher._SUBCOMMANDS) == {
+        "run", "preflight", "bootstrap", "support-info", "task-xml",
+        "identity-collision-diag", "v2-key", "version",
+    }
     assert {"run", "preflight", "bootstrap", "support-info", "task-xml"} <= set(dispatcher._SUBCOMMANDS)
 
 
@@ -160,6 +208,8 @@ def test_the_other_subcommands_are_unchanged_by_the_version_addition(capsys):
     assert dispatcher.main(["bootstrap", "--config", "does-not-exist.json"]) == 2
     assert dispatcher.main(["preflight", "--config", "does-not-exist.json"]) == 2
     assert dispatcher.main(["support-info", "--config", "does-not-exist.json"]) == 2
+    assert dispatcher.main(["identity-collision-diag", "--config", "does-not-exist.json"]) == 2
+    assert dispatcher.main(["v2-key", "check", "--config", "does-not-exist.json"]) == 2
     out = capsys.readouterr().out
     assert "config_loads" in out and "did NOT load" in out
     assert dispatcher.main(["bogus"]) == 2
@@ -202,6 +252,8 @@ def test_dispatcher_imports_are_static_not_dynamic_importlib():
     assert "from collector.bootstrap_state import main" in full_text
     assert "from collector.support_info import main" in full_text
     assert "from collector.task_settings import main" in full_text
+    assert "from collector.identity_collision_diag import main" in full_text
+    assert "from collector.v2_keys import main" in full_text
 
 
 # --- static checks on the PyInstaller spec (CI does not build PyInstaller) --
@@ -235,11 +287,12 @@ def test_spec_is_onedir_not_onefile():
     assert "COLLECT(" in text
 
 
-def test_spec_hiddenimports_cover_all_five_subcommand_targets():
+def test_spec_hiddenimports_cover_all_seven_subcommand_targets():
     text = _spec_text()
     for module in (
         "collector.run", "collector.preflight", "collector.bootstrap_state",
-        "collector.support_info", "collector.task_settings",
+        "collector.support_info", "collector.task_settings", "collector.identity_collision_diag",
+        "collector.v2_keys",
     ):
         assert f'"{module}"' in text
 
