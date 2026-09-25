@@ -706,12 +706,34 @@ max_date = df_history_raw["datetime"].max().date()
 # permissions allow it.
 #***************************************************************
 
-render_app_header(
-    library_name=LIBRARY_NAME,
-    branch_name=BRANCH_NAME,
-    system_name=SYSTEM_NAME,
-    show_admin_button=show_header_admin_button,
+header_left, header_right = st.columns(
+    [4, 2],
+    vertical_alignment="center",
 )
+
+with header_left:
+    render_app_header(
+        library_name=LIBRARY_NAME,
+        branch_name=BRANCH_NAME,
+        system_name=SYSTEM_NAME,
+        show_admin_button=show_header_admin_button,
+    )
+
+with header_right:
+    st.markdown(
+        f"""
+        <div style="
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--text-color);
+            text-align: left;
+            white-space: nowrap;
+        ">
+            {datetime.now(APP_TZ).strftime('%A, %b %d')}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 nav_options = ["Live Today", "Reports", "Overview"]
 
 if show_transits_tab:
@@ -778,19 +800,6 @@ if LIVE_TODAY_PAUSE_KEY not in st.session_state:
     st.session_state[LIVE_TODAY_PAUSE_KEY] = False
 
 live_today_paused = st.session_state[LIVE_TODAY_PAUSE_KEY]
-
-if selected_view == "Live Today":
-    with st.container(key="sv_live_refresh_controls"):
-        if live_today_paused:
-            if st.button("Resume live updates"):
-                st.session_state[LIVE_TODAY_PAUSE_KEY] = False
-                st.rerun()
-        else:
-            if st.button("Pause live updates"):
-                st.session_state[LIVE_TODAY_PAUSE_KEY] = True
-                st.rerun()
-
-        st.caption(f"Automatic status check every {refresh_interval_seconds // 60} minutes")
 
 live_today_run_every = resolve_run_every_seconds(
     is_operating_hours_now=is_operating_hours(now_ct),
@@ -932,6 +941,11 @@ def _render_live_today():
         # forced live-data reload without any extra branching here.
         tenant_refresh_state["manual_refresh_count"] += 1
 
+    def _handle_toggle_live_updates():
+        st.session_state[LIVE_TODAY_PAUSE_KEY] = not st.session_state[
+            LIVE_TODAY_PAUSE_KEY
+        ]
+
     live_view_context = build_dashboard_context(
         df_live_raw=df_live_raw,
         df_history_raw=df_history_raw,
@@ -959,6 +973,11 @@ def _render_live_today():
     live_view_context["live_today_args"]["can_view_internal_workflow"] = show_internal_workflow
     live_view_context["live_today_args"]["can_view_transits"] = show_transits_tab
     live_view_context["live_today_args"]["on_refresh_now"] = _handle_refresh_now
+    live_view_context["live_today_args"]["live_today_paused"] = live_today_paused
+    live_view_context["live_today_args"]["on_toggle_live_updates"] = _handle_toggle_live_updates
+    live_view_context["live_today_args"]["refresh_interval_minutes"] = (
+        refresh_interval_seconds // 60
+    )
 
     if live_view_context["no_today_data"]:
         st.info("No checkins have been ingested yet for today. Live dashboard is showing the current day only.")
