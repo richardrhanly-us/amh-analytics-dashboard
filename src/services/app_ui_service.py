@@ -39,6 +39,48 @@ def apply_page_chrome():
     </style>
     """, unsafe_allow_html=True)
 
+    # Compact the top of the page. Streamlit's own default
+    # `.block-container` padding-top is 6rem (reserved so page content
+    # never sits under the fixed header/toolbar strip) -- see the bundled
+    # `StyledAppViewBlockContainer` styles. That is far more clearance than
+    # this app's own header actually needs, and was the single largest
+    # contributor to the "Live Today" landing page's excessive whitespace
+    # before any KPI cards are visible. 3rem keeps a comfortable margin
+    # above the toolbar while cutting the blank area roughly in half.
+    st.markdown("""
+    <style>
+    .block-container {
+        padding-top: 3rem;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # The three keyed containers below (.st-key-sv_*) are opted into by
+    # name from app.py/live_today_view.py -- each wraps exactly one small
+    # cluster of chrome above the KPI cards (nav tabs, the live-update
+    # pause/status controls, and the date/refresh/pipeline-status row).
+    # Using Streamlit's own container `key=` scoping (rather than a broad
+    # element-type selector) means this can't reach into Reports/Transits/
+    # Overview content, dialogs, or the KPI cards themselves -- only these
+    # specific, opted-in regions get tightened.
+    st.markdown("""
+    <style>
+    .st-key-sv_nav_row {
+        margin-bottom: -0.6rem;
+    }
+    .st-key-sv_live_refresh_controls {
+        margin-top: -0.6rem;
+        margin-bottom: -0.6rem;
+    }
+    .st-key-sv_live_refresh_controls div[data-testid="stElementContainer"] {
+        margin-bottom: 0.1rem;
+    }
+    .st-key-sv_date_status_row {
+        margin-top: -0.6rem;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
     # Apply SortView branding styles and custom download button styling.
     st.markdown("""
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&display=swap" rel="stylesheet">

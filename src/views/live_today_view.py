@@ -84,55 +84,56 @@ def render_live_today(
     can_view_transits=True,
     can_view_internal_workflow=True,
 ):
-    col1, col2 = st.columns([4, 2])
+    with st.container(key="sv_date_status_row"):
+        col1, col2 = st.columns([4, 2])
 
-    with col1:
-        st.header(f"{today.strftime('%A, %b %d')}")
+        with col1:
+            st.header(f"{today.strftime('%A, %b %d')}")
 
-        if st.button("Refresh now"):
-            # Tenant-scoped manual refresh (app.py's on_refresh_now
-            # callback) -- forces a fresh pipeline_status read and a
-            # real checkins/rejects/ACS reload for this tenant only, on
-            # the next fragment run. Deliberately not a whole-cache wipe,
-            # which would also clear every other tenant/session's
-            # unrelated cached data on the server.
-            on_refresh_now()
-            st.rerun()
+            if st.button("Refresh now"):
+                # Tenant-scoped manual refresh (app.py's on_refresh_now
+                # callback) -- forces a fresh pipeline_status read and a
+                # real checkins/rejects/ACS reload for this tenant only, on
+                # the next fragment run. Deliberately not a whole-cache wipe,
+                # which would also clear every other tenant/session's
+                # unrelated cached data on the server.
+                on_refresh_now()
+                st.rerun()
 
-    with col2:
-        expander_label = f"● {pipeline_status_label}"
+        with col2:
+            expander_label = f"● {pipeline_status_label}"
 
-        st.markdown(
-            f"""
-            <style>
-            div[data-testid="stExpander"] details {{
-                border: 1px solid rgba(148, 163, 184, 0.28);
-                border-radius: 10px;
-                overflow: hidden;
-                background-color: var(--secondary-background-color);
-            }}
-
-            div[data-testid="stExpander"] summary {{
-                font-weight: 700;
-                color: {pipeline_status_color};
-                background-color: {pipeline_status_bg};
-                padding-top: 0.2rem;
-                padding-bottom: 0.2rem;
-            }}
-
-            div[data-testid="stExpander"] details[open] > div {{
-                background-color: var(--secondary-background-color);
-                color: var(--text-color);
-            }}
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        with st.expander(expander_label, expanded=pipeline_expanded):
             st.markdown(
-                "##### Pipeline Status"
                 f"""
+                <style>
+                div[data-testid="stExpander"] details {{
+                    border: 1px solid rgba(148, 163, 184, 0.28);
+                    border-radius: 10px;
+                    overflow: hidden;
+                    background-color: var(--secondary-background-color);
+                }}
+
+                div[data-testid="stExpander"] summary {{
+                    font-weight: 700;
+                    color: {pipeline_status_color};
+                    background-color: {pipeline_status_bg};
+                    padding-top: 0.2rem;
+                    padding-bottom: 0.2rem;
+                }}
+
+                div[data-testid="stExpander"] details[open] > div {{
+                    background-color: var(--secondary-background-color);
+                    color: var(--text-color);
+                }}
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            with st.expander(expander_label, expanded=pipeline_expanded):
+                st.markdown(
+                    "##### Pipeline Status"
+                    f"""
 App Last Refreshed: {app_refreshed_str}  
 Latest Checkin in DB: {latest_checkin_str} ({latest_checkin_ago})  
 Latest Status Row Written: {pipeline_status_written_str} ({pipeline_status_written_ago})  
@@ -140,33 +141,33 @@ Last Pipeline Attempt: {pipeline_last_attempt_str} ({pipeline_last_attempt_ago})
 Last Successful Upload Run: {pipeline_last_run_str} ({pipeline_last_run_ago})  
 Latest Result: {pipeline_result_text}  
 Status Code: `{status_code_text}`
-                """
-            )
+                    """
+                )
 
-            st.markdown("##### Run Summary")
-            s1, s2 = st.columns(2)
+                st.markdown("##### Run Summary")
+                s1, s2 = st.columns(2)
 
-            with s1:
-                st.markdown(
-                    f"""
+                with s1:
+                    st.markdown(
+                        f"""
 New Checkins This Run: {checkins_rows:,}  
 New Rejects This Run: {rejects_rows:,}  
 Uploaded Checkins This Run: {uploaded_checkins_rows:,}  
 Uploaded Rejects This Run: {uploaded_rejects_rows:,}
-                    """
-                )
-            with s2:
-                st.markdown(
-                    f"""
+                        """
+                    )
+                with s2:
+                    st.markdown(
+                        f"""
 Bad Checkin Datetimes: {checkins_bad_datetime_rows:,}  
 Bad Reject Datetimes: {rejects_bad_datetime_rows:,}  
 Transit Items: {transit_items:,}  
 Problem Items: {problem_items:,}
-                    """
-                )
+                        """
+                    )
 
-            st.markdown("##### Destination Breakdown")
-            st.caption(destination_breakdown_text)
+                st.markdown("##### Destination Breakdown")
+                st.caption(destination_breakdown_text)
 
     if can_view_transits:
         live_group1, live_group2, live_group3 = st.columns(3)

@@ -717,12 +717,13 @@ nav_options = ["Live Today", "Reports", "Overview"]
 if show_transits_tab:
     nav_options.insert(1, "Transits")
 
-selected_view = st.segmented_control(
-    "Section",
-    options=nav_options,
-    default="Live Today",
-    label_visibility="collapsed"
-)
+with st.container(key="sv_nav_row"):
+    selected_view = st.segmented_control(
+        "Section",
+        options=nav_options,
+        default="Live Today",
+        label_visibility="collapsed"
+    )
 
 
 #***************************************************************
@@ -779,16 +780,17 @@ if LIVE_TODAY_PAUSE_KEY not in st.session_state:
 live_today_paused = st.session_state[LIVE_TODAY_PAUSE_KEY]
 
 if selected_view == "Live Today":
-    if live_today_paused:
-        if st.button("Resume live updates"):
-            st.session_state[LIVE_TODAY_PAUSE_KEY] = False
-            st.rerun()
-    else:
-        if st.button("Pause live updates"):
-            st.session_state[LIVE_TODAY_PAUSE_KEY] = True
-            st.rerun()
+    with st.container(key="sv_live_refresh_controls"):
+        if live_today_paused:
+            if st.button("Resume live updates"):
+                st.session_state[LIVE_TODAY_PAUSE_KEY] = False
+                st.rerun()
+        else:
+            if st.button("Pause live updates"):
+                st.session_state[LIVE_TODAY_PAUSE_KEY] = True
+                st.rerun()
 
-    st.caption(f"Automatic status check every {refresh_interval_seconds // 60} minutes")
+        st.caption(f"Automatic status check every {refresh_interval_seconds // 60} minutes")
 
 live_today_run_every = resolve_run_every_seconds(
     is_operating_hours_now=is_operating_hours(now_ct),
