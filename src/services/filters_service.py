@@ -84,8 +84,11 @@ def resolve_date_filters(selected_view, min_date, max_date, local_today):
     if selected_view in ["Overview", "Reports", "Transits"]:
         st.sidebar.header("Filters")
 
-        # Prevent filters from selecting dates beyond the current local day.
-        max_allowed_date = min(max_date, local_today)
+        # Keep the latest date containing data separate from the latest date
+        # the user is allowed to select. Reporting filters may include today
+        # even when no rows have been ingested for today yet.
+        latest_data_date = min(max_date, local_today)
+        max_selectable_date = local_today
 
         # Re-seed the widget's key from the durable, non-widget slot every
         # time this radio is about to render -- covers both "never chosen
@@ -114,26 +117,26 @@ def resolve_date_filters(selected_view, min_date, max_date, local_today):
         if range_mode == "Single Day":
             selected_day = st.sidebar.date_input(
                 "Choose Day",
-                value=max_allowed_date,
+                value=max_selectable_date,
                 min_value=min_date,
-                max_value=max_allowed_date
+                max_value=max_selectable_date
             )
             start_date = selected_day
             end_date = selected_day
 
         # Filter to the most recent seven-day window.
         elif range_mode == "Last 7 Days":
-            end_date = max_allowed_date
+            end_date = max_selectable_date
             start_date = max(min_date, end_date - pd.Timedelta(days=6))
 
         # Filter to the most recent thirty-day window.
         elif range_mode == "Last 30 Days":
-            end_date = max_allowed_date
+            end_date = max_selectable_date
             start_date = max(min_date, end_date - pd.Timedelta(days=29))
 
         # Filter from the first day of the current month through the latest allowed date.
         elif range_mode == "Month to Date":
-            end_date = max_allowed_date
+            end_date = max_selectable_date
             start_date = max(min_date, end_date.replace(day=1))
 
         # Filter to a completed calendar month.
@@ -158,7 +161,7 @@ def resolve_date_filters(selected_view, min_date, max_date, local_today):
 
                 if (
                     month_start_date >= min_date
-                    and month_end_date <= max_allowed_date
+                    and month_end_date <= latest_data_date
                     and month_end_date < first_day_current_month
                 ):
                     label = month_start.strftime("%B %Y")
@@ -178,20 +181,23 @@ def resolve_date_filters(selected_view, min_date, max_date, local_today):
             else:
                 st.sidebar.warning("No completed full months are available in the current dataset.")
                 start_date = min_date
-                end_date = max_allowed_date
+                end_date = latest_data_date
 
         # Filter to all available data.
         elif range_mode == "All Time":
             start_date = min_date
-            end_date = max_allowed_date
+            end_date = latest_data_date
 
         # Let the user choose a custom date range.
         elif range_mode == "Custom":
             custom_range = st.sidebar.date_input(
                 "Custom Range",
-                value=(max(min_date, max_allowed_date - pd.Timedelta(days=6)), max_allowed_date),
+                value=(
+                    max(min_date, max_selectable_date - pd.Timedelta(days=6)),
+                    max_selectable_date,
+                ),
                 min_value=min_date,
-                max_value=max_allowed_date
+                max_value=max_selectable_date
             )
 
             # Streamlit may return a tuple/list for ranges or a single date for one selection.
@@ -202,8 +208,8 @@ def resolve_date_filters(selected_view, min_date, max_date, local_today):
                     start_date = custom_range[0]
                     end_date = custom_range[0]
                 else:
-                    start_date = max(min_date, max_allowed_date - pd.Timedelta(days=6))
-                    end_date = max_allowed_date
+                    start_date = max(min_date, max_selectable_date - pd.Timedelta(days=6))
+                    end_date = max_selectable_date
             else:
                 start_date = custom_range
                 end_date = custom_range
