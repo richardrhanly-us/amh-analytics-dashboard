@@ -81,26 +81,30 @@ def render_live_today(
     today_rejects_df,
     today_hourly_checkins,
     live_hour_range,
+    live_today_paused,
+    on_toggle_live_updates,
+    refresh_interval_minutes,
     can_view_transits=True,
     can_view_internal_workflow=True,
 ):
-    with st.container(key="sv_date_status_row"):
-        col1, col2 = st.columns([4, 2])
+    with st.container(key="sv_live_controls_row"):
+        pause_col, refresh_col, status_col, check_col = st.columns(
+            [1.25, 1.0, 2.4, 2.1]
+        )
 
-        with col1:
-            st.header(f"{today.strftime('%A, %b %d')}")
+        with pause_col:
+            pause_label = "Resume live updates" if live_today_paused else "Pause live updates"
 
+            if st.button(pause_label):
+                on_toggle_live_updates()
+                st.rerun()
+
+        with refresh_col:
             if st.button("Refresh now"):
-                # Tenant-scoped manual refresh (app.py's on_refresh_now
-                # callback) -- forces a fresh pipeline_status read and a
-                # real checkins/rejects/ACS reload for this tenant only, on
-                # the next fragment run. Deliberately not a whole-cache wipe,
-                # which would also clear every other tenant/session's
-                # unrelated cached data on the server.
                 on_refresh_now()
                 st.rerun()
 
-        with col2:
+        with status_col:
             expander_label = f"● {pipeline_status_label}"
 
             st.markdown(
@@ -156,6 +160,7 @@ Uploaded Checkins This Run: {uploaded_checkins_rows:,}
 Uploaded Rejects This Run: {uploaded_rejects_rows:,}
                         """
                     )
+
                 with s2:
                     st.markdown(
                         f"""
@@ -168,6 +173,11 @@ Problem Items: {problem_items:,}
 
                 st.markdown("##### Destination Breakdown")
                 st.caption(destination_breakdown_text)
+
+        with check_col:
+            st.caption(
+                f"Automatic status check every {refresh_interval_minutes} minutes"
+            )
 
     if can_view_transits:
         live_group1, live_group2, live_group3 = st.columns(3)

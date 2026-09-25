@@ -55,28 +55,17 @@ def apply_page_chrome():
     </style>
     """, unsafe_allow_html=True)
 
-    # The three keyed containers below (.st-key-sv_*) are opted into by
-    # name from app.py/live_today_view.py -- each wraps exactly one small
-    # cluster of chrome above the KPI cards (nav tabs, the live-update
-    # pause/status controls, and the date/refresh/pipeline-status row).
-    # Using Streamlit's own container `key=` scoping (rather than a broad
-    # element-type selector) means this can't reach into Reports/Transits/
-    # Overview content, dialogs, or the KPI cards themselves -- only these
-    # specific, opted-in regions get tightened.
+    # Apply small, targeted spacing adjustments to the dashboard navigation
+    # and Live Today control row. These keyed containers are scoped so the
+    # rules do not affect other dashboard views or KPI content.
     st.markdown("""
     <style>
     .st-key-sv_nav_row {
-        margin-bottom: -0.6rem;
+        margin-bottom: 0.75rem;
     }
-    .st-key-sv_live_refresh_controls {
-        margin-top: -0.6rem;
-        margin-bottom: -0.6rem;
-    }
-    .st-key-sv_live_refresh_controls div[data-testid="stElementContainer"] {
-        margin-bottom: 0.1rem;
-    }
-    .st-key-sv_date_status_row {
-        margin-top: -0.6rem;
+
+    .st-key-sv_live_controls_row {
+        margin-bottom: 0.5rem;
     }
     </style>
     """, unsafe_allow_html=True)
