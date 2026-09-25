@@ -31,7 +31,7 @@ def _normalize(sql: str) -> str:
     return " ".join(sql.lower().split())
 
 
-NOW = datetime(2026, 9, 25, 12, 0, 0, tzinfo=UTC)
+NOW = datetime(2026, 9, 25, 12, 0, 0, tzinfo=UTC)  # freshness: allow FRESH004 -- passed explicitly as now= to every time-sensitive call
 
 
 @pytest.fixture(autouse=True)
