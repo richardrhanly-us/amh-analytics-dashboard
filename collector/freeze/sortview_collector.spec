@@ -10,7 +10,10 @@ dispatcher.py) covering all the CLI surfaces via subcommand:
     SortViewCollector.exe preflight --config <path>
     SortViewCollector.exe bootstrap --config <path>
     SortViewCollector.exe support-info --config <path>
-    SortViewCollector.exe task-xml ...      (deployment tooling)
+    SortViewCollector.exe task-xml ...                        (deployment tooling)
+    SortViewCollector.exe identity-collision-diag --config <path>   (onsite identical_identity_events diagnostic)
+    SortViewCollector.exe v2-key init --config <path>         (local DPAPI secret provisioning)
+    SortViewCollector.exe v2-key check --config <path>
     SortViewCollector.exe version           (config-free: prints collector.__version__)
 
 The built executable's `version` output is verified against
@@ -58,9 +61,11 @@ a = Analysis(  # noqa: F821 (Analysis/PYZ/EXE/COLLECT are injected by PyInstalle
     pathex=[str(REPO_ROOT)],
     binaries=[],
     datas=[],
-    # Belt-and-suspenders for the five subcommand targets -- see
+    # Belt-and-suspenders for the seven subcommand targets -- see
     # dispatcher.py's own docstring for why these are expected to be
     # auto-discovered anyway (static from-imports, even inside if/elif).
+    # collector.v2_keys serves double duty here: it is both a subcommand
+    # target (v2-key) AND one of the 15 Contract v2 modules below.
     #
     # Government-readiness audit, Part 6: the 15 Privacy Contract v2
     # modules are ALSO listed explicitly, belt-and-suspenders, because
@@ -78,6 +83,7 @@ a = Analysis(  # noqa: F821 (Analysis/PYZ/EXE/COLLECT are injected by PyInstalle
         "collector.bootstrap_state",
         "collector.support_info",
         "collector.task_settings",
+        "collector.identity_collision_diag",
         "collector.v2_classify",
         "collector.v2_config",
         "collector.v2_events",

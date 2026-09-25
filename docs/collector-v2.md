@@ -139,13 +139,38 @@ that they stay empty); run the tool from a scratch directory if it matters.
 ## Onsite dry-run acceptance check: identical identities
 
 Two genuinely different events with identical safe fields (same second, same item, same destination and bin) share an `event_key`, exactly as
-they did under v1's semantic keys. **Before cutover, run `--v2-dry-run` against real AMH files and read `identical_identity_events`.**
+they did under v1's semantic keys. **Before cutover, run `--v2-dry-run` against real AMH files and read `identical_identity_events`.** It is
+always printed, never hidden or zeroed — but a flat "must be `0`" requirement is wrong: the collector's own design intentionally collapses two
+documented, tested cases onto one `event_key` (an ACS hold read twice, unchanged, in the same second; a barcode-less
+`ils_acs_failure`/`rfid_collision` reject seen twice in the same second — the same safe-field collapse v1's semantic keys already had). Real
+NBPL AMH data confirmed exactly this: 91 `identical_identity_events`, all barcode-less reject pairs of those two classes, none in `acs` or
+`checkins`.
 
-* `0` (or a count you can account for) — proceed.
-* **Non-zero on meaningful AMH data — stop before cutover and revisit the identity design.** No raw-line-derived or personal-data-derived
-  discriminator is used or planned as a workaround.
+**The acceptance check is `identity-collision-diag`'s bounded, source/category-aware gate**, not a manual read of the raw count:
 
-Read it together with `dropped_patron_card`, `unknown_destination`, `unknown_bin` and `dst_ambiguous`, which the same run reports.
+```
+SortViewCollector.exe identity-collision-diag --config <the same dry-run config>
+```
+
+Same safety contract as the dry run (throwaway key, no persistent secret, no network call, no state/cursor write; see
+collector/identity_collision_diag.py). Its output ends with a `=== gate ===` block; `identity_collision_gate=pass` means every collision group
+was one of:
+
+* an item-keyed ACS hold pair (`state=hold`, group size exactly 2) — the documented repeat-read case, or
+* a keyless reject pair whose `error_class` is `ils_acs_failure` or `rfid_collision`, bounded by `keyless_reject_collision_rate <= 0.12` (of
+  that source's own event total) and `collision_time_spread >= 0.90` (collisions spread across mostly-distinct seconds, not stacked on a
+  handful of timestamps — a stacked pattern instead suggests a frozen/rounded clock).
+
+Any other collision — an item-keyed checkin or reject, a non-hold ACS collision, a group larger than 2, an unrecognized reject class, or a
+rate/spread breach — is `identity_collision_gate=fail`, and `collector/deploy/prepare_v2_pilot.ps1`'s onsite preparation tool stops before any
+live-v2 action. On a failure, the same command's per-source detail (group-size histogram, distinct item/time counts, category tally) is what
+to investigate — no raw-line- or personal-data-derived discriminator is used or planned as a workaround. See
+[collector-1.0.9-v2-pilot-runbook.md](collector-1.0.9-v2-pilot-runbook.md) for the full onsite procedure and
+`tests/test_collector_identity_collision_diag.py` for this gate's own test coverage (thresholds: `collector/identity_collision_diag.py`'s
+`MAX_GROUP_SIZE`, `MAX_KEYLESS_REJECT_COLLISION_RATE`, `MIN_COLLISION_TIME_SPREAD`, `PERMITTED_KEYLESS_REJECT_ERROR_CLASSES`).
+
+Read `identical_identity_events` together with `dropped_patron_card`, `unknown_destination`, `unknown_bin` and `dst_ambiguous`, which the same
+run reports.
 
 ## Known limits and deferred work
 
@@ -165,9 +190,11 @@ Read it together with `dropped_patron_card`, `unknown_destination`, `unknown_bin
   stores no additional row, and keeps the originally stored `ruleset_id`. A change to semantic fields such as destination or any
   classification flag still conflicts under the same `event_key`. `tests/test_collector_v2_e2e.py`,
   `tests/test_ingest_v2_api.py` and `tests/test_ingest_v2_postgres.py` pin this behavior.
-* **Not bundled yet.** `collector/build_release.py` lists the v2 modules as build-only, so release bundles contain v1 exactly as before.
-  `collector/run.py` reads `contract_mode` itself and imports v2 lazily, so a build without the v2 modules still runs v1 and answers a
-  `contract_mode: v2` config (or `--v2-dry-run`) with "this build does not include Contract v2" (exit 2). Moving the modules into
-  `COLLECTOR_RUNTIME_FILES` is part of the release-integration step.
+* **Release packaging.** As of 1.0.6, every v2 module is in `collector.build_release.COLLECTOR_RUNTIME_FILES` and ships in every
+  release bundle (source and frozen). `collector/run.py` still reads `contract_mode` itself and imports v2 lazily, so a build that
+  ever lacked the v2 modules would still run v1 and answer a `contract_mode: v2` config (or `--v2-dry-run`) with "this build does not
+  include Contract v2" (exit 2) rather than crashing -- that fallback is now a safety net, not the normal case. For the exact,
+  release-tooling-only NBPL pilot preparation and dry-run acceptance procedure (build-time rules generation, `tools\prepare_v2_pilot.ps1`),
+  see [collector-1.0.9-v2-pilot-runbook.md](collector-1.0.9-v2-pilot-runbook.md).
 * No historical replay. A future cutover bootstraps the v2 cursor from the v1 cursor.
 * Deferred: installer/release integration, `collector_installations` status linkage, key enrollment, retiring v1, dashboard reads.

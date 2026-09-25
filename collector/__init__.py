@@ -73,4 +73,39 @@ from __future__ import annotations
 # 1.0.6 adds the Contract v2 runtime and privacy-safe mixed-era production
 # support. Contract v2 remains opt-in and disabled until explicitly configured
 # for a validated pilot installation.
-__version__ = "1.0.6"
+# 1.0.7 adds the identity-collision-diag onsite diagnostic (explains
+# identical_identity_events on real Tech Logic data), reachable both as
+# `python -m collector.identity_collision_diag` and as the frozen
+# SortViewCollector.exe's own `identity-collision-diag` subcommand -- see
+# collector/identity_collision_diag.py and collector/freeze/dispatcher.py.
+# It reuses the existing v2 dry-run config, transform logic and safety
+# contract unchanged (throwaway key, no persistent secret, no network call,
+# no state/cursor write); the identity algorithm itself is unchanged.
+# 1.0.8 replaces the pilot's flat identical_identity_events == 0 acceptance
+# rule with a bounded, source/category-aware gate (identity_collision_diag.py's
+# _evaluate_gate, surfaced as its printed identity_collision_gate=pass|fail
+# and consumed by collector/deploy/prepare_v2_pilot.ps1's Step 6b): permits
+# only the ACS hold-read-twice-unchanged case and a small, spread-out,
+# low-rate cluster of barcode-less ils_acs_failure/rfid_collision reject
+# duplicates -- real NBPL AMH data (91 such pairs of 1024 rejects) motivated
+# this over the flat rule, which those same real events would otherwise have
+# failed. identical_identity_events is still always printed, never hidden;
+# the identity algorithm, event_key generation, transformation semantics,
+# the uploader, the privacy boundary and dedup behavior are all unchanged.
+# 1.0.9 adds frozen-runtime support for local v2 secret provisioning --
+# `SortViewCollector.exe v2-key init|check` (collector/freeze/dispatcher.py's
+# `v2-key` subcommand, pure argv forwarding to collector/v2_keys.py's
+# existing main(), never a copy of its key-generation or DPAPI/ACL logic) --
+# and a new release-packaged tool, tools\configure_v2.ps1
+# (collector/deploy/configure_v2.ps1), which converts an existing production
+# collector_config.json from contract_mode "v1" to "v2" in place: fail-closed
+# throughout, requires the Scheduled Task disabled, validates a candidate
+# copy with the real collector config loader BEFORE ever touching the
+# production file, takes a UTC-timestamped backup, and replaces the
+# production file atomically only once validation has already passed. Key
+# creation, server feature-flag activation, cutover recording, and task
+# enabling remain separate, explicit, later operator steps -- none of them
+# automatic and none performed by this release's own tooling. No change to
+# cryptography, key format, DPAPI scope, ACL rules, the identity algorithm,
+# the uploader, the privacy boundary, or dedup behavior.
+__version__ = "1.0.9"

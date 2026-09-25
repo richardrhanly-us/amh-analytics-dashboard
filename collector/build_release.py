@@ -77,7 +77,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import __version__, deploy_manifest
+from . import __version__, deploy_manifest, v2_rules
 
 PRODUCT_NAME = "SortView Collector"
 
@@ -98,10 +98,18 @@ PRODUCT_NAME = "SortView Collector"
 # report for the remaining steps (a real 1.0.6 build, an onsite dry-run
 # validation, and an operator-issued ingest key) before any machine would
 # actually run v2.
+#
+# collector/identity_collision_diag.py (the identical_identity_events
+# onsite diagnostic; see its own docstring and collector/freeze/dispatcher.py's
+# `identity-collision-diag` subcommand) is listed here, not in
+# BUILD_ONLY_COLLECTOR_FILES, for the same reason: it is a real operator-facing
+# tool that must be present on the target machine (source or frozen bundle
+# alike) to run there, not a build-time-only module like this file itself.
 COLLECTOR_RUNTIME_FILES: tuple[str, ...] = (
     "collector/__init__.py",
     "collector/bootstrap_state.py",
     "collector/config.py",
+    "collector/identity_collision_diag.py",
     "collector/parsers.py",
     "collector/preflight.py",
     "collector/reader.py",
@@ -152,6 +160,17 @@ DEPLOY_TOOL_FILES: tuple[tuple[str, str], ...] = (
     # this list plus SortViewCollector.exe's own subcommands; frozen
     # installs only. Copied verbatim like the rest.
     ("collector/deploy/finish-collector-install.ps1", "tools/finish-install.ps1"),
+    # Contract v2 NBPL pilot preparation (dry-run only -- see its own
+    # docstring). Copied verbatim like the rest of this tuple; it resolves
+    # the packaged PILOT_RULES_DEST artifact from its OWN bundle root
+    # (Split-Path $PSScriptRoot -Parent), never a repo-relative path.
+    ("collector/deploy/prepare_v2_pilot.ps1", "tools/prepare_v2_pilot.ps1"),
+    # Contract v2 production config conversion (contract_mode: v1 -> v2 on
+    # the EXISTING collector_config.json; never key creation, never task
+    # enabling -- see its own docstring). Copied verbatim like the rest of
+    # this tuple; it resolves its own bundle's MANIFEST.json the same way
+    # prepare_v2_pilot.ps1 does (Split-Path $PSScriptRoot -Parent).
+    ("collector/deploy/configure_v2.ps1", "tools/configure_v2.ps1"),
 )
 
 # (repo-relative source, bundle-relative destination) for files that land
@@ -168,6 +187,19 @@ SUPPORT_FILES: tuple[tuple[str, str], ...] = (
 # _release_facing_example_config below.
 CONFIG_TEMPLATE_SOURCE = "collector/deploy/collector_config.example.json"
 CONFIG_TEMPLATE_DEST = "collector_config.example.json"
+
+# This 1.0.6 NBPL pilot's packaged classification rules: GENERATED AT BUILD TIME (never
+# hand-copied into source control -- see _write_pilot_rules_artifact) from the current
+# src/branch_settings.json via collector.v2_rules.seed_from_settings, the same
+# seed/normalization logic `python -m collector.v2_rules seed` uses. The bundle-relative
+# destination is deliberately under its own pilot/ folder, distinct from
+# CONFIG_TEMPLATE_DEST and from the ProgramData runtime path it is installed to
+# (tools/prepare_v2_pilot.ps1 copies it there) -- this file is a release-owned SEED
+# artifact, not a filled-in runtime config. It holds only staff/service-account names and
+# destination/DA-pattern routing labels already present in branch_settings.json -- no
+# patron data, no credentials.
+PILOT_RULES_SETTINGS_SOURCE = "src/branch_settings.json"
+PILOT_RULES_DEST = "pilot/classification_rules.json"
 
 # --- frozen (PyInstaller) bundle mode ---------------------------------
 #
@@ -295,6 +327,11 @@ def _required_source_files(repo_root: Path) -> list[tuple[Path, str | None]]:
     # created rather than surfacing later as an unhandled read error.
     pairs.append((repo_root / CONFIG_TEMPLATE_SOURCE, None))
 
+    # Same treatment for the pilot rules artifact's settings SOURCE (not copied
+    # verbatim -- generated, see _write_pilot_rules_artifact): existence verified
+    # up front so a missing src/branch_settings.json fails the build loudly too.
+    pairs.append((repo_root / PILOT_RULES_SETTINGS_SOURCE, None))
+
     return pairs
 
 
@@ -324,6 +361,41 @@ def _write_config_template(bundle_dir: Path, repo_root: Path) -> ManifestEntry:
     config_dest.write_text(config_text, encoding="utf-8", newline="\n")
     config_bytes = config_text.encode("utf-8")
     return ManifestEntry(CONFIG_TEMPLATE_DEST, hashlib.sha256(config_bytes).hexdigest(), len(config_bytes))
+
+
+def _write_pilot_rules_artifact(bundle_dir: Path, repo_root: Path) -> ManifestEntry:
+    """Generates this 1.0.6 NBPL pilot's classification_rules.json at BUILD TIME from
+    src/branch_settings.json (v2_rules.seed_from_settings -- the same function
+    `python -m collector.v2_rules seed` uses), rather than checking in a hand-copied
+    file: the document is deterministic given the settings source, so regenerating it
+    is what keeps the packaged artifact from silently drifting out of sync with the
+    settings it is supposed to reflect. Written to bundle_dir/PILOT_RULES_DEST exactly
+    as v2_rules.main's own `seed` command writes it (json.dumps(..., indent=2)), so a
+    build's output is byte-identical to what an operator would get running that CLI
+    command by hand against the same settings file. Shared by both build_release and
+    build_frozen_release -- every 1.0.6 bundle, source or frozen, carries the same
+    pilot artifact for tools/prepare_v2_pilot.ps1 to install."""
+    settings_path = repo_root / PILOT_RULES_SETTINGS_SOURCE
+    try:
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise BuildError(
+            f"could not read {settings_path} to generate the pilot classification rules: {exc}"
+        ) from exc
+    try:
+        document = v2_rules.seed_from_settings(settings)
+    except v2_rules.RulesError as exc:
+        raise BuildError(
+            f"{settings_path} is not a valid branch-settings document ({exc.code}) -- cannot generate "
+            "the pilot classification rules"
+        ) from exc
+
+    dest = bundle_dir / PILOT_RULES_DEST
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(document, indent=2) + "\n"
+    dest.write_text(text, encoding="utf-8", newline="\n")
+    data = text.encode("utf-8")
+    return ManifestEntry(PILOT_RULES_DEST, hashlib.sha256(data).hexdigest(), len(data))
 
 
 def _write_manifest(
@@ -528,6 +600,7 @@ def build_release(
 
     entries = _copy_required_files(required, bundle_dir)
     entries.append(_write_config_template(bundle_dir, repo_root))
+    entries.append(_write_pilot_rules_artifact(bundle_dir, repo_root))
 
     manifest_path = _write_manifest(bundle_dir, version, entries, built_at)
 
@@ -595,6 +668,7 @@ def _required_frozen_deploy_files(repo_root: Path) -> list[tuple[Path, str | Non
         pairs.append((repo_root / source_rel, dest_rel))
 
     pairs.append((repo_root / CONFIG_TEMPLATE_SOURCE, None))
+    pairs.append((repo_root / PILOT_RULES_SETTINGS_SOURCE, None))
 
     return pairs
 
@@ -660,6 +734,7 @@ def build_frozen_release(
     entries = _copy_required_files(required, bundle_dir)
     entries.extend(_copy_frozen_runtime(frozen_runtime_dir, bundle_dir))
     entries.append(_write_config_template(bundle_dir, repo_root))
+    entries.append(_write_pilot_rules_artifact(bundle_dir, repo_root))
 
     manifest_path = _write_manifest(bundle_dir, version, entries, built_at)
 

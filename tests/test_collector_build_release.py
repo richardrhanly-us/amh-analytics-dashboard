@@ -123,6 +123,18 @@ def test_bundle_contains_every_required_collector_runtime_file(built_bundle):
         assert (built_bundle.bundle_dir / rel).is_file(), rel
 
 
+def test_bundle_includes_the_identity_collision_diagnostic_module(built_bundle):
+    # The onsite identical_identity_events diagnostic (collector/identity_collision_diag.py)
+    # must ship in every release -- source and (via the frozen exe's own
+    # dispatcher/spec hiddenimports, see tests/test_collector_freeze.py) frozen
+    # alike -- so it is actually runnable on a machine that only has the
+    # installed release, not a repo checkout.
+    assert "collector/identity_collision_diag.py" in build_release.COLLECTOR_RUNTIME_FILES
+    dest = built_bundle.bundle_dir / "collector" / "identity_collision_diag.py"
+    assert dest.is_file()
+    assert any(e.path == "collector/identity_collision_diag.py" for e in built_bundle.entries)
+
+
 def test_bundle_contains_only_the_approved_six_agent_parser_files(built_bundle):
     agent_files = sorted(
         p.relative_to(built_bundle.bundle_dir).as_posix()
