@@ -1,11 +1,14 @@
 """Browser-side persistence for the opaque session token from session_service.
 
 This module knows NOTHING about users, passwords, or auth_sessions -- it only
-ever handles a string token and a datetime. The token is set via a tiny,
-first-party Streamlit CCv2 component (registered once, below); it is read
-back via st.context.cookies, which needs no component at all since it
-reflects the Cookie header Streamlit already received on the page's initial
-HTTP request.
+ever handles a string token and a datetime. The token is written and read via
+small first-party Streamlit CCv2 components registered once below.
+
+The reader intentionally uses document.cookie rather than st.context.cookies.
+Production-equivalent testing on Streamlit Community Cloud proved that the
+browser accepted the custom __Host- cookie while st.context.cookies did not
+expose it, including from a newly opened browser tab. Reading through the
+component therefore uses the browser's actual cookie state.
 
 WHY NOT A THIRD-PARTY COOKIE PACKAGE. extra-streamlit-components (the
 better-maintained of the two evaluated) has an open, upstream-acknowledged
@@ -14,8 +17,8 @@ set / delete is not sync operation") describing exactly the set/rerun race
 this module is designed to avoid -- see render_cookie_writer()'s docstring.
 streamlit-cookies-controller has had no release since 2024-04-10 and its
 documented API has no Secure/SameSite/Path/expiry parameters at all.
-Writing ~25 lines of first-party CCv2 avoids both problems and adds zero
-new requirements.txt entries.
+Writing a small first-party CCv2 implementation avoids both problems and adds
+zero new requirements.txt entries.
 
 RACE-CONDITION DESIGN. The writer component is mounted from
 render_cookie_writer(), which must be called once per script run, from a
@@ -26,36 +29,33 @@ the rerun a login/logout action already triggers), never in the same
 script run as the st.rerun() call that produced it. document.cookie itself
 is synchronous once the JS executes -- the only real hazard is the
 component never getting a chance to render before a forced rerun tears
-down the DOM, which this call sequencing avoids by construction. No
-acknowledgment/confirmation trigger is used: nothing here needs to know
-WHEN the browser ran the JS, only that it eventually will before the next
-real user interaction, which the sequencing above already guarantees.
+down the DOM, which this call sequencing avoids by construction.
+
+The reader uses Component v2 state. JavaScript reads document.cookie and
+reports the current cookie value to Python with setStateValue(). If the
+browser value differs from the component's stored state, Streamlit reruns
+and the ComponentResult returned to Python reflects the new value.
 
 *** STEP 4 REQUIREMENT -- NOT YET IMPLEMENTED, DOCUMENTED HERE SO IT ISN'T
 LOST ***
-st.context.cookies reflects the Cookie header from the CURRENT Streamlit
-session's initial HTTP request, and does not update for the rest of that
-session's lifetime -- not even after this module's own JS deletes the
-cookie. Concretely: a logout that clears the cookie and calls st.rerun()
-will still see the OLD cookie value in st.context.cookies on that very next
-rerun, because it's still the same underlying session/connection. If a
-future cookie-restoration helper (Step 4, in app.py) blindly trusted
-st.context.cookies after logout, a user could log out, and the immediately
-following rerun could read the stale cookie and silently re-authenticate
-them.
+
+Component state is persistent across Streamlit reruns. After logout or forced
+revocation, Python may therefore briefly still have the reader's previous
+token value until the frontend observes the cleared browser cookie and sends
+the new None state back.
 
 The Step 4 logout/forced-revocation flow MUST therefore set a session_state
 flag, e.g.:
 
     st.session_state["_sortview_suppress_cookie_restore"] = True
 
-before clearing auth_user and calling st.rerun(). Whatever future function
-restores a session from the cookie MUST check and honor this flag, refusing
-to restore while it is set. A genuine hard browser refresh starts a brand
-new Streamlit session with a fresh st.context.cookies read (correctly
-reflecting the now-deleted cookie), at which point the flag is no longer
-needed and can be treated as expired/irrelevant for that new session.
-This module does not implement any part of this yet -- see Step 4.
+before clearing auth_user and rerunning. The future restoration helper MUST
+honor this flag and refuse restoration while logout/revocation is being
+completed. The reader will subsequently synchronize its state from the actual
+browser cookie.
+
+This module does not implement any part of that restoration flow yet -- see
+Step 4.
 """
 
 from __future__ import annotations
@@ -84,7 +84,7 @@ def _cookie_name() -> str:
     return f"__Host-{_COOKIE_STEM}" if _cookie_secure() else _COOKIE_STEM
 
 
-# --- the component (registered once, at import time) ----------------------
+# --- components (registered once, at import time) --------------------------
 
 _COOKIE_WRITER = st.components.v2.component(
     "sortview_cookie_writer",
@@ -109,17 +109,60 @@ export default function (component) {
 """,
 )
 
+_COOKIE_READER = st.components.v2.component(
+    "sortview_cookie_reader",
+    html="<div id='sortview-cookie-reader'></div>",
+    js="""
+export default function (component) {
+  const { data, setStateValue } = component
+  if (!data || !data.name) return
 
-# --- read (no component involved -- see module docstring) -----------------
+  const prefix = `${data.name}=`
+  const match = document.cookie
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(prefix))
+
+  if (!match) {
+    setStateValue("value", null)
+    return
+  }
+
+  const encoded = match.slice(prefix.length)
+
+  try {
+    setStateValue("value", decodeURIComponent(encoded))
+  } catch {
+    setStateValue("value", null)
+  }
+}
+""",
+)
+
+
+# --- read ------------------------------------------------------------------
 
 def get_session_cookie() -> str | None:
+    """Read the current session token directly from the browser cookie.
+
+    On the first mount the Python-side default is None. If JavaScript finds a
+    cookie whose value differs from that state, setStateValue() causes
+    Streamlit to rerun and the returned ComponentResult then contains the
+    browser value.
+    """
     try:
-        return st.context.cookies.get(_cookie_name())
+        result = _COOKIE_READER(
+            key="sortview_cookie_reader",
+            data={"name": _cookie_name()},
+            default={"value": None},
+            on_value_change=lambda: None,
+        )
+        return result.value
     except Exception:
         return None
 
 
-# --- stage a write/clear (actual DOM write happens in render_cookie_writer) -
+# --- stage a write/clear ---------------------------------------------------
 
 def set_session_cookie(
     token: str,
@@ -147,12 +190,21 @@ def clear_session_cookie() -> None:
 
 
 def render_cookie_writer() -> None:
-    """Call once per script run, from a render that does NOT also call
-    st.rerun() -- see the module docstring's RACE-CONDITION DESIGN note.
-    A no-op when nothing is pending; pops the pending op immediately after
-    mounting so it is written exactly once, never re-mounted on a later
-    rerun."""
+    """Mount a staged browser-cookie write exactly once.
+
+    Call once per script run from a render that does NOT also call st.rerun().
+    See the module docstring's RACE-CONDITION DESIGN note.
+
+    This is a no-op when nothing is pending. The pending operation is popped
+    immediately before mounting so it cannot be mounted again on a later
+    rerun.
+    """
     pending: dict[str, Any] | None = st.session_state.pop(_PENDING_KEY, None)
+
     if pending is None:
         return
-    _COOKIE_WRITER(key="sortview_cookie_writer", data=pending)
+
+    _COOKIE_WRITER(
+        key="sortview_cookie_writer",
+        data=pending,
+    )
