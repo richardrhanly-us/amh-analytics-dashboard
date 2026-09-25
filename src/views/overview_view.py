@@ -461,6 +461,7 @@ def render_overview(
             "#059669",
             value_font_size="1.15rem",
             value_wrap=True,
+            subtitle_is_html=True,
         )
 
     with row3_col1:
