@@ -24,6 +24,7 @@ from sqlalchemy import text
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from database import get_engine
+from services import persistent_auth_service
 from services.privacy_hardening import log_safe_exception
 
 logger = logging.getLogger("sortview.auth")
@@ -270,6 +271,10 @@ def enforce_active_session(auth_user: dict) -> None:
         # Best-effort: the audit write must never keep an inactive user
         # authenticated. Session revocation below still proceeds.
         log_safe_exception(logger, "Failed to write session_terminated_inactive audit event", exc)
+
+    persistent_auth_service.clear_all_persistent_auth_for_current_user(
+        auth_user["id"]
+    )
 
     st.session_state["auth_user"] = None
     st.session_state.pop("selected_org_slug", None)

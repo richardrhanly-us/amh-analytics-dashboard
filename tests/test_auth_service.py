@@ -605,7 +605,12 @@ ACTIVE_SESSION_USER = {"id": 1, "email": "user@example.com", "full_name": "Test 
 
 
 def _run_enforce_active_session(
-    monkeypatch, *, active: bool, log_calls: list | None = None, raise_on_log: bool = False,
+    monkeypatch,
+    *,
+    active: bool,
+    log_calls: list | None = None,
+    clear_all_calls: list | None = None,
+    raise_on_log: bool = False,
 ) -> AppTest:
     import services.auth_service as auth_service_flat
 
@@ -618,6 +623,17 @@ def _run_enforce_active_session(
             raise RuntimeError("audit log write failed")
 
     monkeypatch.setattr(auth_service_flat, "log_auth_event", fake_log_auth_event)
+
+    def fake_clear_all_persistent_auth_for_current_user(user_id: int):
+        if clear_all_calls is not None:
+            clear_all_calls.append(user_id)
+        return 1
+
+    monkeypatch.setattr(
+        auth_service_flat.persistent_auth_service,
+        "clear_all_persistent_auth_for_current_user",
+        fake_clear_all_persistent_auth_for_current_user,
+    )
 
     at = AppTest.from_function(_enforce_active_session_script, default_timeout=60)
     at.session_state["auth_user"] = dict(ACTIVE_SESSION_USER)
@@ -640,6 +656,19 @@ def test_enforce_active_session_clears_org_and_branch_selection_for_inactive_acc
     assert "selected_org_slug" not in at.session_state.filtered_state
     assert "selected_branch_slug" not in at.session_state.filtered_state
 
+
+def test_enforce_active_session_revokes_all_persistent_sessions_for_inactive_account(
+    monkeypatch,
+):
+    clear_all_calls: list[int] = []
+
+    _run_enforce_active_session(
+        monkeypatch,
+        active=False,
+        clear_all_calls=clear_all_calls,
+    )
+
+    assert clear_all_calls == [1]
 
 def test_enforce_active_session_writes_audit_event_for_inactive_account(monkeypatch):
     log_calls: list = []
@@ -677,13 +706,19 @@ def test_enforce_active_session_stops_before_protected_content_for_inactive_acco
 
 def test_enforce_active_session_does_nothing_for_active_account(monkeypatch):
     log_calls: list = []
-    at = _run_enforce_active_session(monkeypatch, active=True, log_calls=log_calls)
+    clear_all_calls: list[int] = []
 
-    # Active users are unaffected: session state is untouched, no audit
-    # event is written, and the page proceeds past the guard.
+    at = _run_enforce_active_session(
+        monkeypatch,
+        active=True,
+        log_calls=log_calls,
+        clear_all_calls=clear_all_calls,
+    )
+
     assert at.session_state["auth_user"] == ACTIVE_SESSION_USER
     assert at.session_state["selected_org_slug"] == "acme"
     assert at.session_state["selected_branch_slug"] == "main"
     assert log_calls == []
+    assert clear_all_calls == []
     assert [m.value for m in at.markdown] == ["PROTECTED_CONTENT_RENDERED"]
     assert [e.value for e in at.error] == []
