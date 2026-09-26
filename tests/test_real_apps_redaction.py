@@ -58,6 +58,16 @@ from streamlit.web import bootstrap, cli
 script, cli_env, cli_args, enforcement_off = sys.argv[1], json.loads(sys.argv[2]), json.loads(sys.argv[3]), sys.argv[4] == "off"
 sys.path.insert(0, os.path.dirname(script))  # what `streamlit run` does: the script's own folder is importable
 
+# The main Streamlit app now waits for its browser-side persistent-cookie
+# reader before rendering login. AppTest has no real browser/CCv2 execution,
+# and this suite is testing error redaction rather than persistence.
+if os.path.basename(script) == "app.py":
+    from services import persistent_auth_service
+
+    persistent_auth_service.restore_persistent_auth_state = (
+        lambda: (True, None)
+    )
+
 # Start Streamlit as `streamlit run <script>` does (real argument, environment and config loading); only the server is stubbed.
 bootstrap.run = lambda *args, **kwargs: None
 started = CliRunner().invoke(cli.main, ["run", script, "--server.headless=true", *cli_args], env=cli_env)
