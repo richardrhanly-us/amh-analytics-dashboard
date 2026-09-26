@@ -85,7 +85,11 @@ import sys
 sys.path.insert(0, {src!r})
 
 from streamlit.testing.v1 import AppTest
-from services import auth_service
+from services import auth_service, persistent_auth_service
+
+# AppTest has no browser-side JavaScript. These tests exercise the login and
+# forgot-password forms, not persistent-cookie restoration.
+persistent_auth_service.restore_persistent_auth_state = lambda: (True, None)
 
 login_calls = []
 def fake_authenticate_user(email, password):

@@ -79,7 +79,13 @@ def test_login_page_renders_from_a_cold_start_without_database_url():
         f"""
         import sys
         sys.path.insert(0, {str(SRC)!r})
+
+        from services import persistent_auth_service
         from streamlit.testing.v1 import AppTest
+
+        # AppTest has no real browser, so the CCv2 cookie reader cannot synchronize.
+        # This smoke test is about cold-start/login rendering, not cookie restoration.
+        persistent_auth_service.restore_persistent_auth_state = lambda: (True, None)
         at = AppTest.from_file({str(SRC / "app.py")!r}, default_timeout=120)
         at.run()
         problems = [e.value for e in at.exception]

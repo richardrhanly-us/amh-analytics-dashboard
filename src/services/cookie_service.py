@@ -123,8 +123,17 @@ export default function (component) {
     .map((part) => part.trim())
     .find((part) => part.startsWith(prefix))
 
+  // ComponentResult.value has three intentional states:
+  //
+  //   null / Python None = reader has not synchronized yet
+  //   ""                 = reader is ready and no cookie exists
+  //   non-empty string   = reader is ready and this is the cookie value
+  //
+  // A real SortView session token is generated with token_urlsafe() and is
+  // never an empty string, so "" is safe as the browser-ready/no-cookie
+  // sentinel.
   if (!match) {
-    setStateValue("value", null)
+    setStateValue("value", "")
     return
   }
 
@@ -133,7 +142,7 @@ export default function (component) {
   try {
     setStateValue("value", decodeURIComponent(encoded))
   } catch {
-    setStateValue("value", null)
+    setStateValue("value", "")
   }
 }
 """,
@@ -142,13 +151,18 @@ export default function (component) {
 
 # --- read ------------------------------------------------------------------
 
-def get_session_cookie() -> str | None:
-    """Read the current session token directly from the browser cookie.
+def get_session_cookie_state() -> tuple[bool, str | None]:
+    """Return whether the browser reader is ready and its cookie value.
 
-    On the first mount the Python-side default is None. If JavaScript finds a
-    cookie whose value differs from that state, setStateValue() causes
-    Streamlit to rerun and the returned ComponentResult then contains the
-    browser value.
+    The Component v2 reader has three states:
+
+    - None: JavaScript has not synchronized browser state to Python yet.
+    - "": JavaScript has run and confirmed that no usable cookie exists.
+    - non-empty string: JavaScript has run and returned the cookie value.
+
+    Keeping readiness separate from cookie absence prevents callers from
+    treating the component's first unsynchronized render as a logged-out
+    browser.
     """
     try:
         result = _COOKIE_READER(
@@ -157,9 +171,38 @@ def get_session_cookie() -> str | None:
             default={"value": None},
             on_value_change=lambda: None,
         )
-        return result.value
     except Exception:
+        # Persistence is unavailable, but this is a resolved state: fall back to
+        # the normal login form rather than leaving the app permanently waiting.
+        return True, None
+
+    value = result.value
+
+    if value is None:
+        return False, None
+
+    if value == "":
+        return True, None
+
+    if not isinstance(value, str):
+        return False, None
+
+    return True, value
+
+
+def get_session_cookie() -> str | None:
+    """Return the browser session token when the reader is synchronized.
+
+    This compatibility helper intentionally collapses both "not ready yet"
+    and "ready with no cookie" to None. Call get_session_cookie_state() when
+    the distinction matters.
+    """
+    ready, token = get_session_cookie_state()
+
+    if not ready:
         return None
+
+    return token
 
 
 # --- stage a write/clear ---------------------------------------------------
