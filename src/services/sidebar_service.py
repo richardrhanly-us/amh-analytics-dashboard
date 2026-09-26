@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from services import auth_service
+from services import auth_service, persistent_auth_service
 
 
 def render_main_sidebar(
@@ -89,6 +89,9 @@ def render_main_sidebar(
                     "selected_branch_slug": st.session_state.get("selected_branch_slug"),
                 },
             )
+
+            persistent_auth_service.clear_persistent_auth()
+
             st.session_state["auth_user"] = None
             st.session_state.pop("selected_org_slug", None)
             st.session_state.pop("selected_branch_slug", None)
