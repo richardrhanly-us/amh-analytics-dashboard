@@ -89,7 +89,7 @@ def render_live_today(
 ):
     with st.container(key="sv_live_controls_row"):
         pause_col, refresh_col, check_col, status_col = st.columns(
-            [1.25, 1.0, 2.1, 1.85]
+            [1.25, 1.0, 2.1, 2.0]
         )
 
         with pause_col:
