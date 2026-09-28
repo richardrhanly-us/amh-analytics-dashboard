@@ -30,6 +30,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import re
 import shutil
 import sys
@@ -666,6 +667,119 @@ def _manifest_prelude(bundle_root: Path, install_root: Path) -> str:
         f"$InstallRoot = '{install_root}'\n"
         "$Manifest = Get-Content (Join-Path $BundleRoot 'MANIFEST.json') -Raw | ConvertFrom-Json\n"
     )
+
+
+# =====================================================================================================================
+# 6b. Get-CollectorRelativePath -- direct tests of the containment helper itself. Every test creates REAL files
+#     under tmp_path (never a fabricated string path), so each exercises the ACTUAL platform's own native path
+#     semantics wherever it runs -- POSIX on the Linux CI runner, Windows here -- rather than simulating one
+#     platform's behavior on the other. This is the exact function whose bug caused the real CI failure: an
+#     absolute root run through the RELATIVE-path canonicalizer corrupted "/tmp/install" into "tmp/install" on
+#     Linux, and (found by direct reproduction, independent of that bug) a bare string-prefix containment test
+#     separately accepted "install" as containing "installer" on any platform.
+# =====================================================================================================================
+
+def _get_relative_path_script(root, full_path) -> str:
+    lib_path = str(DEPLOY_DIR / MANIFEST_LIB).replace("'", "''")
+    return (
+        f". '{lib_path}'\n"
+        f"try {{ Get-CollectorRelativePath -Root '{root}' -FullPath '{full_path}'; }} "
+        "catch { \"REJECTED:$($_.Exception.Message)\" }"
+    )
+
+
+@needs_powershell
+def test_get_collector_relative_path_accepts_a_direct_child_file(tmp_path):
+    root = tmp_path / "install"
+    root.mkdir()
+    child = root / "file.txt"
+    child.write_text("x")
+    assert _run_powershell(_get_relative_path_script(root, child)).strip() == "file.txt"
+
+
+@needs_powershell
+def test_get_collector_relative_path_accepts_a_nested_child_file(tmp_path):
+    root = tmp_path / "install"
+    (root / "sub").mkdir(parents=True)
+    child = root / "sub" / "file.txt"
+    child.write_text("x")
+    assert _run_powershell(_get_relative_path_script(root, child)).strip() == "sub/file.txt"
+
+
+@needs_powershell
+def test_get_collector_relative_path_accepts_the_exact_paths_the_real_ci_failure_reported(tmp_path):
+    # Direct regression pin for the exact two paths the real Linux GitHub Actions run reported as failing:
+    # "<root>/MANIFEST.installed.json" and "<root>/collector/run.py", both genuine direct/nested children.
+    root = tmp_path / "install"
+    (root / "collector").mkdir(parents=True)
+    manifest_installed = root / "MANIFEST.installed.json"
+    manifest_installed.write_text("{}")
+    run_py = root / "collector" / "run.py"
+    run_py.write_text("x")
+
+    lib_path = str(DEPLOY_DIR / MANIFEST_LIB).replace("'", "''")
+    script = (
+        f". '{lib_path}'\n"
+        f"Get-CollectorRelativePath -Root '{root}' -FullPath '{manifest_installed}'\n"
+        f"Get-CollectorRelativePath -Root '{root}' -FullPath '{run_py}'"
+    )
+    assert _run_powershell(script).strip().splitlines() == ["MANIFEST.installed.json", "collector/run.py"]
+
+
+@needs_powershell
+def test_get_collector_relative_path_rejects_a_sibling_directory_with_a_shared_name_prefix(tmp_path):
+    # The exact "install" vs "installer" shape: a bare string-prefix test would (and, before this fix, did)
+    # wrongly accept this.
+    root = tmp_path / "install"
+    root.mkdir()
+    sibling = tmp_path / "installer"
+    sibling.mkdir()
+    evil = sibling / "evil.txt"
+    evil.write_text("x")
+    result = _run_powershell(_get_relative_path_script(root, evil)).strip()
+    assert result.startswith("REJECTED:"), result
+
+
+@needs_powershell
+def test_get_collector_relative_path_rejects_a_sibling_directory_like_install_vs_install2(tmp_path):
+    root = tmp_path / "install"
+    root.mkdir()
+    sibling = tmp_path / "install2"
+    sibling.mkdir()
+    evil = sibling / "file.txt"
+    evil.write_text("x")
+    result = _run_powershell(_get_relative_path_script(root, evil)).strip()
+    assert result.startswith("REJECTED:"), result
+
+
+@needs_powershell
+def test_get_collector_relative_path_rejects_a_path_truly_outside_root(tmp_path):
+    root = tmp_path / "install"
+    root.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("x")
+    result = _run_powershell(_get_relative_path_script(root, outside)).strip()
+    assert result.startswith("REJECTED:"), result
+
+
+@needs_powershell
+def test_get_collector_relative_path_accepts_root_with_a_trailing_separator(tmp_path):
+    root = tmp_path / "install"
+    root.mkdir()
+    child = root / "file.txt"
+    child.write_text("x")
+    root_with_trailing_sep = str(root) + os.sep
+    assert _run_powershell(_get_relative_path_script(root_with_trailing_sep, child)).strip() == "file.txt"
+
+
+@needs_powershell
+def test_get_collector_relative_path_accepts_root_without_a_trailing_separator(tmp_path):
+    root = tmp_path / "install"
+    root.mkdir()
+    child = root / "file.txt"
+    child.write_text("x")
+    root_no_trailing_sep = str(root).rstrip(os.sep)
+    assert _run_powershell(_get_relative_path_script(root_no_trailing_sep, child)).strip() == "file.txt"
 
 
 @needs_powershell

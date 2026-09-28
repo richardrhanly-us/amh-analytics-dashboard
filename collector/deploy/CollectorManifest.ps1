@@ -112,22 +112,55 @@ function ConvertTo-CollectorCanonicalRelativePath {
 
 function Get-CollectorRelativePath {
     <#
-    $FullPath's path relative to $Root, canonicalized. Deliberately NOT [System.IO.Path]::GetRelativePath --
-    that method does not exist in .NET Framework, which Windows PowerShell 5.1 (still a real production target
-    for this tooling) runs on. Deliberately NOT a fixed-length Substring/TrimStart('\') either -- that is only
-    correct when $Root's own separator convention matches $FullPath's, which silently breaks the moment either
-    side uses "/" instead of "\" (confirmed root cause of a real CI failure on a Linux pwsh runner, where
-    Get-ChildItem's .FullName uses "/" throughout).
+    $FullPath's path relative to $Root, canonicalized (forward-slash, no leading slash) -- but ONLY the final
+    relative suffix is canonicalized. Containment itself is established first, using NATIVE path semantics
+    (GetFullPath + the platform's own DirectorySeparatorChar), never a bare string-prefix test on a
+    slash-converted form.
+
+    TWO real, confirmed bugs this replaces (found by direct reproduction, not assumed):
+
+      1. The previous implementation ran the ABSOLUTE $Root through ConvertTo-CollectorCanonicalRelativePath --
+         a function for RELATIVE manifest paths, where trimming a leading slash is correct. Applied to an
+         absolute POSIX root, it silently corrupted "/tmp/install" into "tmp/install", which could then never
+         match $FullPath's own untouched leading "/" -- every absolute Linux path failed containment. This was
+         the actual root cause of a real Linux CI failure; confirmed directly:
+         ConvertTo-CollectorCanonicalRelativePath('/tmp/install') -> 'tmp/install'.
+      2. Even setting that aside, a bare string-prefix test alone accepts SIBLINGS whose names happen to share
+         a prefix -- "/tmp/install" as a string-prefix of "/tmp/installer/evil.txt", or "C:\foo\install" of
+         "C:\foo\installer\evil.txt". Confirmed directly: the previous implementation returned 'er/evil.txt'
+         for exactly that Windows pair instead of rejecting it. The character immediately after $Root's own
+         length must be a directory separator before this accepts containment at all -- checked below via
+         $rootWithSeparator, never a raw Substring/prefix match on $Root alone.
+
+    GetFullPath also resolves "." and ".." segments as a side effect, so a traversal segment in $FullPath
+    (which in practice only ever comes from Get-ChildItem's own .FullName, never attacker input) is normalized
+    away before the containment check, not left for a string match to be fooled by.
+
+    Deliberately NOT [System.IO.Path]::GetRelativePath or ::TrimEndingDirectorySeparator -- NEITHER exists in
+    .NET Framework, which Windows PowerShell 5.1 (still a real production target for this tooling) runs on.
     #>
     param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$FullPath)
 
-    $canonicalRoot = (ConvertTo-CollectorCanonicalRelativePath $Root).TrimEnd('/')
-    $canonicalFull = ($FullPath -replace '\\', '/')
-    if ($canonicalFull.Length -lt $canonicalRoot.Length -or
-        -not $canonicalFull.Substring(0, $canonicalRoot.Length).Equals($canonicalRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    # NATIVE normalization only, on BOTH sides, before any comparison -- canonicalization (forward-slash) is
+    # applied only to the final relative suffix, further down, never to an absolute path.
+    $nativeRoot = ([System.IO.Path]::GetFullPath($Root)).TrimEnd('\', '/')
+    $nativeFull = [System.IO.Path]::GetFullPath($FullPath)
+    $rootWithSeparator = $nativeRoot + [System.IO.Path]::DirectorySeparatorChar
+
+    $comparison = if ($Script:CollectorManifestIsWindows) {
+        [System.StringComparison]::OrdinalIgnoreCase
+    } else {
+        [System.StringComparison]::Ordinal
+    }
+
+    $isRealChild = $nativeFull.Length -gt $rootWithSeparator.Length -and
+                   $nativeFull.Substring(0, $rootWithSeparator.Length).Equals($rootWithSeparator, $comparison)
+    if (-not $isRealChild) {
         throw "Get-CollectorRelativePath: '$FullPath' is not under '$Root'."
     }
-    return $canonicalFull.Substring($canonicalRoot.Length).TrimStart('/')
+
+    $relativeNative = $nativeFull.Substring($rootWithSeparator.Length)
+    return ConvertTo-CollectorCanonicalRelativePath $relativeNative
 }
 
 function Test-CollectorManifestPathSafe {
