@@ -171,6 +171,24 @@ DEPLOY_TOOL_FILES: tuple[tuple[str, str], ...] = (
     # this tuple; it resolves its own bundle's MANIFEST.json the same way
     # prepare_v2_pilot.ps1 does (Split-Path $PSScriptRoot -Parent).
     ("collector/deploy/configure_v2.ps1", "tools/configure_v2.ps1"),
+    # Least-privilege ACL library (SYSTEM+Administrators only, everyone
+    # else denied) and release-manifest persistence/verification library --
+    # dot-sourced by install.ps1, tools/update.ps1, tools/repair-permissions.ps1
+    # and tools/verify-install.ps1, all of which resolve them relative to
+    # their OWN location, never a repo-relative path. Pure function
+    # libraries, no content changes between bundle kinds.
+    ("collector/deploy/CollectorAcl.ps1", "tools/CollectorAcl.ps1"),
+    ("collector/deploy/CollectorManifest.ps1", "tools/CollectorManifest.ps1"),
+    # One-time production remediation for an ALREADY-installed collector
+    # whose ACLs predate this ACL-hardening work (does not run at install/
+    # update time itself). Refuses unless the "SortView Collector" task is
+    # already disabled; never touches the v2 secrets directory.
+    ("collector/deploy/repair-collector-permissions.ps1", "tools/repair-permissions.ps1"),
+    # Read-only, standalone: recomputes SHA-256 of every installed release
+    # file against MANIFEST.installed.json and reports PASS/problem list.
+    # install.ps1/tools/update.ps1 also call its Test-InstalledManifest
+    # function directly (dot-sourced) right after they write that file.
+    ("collector/deploy/verify-install.ps1", "tools/verify-install.ps1"),
 )
 
 # (repo-relative source, bundle-relative destination) for files that land

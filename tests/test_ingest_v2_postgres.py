@@ -32,6 +32,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
@@ -53,7 +55,24 @@ LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 PREVIOUS_HEAD = "b4e91d7a3c58"      # the head before Contract v2 existed
 STEP3_HEAD = "d3f1a8c95b27"         # Step 3 as merged: acs_hold_events
 RLS_HEAD = "0acba192bf69"           # RLS phase 1: RLS enabled on the seven operational-domain tables
-HEAD = "f2a91c7d4e83"               # government-readiness audit: add v2_cutovers (purely additive, unrelated to v2 ingest)
+
+
+def _script_directory() -> ScriptDirectory:
+    cfg = Config(str(ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(ROOT / "alembic"))
+    return ScriptDirectory.from_config(cfg)
+
+
+def _current_head() -> str:
+    """The single current migration head, discovered from the real migration chain -- so this never needs a
+    literal updated by hand just because an unrelated migration (e.g. auth_sessions) is appended somewhere
+    above the v2/RLS chain this file tests."""
+    heads = _script_directory().get_heads()
+    assert len(heads) == 1, f"expected exactly one linear migration history, found heads: {heads}"
+    return heads[0]
+
+
+HEAD = _current_head()              # the current migration head -- computed, never a literal to keep updated
 
 pytestmark = pytest.mark.skipif(
     not ADMIN_URL, reason="SORTVIEW_TEST_POSTGRES_URL is not set (opt-in PostgreSQL migration tests)"
@@ -689,6 +708,7 @@ def test_upgrade_downgrade_upgrade_is_clean_and_the_downgrade_leaves_v1_alone():
 def test_the_migration_history_is_one_linear_chain_ending_at_the_new_head(pg_url):
     engine = create_engine(pg_url)
 
+    assert len(_script_directory().get_heads()) == 1  # one linear history, not a branch
     assert scalar(engine, "SELECT version_num FROM alembic_version") == HEAD
     engine.dispose()
 
@@ -946,16 +966,17 @@ def test_the_downgrade_refuses_while_a_non_hold_row_exists_and_leaves_everything
             _insert_item(conn, e=hmac_like(2), state="non_hold_101", **NON_HOLD_SHAPE)
         before = rows(engine, "SELECT * FROM acs_item_events ORDER BY id")
 
-        # -4, not -1: three migrations now sit on top of the ACS amendment
-        # (v2_cutovers, and below it the RLS phase 1 migration, and below
-        # that the trigger-security fix), so reaching the amendment's own
-        # downgrade (the one that must refuse here) needs four steps.
+        # Target STEP3_HEAD directly, not a step count: alembic then downgrades every migration above it in
+        # order, ending with the ACS amendment's own downgrade (the one that must refuse here). A step count
+        # (e.g. "-4") is brittle -- it silently stops one step short as soon as another, unrelated migration
+        # is appended above this chain (as happened once already with auth_sessions). Targeting the named
+        # revision is immune to that.
         # Confirmed empirically: alembic runs a multi-step downgrade as one
         # overall transaction -- when the last step raises, the earlier
         # steps' (trivial) changes are rolled back too, not just the
         # failing one. alembic_version is therefore left completely
         # unchanged at HEAD.
-        down = _alembic(db.url, "downgrade", "-4")
+        down = _alembic(db.url, "downgrade", STEP3_HEAD)
 
         assert down.returncode != 0 and "cannot downgrade" in down.stderr
         assert rows(engine, "SELECT * FROM acs_item_events ORDER BY id") == before  # nothing destroyed
@@ -973,11 +994,9 @@ def test_the_downgrade_restores_step_3_exactly_when_only_holds_exist_and_the_upg
             _insert_item(conn, e=hmac_like(2), dest="westside", ill=True)
         holds = rows(engine, "SELECT id, event_key, destination, is_ill FROM acs_item_events ORDER BY id")
 
-        # -4: undo v2_cutovers, the RLS phase 1 migration, and the
-        # trigger-security fix (all three trivial here) first, then the ACS
-        # amendment itself -- see the sibling refusal test above for why -1
-        # alone no longer reaches the ACS amendment.
-        down = _alembic(db.url, "downgrade", "-4")
+        # Target STEP3_HEAD directly, not a step count -- see the sibling refusal test above for why a step
+        # count is brittle against later, unrelated migrations being appended above this chain.
+        down = _alembic(db.url, "downgrade", STEP3_HEAD)
         assert down.returncode == 0, down.stderr[-2000:]
         assert scalar(engine, "SELECT version_num FROM alembic_version") == STEP3_HEAD
         assert rows(engine, "SELECT id, event_key, destination, is_ill FROM acs_hold_events ORDER BY id") == holds

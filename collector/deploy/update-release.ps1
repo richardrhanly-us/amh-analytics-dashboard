@@ -99,6 +99,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# tools\CollectorAcl.ps1 and tools\CollectorManifest.ps1 -- this script
+# lives at <bundle>\tools\update.ps1, the SAME directory as both. See
+# those files' own docstrings.
+. (Join-Path $PSScriptRoot "CollectorAcl.ps1")
+. (Join-Path $PSScriptRoot "CollectorManifest.ps1")
+
 function Test-ReleaseManifest {
     <# See install.ps1's identical copy of this function for the full
     rationale -- duplicated deliberately, not shared via a module, per
@@ -436,6 +442,26 @@ if ($preflightExitCode -ne 0) {
 
 Write-Host ""
 Write-Host "Preflight passed against the new runtime." -ForegroundColor Green
+
+Write-Host "=== 5. Least-privilege permissions on the install root ===" -ForegroundColor Cyan
+# -DataRoot is never touched by this script (see its own docstring) -- only
+# -InstallRoot, which was just replaced and just passed preflight.
+try {
+    Protect-CollectorPath -Path $InstallRoot -Recurse
+    Write-Host "Restricted $InstallRoot to SYSTEM + Administrators only (verified)." -ForegroundColor Green
+} catch {
+    Restore-DisabledTaskAndFail "ACL hardening of '$InstallRoot' failed: $($_.Exception.Message)"
+}
+
+Write-Host "=== 6. Persist and self-verify the release manifest ===" -ForegroundColor Cyan
+try {
+    $bundleManifest = Get-Content (Join-Path $BundleRoot "MANIFEST.json") -Raw | ConvertFrom-Json
+    New-InstalledManifest -BundleRoot $BundleRoot -InstallRoot $InstallRoot -Manifest $bundleManifest `
+        -BundleKind $(if ($isFrozen) { "frozen" } else { "source" })
+    Test-InstalledManifest -InstallRoot $InstallRoot
+} catch {
+    Restore-DisabledTaskAndFail "Release-manifest persistence/verification failed: $($_.Exception.Message)"
+}
 
 if ($wasRegistered -and $wasEnabled) {
     Enable-ScheduledTask -TaskName $TaskName | Out-Null
