@@ -108,4 +108,27 @@ from __future__ import annotations
 # automatic and none performed by this release's own tooling. No change to
 # cryptography, key format, DPAPI scope, ACL rules, the identity algorithm,
 # the uploader, the privacy boundary, or dedup behavior.
-__version__ = "1.0.9"
+# 1.0.10 hardens install/update/repair against the confirmed production ACL
+# gap: nothing in this codebase had ever restricted -InstallRoot or
+# -DataRoot\{config,data,logs} to SYSTEM+Administrators, so a real
+# production install was found with "Authenticated Users: Modify" on
+# C:\SortView\Collector (and the .exe and logs\ underneath it, as children
+# of an unprotected parent) and "BUILTIN\Users: Write" on
+# C:\ProgramData\SortViewCollector\config. tools\CollectorAcl.ps1
+# (collector/deploy/CollectorAcl.ps1) is the new shared primitive --
+# install.ps1 and tools\update.ps1 now apply it wherever they create or
+# replace -InstallRoot/-DataRoot's subdirectories; tools\repair-permissions.ps1
+# (collector/deploy/repair-collector-permissions.ps1) is a new one-time
+# remediation tool for an already-installed collector, refusing unless the
+# Scheduled Task is already disabled and never touching the v2 secrets
+# directory (that stays governed exclusively by v2_keys.py's own,
+# separately fail-closed ACL logic). Also new: MANIFEST.json and a derived
+# MANIFEST.installed.json are now persisted into -InstallRoot by both
+# install.ps1 and tools\update.ps1 (previously the bundle's own manifest was
+# never copied in, so no on-machine integrity record survived past the
+# extracted bundle folder), self-verified immediately via
+# tools\CollectorManifest.ps1, and independently re-checkable at any later
+# time with the new tools\verify-install.ps1. No change to the collector
+# runtime itself: parsing, upload, identity, the v1/v2 contracts, dedup
+# behavior and the privacy boundary are all unchanged.
+__version__ = "1.0.10"

@@ -144,6 +144,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# tools\CollectorAcl.ps1 (least-privilege ACL helper) and
+# tools\CollectorManifest.ps1 (installed-release-manifest persistence and
+# verification) -- this script lives at the bundle ROOT, so both are one
+# level down, at "tools\". See those files' own docstrings.
+. (Join-Path $PSScriptRoot "tools\CollectorAcl.ps1")
+. (Join-Path $PSScriptRoot "tools\CollectorManifest.ps1")
+
 # The Scheduled Task registered by tools\register-task.ps1. This script
 # only ever LOOKS FOR it (see the -Force guard below) -- it never
 # registers, changes, disables, or removes it.
@@ -480,11 +487,37 @@ if ($isFrozenBundle) {
     Write-Host "Copied $parserFileCount canonical parser runtime file(s) to $TargetAgentDir"
 }
 
+Write-Host "=== 1a. Least-privilege permissions on the install root ===" -ForegroundColor Cyan
+# Recurse: the runtime was just placed here, so this also protects the .exe
+# (frozen) or collector\*.py + agent\ (source) directly, not only the
+# directory itself.
+Protect-CollectorPath -Path $InstallRoot -Recurse
+Write-Host "Restricted $InstallRoot to SYSTEM + Administrators only (verified)." -ForegroundColor Green
+
+Write-Host "=== 1b. Persist and self-verify the release manifest ===" -ForegroundColor Cyan
+$bundleManifest = Get-Content (Join-Path $BundleRoot "MANIFEST.json") -Raw | ConvertFrom-Json
+New-InstalledManifest -BundleRoot $BundleRoot -InstallRoot $InstallRoot -Manifest $bundleManifest `
+    -BundleKind $(if ($isFrozenBundle) { "frozen" } else { "source" })
+Test-InstalledManifest -InstallRoot $InstallRoot
+
 Write-Host "=== 2. Data directories ===" -ForegroundColor Cyan
 foreach ($sub in @("config", "data", "data\processed", "logs")) {
     New-Item -ItemType Directory -Path (Join-Path $DataRoot $sub) -Force | Out-Null
 }
 Write-Host "Created $DataRoot\{config,data,data\processed,logs}"
+
+Write-Host "=== 2a. Least-privilege permissions on the data root ===" -ForegroundColor Cyan
+# config\, data\ (which already contains the just-created data\processed\
+# child) and logs\ are each protected WITH -Recurse so that child is
+# covered too, not just the directory itself. -DataRoot's own entry needs
+# no -Recurse (its other children are each already protected in their own
+# right). Never includes -DataRoot\secrets: that stays governed by
+# v2_keys.py's own ACL logic (see tools\CollectorAcl.ps1's docstring).
+Protect-CollectorPath -Path $DataRoot
+Protect-CollectorPath -Path (Join-Path $DataRoot "config") -Recurse
+Protect-CollectorPath -Path (Join-Path $DataRoot "data") -Recurse
+Protect-CollectorPath -Path (Join-Path $DataRoot "logs") -Recurse
+Write-Host "Restricted $DataRoot, config\, data\ and logs\ to SYSTEM + Administrators only (verified)." -ForegroundColor Green
 
 $RunnerExe = $FrozenExeInstalled
 if (-not $isFrozenBundle) {

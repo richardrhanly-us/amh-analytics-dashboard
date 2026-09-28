@@ -112,12 +112,22 @@ collector's health until the dashboard step reads it. Body limit 16 KiB.
 
 * The dedup identity is `(customer_id, branch_id, key_id, event_key)` per table. It replaces v1's semantic keys, which depend
   on the barcode v2 no longer has.
-* **Identical resend** (same identity, same content): accepted; counted under `_duplicates`; nothing changes.
-* **Same identity, different content** (any of `event_time`, `item_key`, `destination`, `bin`, `error_class`, `state`, the `is_*`
-  flags, `ruleset_id`): a **conflict**. Also detected between two events inside one request. The request is **rejected as a
-  whole with `409` and nothing is stored** (all-or-nothing, as v1's single transaction). The body is
-  `{"code": "event_conflict", "detail": "...", "conflicts": {"<kind>": [<request indexes>]}}`: list positions only, no keys
-  or contents. The log line carries the token id, tenant ids, `key_id` and per-kind counts, never an event's content.
+* **`ruleset_id` is provenance metadata, not part of event identity.** It travels in the ACS item payload (see 8.1) but is
+  excluded from both the `event_key` HMAC (`collector/v2_identity.py`) and the content comparison below, by design: a
+  collector re-deriving its local classification ruleset and re-sending the same physical event must not be treated as
+  sending different content. The stored `ruleset_id` is whichever value was written first; a later resend that changes
+  only `ruleset_id` never overwrites it
+  (`tests/test_ingest_v2_api.py::test_acs_ruleset_only_duplicate_does_not_replace_original_ruleset`).
+* **Identical resend** (same identity, same content -- see the field list below): accepted; counted under `_duplicates`;
+  nothing changes, including the stored `ruleset_id`.
+* **Same identity, different content** -- for checkins: `event_time`, `item_key`, `destination`, `bin`; for rejects:
+  `event_time`, `error_class`, `item_key`; for ACS items: `event_time`, `state`, `item_key`, `destination`, and the three
+  `is_*` classification flags (see `ingest_v2_service.py`'s per-table `*_COMPARE_COLUMNS`) -- is a **conflict**.
+  `ruleset_id` is deliberately never part of this comparison for any kind (see above). Also detected between two events
+  inside one request. The request is **rejected as a whole with `409` and nothing is stored** (all-or-nothing, as v1's
+  single transaction). The body is `{"code": "event_conflict", "detail": "...", "conflicts": {"<kind>": [<request
+  indexes>]}}`: list positions only, no keys or contents. The log line carries the token id, tenant ids, `key_id` and
+  per-kind counts, never an event's content.
 * Rotating `key_id` yields new `event_key`s for the same physical events, so a replay across a rotation duplicates rows.
   Rotation must be coordinated with the collector's read cursor.
 
@@ -185,6 +195,14 @@ out, or differs from a sentence in this document as first written. Each is delib
     misconfiguration cannot silently loosen them. Both are enforced for a declared `Content-Length` and for chunked bodies.
 11. **`scripts/issue_ingest_key.py`** issues (`issue`) and retires (`retire`) keys; dry run by default. There is no
     reactivation: a retired key is replaced by a new one.
+12. **`ruleset_id` is excluded from the conflict-comparison columns, not only from the `event_key`.** An earlier draft of
+    section 5 listed `ruleset_id` among the fields whose change makes a resend a conflict. The shipped code
+    (`ACS_ITEM_COMPARE_COLUMNS`, `ingest_v2_service.py`) and the collector's own identity design
+    (`collector/v2_identity.py`'s "ruleset_id is provenance only... it does not influence the event_key" comment) agree it
+    must not be: a ruleset rotation followed by a replay of the same physical event is exactly the case this exists to
+    keep idempotent, not to reject. Section 5 above reflects the shipped/tested behavior. Pinned by
+    `tests/test_ingest_v2_api.py::test_acs_resend_with_different_ruleset_id_is_an_idempotent_duplicate` and
+    `::test_acs_ruleset_only_duplicate_does_not_replace_original_ruleset`.
 
 ### 8.1 Key issuance handles only the non-secret `key_id`
 
