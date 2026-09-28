@@ -1,16 +1,28 @@
 """Item 3 (least-privilege ACL hardening) and Item 4 (release-manifest persistence/verification) of the
 2026-09-28 pre-cutover work.
 
-Static/textual checks run everywhere (no PowerShell required). Behavior checks (@needs_powershell) run a real
-PowerShell subprocess -- the same convention tests/test_collector_build_release.py already uses (_run_powershell,
-_powershell(), -EncodedCommand). The ACL-application tests are additionally gated with a runtime skip if icacls
-itself refuses, for a more restrictive CI/sandbox account than the one this suite was last verified against -- a
-plain (non-Administrator, non-elevated) domain account can still apply and verify every one of Protect-CollectorPath's
-claims here, INCLUDING the recursive fix of an already-broad existing child ACE (confirmed by a real, non-skipped
-PASS, not just static/unit coverage): ownership-based DACL rights are sufficient for icacls /reset and /grant:r on
-objects the test itself created, and PowerShell's own directory enumeration bypasses the parent's own (already
-tightened) traversal ACL via SeChangeNotifyPrivilege. Only a genuinely more locked-down account (no Administrators
-membership AND no implicit traverse-bypass right) would still need a real onsite/administrator run to confirm this.
+THREE tiers of test, not two -- @needs_powershell alone is NOT a Windows check (pwsh is cross-platform and is
+genuinely present on the Linux GitHub Actions runner this repo's CI uses):
+
+  1. Static/textual checks (no decorator): pure Python string/regex inspection of the .ps1 source. Run
+     everywhere, including Linux CI, with no PowerShell at all.
+  2. @needs_powershell: runs a real PowerShell subprocess (the same convention
+     tests/test_collector_build_release.py already uses -- _run_powershell, _powershell(), -EncodedCommand),
+     but only for logic that is genuinely cross-platform once PowerShell itself is available -- parsing a
+     script, the manifest-path/hashing logic in CollectorManifest.ps1 (portable by design, see that file's own
+     .NOTES), and a task-gate test that SHADOWS Get-ScheduledTask with a fake function rather than depending on
+     the real (Windows-only) ScheduledTasks module.
+  3. @needs_windows_acl: runs a real PowerShell subprocess for logic that genuinely requires Windows --
+     icacls, NTFS ACL semantics via Get-Acl/Set-Acl (FileSystemAccessRule/AccessControlType/FileSystemRights),
+     and the real Get-ScheduledTask cmdlet. Skipped on Linux CI with a distinct, explicit reason -- not
+     silently lumped in with "PowerShell is unavailable." Verified by hand on a real (non-elevated) Windows
+     account: every one of Protect-CollectorPath's claims here, INCLUDING the recursive fix of an
+     already-broad existing child ACE, passed for real (not merely skipped) -- ownership-based DACL rights are
+     sufficient for icacls /reset and /grant:r on objects the test itself created, and PowerShell's own
+     directory enumeration bypasses the parent's own (already tightened) traversal ACL via
+     SeChangeNotifyPrivilege. A genuinely more locked-down Windows account (no Administrators membership AND no
+     implicit traverse-bypass right) would still need a real onsite/administrator run to confirm the deepest
+     recursive case; see that test's own skip message.
 """
 
 from __future__ import annotations
@@ -20,6 +32,7 @@ import hashlib
 import json
 import re
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -55,6 +68,22 @@ def _powershell() -> str | None:
 
 needs_powershell = pytest.mark.skipif(
     _powershell() is None, reason="no PowerShell available -- the static tests still run"
+)
+
+
+def _has_windows_acl_support() -> bool:
+    # PowerShell (pwsh) is cross-platform and IS present on the Linux GitHub Actions runner -- @needs_powershell
+    # alone is not a Windows check. icacls, NTFS ACL semantics (Get-Acl/Set-Acl producing real
+    # FileSystemAccessRule/AccessControlType/FileSystemRights behavior), and the ScheduledTasks module
+    # (Get-ScheduledTask) all genuinely require Windows; none of them exist on Linux pwsh. sys.platform is
+    # checked directly rather than inferred from shutil.which("icacls") alone, since a same-named executable
+    # could theoretically exist elsewhere on PATH.
+    return sys.platform == "win32" and shutil.which("icacls") is not None
+
+
+needs_windows_acl = pytest.mark.skipif(
+    not _has_windows_acl_support(),
+    reason="Windows-only: requires icacls / NTFS ACL semantics, not available on this platform (e.g. Linux CI)",
 )
 
 
@@ -282,7 +311,7 @@ def test_repair_task_gate_never_uses_silentlycontinue():
     assert "Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop" in body
 
 
-@needs_powershell
+@needs_windows_acl  # real Get-ScheduledTask cmdlet -- the ScheduledTasks module does not exist on Linux
 def test_repair_task_gate_proceeds_for_a_genuinely_unregistered_task():
     # Real Get-ScheduledTask call, real (all-but-certain) absence on this dev machine -- proves the "not
     # registered" branch is reached via the module's own actual not-found error, not assumed.
@@ -405,7 +434,7 @@ def _acl_reset(tmp_dir: str) -> str:
     return f"icacls '{tmp_dir}' /reset /T /C *>$null\n"
 
 
-@needs_powershell
+@needs_windows_acl
 def test_protect_collector_path_locks_a_fresh_directory_and_verifies_it(tmp_path):
     target = tmp_path / "fresh"
     target.mkdir()
@@ -425,7 +454,7 @@ def test_protect_collector_path_locks_a_fresh_directory_and_verifies_it(tmp_path
         _run_powershell(_acl_reset(str(target)))
 
 
-@needs_powershell
+@needs_windows_acl
 def test_protect_collector_path_is_idempotent(tmp_path):
     target = tmp_path / "twice"
     target.mkdir()
@@ -442,7 +471,7 @@ def test_protect_collector_path_is_idempotent(tmp_path):
         _run_powershell(_acl_reset(str(target)))
 
 
-@needs_powershell
+@needs_windows_acl
 def test_protect_collector_path_removes_a_preexisting_explicit_grant_to_an_unwanted_principal(tmp_path):
     # Regression test for a real bug found via manual onsite-shape reproduction: /inheritance:r /grant:r alone
     # only cuts INHERITED entries and adds/replaces the NAMED SIDs' own grant -- it does NOT remove another
@@ -479,7 +508,7 @@ def test_protect_collector_path_removes_a_preexisting_explicit_grant_to_an_unwan
     assert _run_powershell(verify_script).strip() == "True"
 
 
-@needs_powershell
+@needs_windows_acl
 def test_protect_collector_path_recurse_fixes_an_already_broad_existing_child(tmp_path):
     # Reproduces the confirmed onsite shape: a child file that already has a broader grant
     # (Authenticated Users) BEFORE the parent is protected -- -Recurse must correct it too, not just the parent.
@@ -545,7 +574,7 @@ def _deny_rule(identity: str, rights: str) -> str:
     return f'$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule("{identity}", "{rights}", "Deny")))\n'
 
 
-@needs_powershell
+@needs_windows_acl
 def test_verifier_rejects_system_with_readandexecute_instead_of_fullcontrol(tmp_path):
     target = tmp_path / "weak_system.exe"
     target.write_text("stub")
@@ -555,7 +584,7 @@ def test_verifier_rejects_system_with_readandexecute_instead_of_fullcontrol(tmp_
     assert _run_powershell(script).strip() == "False"
 
 
-@needs_powershell
+@needs_windows_acl
 def test_verifier_rejects_administrators_with_read_instead_of_fullcontrol(tmp_path):
     target = tmp_path / "weak_admins.exe"
     target.write_text("stub")
@@ -565,7 +594,7 @@ def test_verifier_rejects_administrators_with_read_instead_of_fullcontrol(tmp_pa
     assert _run_powershell(script).strip() == "False"
 
 
-@needs_powershell
+@needs_windows_acl
 def test_verifier_rejects_an_extra_authenticated_users_allow_ace(tmp_path):
     target = tmp_path / "extra_trustee.exe"
     target.write_text("stub")
@@ -577,7 +606,7 @@ def test_verifier_rejects_an_extra_authenticated_users_allow_ace(tmp_path):
     assert _run_powershell(script).strip() == "False"
 
 
-@needs_powershell
+@needs_windows_acl
 def test_verifier_rejects_an_unexpected_deny_ace(tmp_path):
     # The OLD verifier filtered to AccessControlType -eq "Allow" before ever building its SID set -- a Deny
     # entry was silently invisible to it and could coexist with an otherwise-correct Allow set undetected.
@@ -591,7 +620,7 @@ def test_verifier_rejects_an_unexpected_deny_ace(tmp_path):
     assert _run_powershell(script).strip() == "False"
 
 
-@needs_powershell
+@needs_windows_acl
 def test_verifier_rejects_a_path_where_inheritance_is_still_enabled(tmp_path):
     target = tmp_path / "still_inherited.exe"
     target.write_text("stub")
@@ -660,8 +689,50 @@ def test_new_installed_manifest_frozen_round_trips_through_test_installed_manife
     assert installed["bundle_kind"] == "frozen"
     installed_paths = {f["installed_path"] for f in installed["files"]}
     # install.ps1 is bundle-only tooling -- never copied to InstallRoot, so it must NOT appear.
-    assert installed_paths == {"SortViewCollector.exe", "_internal\\lib.pyd"}
+    # Forward slash, not backslash: the canonical relative-path form (see CollectorManifest.ps1's own .NOTES) --
+    # this is what makes MANIFEST.installed.json itself portable across Windows and Linux pwsh.
+    assert installed_paths == {"SortViewCollector.exe", "_internal/lib.pyd"}
     assert (install_root / "MANIFEST.json").read_text(encoding="utf-8") == (bundle_root / "MANIFEST.json").read_text(encoding="utf-8")
+
+
+@needs_powershell
+def test_new_installed_manifest_round_trips_with_the_actual_forward_slash_paths_build_release_writes(tmp_path):
+    # Regression test for the real GitHub Actions CI failure on a Linux pwsh runner: collector/build_release.py
+    # ALWAYS writes MANIFEST.json paths with forward slashes (Path.as_posix() for the frozen runtime; literal
+    # "tools/..."-style string constants for everything else -- confirmed by reading that file, never a
+    # backslash). The OLDER helper above uses backslash input defensively (mixed-separator tolerance); THIS
+    # test uses the actual shape production code produces, so this proves the realistic case directly, not
+    # just the defensive one.
+    bundle_root = tmp_path / "bundle"
+    runtime = bundle_root / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "SortViewCollector.exe").write_bytes(b"exe-bytes")
+    internal = runtime / "_internal"
+    internal.mkdir()
+    (internal / "lib.pyd").write_bytes(b"lib-bytes")
+    files = [
+        {"path": "runtime/SortViewCollector.exe", "sha256": _sha256(b"exe-bytes"), "size_bytes": 9},
+        {"path": "runtime/_internal/lib.pyd", "sha256": _sha256(b"lib-bytes"), "size_bytes": 9},
+        {"path": "tools/install.ps1", "sha256": _sha256(b"stub"), "size_bytes": 4},
+    ]
+    manifest = {"product": "SortView Collector", "version": "9.9.9", "built_at": "x", "files": files}
+    (bundle_root / "MANIFEST.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    install_root = tmp_path / "install"
+    install_root.mkdir()
+    (install_root / "SortViewCollector.exe").write_bytes(b"exe-bytes")
+    (install_root / "_internal").mkdir()
+    (install_root / "_internal" / "lib.pyd").write_bytes(b"lib-bytes")
+
+    script = _manifest_prelude(bundle_root, install_root) + (
+        "New-InstalledManifest -BundleRoot $BundleRoot -InstallRoot $InstallRoot -Manifest $Manifest -BundleKind frozen\n"
+        "try { Test-InstalledManifest -InstallRoot $InstallRoot; 'PASS' } catch { $_.Exception.Message }"
+    )
+    assert _run_powershell(script).strip().splitlines()[-1] == "PASS"
+
+    installed = json.loads((install_root / "MANIFEST.installed.json").read_text(encoding="utf-8"))
+    installed_paths = {f["installed_path"] for f in installed["files"]}
+    assert installed_paths == {"SortViewCollector.exe", "_internal/lib.pyd"}
 
 
 @needs_powershell
@@ -684,7 +755,7 @@ def test_test_installed_manifest_reports_missing_file(tmp_path):
         "try { Test-InstalledManifest -InstallRoot $InstallRoot; 'NO EXCEPTION' } "
         "catch { $_.Exception.Message }"
     )
-    assert "MISSING: _internal\\lib.pyd" in _run_powershell(verify_script)
+    assert "MISSING: _internal/lib.pyd" in _run_powershell(verify_script)
 
 
 @needs_powershell
