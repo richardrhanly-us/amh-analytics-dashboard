@@ -100,10 +100,13 @@ def _split_by_cutover(df, cutover_at, *, before):
     if df is None or df.empty or "datetime" not in df.columns:
         return df.iloc[0:0].copy() if df is not None else pd.DataFrame()
 
-    datetimes = _as_utc(df["datetime"])
+    work = df.copy()
+    work["datetime"] = _as_utc(work["datetime"])
+
     cutover_utc = _as_utc(cutover_at)
-    mask = datetimes < cutover_utc if before else datetimes >= cutover_utc
-    return df[mask].copy()
+    mask = work["datetime"] < cutover_utc if before else work["datetime"] >= cutover_utc
+
+    return work[mask].copy()
 
 
 def _filter_date_range(df, start_date, end_date):
