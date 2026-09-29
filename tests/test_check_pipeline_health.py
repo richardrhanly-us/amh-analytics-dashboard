@@ -46,25 +46,71 @@ def _row(**overrides):
     row = {
         "organization_name": "Test Library",
         "branch_name": "Main",
+
         "status": None,
         "last_run": None,
         "last_attempt": None,
         "updated_at": NOW - timedelta(minutes=1),
-        "health_status": None,
-        "quarantined_count": None,
-        "last_error": None,
+        "legacy_health_status": None,
+        "legacy_quarantined_count": None,
+        "legacy_last_error": None,
+
+        "cutover_at": None,
+
+        "key_id": None,
+        "key_status": None,
+        "last_heartbeat_at": None,
+        "v2_health_status": None,
+        "v2_last_error": None,
+        "pending_outbox_count": None,
+        "v2_quarantined_count": None,
+        "last_success_at": None,
     }
     row.update(overrides)
     return row
 
 
+def test_cutover_branch_uses_fresh_v2_heartbeat_and_ignores_stale_legacy_status():
+    conn = FakeConnection([
+        _row(
+            updated_at=NOW - timedelta(hours=4),
+            status="failed_old_pipeline",
+            cutover_at=NOW - timedelta(hours=3),
+            key_id="test-key",
+            key_status="active",
+            last_heartbeat_at=NOW - timedelta(minutes=1),
+            v2_health_status="healthy",
+            last_success_at=NOW - timedelta(minutes=1),
+            pending_outbox_count=0,
+            v2_quarantined_count=0,
+        )
+    ])
+
+    assert find_unhealthy_branches(conn, STALE_AFTER) == []
+
+
+def test_non_cutover_branch_still_uses_legacy_pipeline_status_staleness():
+    conn = FakeConnection([
+        _row(
+            updated_at=NOW - timedelta(hours=2),
+            legacy_health_status="healthy",
+            cutover_at=None,
+        )
+    ])
+
+    unhealthy = find_unhealthy_branches(conn, STALE_AFTER)
+
+    assert len(unhealthy) == 1
+    assert any("stale" in reason for reason in unhealthy[0]["reasons"])
+
+
 def test_healthy_heartbeat_not_flagged():
-    conn = FakeConnection([_row(health_status="healthy")])
+    conn = FakeConnection([_row(legacy_health_status="healthy")])
     assert find_unhealthy_branches(conn, STALE_AFTER) == []
 
 
 def test_degraded_heartbeat_flagged():
-    conn = FakeConnection([_row(health_status="degraded", last_error="backlog stuck")])
+    conn = FakeConnection([_row(legacy_health_status="degraded", legacy_last_error="backlog stuck")])
     unhealthy = find_unhealthy_branches(conn, STALE_AFTER)
 
     assert len(unhealthy) == 1
@@ -73,7 +119,7 @@ def test_degraded_heartbeat_flagged():
 
 
 def test_auth_failure_heartbeat_flagged():
-    conn = FakeConnection([_row(health_status="auth_failure")])
+    conn = FakeConnection([_row(legacy_health_status="auth_failure")])
     unhealthy = find_unhealthy_branches(conn, STALE_AFTER)
 
     assert len(unhealthy) == 1
@@ -81,7 +127,7 @@ def test_auth_failure_heartbeat_flagged():
 
 
 def test_stale_no_heartbeat_flagged():
-    conn = FakeConnection([_row(health_status="healthy", updated_at=NOW - timedelta(hours=2))])
+    conn = FakeConnection([_row(legacy_health_status="healthy", updated_at=NOW - timedelta(hours=2))])
     unhealthy = find_unhealthy_branches(conn, STALE_AFTER)
 
     assert len(unhealthy) == 1
@@ -113,7 +159,7 @@ def test_health_status_takes_precedence_over_stale_legacy_status():
     # A branch that has cut over to heartbeat reporting no longer has its
     # legacy `status` refreshed -- health_status healthy must win even
     # though the frozen legacy status says "failed".
-    conn = FakeConnection([_row(health_status="healthy", status="failed")])
+    conn = FakeConnection([_row(legacy_health_status="healthy", status="failed")])
     assert find_unhealthy_branches(conn, STALE_AFTER) == []
 
 
@@ -121,20 +167,19 @@ def test_idle_branch_with_recent_heartbeat_not_flagged_as_stale():
     # Heartbeat/updated_at freshness is the staleness signal, not AMH log
     # activity -- a branch with a fresh heartbeat and nothing else wrong
     # must not be flagged, regardless of how quiet the source logs are.
-    conn = FakeConnection([_row(health_status="healthy", updated_at=NOW - timedelta(seconds=30))])
+    conn = FakeConnection([_row(legacy_health_status="healthy", updated_at=NOW - timedelta(seconds=30))])
     assert find_unhealthy_branches(conn, STALE_AFTER) == []
 
 
 def test_multiple_branches_only_unhealthy_ones_reported():
     conn = FakeConnection([
-        _row(branch_name="Main", health_status="healthy"),
-        _row(branch_name="Annex", health_status="auth_failure"),
+        _row(branch_name="Main", legacy_health_status="healthy"),
+        _row(branch_name="Annex", legacy_health_status="auth_failure"),
     ])
     unhealthy = find_unhealthy_branches(conn, STALE_AFTER)
 
     assert len(unhealthy) == 1
     assert unhealthy[0]["branch_name"] == "Annex"
-
 
 # --- organization / branch scope (real query against SQLite) --------------------
 #
@@ -164,8 +209,9 @@ class _ParsedConn:
         self.statements.append(str(stmt))
         rows = [dict(r) for r in self._conn.execute(stmt, params or {}).mappings().all()]
         for row in rows:
-            if isinstance(row.get("updated_at"), str):
-                row["updated_at"] = datetime.fromisoformat(row["updated_at"])
+            for key in ("updated_at", "cutover_at", "last_heartbeat_at", "last_success_at"):
+                if isinstance(row.get(key), str):
+                    row[key] = datetime.fromisoformat(row[key])
         return FakeResult(rows)
 
 
@@ -188,18 +234,27 @@ def scope_db():
                 customer_id INTEGER, branch_id INTEGER, status TEXT, last_run TEXT,
                 last_attempt TEXT, updated_at TEXT, health_status TEXT,
                 quarantined_count INTEGER, last_error TEXT)""",
+            """CREATE TABLE v2_cutovers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id INTEGER, branch_id INTEGER, cutover_at TEXT)""",
+            """CREATE TABLE ingest_key_ids (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, key_id TEXT,
+                customer_id INTEGER, branch_id INTEGER, status TEXT, created_at TEXT,
+                last_heartbeat_at TEXT, health_status TEXT, last_error_class TEXT,
+                pending_outbox_count INTEGER, quarantined_count INTEGER,
+                last_success_at TEXT)""",
         ):
             conn.execute(text(ddl))
     return engine
 
 
-def _add_status(engine, customer_id, branch_id, reported_at, health_status="healthy"):
+def _add_status(engine, customer_id, branch_id, reported_at, legacy_health_status="healthy"):
     with engine.begin() as conn:
         conn.execute(
             text("INSERT INTO pipeline_status (customer_id, branch_id, updated_at, "
                  "health_status) VALUES (:c, :b, :u, :h)"),
             {"c": customer_id, "b": branch_id,
-             "u": reported_at.replace(tzinfo=None).isoformat(sep=" "), "h": health_status},
+             "u": reported_at.replace(tzinfo=None).isoformat(sep=" "), "h": legacy_health_status},
         )
 
 
@@ -255,7 +310,6 @@ def _unhealthy(engine):
 
 def _flagged(engine):
     return [row["organization_name"] for row in _unhealthy(engine)]
-
 
 FRESH = NOW - timedelta(minutes=1)
 STALE = NOW - timedelta(hours=3)
@@ -328,11 +382,11 @@ def test_active_tenant_problems_are_still_reported_alongside_a_suspended_tenant(
 
     assert _flagged(scope_db) == ["Broken Library"]
 
-
 # --- Collector installation lifecycle scopes monitoring --------------------------
 #
 # Every tenant below reported long ago (STALE), i.e. it WOULD alert if evaluated;
 # only the installation state differs.
+
 
 def test_branch_with_an_active_installation_is_evaluated(scope_db):
     _add_tenant(scope_db, org_id=1, name="Live Library", reported_at=STALE)
@@ -462,8 +516,8 @@ def test_a_branch_is_evaluated_only_when_org_branch_and_installation_are_all_eli
         org_status in ("active", "trial") and branch_status == "active" and installation_status == "active"
     )
 
-
 # --- operational bridge is preserved ---------------------------------------------
+
 
 def test_nbpl_style_matching_ids_join_correctly(scope_db):
     _add_monitored_tenant(scope_db, org_id=1, name="NBPL", reported_at=FRESH)
@@ -500,8 +554,8 @@ def test_unmapped_active_tenant_still_reads_as_never_reported(scope_db):
     assert [r["organization_name"] for r in result] == ["Unmapped Library"]
     assert "has never reported a pipeline run" in result[0]["reasons"]
 
-
 # --- read-only ------------------------------------------------------------------------
+
 
 def test_health_check_only_reads_and_never_changes_pipeline_status(scope_db):
     _add_monitored_tenant(scope_db, org_id=1, name="Suspended Library", org_status="suspended",
