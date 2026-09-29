@@ -610,7 +610,7 @@ def _scoped_query(table_name, org_column, branch_column, live_only=False, column
             FROM {table_name}
             WHERE {org_column} = :org_slug
               AND {branch_column} = :branch_slug
-              AND event_time::date = {today_filter}
+              AND (event_time AT TIME ZONE '{live_timezone}')::date = {today_filter}
             ORDER BY event_time
         """
         # table_name/org_column/branch_column/select_list pass through the
@@ -622,6 +622,7 @@ def _scoped_query(table_name, org_column, branch_column, live_only=False, column
             org_column=org_column,
             branch_column=branch_column,
             today_filter=_today_filter_sql(),
+            live_timezone=LIVE_DASHBOARD_TIMEZONE,
         )
 
     range_template = """

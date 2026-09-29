@@ -1,4 +1,4 @@
-#***************************************************************
+# ***************************************************************
 #
 #  Author:       Richard Hanly
 #
@@ -12,13 +12,25 @@
 #               ILL items, programming items, and collection services
 #               items.
 #
-#***************************************************************
-
+# ***************************************************************
+import os
 import re
 
 import pandas as pd
 
-#***************************************************************
+DASHBOARD_TIMEZONE = os.getenv("SORTVIEW_LIVE_TIMEZONE", "America/Chicago")
+
+
+def _to_dashboard_local_datetime(series):
+    values = pd.to_datetime(series, errors="coerce")
+
+    if getattr(values.dt, "tz", None) is not None:
+        values = values.dt.tz_convert(DASHBOARD_TIMEZONE)
+
+    return values
+
+
+# ***************************************************************
 #
 #  Function:     get_date_filtered_df
 #
@@ -35,14 +47,14 @@ import pandas as pd
 #  Returns:     DataFrame - Filtered dataframe containing only rows
 #                           within the selected date range.
 #
-#***************************************************************
+# ***************************************************************
+
 
 def get_date_filtered_df(df, start_date, end_date):
     if df is None or not isinstance(df, pd.DataFrame) or "datetime" not in df.columns:
         return pd.DataFrame()
-
     work_df = df.copy()
-    work_df["datetime"] = pd.to_datetime(work_df["datetime"], errors="coerce")
+    work_df["datetime"] = _to_dashboard_local_datetime(work_df["datetime"])
     work_df = work_df[work_df["datetime"].notna()].copy()
 
     return work_df[
@@ -51,7 +63,7 @@ def get_date_filtered_df(df, start_date, end_date):
     ].copy()
 
 
-#***************************************************************
+# ***************************************************************
 #
 #  Function:     get_today_metrics
 #
@@ -67,7 +79,8 @@ def get_date_filtered_df(df, start_date, end_date):
 #  Returns:     dict - Dictionary containing today's filtered dataframes
 #                      and calculated live metrics.
 #
-#***************************************************************
+# ***************************************************************
+
 
 def get_today_metrics(df, rejects_df, today):
     empty_today_df = pd.DataFrame()
@@ -78,48 +91,51 @@ def get_today_metrics(df, rejects_df, today):
         df = empty_today_df.copy()
     else:
         df = df.copy()
-        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+        df["datetime"] = _to_dashboard_local_datetime(df["datetime"])
         df = df[df["datetime"].notna()].copy()
 
     # Validate and normalize the rejects dataframe before filtering.
-    if rejects_df is None or not isinstance(rejects_df, pd.DataFrame) or "datetime" not in rejects_df.columns:
+    if (
+        rejects_df is None
+        or not isinstance(rejects_df, pd.DataFrame)
+        or "datetime" not in rejects_df.columns
+    ):
         rejects_df = empty_today_rejects_df.copy()
     else:
         rejects_df = rejects_df.copy()
-        rejects_df["datetime"] = pd.to_datetime(rejects_df["datetime"], errors="coerce")
+        rejects_df["datetime"] = _to_dashboard_local_datetime(rejects_df["datetime"])
         rejects_df = rejects_df[rejects_df["datetime"].notna()].copy()
 
     # Build today's checkin dataframe while handling timezone-aware datetime values.
     if len(df) > 0:
         try:
-            if getattr(df["datetime"].dt, "tz", None) is not None:
-                today_df = df[df["datetime"].dt.tz_localize(None).dt.date == today].copy()
-            else:
-                today_df = df[df["datetime"].dt.date == today].copy()
+            today_df = df[df["datetime"].dt.date == today].copy()
         except Exception:
             today_df = pd.DataFrame(columns=df.columns)
     else:
         today_df = pd.DataFrame(columns=df.columns if len(df.columns) > 0 else [])
 
-    # Build today's reject dataframe while handling timezone-aware datetime values.
+    # Build today's reject dataframe using dashboard-local datetime values.
     if len(rejects_df) > 0:
         try:
-            if getattr(rejects_df["datetime"].dt, "tz", None) is not None:
-                today_rejects_df = rejects_df[
-                    rejects_df["datetime"].dt.tz_localize(None).dt.date == today
-                ].copy()
-            else:
-                today_rejects_df = rejects_df[rejects_df["datetime"].dt.date == today].copy()
+            today_rejects_df = rejects_df[
+                rejects_df["datetime"].dt.date == today
+            ].copy()
         except Exception:
             today_rejects_df = pd.DataFrame(columns=rejects_df.columns)
     else:
-        today_rejects_df = pd.DataFrame(columns=rejects_df.columns if len(rejects_df.columns) > 0 else [])
+        today_rejects_df = pd.DataFrame(
+            columns=rejects_df.columns if len(rejects_df.columns) > 0 else []
+        )
 
     # Count today's transit routing activity for Westside and Library Express.
     if "destination" in today_df.columns:
         today_dest_upper = today_df["destination"].fillna("").astype(str).str.upper()
         today_westside = int(today_dest_upper.str.contains("WESTSIDE", na=False).sum())
-        today_library_express = int(today_dest_upper.str.contains("LIBRARY EXPRESS", na=False).sum())
+        today_library_express = int(
+            today_dest_upper.str.contains("LIBRARY EXPRESS", na=False).sum()
+        )
+
     else:
         today_westside = 0
         today_library_express = 0
@@ -131,9 +147,15 @@ def get_today_metrics(df, rejects_df, today):
     # Determine the busiest hour of the day based on checkin volume.
     if today_checkins > 0 and "datetime" in today_df.columns:
         hourly_counts = today_df["datetime"].dt.hour.value_counts().sort_index()
-        today_peak_hour = int(hourly_counts.idxmax()) if len(hourly_counts) > 0 else None
-        today_peak_hour_count = int(hourly_counts.max()) if len(hourly_counts) > 0 else 0
-        today_peak_hour_pct = (today_peak_hour_count / today_checkins) * 100 if today_checkins > 0 else 0
+        today_peak_hour = (
+            int(hourly_counts.idxmax()) if len(hourly_counts) > 0 else None
+        )
+        today_peak_hour_count = (
+            int(hourly_counts.max()) if len(hourly_counts) > 0 else 0
+        )
+        today_peak_hour_pct = (
+            (today_peak_hour_count / today_checkins) * 100 if today_checkins > 0 else 0
+        )
     else:
         today_peak_hour = None
         today_peak_hour_count = 0
@@ -142,10 +164,12 @@ def get_today_metrics(df, rejects_df, today):
     # Count how many items have been processed during the current hour.
     current_speed = 0
     if today_checkins > 0 and "datetime" in today_df.columns:
-        current_hour = pd.Timestamp.now().hour
+        current_hour = pd.Timestamp.now(tz=DASHBOARD_TIMEZONE).hour
         current_speed = int((today_df["datetime"].dt.hour == current_hour).sum())
 
-    today_reject_rate = (today_rejects / today_checkins * 100) if today_checkins > 0 else 0
+    today_reject_rate = (
+        (today_rejects / today_checkins * 100) if today_checkins > 0 else 0
+    )
 
     return {
         "today_df": today_df,
@@ -163,7 +187,7 @@ def get_today_metrics(df, rejects_df, today):
     }
 
 
-#***************************************************************
+# ***************************************************************
 #
 #  Function:     get_overall_metrics
 #
@@ -177,7 +201,8 @@ def get_today_metrics(df, rejects_df, today):
 #
 #  Returns:     dict - Dictionary containing overall dashboard metrics.
 #
-#***************************************************************
+# ***************************************************************
+
 
 def get_overall_metrics(df, rejects_df):
     if df is None or not isinstance(df, pd.DataFrame):
@@ -206,8 +231,12 @@ def get_overall_metrics(df, rejects_df):
         westside_count = dest_upper.str.contains("WESTSIDE", na=False).sum()
         westside_pct = (westside_count / len(df) * 100) if len(df) > 0 else 0
 
-        library_express_count = dest_upper.str.contains("LIBRARY EXPRESS", na=False).sum()
-        library_express_pct = (library_express_count / len(df) * 100) if len(df) > 0 else 0
+        library_express_count = dest_upper.str.contains(
+            "LIBRARY EXPRESS", na=False
+        ).sum()
+        library_express_pct = (
+            (library_express_count / len(df) * 100) if len(df) > 0 else 0
+        )
     else:
         westside_count = 0
         westside_pct = 0
@@ -227,7 +256,7 @@ def get_overall_metrics(df, rejects_df):
     }
 
 
-#***************************************************************
+# ***************************************************************
 #
 #  Function:     get_historical_reject_baseline
 #
@@ -244,7 +273,8 @@ def get_overall_metrics(df, rejects_df):
 #  Returns:     dict - Dictionary containing the historical average
 #                      reject rate and the combined daily dataframe.
 #
-#***************************************************************
+# ***************************************************************
+
 
 def get_historical_reject_baseline(df, rejects_df, today):
     if df is None or not isinstance(df, pd.DataFrame) or "datetime" not in df.columns:
@@ -253,8 +283,18 @@ def get_historical_reject_baseline(df, rejects_df, today):
             "historical_combined": pd.DataFrame(),
         }
 
-    if rejects_df is None or not isinstance(rejects_df, pd.DataFrame) or "datetime" not in rejects_df.columns:
+    if (
+        rejects_df is None
+        or not isinstance(rejects_df, pd.DataFrame)
+        or "datetime" not in rejects_df.columns
+    ):
         rejects_df = pd.DataFrame(columns=["datetime"])
+
+    df = df.copy()
+    df["datetime"] = _to_dashboard_local_datetime(df["datetime"])
+
+    rejects_df = rejects_df.copy()
+    rejects_df["datetime"] = _to_dashboard_local_datetime(rejects_df["datetime"])
 
     # Use only dates before today so today's live data does not skew the baseline.
     historical_df = df[df["datetime"].dt.date < today].copy()
@@ -267,13 +307,19 @@ def get_historical_reject_baseline(df, rejects_df, today):
         }
 
     # Build daily checkin and reject counts.
-    historical_checkins_daily = historical_df["datetime"].dt.date.value_counts().sort_index()
-    historical_rejects_daily = historical_rejects_df["datetime"].dt.date.value_counts().sort_index()
+    historical_checkins_daily = (
+        historical_df["datetime"].dt.date.value_counts().sort_index()
+    )
+    historical_rejects_daily = (
+        historical_rejects_df["datetime"].dt.date.value_counts().sort_index()
+    )
 
-    historical_combined = pd.DataFrame({
-        "checkins": historical_checkins_daily,
-        "rejects": historical_rejects_daily,
-    }).fillna(0)
+    historical_combined = pd.DataFrame(
+        {
+            "checkins": historical_checkins_daily,
+            "rejects": historical_rejects_daily,
+        }
+    ).fillna(0)
 
     historical_combined = historical_combined[historical_combined["checkins"] > 0]
 
@@ -293,7 +339,7 @@ def get_historical_reject_baseline(df, rejects_df, today):
     }
 
 
-#***************************************************************
+# ***************************************************************
 #
 #  Function:     build_roi_payload
 #
@@ -320,7 +366,8 @@ def get_historical_reject_baseline(df, rejects_df, today):
 #  Returns:     dict - ROI metrics and cost estimates, or None if the
 #                      input dataframe cannot support the calculation.
 #
-#***************************************************************
+# ***************************************************************
+
 
 def build_roi_payload(
     df,
@@ -333,7 +380,12 @@ def build_roi_payload(
     install_date=None,
     include_upfront_in_since_install=True,
 ):
-    if df is None or not isinstance(df, pd.DataFrame) or len(df) == 0 or "datetime" not in df.columns:
+    if (
+        df is None
+        or not isinstance(df, pd.DataFrame)
+        or len(df) == 0
+        or "datetime" not in df.columns
+    ):
         return None
 
     work_df = df.copy()
@@ -349,11 +401,7 @@ def build_roi_payload(
     work_df["hour"] = work_df["datetime"].dt.hour
 
     # Calculate average AMH processing volume by hour.
-    daily_hourly = (
-        work_df.groupby(["date", "hour"])
-        .size()
-        .reset_index(name="checkins")
-    )
+    daily_hourly = work_df.groupby(["date", "hour"]).size().reset_index(name="checkins")
 
     avg_hourly = (
         daily_hourly.groupby("hour")["checkins"]
@@ -382,18 +430,24 @@ def build_roi_payload(
 
     staff_df["manual_hours"] = staff_df["checkins"] / manual_rate
     staff_df["amh_hours"] = staff_df["checkins"] / amh_rate
-    staff_df["hours_saved"] = (staff_df["manual_hours"] - staff_df["amh_hours"]).clip(lower=0)
+    staff_df["hours_saved"] = (staff_df["manual_hours"] - staff_df["amh_hours"]).clip(
+        lower=0
+    )
 
     total_saved_hours = float(staff_df["hours_saved"].sum())
     labor_value_saved = total_saved_hours * hourly_cost
 
     # Convert the selected date range into day, month, and year units.
-    days_in_range = max((pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1)
+    days_in_range = max(
+        (pd.to_datetime(end_date) - pd.to_datetime(start_date)).days + 1, 1
+    )
     months_in_range = days_in_range / 30.44
     years_in_range = days_in_range / 365.25
 
     # Estimate selected-range operating costs and net operating value.
-    observed_operating_cost = (monthly_cost * months_in_range) + (yearly_cost * years_in_range)
+    observed_operating_cost = (monthly_cost * months_in_range) + (
+        yearly_cost * years_in_range
+    )
     observed_total_cost = upfront_cost + observed_operating_cost
 
     # Selected-range "observed net" should subtract recurring operating cost only
@@ -405,7 +459,9 @@ def build_roi_payload(
     )
 
     # Annualize labor value and operating cost to estimate yearly ROI.
-    annual_labor_value = labor_value_saved * (12 / months_in_range) if months_in_range > 0 else 0.0
+    annual_labor_value = (
+        labor_value_saved * (12 / months_in_range) if months_in_range > 0 else 0.0
+    )
     annual_operating_cost = (monthly_cost * 12) + yearly_cost
     annual_net_value = annual_labor_value - annual_operating_cost
     annual_roi_pct = (
@@ -457,29 +513,23 @@ def build_roi_payload(
         "upfront_cost": upfront_cost,
         "monthly_cost": monthly_cost,
         "yearly_cost": yearly_cost,
-
         "days_in_range": days_in_range,
         "months_in_range": months_in_range,
         "years_in_range": years_in_range,
-
         "observed_operating_cost": observed_operating_cost,
         "observed_total_cost": observed_total_cost,
         "observed_net_operating_value": observed_net_operating_value,
         "observed_net_value": observed_net_operating_value,
         "observed_roi_pct": observed_roi_pct,
-
         "annual_labor_value": annual_labor_value,
         "annual_operating_cost": annual_operating_cost,
         "annual_net_value": annual_net_value,
         "annual_roi_pct": annual_roi_pct,
-
         # backward-compatible names expected by reports/overview
         "net_roi_value": annual_net_value,
         "total_roi_cost": annual_operating_cost,
         "roi_pct": annual_roi_pct,
-
         "payback_months": payback_months,
-
         "installed_years": installed_years,
         "since_install_labor_value": since_install_labor_value,
         "since_install_operating_cost": since_install_operating_cost,
@@ -489,7 +539,7 @@ def build_roi_payload(
     }
 
 
-#***************************************************************
+# ***************************************************************
 #
 #  Function:     prepare_todays_acs_snapshot
 #
@@ -510,20 +560,27 @@ def build_roi_payload(
 #  Returns:     DataFrame - Prepared ACS dataframe ready for
 #                           build_acs_item_summary.
 #
-#***************************************************************
+# ***************************************************************
+
 
 def prepare_todays_acs_snapshot(acs_live_raw):
     today_acs_df = acs_live_raw.copy()
 
     if len(today_acs_df) > 0 and "datetime" in today_acs_df.columns:
-        today_acs_df["datetime"] = pd.to_datetime(today_acs_df["datetime"], errors="coerce")
+        today_acs_df["datetime"] = _to_dashboard_local_datetime(
+            today_acs_df["datetime"]
+        )
         today_acs_df = today_acs_df.dropna(subset=["datetime"]).copy()
 
         today_acs_latest_date = today_acs_df["datetime"].max().date()
-        today_acs_df = today_acs_df[today_acs_df["datetime"].dt.date == today_acs_latest_date].copy()
+        today_acs_df = today_acs_df[
+            today_acs_df["datetime"].dt.date == today_acs_latest_date
+        ].copy()
 
     if "raw_message" in today_acs_df.columns:
-        today_acs_df["raw_message"] = today_acs_df["raw_message"].fillna("").astype(str).str.strip()
+        today_acs_df["raw_message"] = (
+            today_acs_df["raw_message"].fillna("").astype(str).str.strip()
+        )
 
     # For item message rows, keep only the latest row per barcode while preserving non-item rows.
     if (
@@ -531,8 +588,12 @@ def prepare_todays_acs_snapshot(acs_live_raw):
         and "datetime" in today_acs_df.columns
         and "message_code" in today_acs_df.columns
     ):
-        item_rows = today_acs_df[today_acs_df["message_code"].astype(str).str.strip() == "10"].copy()
-        non_item_rows = today_acs_df[today_acs_df["message_code"].astype(str).str.strip() != "10"].copy()
+        item_rows = today_acs_df[
+            today_acs_df["message_code"].astype(str).str.strip() == "10"
+        ].copy()
+        non_item_rows = today_acs_df[
+            today_acs_df["message_code"].astype(str).str.strip() != "10"
+        ].copy()
 
         if len(item_rows) > 0:
             item_rows = item_rows.sort_values("datetime")
@@ -543,7 +604,7 @@ def prepare_todays_acs_snapshot(acs_live_raw):
     return today_acs_df
 
 
-#***************************************************************
+# ***************************************************************
 #
 #  Function:     build_acs_item_summary
 #
@@ -571,7 +632,7 @@ def prepare_todays_acs_snapshot(acs_live_raw):
 #                      public holds, ILL, programming, and collection
 #                      services activity.
 #
-#***************************************************************
+# ***************************************************************
 
 # The summary's supporting dataframes are handed to the view layer and cached in
 # session context. They used to be the classifier's working frames -- including
@@ -682,9 +743,7 @@ def build_acs_item_summary(
 
     # Add patron name and patron type details to each item record.
     items = items.merge(
-        patrons[["patron_id", "patron_name", "patron_type"]],
-        on="patron_id",
-        how="left"
+        patrons[["patron_id", "patron_name", "patron_type"]], on="patron_id", how="left"
     )
 
     items["patron_name"] = items["patron_name"].fillna("").astype(str).str.strip()
@@ -692,21 +751,15 @@ def build_acs_item_summary(
 
     # Create uppercase helper columns for consistent matching.
     items["patron_name_upper"] = (
-        items["patron_name"]
-        .fillna("")
-        .astype(str)
-        .str.strip()
-        .str.upper()
+        items["patron_name"].fillna("").astype(str).str.strip().str.upper()
     )
     items["raw_upper"] = items["raw_message"].fillna("").astype(str).str.upper()
-    items["destination_upper"] = items["destination"].fillna("").astype(str).str.strip().str.upper()
-    
+    items["destination_upper"] = (
+        items["destination"].fillna("").astype(str).str.strip().str.upper()
+    )
+
     items["patron_type_upper"] = (
-        items["patron_type"]
-        .fillna("")
-        .astype(str)
-        .str.strip()
-        .str.upper()
+        items["patron_type"].fillna("").astype(str).str.strip().str.upper()
     )
 
     # Normalize configured service names and destination patterns so they
@@ -739,36 +792,42 @@ def build_acs_item_summary(
     # and raw ACS message patterns.
     items["is_ill"] = (
         items["patron_type_upper"].eq("ILL")
-        | items["destination_upper"].str.contains(r"\bILL\b|INTERLIBRARY", regex=True, na=False)
-        | items["patron_name_upper"].str.contains(r"\bILL\b|INTERLIBRARY", regex=True, na=False)
+        | items["destination_upper"].str.contains(
+            r"\bILL\b|INTERLIBRARY", regex=True, na=False
+        )
+        | items["patron_name_upper"].str.contains(
+            r"\bILL\b|INTERLIBRARY", regex=True, na=False
+        )
         | items["raw_upper"].str.contains(
             r"\bILL\b|INTERLIBRARY|\|DAILL\b|\|AEILL\b|\|PTILL\b",
             regex=True,
             na=False,
         )
     )
-    
+
     # Identify collection services items by configured patron names.
-    items["is_collection_services"] = items["patron_name_upper"].isin(normalized_collection_services_names)
+    items["is_collection_services"] = items["patron_name_upper"].isin(
+        normalized_collection_services_names
+    )
 
     # Also identify collection services items by configured destination patterns.
     for pattern in normalized_collection_services_da_patterns:
         escaped_pattern = re.escape(f"|{pattern}|")
-        items["is_collection_services"] = (
-            items["is_collection_services"]
-            | items["raw_upper"].str.contains(escaped_pattern, na=False)
-        )
+        items["is_collection_services"] = items["is_collection_services"] | items[
+            "raw_upper"
+        ].str.contains(escaped_pattern, na=False)
 
     # Identify programming or branch services items by configured patron names.
-    items["is_programming"] = items["patron_name_upper"].isin(normalized_branch_services_names)
+    items["is_programming"] = items["patron_name_upper"].isin(
+        normalized_branch_services_names
+    )
 
     # Also identify programming or branch services items by configured destination patterns.
     for pattern in normalized_branch_services_da_patterns:
         escaped_pattern = re.escape(f"|{pattern}|")
-        items["is_programming"] = (
-            items["is_programming"]
-            | items["raw_upper"].str.contains(escaped_pattern, na=False)
-        )
+        items["is_programming"] = items["is_programming"] | items[
+            "raw_upper"
+        ].str.contains(escaped_pattern, na=False)
 
     # Split hold records into public holds and internal workflow categories.
     holds_df = items[items["is_hold"]].copy()
@@ -785,11 +844,15 @@ def build_acs_item_summary(
     public_holds_df = holds_df[~internal_mask].copy()
 
     # Count ILL items by transit branch destination.
-    ill_dest_upper = ill_df["destination"].fillna("").astype(str).str.strip().str.upper()
+    ill_dest_upper = (
+        ill_df["destination"].fillna("").astype(str).str.strip().str.upper()
+    )
 
     ill_by_branch = {}
     for transit_label in transit_labels:
-        ill_by_branch[transit_label] = int((ill_dest_upper == transit_label.upper()).sum())
+        ill_by_branch[transit_label] = int(
+            (ill_dest_upper == transit_label.upper()).sum()
+        )
 
     ill_main_count = int(
         (~ill_dest_upper.isin([label.upper() for label in transit_labels])).sum()

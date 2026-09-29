@@ -72,7 +72,7 @@ def test_checkin_events_history_loader_scopes_by_customer_and_branch(recording_r
 def test_checkin_events_live_loader_filters_to_today(recording_read_table):
     dl.load_checkin_events_df(ORG, BRANCH)
     call = recording_read_table[0]
-    assert "event_time::date" in call["query"]
+    assert "(event_time AT TIME ZONE 'America/Chicago')::date" in call["query"]
 
 
 def test_reject_events_history_loader_scopes_by_customer_and_branch(recording_read_table):
