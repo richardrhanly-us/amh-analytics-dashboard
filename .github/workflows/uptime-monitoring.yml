@@ -22,6 +22,19 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Diagnose backend connectivity
+        env:
+          SORTVIEW_API_BASE_URL: ${{ secrets.SORTVIEW_API_BASE_URL }}
+        run: |
+          echo "Testing normal curl"
+          curl -v --max-time 20 "${SORTVIEW_API_BASE_URL%/}/" || true
+
+          echo "Testing IPv4"
+          curl -4 -v --max-time 20 "${SORTVIEW_API_BASE_URL%/}/" || true
+
+          echo "Testing IPv6"
+          curl -6 -v --max-time 20 "${SORTVIEW_API_BASE_URL%/}/" || true
+
       - name: Check backend API is reachable
         env:
           SORTVIEW_API_BASE_URL: ${{ secrets.SORTVIEW_API_BASE_URL }}
