@@ -304,7 +304,9 @@ def test_both_acs_loaders_select_explicit_columns_never_star(captured_queries):
     columns = ", ".join(dl.ACS_LOAD_COLUMNS)
     assert history[0] == (
         f"SELECT {columns} FROM acs_events WHERE customer_id = :org_slug AND branch_id = :branch_slug ORDER BY event_time")
-    assert live[0].startswith(f"SELECT {columns} FROM acs_events WHERE customer_id = :org_slug AND branch_id = :branch_slug AND event_time::date =")
+    assert live[0].startswith(
+        f"SELECT {columns} FROM acs_events WHERE customer_id = :org_slug AND branch_id = :branch_slug AND (event_time AT TIME ZONE 'America/Chicago')::date ="
+    )
     for query, params in captured_queries:
         assert "*" not in query
         assert params == {"org_slug": 10, "branch_slug": 1}  # the tenant scoping is untouched
