@@ -1038,7 +1038,12 @@ def load_v2_ingest_status(org_slug, branch_slug):
     # org_column/branch_column pass through _safe_identifier() allowlist above;
     # org_slug/branch_slug stay bound parameters.
     query = query_template.format(org_column=org_column, branch_column=branch_column)  # nosec B608
-    df = _read_table(query, params={"org_slug": org_slug, "branch_slug": branch_slug})
+    df = _read_table(
+        query,
+        params={"org_slug": org_slug, "branch_slug": branch_slug},
+        customer_id=org_slug,
+        branch_id=branch_slug,
+    )
 
     if df.empty:
         return None
