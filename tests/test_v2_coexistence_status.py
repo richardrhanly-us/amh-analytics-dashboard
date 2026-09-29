@@ -48,7 +48,16 @@ def test_v2_healthy_status_wins_even_when_v1_pipeline_status_is_stale_or_failed(
     ctx = build_v2_aware_pipeline_context(stale_v1_status, v2_status, empty_df(), NOW_CT, APP_TZ, "light")
     assert ctx["pipeline_status_label"] == "Pipeline Healthy"
     assert ctx["pipeline_expanded"] is False
-    assert ctx["pipeline_source"] == "v2"
+
+
+def test_v2_status_returns_the_same_key_shape_as_build_pipeline_context():
+    # dashboard_context splats this dict straight into render_live_today(**...), so an extra key is a TypeError in
+    # production (the removed "pipeline_source" key did exactly that once a real v2 row reached the dashboard).
+    stale_v1_status = {"status": "failed", "updated_at": "2026-01-01T00:00:00Z"}
+    v2_status = {"health_status": "healthy", "last_heartbeat_at": "2026-10-05T17:59:00Z"}
+    expected = build_pipeline_context(stale_v1_status, empty_df(), NOW_CT, APP_TZ, "light")
+    actual = build_v2_aware_pipeline_context(stale_v1_status, v2_status, empty_df(), NOW_CT, APP_TZ, "light")
+    assert set(actual) == set(expected)
 
 
 def test_v2_degraded_status_reports_pending_and_quarantined_counts():

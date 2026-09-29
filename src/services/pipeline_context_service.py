@@ -340,5 +340,4 @@ def build_v2_aware_pipeline_context(pipeline_status, v2_ingest_status, df_live_r
         "status_code_text": str(health_status or "unknown"),
         "pipeline_status_written_str": last_heartbeat_str,
         "pipeline_last_run_str": last_success_str,
-        "pipeline_source": "v2",
     }
