@@ -67,6 +67,38 @@ def test_get_today_metrics():
     assert round(result["today_reject_rate"], 2) == round((1 / 3) * 100, 2)
 
 
+def test_get_today_metrics_converts_utc_to_dashboard_local_day():
+    df = pd.DataFrame({
+        "datetime": pd.to_datetime(
+            [
+                "2026-09-29 00:30:00+00:00",  # Sep 28, 7:30 PM Central
+                "2026-09-29 13:15:00+00:00",  # Sep 29, 8:15 AM Central
+            ],
+            utc=True,
+        ),
+        "destination": ["WESTSIDE", "WESTSIDE"],
+    })
+
+    rejects_df = pd.DataFrame({
+        "datetime": pd.to_datetime(
+            [
+                "2026-09-29 00:45:00+00:00",  # Sep 28 local — must be excluded
+                "2026-09-29 13:30:00+00:00",  # Sep 29 local — must be included
+            ],
+            utc=True,
+        ),
+    })
+
+    today = pd.Timestamp("2026-09-29").date()
+
+    result = get_today_metrics(df, rejects_df, today)
+
+    assert result["today_checkins"] == 1
+    assert result["today_rejects"] == 1
+    assert result["today_peak_hour"] == 8
+    assert result["today_peak_hour_count"] == 1
+    assert result["today_df"].iloc[0]["datetime"].hour == 8
+
 def test_get_today_metrics_when_no_checkins():
     df = build_checkins_df()
     rejects_df = build_rejects_df()
