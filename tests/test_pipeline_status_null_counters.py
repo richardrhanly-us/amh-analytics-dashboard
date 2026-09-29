@@ -28,7 +28,10 @@ import pytest
 
 import data_loader as dl
 from alerts import get_system_alerts
-from services.pipeline_context_service import build_pipeline_context
+from services.pipeline_context_service import (
+    build_pipeline_context,
+    build_v2_aware_pipeline_context,
+)
 from views import live_today_view
 
 # Exactly the columns load_pipeline_status selects, in order.
@@ -294,6 +297,23 @@ def test_live_today_run_summary_is_unchanged_for_a_full_legacy_row(monkeypatch):
     assert "Problem Items: 3" in rendered
     assert "New Rejects This Run: 2" in rendered
     assert "Uploaded Rejects This Run: 1" in rendered
+
+
+def test_live_today_run_summary_renders_na_not_frozen_v1_counters_for_a_v2_branch(monkeypatch):
+    # A v2-active branch passes None counters (no v2 source for them); the real view must render them as N/A
+    # rather than raise on `f"{None:,}"` or fall back to the frozen v1 row's numbers.
+    status = load(monkeypatch, legacy_agent_row())
+    now_ct = datetime(2026, 9, 18, 12, 0, tzinfo=LOCAL_TZ)
+    v2_status = {"health_status": "healthy", "last_heartbeat_at": "2026-09-18T16:55:00+00:00"}
+    context = build_v2_aware_pipeline_context(status, v2_status, pd.DataFrame(), now_ct, LOCAL_TZ, "light")
+
+    rendered = "\n".join(_render_run_summary(context))
+
+    assert "New Checkins This Run: N/A" in rendered
+    assert "Uploaded Rejects This Run: N/A" in rendered
+    assert "Transit Items: N/A" in rendered
+    assert "Problem Items: N/A" in rendered
+    assert "Transit Items: 7" not in rendered
 
 
 def test_every_view_consumed_counter_is_covered_by_the_normalized_set():

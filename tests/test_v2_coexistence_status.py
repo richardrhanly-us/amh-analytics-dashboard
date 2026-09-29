@@ -60,6 +60,85 @@ def test_v2_status_returns_the_same_key_shape_as_build_pipeline_context():
     assert set(actual) == set(expected)
 
 
+# --- a v2-active branch never shows frozen v1 status values next to current v2 ones ----------------------------------
+
+# The v1 row as it was left at cutover: last written Oct 04 5:23 PM CT (22:23 UTC, naive as pipeline_status stores it),
+# i.e. "19 hrs ago" at NOW_CT, with its last run's counters.
+FROZEN_V1_STATUS = {
+    "status": "completed",
+    "updated_at": "2026-10-04T22:23:00",
+    "last_attempt": "2026-10-04T22:23:00",
+    "last_run": "2026-10-04T22:23:00",
+    "checkins_rows": 6, "rejects_rows": 0, "uploaded_checkins_rows": 6, "uploaded_rejects_rows": 0,
+    "checkins_bad_datetime_rows": 2, "rejects_bad_datetime_rows": 1, "transit_items": 3, "problem_items": 1,
+    "destination_breakdown": {"Main": 6},
+}
+
+# NOW_CT is 12:00 PM CT == 17:00 UTC; each v2 instant is a few minutes before that.
+CURRENT_V2_STATUS = {
+    "health_status": "healthy",
+    "last_error_class": None,
+    "pending_outbox_count": 0,
+    "quarantined_count": 0,
+    "last_heartbeat_at": "2026-10-05T16:55:00.182880+00:00",  # 11:55 AM CT, the loader's isoformat() shape
+    "watcher_last_active_at": "2026-10-05T16:54:00+00:00",   # 11:54 AM CT
+    "last_success_at": "2026-10-05T16:50:00+00:00",          # 11:50 AM CT
+}
+
+
+def _v2_ctx(v1_status=None, v2_status=None):
+    return build_v2_aware_pipeline_context(
+        FROZEN_V1_STATUS if v1_status is None else v1_status,
+        v2_status or CURRENT_V2_STATUS, empty_df(), NOW_CT, APP_TZ, "light",
+    )
+
+
+def test_v2_heartbeat_is_shown_in_dashboard_local_time_and_aged_from_itself():
+    ctx = _v2_ctx()
+    assert ctx["pipeline_status_written_str"] == "Oct 05, 2026 11:55 AM"
+    assert ctx["pipeline_status_written_ago"] == "4 min ago"
+
+
+def test_v2_last_success_is_shown_in_dashboard_local_time_and_aged_from_itself():
+    ctx = _v2_ctx()
+    assert ctx["pipeline_last_run_str"] == "Oct 05, 2026 11:50 AM"
+    assert ctx["pipeline_last_run_ago"] == "10 min ago"
+
+
+def test_v2_last_attempt_comes_from_watcher_last_active_at_never_v1_last_attempt():
+    ctx = _v2_ctx()
+    assert ctx["pipeline_last_attempt_str"] == "Oct 05, 2026 11:54 AM"
+    assert ctx["pipeline_last_attempt_ago"] == "6 min ago"
+
+
+def test_v2_run_summary_and_destination_breakdown_never_show_frozen_v1_counters():
+    ctx = _v2_ctx()
+    for key in ("checkins_rows", "rejects_rows", "uploaded_checkins_rows", "uploaded_rejects_rows",
+                "checkins_bad_datetime_rows", "rejects_bad_datetime_rows", "transit_items", "problem_items"):
+        assert ctx[key] is None, key
+    assert ctx["destination_breakdown_text"].startswith("N/A")
+
+
+def test_no_v1_status_value_leaks_into_a_v2_context():
+    ctx = _v2_ctx()
+    v1_only = build_pipeline_context(FROZEN_V1_STATUS, empty_df(), NOW_CT, APP_TZ, "light")
+    # app_refreshed_str / latest_checkin_* are not v1 status fields (now_ct and the live dataframe).
+    shared = {"app_refreshed_str", "latest_checkin_str", "latest_checkin_ago"}
+    leaked = {k for k in v1_only if k not in shared and v1_only[k] not in ("N/A", None) and ctx[k] == v1_only[k]}
+    # The label/colors legitimately coincide ("Pipeline Healthy" for both a completed v1 run and a healthy v2).
+    assert leaked <= {"pipeline_status_label", "pipeline_status_color", "pipeline_status_bg", "pipeline_expanded"}
+    rendered = " ".join(str(v) for v in ctx.values())
+    assert "Oct 04" not in rendered
+    assert "hrs ago" not in rendered
+
+
+def test_missing_v2_timestamps_show_na_never_the_v1_fallback():
+    v2_status = {**CURRENT_V2_STATUS, "last_success_at": None, "watcher_last_active_at": None}
+    ctx = _v2_ctx(v2_status=v2_status)
+    assert (ctx["pipeline_last_run_str"], ctx["pipeline_last_run_ago"]) == ("N/A", "N/A")
+    assert (ctx["pipeline_last_attempt_str"], ctx["pipeline_last_attempt_ago"]) == ("N/A", "N/A")
+
+
 def test_v2_degraded_status_reports_pending_and_quarantined_counts():
     v2_status = {
         "health_status": "degraded",

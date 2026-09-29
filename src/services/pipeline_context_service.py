@@ -271,6 +271,22 @@ def build_pipeline_context(pipeline_status, df_live_raw, now_ct, local_tz, theme
 #               build_pipeline_context, and touches nothing about how
 #               v1-only branches are shown.
 #
+#               Once v2 is active, no field of the frozen v1
+#               pipeline_status row is shown -- each panel field is either
+#               v2-sourced or explicitly N/A (None for counters):
+#                 Latest Status Row Written  <- last_heartbeat_at (server
+#                                               stamp of the heartbeat write)
+#                 Last Pipeline Attempt      <- watcher_last_active_at
+#                                               (collector/v2_run.py stamps it
+#                                               on EVERY run, success or not)
+#                 Last Successful Upload Run <- last_success_at (advances
+#                                               only on a successful run)
+#                 Run Summary counters and   <- N/A: the v2 heartbeat
+#                 Destination Breakdown         (StatusV2Request) carries no
+#                                               per-run counters at all
+#               App Last Refreshed and Latest Checkin in DB are not v1
+#               status fields (now_ct and the live dataframe) and are kept.
+#
 #  Parameters:  pipeline_status - v1 pipeline_status row (see
 #                                 build_pipeline_context).
 #               v2_ingest_status - The tenant's latest v2 heartbeat
@@ -327,17 +343,36 @@ def build_v2_aware_pipeline_context(pipeline_status, v2_ingest_status, df_live_r
         pipeline_status_label = "Pipeline Status Unknown"
         pipeline_result_text = "No Contract v2 status has been recorded yet"
 
-    last_heartbeat_str = v2_ingest_status.get("last_heartbeat_at") or "N/A"
-    last_success_str = v2_ingest_status.get("last_success_at") or "N/A"
+    last_heartbeat = _parse_status_datetime(v2_ingest_status.get("last_heartbeat_at"), local_tz)
+    last_attempt = _parse_status_datetime(v2_ingest_status.get("watcher_last_active_at"), local_tz)
+    last_success = _parse_status_datetime(v2_ingest_status.get("last_success_at"), local_tz)
+
+    def _display(dt):
+        return dt.strftime("%b %d, %Y %I:%M %p") if dt else "N/A"
 
     return {
-        **base,
         "pipeline_status_label": pipeline_status_label,
         "pipeline_status_color": pipeline_status_color,
         "pipeline_status_bg": pipeline_status_bg,
         "pipeline_expanded": family != "healthy",
+        "app_refreshed_str": base["app_refreshed_str"],
+        "latest_checkin_str": base["latest_checkin_str"],
+        "latest_checkin_ago": base["latest_checkin_ago"],
+        "pipeline_status_written_str": _display(last_heartbeat),
+        "pipeline_status_written_ago": format_relative_time(last_heartbeat, now_ct),
+        "pipeline_last_attempt_str": _display(last_attempt),
+        "pipeline_last_attempt_ago": format_relative_time(last_attempt, now_ct),
+        "pipeline_last_run_str": _display(last_success),
+        "pipeline_last_run_ago": format_relative_time(last_success, now_ct),
         "pipeline_result_text": pipeline_result_text,
         "status_code_text": str(health_status or "unknown"),
-        "pipeline_status_written_str": last_heartbeat_str,
-        "pipeline_last_run_str": last_success_str,
+        "checkins_rows": None,
+        "rejects_rows": None,
+        "uploaded_checkins_rows": None,
+        "uploaded_rejects_rows": None,
+        "checkins_bad_datetime_rows": None,
+        "rejects_bad_datetime_rows": None,
+        "transit_items": None,
+        "problem_items": None,
+        "destination_breakdown_text": "N/A (not reported by the Contract v2 collector)",
     }
