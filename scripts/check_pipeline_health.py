@@ -1,15 +1,10 @@
 """Checks whether every monitored branch's AMH pipeline is still reporting in.
 
-Reads pipeline_status for every monitored branch (see SCOPE) and flags
-branches where the
-most recent report is older than SORTVIEW_PIPELINE_STALE_MINUTES, has never
-reported at all, or reported an unhealthy status. Two vocabularies can be
-live on the same row during Continuous Ingestion Phase 0's parallel
-validation: the legacy scheduled pipeline's status (started/completed/
-failed*) and the new continuous-agent heartbeat's health_status (healthy/
-degraded/auth_failure). health_status is preferred whenever a branch has
-ever reported one; legacy status parsing is the fallback for branches that
-haven't. Meant to run on a schedule (a GitHub Actions cron job by default)
+For branches without a v2 cutover, reads pipeline_status and applies the
+legacy freshness/health rules. For branches with a v2_cutovers row, ignores
+the frozen legacy pipeline_status timestamp and instead evaluates the newest
+active ingest_key_ids heartbeat and health state. Meant to run on a schedule
+(a GitHub Actions cron job by default)
 so a dead agent or a stalled AMH machine gets noticed without a human
 staring at the dashboard's pipeline-status panel.
 
@@ -32,9 +27,9 @@ The installation condition is an EXISTS, not a JOIN: a branch may have several
 Collector installations, and more than one active one must not produce
 duplicate results for the branch. collector_installations.organization_id and
 branch_id are SaaS ids (organizations.id / branches.id), matched as such.
-pipeline_status is still bridged ONLY through the operational ids
-(o.operational_customer_id / b.operational_branch_id) -- never the SaaS ids.
-pipeline_status is only ever read here, never modified.
+pipeline_status, v2_cutovers, and ingest_key_ids are bridged ONLY through the
+operational ids (o.operational_customer_id / b.operational_branch_id) -- never
+the SaaS ids. Monitoring tables are only ever read here, never modified.
 
 SORTVIEW_PIPELINE_STALE_MINUTES has no single correct value -- it depends on
 how often each branch's AMH agent is actually scheduled to run, which lives
@@ -91,18 +86,49 @@ def find_unhealthy_branches(
             SELECT
                 o.name AS organization_name,
                 b.name AS branch_name,
+
                 ps.status,
                 ps.last_run,
                 ps.last_attempt,
                 ps.updated_at,
-                ps.health_status,
-                ps.quarantined_count,
-                ps.last_error
+                ps.health_status AS legacy_health_status,
+                ps.quarantined_count AS legacy_quarantined_count,
+                ps.last_error AS legacy_last_error,
+
+                vc.cutover_at,
+
+                ik.key_id,
+                ik.status AS key_status,
+                ik.last_heartbeat_at,
+                ik.health_status AS v2_health_status,
+                ik.last_error_class AS v2_last_error,
+                ik.pending_outbox_count,
+                ik.quarantined_count AS v2_quarantined_count,
+                ik.last_success_at
+
             FROM branches b
-            JOIN organizations o ON o.id = b.organization_id
+            JOIN organizations o
+                ON o.id = b.organization_id
+
             LEFT JOIN pipeline_status ps
                 ON ps.customer_id = o.operational_customer_id
                AND ps.branch_id = b.operational_branch_id
+
+            LEFT JOIN v2_cutovers vc
+                ON vc.customer_id = o.operational_customer_id
+               AND vc.branch_id = b.operational_branch_id
+
+            LEFT JOIN ingest_key_ids ik
+                ON ik.id = (
+                    SELECT ik2.id
+                    FROM ingest_key_ids ik2
+                    WHERE ik2.customer_id = o.operational_customer_id
+                      AND ik2.branch_id = b.operational_branch_id
+                      AND ik2.status = 'active'
+                    ORDER BY ik2.created_at DESC, ik2.id DESC
+                    LIMIT 1
+                )
+
             WHERE b.status = 'active'
               AND o.status IN ('active', 'trial')
               AND EXISTS (
@@ -112,6 +138,7 @@ def find_unhealthy_branches(
                     AND ci.branch_id = b.id
                     AND ci.status = 'active'
               )
+
             ORDER BY o.name, b.name
         """)
     ).mappings().all()
@@ -121,30 +148,62 @@ def find_unhealthy_branches(
     for row in rows:
         reasons = []
 
-        updated_at = row["updated_at"]
-        if updated_at is None:
-            reasons.append("has never reported a pipeline run")
-        else:
-            if updated_at.tzinfo is None:
-                updated_at = updated_at.replace(tzinfo=UTC)
-            if updated_at < stale_after:
-                reasons.append(f"last reported at {updated_at.isoformat()} (stale/no heartbeat)")
+        if row["cutover_at"] is not None:
+            # Once a branch has cut over to v2, pipeline_status is historical.
+            # Freshness and health come from the active ingest key instead.
+            if row["key_id"] is None:
+                reasons.append("v2 cutover is active but no active ingest key exists")
+            else:
+                heartbeat = row["last_heartbeat_at"]
+                if heartbeat is None:
+                    reasons.append("v2 collector has never reported a heartbeat")
+                else:
+                    if heartbeat.tzinfo is None:
+                        heartbeat = heartbeat.replace(tzinfo=UTC)
+                    if heartbeat < stale_after:
+                        reasons.append(
+                            f"last v2 heartbeat at {heartbeat.isoformat()} "
+                            "(stale/no heartbeat)"
+                        )
 
-        # During coexistence a branch may be reported by the legacy
-        # scheduled pipeline (ps.status, started/completed/failed*) or by
-        # the new continuous-agent heartbeat (ps.health_status,
-        # healthy/degraded/auth_failure) -- prefer health_status when
-        # present, since it's the more precise, currently-live signal;
-        # fall back to legacy status parsing only when health_status has
-        # never been reported for this branch.
-        if row["health_status"] is not None:
-            if row["health_status"] == "auth_failure":
-                reasons.append("agent heartbeat reports auth_failure")
-            elif row["health_status"] == "degraded":
-                detail = f" ({row['last_error']})" if row["last_error"] else ""
-                reasons.append(f"agent heartbeat reports degraded{detail}")
-        elif row["status"] and str(row["status"]).startswith("failed"):
-            reasons.append(f"latest run status is '{row['status']}'")
+                health_status = row["v2_health_status"]
+                if health_status == "auth_failure":
+                    reasons.append("v2 collector heartbeat reports auth_failure")
+                elif health_status == "degraded":
+                    detail = (
+                        f" ({row['v2_last_error']})"
+                        if row["v2_last_error"]
+                        else ""
+                    )
+                    reasons.append(
+                        f"v2 collector heartbeat reports degraded{detail}"
+                    )
+        else:
+            # Pre-cutover branches retain the existing pipeline_status behavior.
+            updated_at = row["updated_at"]
+            if updated_at is None:
+                reasons.append("has never reported a pipeline run")
+            else:
+                if updated_at.tzinfo is None:
+                    updated_at = updated_at.replace(tzinfo=UTC)
+                if updated_at < stale_after:
+                    reasons.append(
+                        f"last reported at {updated_at.isoformat()} "
+                        "(stale/no heartbeat)"
+                    )
+
+            if row["legacy_health_status"] is not None:
+                if row["legacy_health_status"] == "auth_failure":
+                    reasons.append("agent heartbeat reports auth_failure")
+                elif row["legacy_health_status"] == "degraded":
+                    detail = (
+                        f" ({row['legacy_last_error']})"
+                        if row["legacy_last_error"]
+                        else ""
+                    )
+                    reasons.append(f"agent heartbeat reports degraded{detail}")
+            elif row["status"] and str(row["status"]).startswith("failed"):
+                reasons.append(f"latest run status is '{row['status']}'")
 
         if reasons:
             unhealthy.append({**row, "reasons": reasons})
