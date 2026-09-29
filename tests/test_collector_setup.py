@@ -1795,19 +1795,38 @@ def _session_is_elevated() -> bool:
     ],
     ids=["install.ps1", "finish-install.ps1", "set-api-token.ps1"],
 )
-def test_the_real_scripts_accept_the_new_parameter_and_reach_their_own_elevation_refusal(script, arguments):
+def test_the_real_scripts_accept_the_new_parameter_and_reach_their_own_elevation_refusal(
+    script, arguments, tmp_path
+):
     """The REAL scripts (not stubs), run non-elevated: if the new switch/parameter did not exist they would fail
     to bind it; instead each must reach its own elevation check -- with no prompt and no effect on this machine."""
     if _session_is_elevated():
         pytest.skip("this session is elevated: the real scripts would run for real; the stubbed scenarios cover them")
 
-    completed = _run_ps(f"& {ps_quote(script)} {arguments}; exit $LASTEXITCODE")
+    run_script = script
+
+    if script == INSTALL_SOURCE:
+        bundle_root = tmp_path / "bundle"
+        tools_dir = bundle_root / "tools"
+        tools_dir.mkdir(parents=True)
+
+        run_script = bundle_root / "install.ps1"
+        run_script.write_bytes(INSTALL_SOURCE.read_bytes())
+
+        (tools_dir / "CollectorAcl.ps1").write_bytes(
+            (DEPLOY / "CollectorAcl.ps1").read_bytes()
+        )
+        (tools_dir / "CollectorManifest.ps1").write_bytes(
+            (DEPLOY / "CollectorManifest.ps1").read_bytes()
+        )
+
+    completed = _run_ps(f"& {ps_quote(run_script)} {arguments}; exit $LASTEXITCODE")
     combined = completed.stdout + completed.stderr
 
     assert "A parameter cannot be found" not in combined and "Cannot process argument" not in combined, combined
     assert "elevated" in combined.lower() or "Administrator" in combined, combined
     assert "not-a-real-token-value" not in combined
-    assert "Paste the SortView Collector API token" not in combined  # never prompted
+    assert "Paste the SortView Collector API token" not in combined
 
 
 # =====================================================================================
