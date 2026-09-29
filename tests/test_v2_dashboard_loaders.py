@@ -130,6 +130,9 @@ def test_load_v2_cutover_treats_a_null_cutover_row_as_v1_only(monkeypatch):
 def test_load_v2_ingest_status_scopes_by_customer_and_branch(recording_read_table):
     dl.load_v2_ingest_status(ORG, BRANCH)
     call = recording_read_table[0]
+    assert call["customer_id"] == ORG
+    assert call["branch_id"] == BRANCH
+    assert call["params"] == {"org_slug": ORG, "branch_slug": BRANCH}
     assert "ingest_key_ids" in call["query"]
     assert "status = 'active'" in call["query"]
 
