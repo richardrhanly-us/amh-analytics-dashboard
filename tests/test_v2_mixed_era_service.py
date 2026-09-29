@@ -56,7 +56,33 @@ def test_no_cutover_checkins_history_is_unchanged_and_never_touches_the_v2_loade
     assert result["barcode"].tolist() == ["111"]
     assert result["destination"].tolist() == ["Main"]  # untouched -- no v2 text rewrite ever applied to a v1 row
 
+def test_mixed_checkins_normalizes_naive_v1_and_aware_v2_datetimes_before_sort(monkeypatch):
+    v1_df = _checkins_df([
+        {
+            "datetime": pd.Timestamp("2026-09-30T23:59:59"),
+            "barcode": "v1-item",
+            "destination": "Main",
+        },
+    ])
+    v2_df = _checkin_events_df([
+        {
+            "datetime": pd.Timestamp("2026-10-01T00:00:00+00:00"),
+            "item_key": "a" * 64,
+            "destination": "main",
+            "bin": "1",
+        },
+    ])
 
+    monkeypatch.setattr(mixed, "get_effective_cutover", lambda *_a: CUTOVER)
+    monkeypatch.setattr(dl, "load_checkins_history_df", lambda *_a: v1_df)
+    monkeypatch.setattr(dl, "load_checkin_events_history_df", lambda *_a: v2_df)
+
+    result = mixed.build_mixed_checkins_df(ORG, BRANCH)
+
+    assert len(result) == 2
+    assert str(result["datetime"].dtype) == "datetime64[ns, UTC]"
+    assert result["source_era"].tolist() == ["v1", "v2"]
+    
 def test_no_cutover_checkins_live_is_unchanged_and_never_touches_the_v2_loader(monkeypatch):
     v1_df = _checkins_df([
         {"datetime": pd.Timestamp("2026-09-01T08:00:00+00:00"), "barcode": "111", "destination": "Main"},
