@@ -226,7 +226,7 @@ def test_v1_only_branch_pipeline_status_is_untouched_through_the_real_wiring():
         pd.Timestamp("2026-10-05T12:05:00", tz=APP_TZ), APP_TZ, "light",
     )
     assert ctx["pipeline_status_label"] == "Pipeline Healthy"
-    assert "pipeline_source" not in ctx  # only set on the v2-aware branch, per its own docstring
+    assert "pipeline_source" not in ctx  # never set on either branch -- the view's signature does not accept it
 
 
 # =====================================================================================================================

@@ -105,6 +105,37 @@ def test_live_today_args_merge_pipeline_and_live_context():
     assert "today_df" in live_today_args
 
 
+def test_live_today_args_with_a_real_v2_status_bind_to_render_live_today():
+    # Regression: a truthy v2_ingest_status once added a key render_live_today() does not accept, crashing
+    # app.py's render_live_today(**live_today_args) in production. Bind against the real signature, with the
+    # same keys app.py's _render_live_today injects before the call.
+    import inspect
+
+    from views.live_today_view import render_live_today
+
+    kwargs = base_kwargs("Live Today")
+    kwargs["v2_ingest_status"] = {
+        "health_status": "healthy",
+        "last_error_class": None,
+        "pending_outbox_count": 0,
+        "quarantined_count": 0,
+        "last_heartbeat_at": "2026-03-30T16:59:00+00:00",
+        "last_success_at": "2026-03-30T16:58:00+00:00",
+    }
+    live_today_args = build_dashboard_context(**kwargs)["live_today_args"]
+    assert live_today_args["pipeline_result_text"] == "Contract v2 collector reporting healthy"
+
+    live_today_args.update({
+        "can_view_internal_workflow": True,
+        "can_view_transits": True,
+        "on_refresh_now": lambda: None,
+        "live_today_paused": False,
+        "on_toggle_live_updates": lambda: None,
+        "refresh_interval_minutes": 3,
+    })
+    inspect.signature(render_live_today).bind(**live_today_args)
+
+
 def test_no_today_data_true_when_no_live_checkins_regardless_of_tab():
     for selected_view in ["Live Today", "Overview", "Reports", "Transits"]:
         context = build_dashboard_context(**base_kwargs(selected_view, with_today_data=False))
