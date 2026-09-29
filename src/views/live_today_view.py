@@ -11,6 +11,12 @@ from ui_components import (
 )
 
 
+def _format_count(value):
+    # None means "no source for this counter" (a Contract v2 branch -- see
+    # build_v2_aware_pipeline_context), never zero.
+    return "N/A" if value is None else f"{value:,}"
+
+
 def render_live_today(
     today,
     refresh_count,  # kept for call-site/context-dict compatibility; no longer read here
@@ -154,20 +160,20 @@ Status Code: `{status_code_text}`
                 with s1:
                     st.markdown(
                         f"""
-New Checkins This Run: {checkins_rows:,}  
-New Rejects This Run: {rejects_rows:,}  
-Uploaded Checkins This Run: {uploaded_checkins_rows:,}  
-Uploaded Rejects This Run: {uploaded_rejects_rows:,}
+New Checkins This Run: {_format_count(checkins_rows)}
+New Rejects This Run: {_format_count(rejects_rows)}
+Uploaded Checkins This Run: {_format_count(uploaded_checkins_rows)}
+Uploaded Rejects This Run: {_format_count(uploaded_rejects_rows)}
                         """
                     )
 
                 with s2:
                     st.markdown(
                         f"""
-Bad Checkin Datetimes: {checkins_bad_datetime_rows:,}  
-Bad Reject Datetimes: {rejects_bad_datetime_rows:,}  
-Transit Items: {transit_items:,}  
-Problem Items: {problem_items:,}
+Bad Checkin Datetimes: {_format_count(checkins_bad_datetime_rows)}
+Bad Reject Datetimes: {_format_count(rejects_bad_datetime_rows)}
+Transit Items: {_format_count(transit_items)}
+Problem Items: {_format_count(problem_items)}
                         """
                     )
 
