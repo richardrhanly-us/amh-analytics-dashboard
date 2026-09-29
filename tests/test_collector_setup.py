@@ -49,12 +49,16 @@ SENTINEL_CODE = "SV-TEST-CODE-ABCD-EFGH"
 IDS = {"customer_id": 7, "branch_id": 3, "installation_id": 41}
 
 
-def _powershell() -> str | None:
-    return shutil.which("powershell") or shutil.which("pwsh")
+_POWERSHELL = shutil.which("powershell") or shutil.which("pwsh")
+
+
+def _powershell() -> str:
+    assert _POWERSHELL is not None
+    return _POWERSHELL
 
 
 needs_windows_powershell = pytest.mark.skipif(
-    sys.platform != "win32" or _powershell() is None,
+    sys.platform != "win32" or _POWERSHELL is None,
     reason="the setup scenarios run real Windows PowerShell (SecureString/Machine-scope semantics)",
 )
 
@@ -859,15 +863,18 @@ class Result:
 
     @property
     def recovery_path(self) -> Path:
+        assert self.bundle is not None
         return self.bundle.data_root / "setup" / "enrollment-recovery.json"
 
     @property
     def recovery(self) -> dict | None:
+        assert self.bundle is not None
         return json.loads(self.recovery_path.read_text(encoding="utf-8")) if self.recovery_path.exists() else None
 
     @property
     def everything_written(self) -> str:
         """All text a scenario left on disk under the bundle's fake state and the install roots (except the fake Machine store)."""
+        assert self.bundle is not None
         parts = []
         for base in (self.bundle.data_root, self.bundle.install_root):
             if base.exists():
@@ -2197,6 +2204,8 @@ _TOKEN_STORED_ONLY = ["install-verify", "runtime-version", "http:GET", "read-cod
 
 def _assert_stopped_at_the_record_gate(result: Result, *, problem: str) -> None:
     """Redeemed and token stored -- and then NOTHING else: no install, no finish, no task, no record left behind."""
+    assert result.bundle is not None
+
     assert result.exit_code == 1, result.output
     assert result.tools() == _TOKEN_STORED_ONLY  # install.ps1 was never started
     assert result.calls_to("install") == [] and result.calls_to("finish-install") == [] and result.calls_to("enable-task") == []
@@ -2322,9 +2331,17 @@ def test_a_saved_and_verified_record_lets_setup_proceed_to_install(tmp_path):
 
     assert stopped.tools() == ["install-verify", "runtime-version", "http:GET", "read-code", "http:POST", "set-api-token", "install"]
     assert "saved and verified" in stopped.output
-    assert stopped.recovery == {
-        "schema_version": 1, "created_utc": stopped.recovery["created_utc"], "release_version": RELEASE_VERSION,
-        "api_url": TEMPLATE_URL, "customer_id": 7, "branch_id": 3, "installation_id": 41,
+    recovery = stopped.recovery
+    assert recovery is not None
+
+    assert recovery == {
+        "schema_version": 1,
+        "created_utc": recovery["created_utc"],
+        "release_version": RELEASE_VERSION,
+        "api_url": TEMPLATE_URL,
+        "customer_id": 7,
+        "branch_id": 3,
+        "installation_id": 41,
     }
     assert SENTINEL_TOKEN not in stopped.recovery_path.read_text(encoding="utf-8")
     assert SENTINEL_CODE not in stopped.recovery_path.read_text(encoding="utf-8")
