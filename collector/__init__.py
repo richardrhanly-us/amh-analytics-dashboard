@@ -131,4 +131,19 @@ from __future__ import annotations
 # time with the new tools\verify-install.ps1. No change to the collector
 # runtime itself: parsing, upload, identity, the v1/v2 contracts, dedup
 # behavior and the privacy boundary are all unchanged.
-__version__ = "1.0.10"
+# 1.0.11 moves the API bearer token out of the Machine-scope
+# SORTVIEW_API_TOKEN environment variable (readable by every local user)
+# into <DataRoot>\secrets\api_token.dpapi: DPAPI machine scope, its own
+# entropy, bound to the config's customer_id/branch_id, in the
+# Administrators+SYSTEM-only secrets folder, ACL verified before every read
+# (collector/api_token_store.py). It is provisioned with the new
+# `SortViewCollector.exe api-token set|check` subcommand, which reads the
+# token from STDIN only. collector/config.py's resolve_api_token is the one
+# place the token is resolved, for the run, preflight, bootstrap and
+# support-info alike. TEMPORARY, 1.0.11 ONLY: when api_token.dpapi is
+# ABSENT, the environment variable is still used (a migration fallback, so a
+# machine can be updated before its token is moved); a present file that
+# cannot be used fails closed and never falls back. Preflight now reports the
+# token's source instead of its length. No change to the v2 secret, the
+# uploader, the v1/v2 contracts or the privacy boundary.
+__version__ = "1.0.11"

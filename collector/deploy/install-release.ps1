@@ -48,7 +48,7 @@
        parameters.
        There is no template fallback and no default for any of them --
        see REQUIRED INPUT below. NEVER writes a token into this file --
-       SORTVIEW_API_TOKEN is handled entirely separately; see TOKEN SETUP
+       the API token is handled entirely separately; see TOKEN SETUP
        below. Written UTF-8 with NO byte-order mark (see the BOM comment
        inline below -- a real production finding, identical for both
        bundle kinds).
@@ -105,10 +105,12 @@
     the same terminating error as in a real install, with a non-zero exit.
 
 .PARAMETER TOKEN SETUP
-    This script does not set SORTVIEW_API_TOKEN. Run tools\set-api-token.ps1
-    (in this same bundle) -- a Machine-scope Windows environment variable,
-    SecureString prompt, never written to a file or log. Identical for
-    both bundle kinds.
+    This script does not store the API token. Run tools\set-api-token.ps1
+    (in this same bundle) AFTER this install: a SecureString prompt, handed
+    on STDIN to the installed Collector's `api-token set`, which stores it in
+    -DataRoot\secrets\api_token.dpapi (DPAPI, Administrators + SYSTEM only)
+    -- never in the config, a plain file or a log. Identical for both
+    bundle kinds.
 
 .EXAMPLE
     .\install.ps1 `
@@ -214,8 +216,8 @@ function Get-InstallInputProblems {
 
 function New-CollectorConfigJson {
     # Builds collector_config.json's text from the supplied values -- pure,
-    # writes nothing. Never includes a token (SORTVIEW_API_TOKEN is read
-    # from the environment only). state/status/log paths sit under -DataRoot.
+    # writes nothing. Never includes a token (it lives in
+    # -DataRoot\secrets\api_token.dpapi). state/status/log paths sit under -DataRoot.
     param($CustomerId, $BranchId, $InstallationId, $ApiUrl, $CheckinsPath, $RejectsPath, $AcsPath, $DataRoot)
 
     $dataRootTrimmed = $DataRoot.TrimEnd('\', '/')
@@ -575,8 +577,8 @@ if ($isFrozenBundle) {
     Write-Host "Or follow the steps by hand:" -ForegroundColor Cyan
 }
 Write-Host "1. Review $ConfigPath (written from the values you supplied)."
-Write-Host "2. Set the API token (Machine-scope env var, not stored in any file):"
-Write-Host "     $(Join-Path $BundleRoot 'tools\set-api-token.ps1')"
+Write-Host "2. Store the API token (DPAPI-protected api_token.dpapi, Administrators + SYSTEM only; hidden prompt):"
+Write-Host "     $(Join-Path $BundleRoot 'tools\set-api-token.ps1') -InstallRoot `"$InstallRoot`" -ConfigPath `"$ConfigPath`""
 Write-Host "3. Run preflight interactively, then as SYSTEM:"
 if ($isFrozenBundle) {
     Write-Host "     `"$RunnerExe`" preflight --config `"$ConfigPath`""

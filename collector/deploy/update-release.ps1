@@ -78,9 +78,21 @@
     directory, never overlaid. No pip/venv/requirements logic ever
     executes for a frozen update.
 
-    Never touches -DataRoot (config\, data\, logs\) or the Machine-scope
+    Never touches -DataRoot (config\, data\, logs\, secrets\ -- including
+    the API token file secrets\api_token.dpapi) or the Machine-scope
     SORTVIEW_API_TOKEN -- only the application runtime (-InstallRoot) is
     replaced, for either kind.
+
+    API TOKEN (1.0.11): the verification preflight resolves the token
+    exactly as the runtime does and prints its source. Updating to 1.0.11
+    therefore needs NO token step: with no api_token.dpapi it keeps using
+    the Machine-scope SORTVIEW_API_TOKEN (the 1.0.11-only migration
+    fallback -- as before, it must be visible to this elevated session);
+    with a stored api_token.dpapi it uses that. A PRESENT but unusable
+    api_token.dpapi never falls back: preflight fails and, as for any
+    failed verification, the task is left DISABLED -- fix it with
+    tools\set-api-token.ps1 (or, before the old token is revoked, remove
+    that file) and re-enable.
 
 .EXAMPLE
     .\update.ps1 -InstallRoot "C:\SortView\Collector" `

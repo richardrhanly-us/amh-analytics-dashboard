@@ -1,78 +1,85 @@
 <#
 .SYNOPSIS
-    Sets SORTVIEW_API_TOKEN as a MACHINE-level Windows environment variable
-    for the SortView Collector, without ever writing the token to a file,
-    a log, Git, or the console.
+    Stores the SortView Collector's API token in the DPAPI-protected
+    <DataRoot>\secrets\api_token.dpapi, by handing it to the Collector's own
+    `api-token set` command on STDIN -- never on a command line, never in a
+    plain file, a log, Git, or the console.
 
 .DESCRIPTION
-    collector/config.py reads its API token ONLY from the SORTVIEW_API_TOKEN
-    environment variable -- never from collector_config.json, never from a
-    command-line argument. A Machine-scope environment variable is visible
-    to every process that starts AFTER it is set, on this machine,
-    regardless of which account or logon type started it -- including the
-    "SortView Collector" Scheduled Task running as SYSTEM. This is what
-    lets the Collector's unattended, one-shot, every-15-minutes runs read
-    it without any interactive login.
+    Collector 1.0.11+ reads its API token from api_token.dpapi (DPAPI machine
+    scope, bound to the config's customer_id/branch_id, in the
+    Administrators+SYSTEM-only secrets folder -- see
+    collector/api_token_store.py). This script owns NO file format and no
+    cryptography: it only obtains the token and pipes it to
 
-    Same mechanism as the continuous-agent deployment tooling's own
-    set-sortview-api-token.ps1 (same env var name, same SecureString/
-    Machine-scope approach) -- reimplemented here, rather than reused
-    directly from the repository, so a standalone Collector release bundle
-    never needs Git/repo access to set its own token. See
-    collector/build_release.py's module docstring for why this script (not
-    a fork of the repo path) is what actually ships.
+        SortViewCollector.exe api-token set --config <ConfigPath>
+
+    (or, for a source install, `python -m collector.api_token_store set ...`),
+    which writes it atomically -- replacing any token already stored, which is
+    how a token is rotated -- then verifies the folder's ACL.
+
+    It no longer sets the Machine-scope SORTVIEW_API_TOKEN environment
+    variable (readable by every local user). It never removes one either: in
+    1.0.11 an existing variable is still the migration fallback whenever
+    api_token.dpapi is absent, and removing it is a separate, later step
+    (docs/deployment.md).
 
     This script:
       1. Prompts for the token as a SecureString (never echoed to the
-         console, never appears in PowerShell transcript/history as
-         plaintext).
-      2. Sets it as a Machine-scope environment variable via
-         [Environment]::SetEnvironmentVariable(..., 'Machine').
-      3. Immediately clears the plaintext copy from memory.
-      4. Prints only a short confirmation (length + a truncated SHA-256
-         hash prefix) so the operator can sanity-check the value was
-         accepted -- never the token itself, and never anything an
-         attacker could reverse into the token.
+         console, never in PowerShell transcript/history as plaintext) --
+         or takes -Token, a SecureString, for automation.
+      2. Converts it to text once, pipes it to the Collector's STDIN, and
+         clears the plain copy immediately.
+      3. Prints only the Collector's fixed confirmation line -- never the
+         token, its length, or any hash of it.
+      4. Throws if the Collector did not store it, so a caller can never
+         mistake a failure for success.
 
-    Requires an elevated (Administrator) PowerShell session -- setting a
-    Machine-scope environment variable always does.
+    Requires an elevated (Administrator) PowerShell session: the secrets
+    folder is Administrators + SYSTEM only.
+
+    TENANT: normally taken from -ConfigPath. Guided setup stores the token
+    BEFORE install.ps1 has written the config, so it passes -CustomerId,
+    -BranchId and -DataRoot instead (the same three values install.ps1 then
+    writes -- the file lands exactly where that config will look), together
+    with -ExePath pointing at the bundle's own runtime.
 
     AUTOMATED USE (guided setup): collector/deploy/setup-collector.ps1
-    (shipped as setup.ps1) calls this script with -Token, a SecureString it
-    already holds -- the permanent token issued by one-time enrollment -- so
-    the storage semantics stay exactly these (same variable, same Machine
-    scope) and there is only one implementation of them. -Token is a
-    SecureString, not a string, so a plain-text token cannot be passed by
-    accident, and it is bound in-process: it is never part of any process
-    command line. In that mode nothing derived from the token is printed
-    (no length, no hash prefix) -- the only output is that the variable was
-    set. Without -Token this script behaves exactly as before (hidden
-    prompt).
+    (shipped as setup.ps1) calls this script in-process with -Token, the
+    permanent token issued by one-time enrollment. -Token is a SecureString,
+    not a string, so a plain-text token cannot be passed by accident, and it
+    is never part of any process command line.
 
-    A newly-started process picks up a Machine env var change immediately.
-    Since the Collector is a one-shot process (Task Scheduler starts a
-    fresh python.exe every run, it never stays resident), its VERY NEXT
-    scheduled or manual run already sees the new value -- there is no
-    long-running service to restart, unlike the continuous agent.
-
-.PARAMETER VariableName
-    Defaults to SORTVIEW_API_TOKEN. Override only if a second, distinctly
-    named Collector installation on this same machine needs its own token
-    variable (not the normal single-branch case).
-
+.PARAMETER InstallRoot
+    The installed runtime (SortViewCollector.exe for a frozen install, or
+    .venv\Scripts\python.exe for a source install).
+.PARAMETER ConfigPath
+    The installed collector_config.json (the tenant and the token path).
+.PARAMETER ExePath
+    Optional: a specific SortViewCollector.exe (guided setup: the bundle's own).
+.PARAMETER CustomerId
+    With -BranchId and -DataRoot: store the token before a config exists.
+.PARAMETER BranchId
+    See -CustomerId.
+.PARAMETER DataRoot
+    See -CustomerId.
 .PARAMETER Token
     Optional, for automation only (see AUTOMATED USE). When omitted, the
-    token is read from a hidden prompt, as always.
+    token is read from a hidden prompt.
 
 .EXAMPLE
-    # Run from an elevated PowerShell prompt:
+    # Run from an elevated PowerShell prompt (the token is typed/pasted, never shown):
     .\set-api-token.ps1
-    # (paste/type the token when prompted -- it will not be displayed)
 #>
 
 [CmdletBinding()]
 param(
-    [string]$VariableName = "SORTVIEW_API_TOKEN",
+    [string]$InstallRoot = "C:\SortView\Collector",
+    [string]$ConfigPath = "C:\ProgramData\SortViewCollector\config\collector_config.json",
+    [string]$ExePath,
+    [int]$CustomerId,
+    [int]$BranchId,
+    [string]$DataRoot,
     [SecureString]$Token
 )
 
@@ -80,11 +87,37 @@ $ErrorActionPreference = "Stop"
 
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    throw "This script must be run from an elevated (Administrator) PowerShell session -- setting a Machine-scope environment variable requires it."
+    throw "This script must be run from an elevated (Administrator) PowerShell session -- the secrets folder is Administrators + SYSTEM only."
+}
+
+# Where the tenant comes from: the installed config, or (guided setup, before install) all three explicit values.
+$explicitTenant = $PSBoundParameters.ContainsKey("CustomerId") -or $PSBoundParameters.ContainsKey("BranchId") -or $PSBoundParameters.ContainsKey("DataRoot")
+if ($explicitTenant) {
+    if (-not ($PSBoundParameters.ContainsKey("CustomerId") -and $PSBoundParameters.ContainsKey("BranchId") -and $PSBoundParameters.ContainsKey("DataRoot"))) {
+        throw "-CustomerId, -BranchId and -DataRoot must be given together."
+    }
+    $tenantArgs = @("--customer-id", [string]$CustomerId, "--branch-id", [string]$BranchId, "--data-root", $DataRoot)
+} else {
+    if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+        throw "The config file was not found at '$ConfigPath' -- nothing was stored."
+    }
+    $tenantArgs = @("--config", $ConfigPath)
+}
+
+# Which Collector runs `api-token set`: an explicit exe, the installed frozen runtime, or a source install's venv.
+$frozenExe = if ($ExePath) { $ExePath } else { Join-Path $InstallRoot "SortViewCollector.exe" }
+$venvPython = Join-Path $InstallRoot ".venv\Scripts\python.exe"
+$useFrozen = Test-Path -LiteralPath $frozenExe -PathType Leaf
+if (-not $useFrozen -and ($ExePath -or -not (Test-Path -LiteralPath $venvPython -PathType Leaf))) {
+    throw "No SortView Collector runtime was found (looked for '$frozenExe'$(if (-not $ExePath) { " and '$venvPython'" })) -- nothing was stored."
 }
 
 $tokenFromCaller = $PSBoundParameters.ContainsKey("Token")
 $secure = if ($tokenFromCaller) { $Token } else { Read-Host -AsSecureString -Prompt "Paste the SortView Collector API token (input hidden)" }
+if ($null -eq $secure -or $secure.Length -eq 0) {
+    throw "No token was entered -- nothing was stored."
+}
+
 $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
 try {
     $plainToken = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
@@ -92,33 +125,27 @@ try {
     [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
 }
 
-if ([string]::IsNullOrWhiteSpace($plainToken)) {
-    throw "No token was entered -- nothing was set."
-}
-
-[Environment]::SetEnvironmentVariable($VariableName, $plainToken, "Machine")
-
-if ($tokenFromCaller) {
-    # Automated use: no length, no hash prefix -- nothing derived from the token.
+# The token travels ONLY on the child's STDIN. The child prints one fixed line (or a fixed failure code).
+$global:LASTEXITCODE = $null
+try {
+    if ($useFrozen) {
+        $plainToken | & $frozenExe api-token set @tenantArgs | Out-Host
+    } else {
+        # -m collector.api_token_store resolves the `collector` package via the process's working directory.
+        Push-Location $InstallRoot
+        try {
+            $plainToken | & $venvPython -m collector.api_token_store set @tenantArgs | Out-Host
+        } finally {
+            Pop-Location
+        }
+    }
+    $storeExitCode = $LASTEXITCODE
+} finally {
     $plainToken = $null
     [GC]::Collect()
-    Write-Host "Set $VariableName as a Machine environment variable (value not shown)." -ForegroundColor Green
-    return
 }
 
-# Confirmation only -- a hash PREFIX, never the token, never the full hash.
-$sha256 = [Security.Cryptography.SHA256]::Create()
-$hashBytes = $sha256.ComputeHash([Text.Encoding]::UTF8.GetBytes($plainToken))
-$hashPrefix = [BitConverter]::ToString($hashBytes).Replace("-", "").Substring(0, 8).ToLower()
-
-$tokenLength = $plainToken.Length
-$plainToken = $null
-[GC]::Collect()
-
-Write-Host ""
-Write-Host "Set $VariableName as a Machine environment variable." -ForegroundColor Green
-Write-Host "  length=$tokenLength  sha256_prefix=$hashPrefix..." -ForegroundColor DarkGray
-Write-Host ""
-Write-Host "This takes effect for NEWLY STARTED processes only -- the Collector's next" -ForegroundColor Yellow
-Write-Host "scheduled or manual run (it is a one-shot process, not a long-running service)" -ForegroundColor Yellow
-Write-Host "will see this value automatically."
+if ($storeExitCode -ne 0) {
+    throw "The Collector did not store the API token (exit code $storeExitCode) -- see the failure code above."
+}
+Write-Host "Stored the API token in api_token.dpapi (DPAPI, Administrators + SYSTEM only; value not shown)." -ForegroundColor Green

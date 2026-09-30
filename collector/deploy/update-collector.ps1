@@ -21,8 +21,12 @@
        timestamped backup folder alongside -InstallRoot -- both
        collector\*.py AND the canonical parser runtime (agent\*, per
        collector/deploy_manifest.py) that collector/parsers.py depends
-       on just as much. NEVER touches -DataRoot (config\, data\, logs\)
-       -- those are not part of what this script replaces.
+       on just as much. NEVER touches -DataRoot (config\, data\, logs\,
+       secrets\ -- including the API token file api_token.dpapi) -- those
+       are not part of what this script replaces. (1.0.11: preflight
+       resolves the token exactly as the runtime does -- api_token.dpapi,
+       or while that file is absent the migration-fallback
+       SORTVIEW_API_TOKEN -- and prints its source.)
     3. Compares collector/deploy/requirements.txt's hash against the
        hash recorded at the last install/update
        (-InstallRoot\.deps-hash). If unchanged, only the .py files are

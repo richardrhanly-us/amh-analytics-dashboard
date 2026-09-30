@@ -30,7 +30,7 @@
     4. Writes collector_config.json from the -CustomerId/-BranchId/
        -InstallationId/-ApiUrl/-SourcePaths parameters (or copies the example template
        verbatim if none are given, for manual editing afterward). NEVER
-       writes a token into this file -- SORTVIEW_API_TOKEN is handled
+       writes a token into this file -- the API token is handled
        entirely separately; see TOKEN SETUP below.
     5. Prints exact next steps (token, preflight, task registration) --
        does NOT register the Scheduled Task or start anything itself.
@@ -46,14 +46,13 @@
     and re-validates before declaring success.
 
 .PARAMETER TOKEN SETUP
-    This script does not set SORTVIEW_API_TOKEN. That is handled by
-    agent/deploy/set-sortview-api-token.ps1 -- reused AS-IS (unmodified)
-    from the continuous-agent deployment tooling, since the mechanism
-    (a Machine-scope Windows environment variable, SecureString prompt,
-    never written to a file or log) is entirely generic and not specific
-    to which process reads it. There is no collector-specific fork of
-    that script, deliberately, to avoid two copies of the same logic
-    drifting apart over time.
+    This script does not store the API token. Afterwards, run
+    set-collector-api-token.ps1 (next to this script): a SecureString
+    prompt, handed on STDIN to this install's `python -m
+    collector.api_token_store set`, which stores it in
+    -DataRoot\secrets\api_token.dpapi (DPAPI, Administrators + SYSTEM
+    only) -- never in the config, a plain file or a log. (The legacy
+    Machine-scope SORTVIEW_API_TOKEN is only a 1.0.11 migration fallback.)
 
 .EXAMPLE
     .\install-collector.ps1 `
@@ -208,9 +207,8 @@ Write-Host "Config never contains the API token -- see TOKEN SETUP below."
 Write-Host ""
 Write-Host "=== Install complete. Next steps: ===" -ForegroundColor Green
 Write-Host "1. Review/edit $ConfigPath if it was copied from the template."
-Write-Host "2. Set the API token (Machine-scope env var, not stored in any file):"
-Write-Host "     <repo>\agent\deploy\set-sortview-api-token.ps1"
-Write-Host "   (reused as-is from the continuous-agent tooling -- same mechanism, same env var name)"
+Write-Host "2. Store the API token (DPAPI-protected api_token.dpapi, Administrators + SYSTEM only; hidden prompt):"
+Write-Host "     .\set-collector-api-token.ps1 -InstallRoot `"$InstallRoot`" -ConfigPath `"$ConfigPath`""
 Write-Host "3. Run preflight interactively, then as SYSTEM:"
 Write-Host "     $VenvPython -m collector.preflight --config `"$ConfigPath`""
 Write-Host "     .\run-preflight-as-system.ps1 -ConfigPath `"$ConfigPath`" -InstallRoot `"$InstallRoot`""

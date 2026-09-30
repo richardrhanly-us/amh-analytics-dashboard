@@ -66,7 +66,13 @@ from urllib.parse import urlsplit
 import requests
 
 from . import uploader
-from .config import CollectorConfig, ConfigError, load_config
+from .config import (
+    TOKEN_SOURCE_DPAPI,
+    TOKEN_SOURCE_ENVIRONMENT,
+    CollectorConfig,
+    ConfigError,
+    load_config,
+)
 
 
 @dataclass(frozen=True)
@@ -130,15 +136,19 @@ def _check_dir_writable(name: str, target_dir: Path) -> CheckResult:
     return CheckResult(name, True, f"{target_dir} is writable")
 
 
-def _check_token_visible() -> CheckResult:
-    token = os.environ.get("SORTVIEW_API_TOKEN")
-    if not token:
+def _check_token_source(cfg: CollectorConfig) -> CheckResult:
+    """Reports WHERE load_config's single token resolution found the token -- never the token, its length or any hash.
+    Preflight reads the token exactly as the runtime does (cfg.api_token), with no second read of its own."""
+    if not cfg.api_token or not cfg.api_token.strip():
+        return CheckResult("api_token_source", False, "no API token was resolved for THIS process identity")
+    if cfg.api_token_source == TOKEN_SOURCE_DPAPI:
+        return CheckResult("api_token_source", True, "token source: dpapi (api_token.dpapi, ACL verified)")
+    if cfg.api_token_source == TOKEN_SOURCE_ENVIRONMENT:
         return CheckResult(
-            "api_token_visible", False,
-            "SORTVIEW_API_TOKEN is not set for THIS process identity -- if this was run as SYSTEM, "
-            "confirm it was set as a Machine-scope environment variable, not a per-user one",
+            "api_token_source", True,
+            "token source: environment (migration fallback) -- store it with `api-token set` to stop using SORTVIEW_API_TOKEN",
         )
-    return CheckResult("api_token_visible", True, f"token is visible (length={len(token)})")
+    return CheckResult("api_token_source", False, f"unrecognized token source {cfg.api_token_source!r}")
 
 
 def _check_dns(cfg: CollectorConfig) -> CheckResult:
@@ -301,7 +311,7 @@ def run_preflight(cfg: CollectorConfig, *, session=None, is_importable=_default_
         _check_dir_writable("state_dir_writable", cfg.state_path.parent),
         _check_dir_writable("status_dir_writable", cfg.status_path.parent),
         _check_dir_writable("log_dir_writable", cfg.log_path.parent),
-        _check_token_visible(),
+        _check_token_source(cfg),
         _check_dns(cfg),
         _check_https_and_tls(cfg, session),
     ]
