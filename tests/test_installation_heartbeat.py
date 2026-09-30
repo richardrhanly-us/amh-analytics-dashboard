@@ -746,6 +746,7 @@ def test_upload_never_writes_collector_installations(monkeypatch):
             return _Conn()
 
     monkeypatch.setattr(main, "engine", _Engine())
+    monkeypatch.setattr(main, "get_effective_v2_cutover", lambda *_: None)  # never cut over: v1 /upload stays open
 
     response = client.post(
         "/upload",

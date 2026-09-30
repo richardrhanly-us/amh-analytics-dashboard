@@ -1152,6 +1152,7 @@ def test_upload_never_touches_the_enrollment_tables_or_writes_installations(monk
             return _Conn()
 
     monkeypatch.setattr(main, "engine", _Engine())
+    monkeypatch.setattr(main, "get_effective_v2_cutover", lambda *_: None)  # never cut over: v1 /upload stays open
 
     response = client.post(
         "/upload",

@@ -440,6 +440,8 @@ class _EndpointConn:
         self.executed.append(sql)
         if "FROM agent_tokens" in sql:
             return _Result(self.token_row)
+        if "FROM v2_cutovers" in sql:  # never cut over: v1 /upload stays open
+            return _Result(None)
 
         class _Written:
             rowcount = 1

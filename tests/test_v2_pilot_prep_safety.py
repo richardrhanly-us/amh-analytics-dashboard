@@ -68,9 +68,11 @@ def test_v2_ingest_enabled_default_is_still_false_in_main_py():
 def test_main_py_was_not_modified_by_this_round_of_work():
     # This round's changes are entirely additive elsewhere (new migration, new service functions, new loaders, new
     # metrics/mapping modules, a new script, and the release-manifest/spec files) -- main.py itself, which owns the
-    # production ingestion feature gate, is untouched.
+    # production ingestion feature gate, is untouched. (Since the v1-post-cutover gate, main.py READS the effective cutover
+    # -- only through ingest_v2_service.get_effective_v2_cutover, never with its own v2_cutovers SQL, and never a write.)
     main_source = _text("main.py")
-    assert "v2_cutovers" not in main_source
+    assert not re.search(r"\b(FROM|INTO|UPDATE|JOIN)\s+v2_cutovers\b", main_source, re.IGNORECASE)
+    assert "record_v2_cutover" not in main_source
     assert "mixed_era_service" not in main_source
     assert "metrics_v2" not in main_source
 

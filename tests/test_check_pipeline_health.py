@@ -104,6 +104,63 @@ def test_non_cutover_branch_still_uses_legacy_pipeline_status_staleness():
     assert any("stale" in reason for reason in unhealthy[0]["reasons"])
 
 
+def _v2_row(**overrides):
+    fields = {
+        "updated_at": NOW - timedelta(hours=4),
+        "cutover_at": NOW - timedelta(hours=3),
+        "key_id": "test-key",
+        "key_status": "active",
+        "last_heartbeat_at": NOW - timedelta(minutes=1),
+        "v2_health_status": "healthy",
+    }
+    fields.update(overrides)
+    return _row(**fields)
+
+
+def test_v2_healthy_heartbeat_not_flagged():
+    assert find_unhealthy_branches(FakeConnection([_v2_row()]), STALE_AFTER) == []
+
+
+def test_v2_degraded_heartbeat_flagged_with_its_error_class():
+    unhealthy = find_unhealthy_branches(
+        FakeConnection([_v2_row(v2_health_status="degraded", v2_last_error="retryable_infra")]), STALE_AFTER
+    )
+
+    assert unhealthy[0]["reasons"] == ["v2 collector heartbeat reports degraded (retryable_infra)"]
+
+
+def test_v2_error_heartbeat_flagged_with_its_error_class():
+    unhealthy = find_unhealthy_branches(
+        FakeConnection([_v2_row(v2_health_status="error", v2_last_error="auth_failure")]), STALE_AFTER
+    )
+
+    assert len(unhealthy) == 1
+    assert unhealthy[0]["reasons"] == ["v2 collector heartbeat reports error (auth_failure)"]
+
+
+def test_v2_error_heartbeat_flagged_without_an_error_class():
+    unhealthy = find_unhealthy_branches(FakeConnection([_v2_row(v2_health_status="error")]), STALE_AFTER)
+
+    assert unhealthy[0]["reasons"] == ["v2 collector heartbeat reports error"]
+
+
+def test_every_non_healthy_v2_health_status_alerts():
+    # Pins the monitor to the v2 contract's own enum, so a status added there cannot go silently unmonitored here.
+    from src.services.ingest_v2_models import HEALTH_STATUSES
+
+    for health_status in HEALTH_STATUSES:
+        unhealthy = find_unhealthy_branches(FakeConnection([_v2_row(v2_health_status=health_status)]), STALE_AFTER)
+        assert bool(unhealthy) == (health_status != "healthy"), health_status
+
+
+def test_v2_stale_heartbeat_still_flagged():
+    unhealthy = find_unhealthy_branches(
+        FakeConnection([_v2_row(last_heartbeat_at=NOW - timedelta(hours=2))]), STALE_AFTER
+    )
+
+    assert any("stale" in reason for reason in unhealthy[0]["reasons"])
+
+
 def test_healthy_heartbeat_not_flagged():
     conn = FakeConnection([_row(legacy_health_status="healthy")])
     assert find_unhealthy_branches(conn, STALE_AFTER) == []
