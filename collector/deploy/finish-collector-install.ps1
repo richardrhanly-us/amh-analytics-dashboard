@@ -16,7 +16,8 @@
     It adds no logic of its own to any step -- it calls the tools this
     bundle already ships, by their shipped names, from its own folder:
 
-        1. tools\set-api-token.ps1
+        1. <InstallRoot>\SortViewCollector.exe api-token check --config <ConfigPath>
+           and, only if a token must be stored, tools\set-api-token.ps1
         2. <InstallRoot>\SortViewCollector.exe preflight --config <ConfigPath>
         3. tools\preflight-system.ps1 -InstallRoot ... -ConfigPath ...
         4. <InstallRoot>\SortViewCollector.exe bootstrap --config <ConfigPath>
@@ -35,20 +36,31 @@
     GUIDED SETUP: setup.ps1 (the enrollment-driven setup) stores the token
     itself and then runs this script with -UseExistingMachineToken. That
     switch changes exactly one thing: step 1 neither asks keep/replace nor
-    runs the token tool -- it requires the Machine-scope token to already
-    exist (stopping if it does not) and uses it. Everything else is
+    runs the token tool -- it requires a token to already be on this
+    machine (stopping if there is none) and uses it. Everything else is
     unchanged, and without the switch the behavior below is exactly as
     before.
 
-    TOKEN: if a Machine-scope SORTVIEW_API_TOKEN already exists you are
-    asked whether to keep or replace it; the value is never displayed. A
-    Machine-scope variable set during this PowerShell session does NOT
-    reach this process's own environment, and the Collector's preflight and
-    bootstrap read the token from THEIR process environment -- so the
-    Machine value is copied into this process's SORTVIEW_API_TOKEN for the
-    duration of the run and the previous process value (if any) is
-    restored, or the variable removed, in a top-level finally. The token is
-    never written to a file, a log, a command line, or the console.
+    TOKEN (1.0.11): the Collector reads its token from
+    <DataRoot>\secrets\api_token.dpapi (DPAPI, Administrators + SYSTEM only;
+    collector/api_token_store.py). Step 1 first asks the Collector itself
+    (`SortViewCollector.exe api-token check`): a stored, usable token counts
+    as the existing token; a file that EXISTS but cannot be used stops the
+    script -- it is never bypassed. If a token exists you are asked whether
+    to keep or replace it; replacing, or entering a first one, always
+    stores it in api_token.dpapi via tools\set-api-token.ps1 (the value is
+    never displayed, written to a plain file, a log, or a command line).
+    With a stored token nothing is copied anywhere.
+
+    MIGRATION FALLBACK (1.0.11 ONLY): while api_token.dpapi is absent, an
+    existing Machine-scope SORTVIEW_API_TOKEN is still accepted, exactly as
+    before this release. A Machine-scope variable does NOT reach this
+    process's own environment on its own, and the Collector's preflight and
+    bootstrap read it from THEIR process environment -- so in that case
+    only, the Machine value is copied into this process's
+    SORTVIEW_API_TOKEN for the duration of the run and the previous process
+    value (if any) is restored, or the variable removed, in a top-level
+    finally. This script never sets or removes the Machine-scope variable.
 
     BOOTSTRAP: bootstrap's exit code 2 means BOTH "bad config" and "state
     already exists", so it is not trusted alone. state.json is inspected
@@ -315,17 +327,21 @@ function Get-ExistingTaskDecision {
 }
 
 function Get-TokenStepAction {
-    # What step 1 does. Without -UseExistingMachineToken this is the original
-    # behavior: ask keep/replace when a token exists, prompt for one when not.
-    #   UseExisting     -> switch given and a Machine token exists: use it, ask nothing
-    #   MissingExisting -> switch given but no Machine token: stop (never prompt)
-    #   AskKeepOrReplace / PromptForToken -> original interactive behavior
-    param([bool]$UseExisting, [bool]$MachineTokenPresent)
+    # What step 1 does. A token already stored in api_token.dpapi counts as "a token
+    # exists" first; in 1.0.11 only, a Machine-scope SORTVIEW_API_TOKEN also does
+    # (the migration fallback, used only while api_token.dpapi is absent).
+    # A PRESENT-but-unusable api_token.dpapi never reaches this function: it stops.
+    #   UseExisting     -> switch given and a token exists: use it, ask nothing
+    #   MissingExisting -> switch given but no token: stop (never prompt)
+    #   AskKeepOrReplace / PromptForToken -> interactive: keep/replace an existing
+    #                      token, or store a new one (always into api_token.dpapi)
+    param([bool]$UseExisting, [bool]$StoredTokenPresent, [bool]$MachineTokenPresent)
+    $tokenPresent = $StoredTokenPresent -or $MachineTokenPresent
     if ($UseExisting) {
-        if ($MachineTokenPresent) { return "UseExisting" }
+        if ($tokenPresent) { return "UseExisting" }
         return "MissingExisting"
     }
-    if ($MachineTokenPresent) { return "AskKeepOrReplace" }
+    if ($tokenPresent) { return "AskKeepOrReplace" }
     return "PromptForToken"
 }
 
@@ -425,20 +441,30 @@ try {
     Write-Host ""
     Write-Host "=== Step 1 of 5: API token ===" -ForegroundColor Cyan
 
+    # The Collector's own check of api_token.dpapi: 0 = stored and usable, 3 = no file at all.
+    # Anything else is a PRESENT but unusable file -- a stop, never bypassed by the fallback below.
+    & $ExePath api-token check --config $ConfigPath | Out-Host
+    $storedTokenCheck = $LASTEXITCODE
+    if ($storedTokenCheck -ne 0 -and $storedTokenCheck -ne 3) {
+        Stop-Setup -Step "step 1 of 5 (API token)" -Problem "api_token.dpapi exists but cannot be used (exit code $storedTokenCheck; reason above). It is never bypassed." `
+            -Unchanged "no preflight, bootstrap, or Scheduled Task step was run" `
+            -Fix "Store a valid token with tools\set-api-token.ps1 (it replaces the file), then re-run this script." -ExitCode 1
+    }
     $machineToken = [Environment]::GetEnvironmentVariable("SORTVIEW_API_TOKEN", "Machine")
     $runTokenTool = $true
-    $tokenAction = Get-TokenStepAction -UseExisting ([bool]$UseExistingMachineToken) `
+    $tokenAction = Get-TokenStepAction -UseExisting ([bool]$UseExistingMachineToken) -StoredTokenPresent ($storedTokenCheck -eq 0) `
         -MachineTokenPresent (-not [string]::IsNullOrWhiteSpace($machineToken))
+    $existingTokenLabel = if ($storedTokenCheck -eq 0) { "stored in api_token.dpapi" } else { "the Machine-scope SORTVIEW_API_TOKEN (1.0.11 migration fallback)" }
     if ($tokenAction -eq "MissingExisting") {
-        Stop-Setup -Step "step 1 of 5 (API token)" -Problem "-UseExistingMachineToken was given, but no Machine-scope SORTVIEW_API_TOKEN is set." `
+        Stop-Setup -Step "step 1 of 5 (API token)" -Problem "-UseExistingMachineToken was given, but no API token is stored on this machine (no api_token.dpapi and no Machine-scope SORTVIEW_API_TOKEN)." `
             -Unchanged "no preflight, bootstrap, or Scheduled Task step was run" `
             -Fix "Run setup.ps1 again (it stores the token), or run this script without -UseExistingMachineToken to enter one." -ExitCode 1
     }
     if ($tokenAction -eq "UseExisting") {
-        Write-Host "Using the API token already stored on this machine (Machine scope; value not shown)."
+        Write-Host "Using the API token already on this machine: $existingTokenLabel (value not shown)."
         $runTokenTool = $false
     } elseif ($tokenAction -eq "AskKeepOrReplace") {
-        Write-Host "An API token is already set on this machine (Machine scope; value not shown)."
+        Write-Host "An API token is already on this machine: $existingTokenLabel (value not shown). Replacing it stores the new token in api_token.dpapi."
         $choice = "Invalid"
         while ($choice -eq "Invalid") {
             $answer = $null
@@ -456,7 +482,7 @@ try {
 
     if ($runTokenTool) {
         try {
-            & $SetTokenScript
+            & $SetTokenScript -InstallRoot $InstallRoot -ConfigPath $ConfigPath
         } catch {
             Stop-Setup -Step "step 1 of 5 (API token)" -Problem "Token setup failed: $($_.Exception.Message)" `
                 -Unchanged "no preflight, bootstrap, or Scheduled Task step was run" -Fix "Re-run and enter the token again." -ExitCode 1
@@ -465,15 +491,22 @@ try {
         Write-Host "Keeping the existing token."
     }
 
+    # Verify with the Collector itself what it will actually use.
+    & $ExePath api-token check --config $ConfigPath | Out-Host
+    $storedTokenCheck = $LASTEXITCODE
     $machineToken = [Environment]::GetEnvironmentVariable("SORTVIEW_API_TOKEN", "Machine")
-    if ([string]::IsNullOrWhiteSpace($machineToken)) {
-        Stop-Setup -Step "step 1 of 5 (API token)" -Problem "No Machine-scope SORTVIEW_API_TOKEN is set after token setup." `
+    if ($storedTokenCheck -eq 0) {
+        Write-Host "  OK: token stored in api_token.dpapi (DPAPI, Administrators + SYSTEM only); nothing is copied into this process." -ForegroundColor Green
+    } elseif ($runTokenTool -or $storedTokenCheck -ne 3 -or [string]::IsNullOrWhiteSpace($machineToken)) {
+        Stop-Setup -Step "step 1 of 5 (API token)" -Problem "No usable API token after token setup (api_token.dpapi check exit code $storedTokenCheck; no Machine-scope fallback applies)." `
             -Unchanged "no preflight, bootstrap, or Scheduled Task step was run" -Fix "Re-run and enter the token when prompted." -ExitCode 1
+    } else {
+        # 1.0.11 MIGRATION FALLBACK ONLY: no api_token.dpapi yet, so the Collector uses the Machine-scope variable.
+        # Machine scope does not reach this process on its own -- see .DESCRIPTION.
+        $env:SORTVIEW_API_TOKEN = $machineToken
+        Write-Host "  OK: using the Machine-scope SORTVIEW_API_TOKEN -- the 1.0.11 migration fallback (no api_token.dpapi yet); made available to this run's child processes." -ForegroundColor Yellow
     }
-    # Machine scope does not reach this process on its own -- see .DESCRIPTION.
-    $env:SORTVIEW_API_TOKEN = $machineToken
     $machineToken = $null
-    Write-Host "  OK: token present (Machine scope) and made available to this run's child processes." -ForegroundColor Green
 
     # === STEP 2: interactive preflight ======================================
     Write-Host ""

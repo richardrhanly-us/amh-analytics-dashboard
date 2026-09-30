@@ -158,6 +158,38 @@ def test_bundle_contains_token_script(built_bundle):
     assert (built_bundle.bundle_dir / "tools" / "set-api-token.ps1").is_file()
 
 
+def test_the_api_token_store_is_a_packaged_runtime_module(built_bundle):
+    # config.py (every command) imports it, so a release without it could not load a config at all.
+    assert "collector/api_token_store.py" in build_release.COLLECTOR_RUNTIME_FILES
+    assert (built_bundle.bundle_dir / "collector" / "api_token_store.py").is_file()
+    manifest = json.loads((built_bundle.bundle_dir / "MANIFEST.json").read_text(encoding="utf-8"))
+    assert any(str(entry.get("path", "")).replace("\\", "/") == "collector/api_token_store.py" for entry in manifest["files"])
+
+
+def test_the_update_scripts_never_touch_the_api_token_file_or_the_environment_variable():
+    # Updating replaces only -InstallRoot: a stored api_token.dpapi (and, in the migration release, the Machine-scope
+    # variable) survives every update untouched, so an update can never be what loses the token.
+    for name in ("update-release.ps1", "update-collector.ps1"):
+        code = _code_only(_executable_body(_read_ps1(name)))
+        assert "api_token" not in code and "secrets" not in code, name
+        assert "SetEnvironmentVariable" not in code and "SORTVIEW_API_TOKEN" not in code, name
+
+
+def test_uninstall_only_reports_the_api_token_file_and_removes_it_only_with_purge_data():
+    code = _code_only(_executable_body(_read_ps1("uninstall-collector.ps1")))
+    token_lines = [line.strip() for line in code.splitlines() if "tokenFile" in line]
+    assert token_lines == [
+        '$tokenFile = Join-Path $DataRoot "secrets\\api_token.dpapi"',
+        "if (Test-Path -LiteralPath $tokenFile) {",
+        'Write-Host "The API token file $tokenFile is still in place (DPAPI, Administrators + SYSTEM only)." -ForegroundColor Yellow',
+        'Write-Host "No API token file ($tokenFile)."',
+    ]  # existence only: never read, copied, printed or deleted on its own
+    assert "Get-Content" not in code and "ReadAll" not in code
+    removals = [line.strip() for line in code.splitlines() if "Remove-Item" in line]
+    assert removals == ["Remove-Item -Recurse -Force $InstallRoot", "Remove-Item -Recurse -Force $DataRoot"]
+    assert code.index("if ($PurgeData) {") < code.index("Remove-Item -Recurse -Force $DataRoot")
+
+
 def test_bundle_contains_requirements(built_bundle):
     text = (built_bundle.bundle_dir / "requirements.txt").read_text(encoding="utf-8")
     assert "requests==" in text
@@ -466,11 +498,19 @@ def test_token_script_never_prints_plaintext_token():
                 assert "$plainToken" not in line
 
 
-def test_token_script_never_writes_token_to_a_file():
-    text = _read_ps1("set-collector-api-token.ps1")
-    assert "Set-Content" not in text
-    assert "WriteAllText" not in text
-    assert 'SetEnvironmentVariable($VariableName, $plainToken, "Machine")' in text
+def test_token_script_never_writes_token_to_a_file_or_the_environment():
+    code = _executable_body(_read_ps1("set-collector-api-token.ps1"))
+    for forbidden in ("Set-Content", "Add-Content", "Out-File", "WriteAllText", "WriteAllBytes", "Tee-Object",
+                      "Start-Transcript", "SetEnvironmentVariable", "$env:"):
+        assert forbidden not in code, forbidden
+    # The plain token goes to exactly one place: the Collector's STDIN, and is cleared right after.
+    uses = [line.strip() for line in code.splitlines() if "$plainToken" in line]
+    assert uses == [
+        "$plainToken = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)",
+        "$plainToken | & $frozenExe api-token set @tenantArgs | Out-Host",
+        "$plainToken | & $venvPython -m collector.api_token_store set @tenantArgs | Out-Host",
+        "$plainToken = $null",
+    ]
 
 
 def test_task_registration_default_remains_disabled():
@@ -1004,12 +1044,22 @@ def test_uninstall_removes_installroot_unconditionally_regardless_of_kind():
     assert "Remove-Item -Recurse -Force $InstallRoot" in text
 
 
-def test_set_api_token_has_no_installed_runtime_awareness():
-    # This script must remain completely mode-agnostic -- it only ever
-    # touches the Machine-scope env var, never inspects -InstallRoot at all.
-    text = _read_ps1("set-collector-api-token.ps1")
-    assert "InstallRoot" not in text
-    assert "SortViewCollector.exe" not in text
+def test_set_api_token_delegates_storage_to_the_collectors_own_api_token_command_for_either_install_kind():
+    # 1.0.11: the script owns no file format and no cryptography -- the installed (or, for guided setup, the bundle's)
+    # Collector writes api_token.dpapi. Frozen: SortViewCollector.exe api-token set; source: python -m collector.api_token_store.
+    code = _executable_body(_read_ps1("set-collector-api-token.ps1"))
+    assert 'Join-Path $InstallRoot "SortViewCollector.exe"' in code
+    assert 'Join-Path $InstallRoot ".venv\\Scripts\\python.exe"' in code
+    assert "api-token set @tenantArgs" in code and "-m collector.api_token_store set @tenantArgs" in code
+    for crypto in ("ProtectedData", "CryptProtectData", "DataProtectionScope", "icacls", "Set-Acl"):
+        assert crypto not in code, crypto
+    # The token never becomes an argument: the only arguments are the tenant (config, or the three explicit values).
+    assert '$tenantArgs = @("--config", $ConfigPath)' in code
+    assert '$tenantArgs = @("--customer-id", [string]$CustomerId, "--branch-id", [string]$BranchId, "--data-root", $DataRoot)' in code
+    assert "--token" not in code
+    # A failure is a thrown error, so an in-process caller (setup.ps1's Invoke-SetupTool) can never mistake it for success.
+    assert "if ($storeExitCode -ne 0) {" in code
+    assert "throw" in code[code.index("if ($storeExitCode -ne 0) {"):]
 
 
 # =========================================================================
@@ -1786,22 +1836,39 @@ def test_finish_prompts_keep_or_replace_only_when_a_machine_token_exists():
     assert "-ExitCode 1" in main[prompt : main.index("$choice = Get-TokenChoice")]
 
 
-def test_finish_runs_the_token_tool_only_when_needed_and_verifies_the_machine_token_after():
+def test_finish_checks_the_stored_token_first_and_never_bypasses_a_damaged_one():
+    main = _finish_main()
+    first_check = main.index("& $ExePath api-token check --config $ConfigPath | Out-Host")
+    damaged = main.index("if ($storedTokenCheck -ne 0 -and $storedTokenCheck -ne 3) {")
+    decide = main.index("$tokenAction = Get-TokenStepAction")
+
+    assert main.index("$hadProcessToken =") < first_check < damaged < decide
+    block = main[damaged : main.index("\n    }\n", damaged)]
+    assert "Stop-Setup" in block and "-ExitCode 1" in block and "never bypassed" in block
+    assert "-StoredTokenPresent ($storedTokenCheck -eq 0)" in main[decide : main.index('if ($tokenAction -eq "MissingExisting")')]
+
+
+def test_finish_runs_the_token_tool_only_when_needed_and_verifies_with_the_collector_after():
     main = _finish_main()
     run_tool = main.index("if ($runTokenTool) {")
-    call = main.index("& $SetTokenScript")
-    verify = main.index("if ([string]::IsNullOrWhiteSpace($machineToken)) {")
+    call = main.index("& $SetTokenScript -InstallRoot $InstallRoot -ConfigPath $ConfigPath")
+    verify = main.index("& $ExePath api-token check --config $ConfigPath | Out-Host", call)
 
-    assert run_tool < call < verify
-    assert "-ExitCode 1" in main[verify : main.index("\n    }\n", verify)]
-    assert 'GetEnvironmentVariable("SORTVIEW_API_TOKEN", "Machine")' in main[call:verify]
+    assert run_tool < call < verify < main.index("& $ExePath preflight")
+    after = main[verify : main.index("& $ExePath preflight")]
+    # A stored token is used as-is; a token the tool just stored MUST check out (no fallback can stand in for it);
+    # otherwise only an ABSENT file (exit 3) plus a Machine token is the migration fallback.
+    assert "if ($storedTokenCheck -eq 0) {" in after
+    assert "} elseif ($runTokenTool -or $storedTokenCheck -ne 3 -or [string]::IsNullOrWhiteSpace($machineToken)) {" in after
+    assert "-ExitCode 1" in after
+    assert after.index("} elseif ($runTokenTool") < after.index("$env:SORTVIEW_API_TOKEN = $machineToken")
 
 
 TOKEN_LINE_ALLOW_LIST = {
     '$machineToken = [Environment]::GetEnvironmentVariable("SORTVIEW_API_TOKEN", "Machine")',
     # Whether a token exists (never its value) feeds Get-TokenStepAction.
     "-MachineTokenPresent (-not [string]::IsNullOrWhiteSpace($machineToken))",
-    "if ([string]::IsNullOrWhiteSpace($machineToken)) {",
+    "} elseif ($runTokenTool -or $storedTokenCheck -ne 3 -or [string]::IsNullOrWhiteSpace($machineToken)) {",
     "$env:SORTVIEW_API_TOKEN = $machineToken",
     "$machineToken = $null",
     '$hadProcessToken = Test-Path -Path "Env:SORTVIEW_API_TOKEN"',
@@ -1833,16 +1900,17 @@ def test_finish_never_writes_the_token_or_anything_else_to_a_file_or_a_command_l
         "Write-Information", "Out-String", ">>", " > ", "2>",
     ):
         assert forbidden not in code, forbidden
-    # No child process is given anything token-shaped on its command line.
+    # No child process is given anything token-shaped on its command line (the `api-token` subcommand NAME is not a token).
     for line in code.splitlines():
         if line.strip().startswith("& $"):
-            assert "token" not in line.replace("$SetTokenScript", "").lower(), line
+            assert "token" not in line.replace("$SetTokenScript", "").replace("api-token check", "").lower(), line
 
 
 def test_finish_copies_the_machine_token_into_the_process_environment_before_the_first_child_that_needs_it():
+    # Only on the migration-fallback branch (no api_token.dpapi); with a stored token nothing is copied at all.
     main = _finish_main()
     saved = main.index("$previousProcessToken = $env:SORTVIEW_API_TOKEN")
-    verified = main.index("if ([string]::IsNullOrWhiteSpace($machineToken)) {")
+    verified = main.index("} elseif ($runTokenTool -or $storedTokenCheck -ne 3 -or [string]::IsNullOrWhiteSpace($machineToken)) {")
     copied = main.index("$env:SORTVIEW_API_TOKEN = $machineToken")
 
     assert main.index("$hadProcessToken =") < saved < copied

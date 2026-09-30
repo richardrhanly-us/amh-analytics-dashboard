@@ -31,7 +31,8 @@
          present, and the bundled runtime's own `version` command agreeing
          with MANIFEST.json (the canonical release version).
       2. Read-only machine checks: an existing install, Scheduled Task or
-         SORTVIEW_API_TOKEN is never adopted, replaced or touched silently. A
+         stored API token (api_token.dpapi) is never adopted, replaced or
+         touched silently. A
          saved enrollment from an interrupted setup is recognised here (see
          RESUME).
       3. The three Tech Logic source files are located and must EXIST.
@@ -41,9 +42,14 @@
       5. The enrollment code is read as a hidden SecureString and redeemed with
          POST /collector/enroll (sending the code, this computer's name and the
          bundle's canonical version). The response is validated strictly.
-      6. The returned token is stored IMMEDIATELY as the Machine-scope
-         SORTVIEW_API_TOKEN by tools\set-api-token.ps1 -- before installing
-         anything -- and the non-secret enrollment details are saved for RESUME,
+      6. The returned token is stored IMMEDIATELY in
+         <DataRoot>\secrets\api_token.dpapi (DPAPI, Administrators + SYSTEM
+         only) by tools\set-api-token.ps1, which pipes it on STDIN to the
+         BUNDLE's own runtime (`api-token set` with the issued customer/branch
+         and -DataRoot -- the exact file the installed config will read) --
+         before installing anything. The Collector then verifies it
+         (`api-token check`). The Machine-scope SORTVIEW_API_TOKEN is neither
+         set nor read. The non-secret enrollment details are saved for RESUME,
          read back and checked. Installing does not start until that record
          exists and verifies; if it cannot be saved or verified, setup stops here
          (the token stays stored).
@@ -72,7 +78,7 @@
 
     RESUME. Enrollment is single-use, and the code is never made reusable -- so
     a local failure after the code was redeemed must not need a new one. Right
-    after redemption the token is stored (Machine scope) and ONLY the non-secret
+    after redemption the token is stored (api_token.dpapi) and ONLY the non-secret
     details needed to continue are saved to
     <DataRoot>\setup\enrollment-recovery.json: the three IDs, the API address and
     the release version (never the enrollment code or the token -- the writer
@@ -122,9 +128,9 @@
     Same as install.ps1.
 
 .PARAMETER ReplaceExistingToken
-    Allow replacing a SORTVIEW_API_TOKEN already set on this machine (e.g. one
-    another SortView component uses). Without it, an existing token is
-    replaced only after an interactive confirmation.
+    Allow replacing an API token already stored on this machine
+    (api_token.dpapi). Without it, an existing token is replaced only after an
+    interactive confirmation.
 
 .PARAMETER EnableTask
     After EVERY step succeeded, enable the Scheduled Task without asking.
@@ -208,18 +214,21 @@ function ConvertFrom-SecureStringPlain {
     }
 }
 
-function Get-Sha256Hex {
-    param([string]$Text)
-    $sha = [Security.Cryptography.SHA256]::Create()
-    try {
-        return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Text))).Replace("-", "").ToLowerInvariant())
-    } finally {
-        $sha.Dispose()
-    }
+function Test-ApiTokenStored {
+    # Whether <DataRoot>\secrets\api_token.dpapi exists -- never its content. (Collector 1.0.11+ keeps its
+    # token there, DPAPI-protected, Administrators + SYSTEM only; this elevated script may look.)
+    param([string]$DataRoot)
+    return (Test-Path -LiteralPath (Join-Path $DataRoot "secrets\api_token.dpapi"))
 }
 
-function Get-MachineToken {
-    return [Environment]::GetEnvironmentVariable("SORTVIEW_API_TOKEN", "Machine")
+function Invoke-ApiTokenCheck {
+    # The Collector's own verification of the stored token -- DPAPI, ACL and customer/branch binding --
+    # run with the bundle's runtime. Returns its exit code (0 = stored and usable). The token itself never
+    # comes back into this script.
+    param([string]$ExePath, [int]$CustomerId, [int]$BranchId, [string]$DataRoot)
+    $global:LASTEXITCODE = $null
+    & $ExePath api-token check --customer-id $CustomerId --branch-id $BranchId --data-root $DataRoot | Out-Host
+    return [int]$global:LASTEXITCODE
 }
 
 function Get-SortViewTask {
@@ -631,7 +640,7 @@ function Get-EnrollmentStateLines {
     if ($null -ne $script:State -and $script:State.CodeConsumed) {
         $lines += "The one-time enrollment code HAS BEEN USED and cannot be used again."
         if ($script:State.TokenStored) {
-            $lines += "The permanent API token IS stored on this machine (Machine scope; never shown)."
+            $lines += "The permanent API token IS stored on this machine (api_token.dpapi; never shown)."
             if ($script:State.RecoveryOnDisk) {
                 $lines += "The non-secret enrollment details are saved at '$($script:State.RecoveryPath)': run setup.ps1 again to RESUME -- no new enrollment code is needed."
             } else {
@@ -676,12 +685,11 @@ function Stop-Setup {
 function Invoke-Enrollment {
     # Redeems the code. Returns Outcome (Enrolled / Rejected / RateLimited /
     # Unreachable / Redirected / BadResponse / ServerError), a non-secret Detail,
-    # and -- only when Enrolled -- the three IDs, the token as a SecureString and
-    # the SHA-256 of the token (to verify what was stored). The plain token and
-    # the plain code never leave this function.
+    # and -- only when Enrolled -- the three IDs and the token as a SecureString.
+    # The plain token and the plain code never leave this function.
     param([string]$ApiUrl, [SecureString]$Code, [string]$HostName, [string]$Version)
 
-    $outcome = { param($name, $detail) return [pscustomobject]@{ Outcome = $name; Detail = $detail; CustomerId = $null; BranchId = $null; InstallationId = $null; Token = $null; TokenHash = $null } }
+    $outcome = { param($name, $detail) return [pscustomobject]@{ Outcome = $name; Detail = $detail; CustomerId = $null; BranchId = $null; InstallationId = $null; Token = $null } }
 
     $plainCode = ConvertFrom-SecureStringPlain -Secure $Code
     $body = $null
@@ -705,13 +713,11 @@ function Invoke-Enrollment {
                 return (& $outcome "BadResponse" "SortView answered, but the response was not valid ($($parsed.Problem)).")
             }
             $secureToken = ConvertTo-SecureString -String $parsed.AgentToken -AsPlainText -Force
-            $tokenHash = Get-Sha256Hex -Text $parsed.AgentToken
             $result = & $outcome "Enrolled" "enrolled"
             $result.CustomerId = $parsed.CustomerId
             $result.BranchId = $parsed.BranchId
             $result.InstallationId = $parsed.InstallationId
             $result.Token = $secureToken
-            $result.TokenHash = $tokenHash
             $parsed.AgentToken = $null
             $parsed = $null
             return $result
@@ -930,9 +936,7 @@ function Invoke-SetupMain {
         }
 
         $recovery = Get-SetupRecovery -DataRoot $DataRoot
-        $existingToken = Get-MachineToken
-        $tokenPresent = -not [string]::IsNullOrWhiteSpace($existingToken)
-        $existingToken = $null
+        $tokenPresent = [bool](Test-ApiTokenStored -DataRoot $DataRoot)
         $mode = "Fresh"
         $customerId = $null
         $branchId = $null
@@ -948,7 +952,7 @@ function Invoke-SetupMain {
 
         if ($recovery.Status -eq "Valid") {
             if (-not $tokenPresent) {
-                Stop-Setup -Step "step 2 (machine)" -Problem "A saved enrollment was found (installation $($recovery.Record.InstallationId)), but this computer has no API token (SORTVIEW_API_TOKEN, Machine scope) to go with it." `
+                Stop-Setup -Step "step 2 (machine)" -Problem "A saved enrollment was found (installation $($recovery.Record.InstallationId)), but this computer has no API token (api_token.dpapi) to go with it." `
                     -Unchanged "the saved record and everything else, and the enrollment code was not requested" `
                     -Fix "The token cannot be recovered and the used enrollment code cannot be reused. Ask your SortView administrator for a NEW enrollment code, delete the saved record '$($recovery.Path)' (non-secret IDs only), then run setup.ps1 again." -ExitCode 2
             }
@@ -997,13 +1001,13 @@ function Invoke-SetupMain {
                     -Fix "An earlier setup may be unfinished. If the API token was already stored, resume the remaining steps with: tools\finish-install.ps1 (safe to re-run). To start over, run tools\uninstall.ps1 first, then setup.ps1 with a NEW enrollment code." -ExitCode 2
             }
             if ($tokenPresent -and -not $ReplaceExistingToken) {
-                Write-Host "  An API token (SORTVIEW_API_TOKEN) is already set on this computer (Machine scope; value not shown)." -ForegroundColor Yellow
-                Write-Host "  Setup would replace it with the token issued for this installation. If another SortView component uses it, that component would stop working."
+                Write-Host "  An API token is already stored on this computer ($DataRoot\secrets\api_token.dpapi; value not shown)." -ForegroundColor Yellow
+                Write-Host "  Setup would replace it with the token issued for this installation."
                 $answer = Read-SetupAnswer -Prompt "Replace the existing token? [y/N] (Enter = no)"
                 if ($null -eq $answer -or @("y", "yes") -notcontains $answer.Trim().ToLowerInvariant()) {
-                    Stop-Setup -Step "step 2 (machine)" -Problem "A SORTVIEW_API_TOKEN already exists on this computer and replacing it was not confirmed." `
+                    Stop-Setup -Step "step 2 (machine)" -Problem "An API token is already stored on this computer (api_token.dpapi) and replacing it was not confirmed." `
                         -Unchanged "the existing token, and the enrollment code was not requested" `
-                        -Fix "If it is a leftover from an unfinished setup, run setup.ps1 again and answer y (or pass -ReplaceExistingToken). If another SortView component uses it, do not replace it." -ExitCode 2
+                        -Fix "If it is a leftover from an unfinished setup, run setup.ps1 again and answer y (or pass -ReplaceExistingToken)." -ExitCode 2
                 }
             }
             Write-Host "  OK: no existing Collector install; token: $(if ($tokenPresent) { 'existing token will be replaced (confirmed)' } else { 'none set' })." -ForegroundColor Green
@@ -1066,22 +1070,23 @@ function Invoke-SetupMain {
             # === STEP 6: store the token, immediately; then save what a resume needs ====
             Write-Host ""
             Write-Host "=== Step 6: storing the API token ===" -ForegroundColor Cyan
-            $toolExit = Invoke-SetupTool -Path $setTokenScript -Parameters @{ Token = $enrollment.Token }
+            # Stored with the BUNDLE's runtime (nothing is installed yet), for exactly the customer/branch and
+            # data root install.ps1 will then write -- so the file is where the installed config will look.
+            $toolExit = Invoke-SetupTool -Path $setTokenScript -Parameters @{
+                Token = $enrollment.Token; ExePath = $runtimeExe; CustomerId = $customerId; BranchId = $branchId; DataRoot = $DataRoot
+            }
             $enrollment.Token = $null
             if ($toolExit -ne 0) {
                 Stop-Setup -Step "step 6 (API token)" -Problem "The token could not be stored (exit code $toolExit)." `
                     -Unchanged "nothing was installed" -Fix "Ask your SortView administrator for a new enrollment code, then run setup.ps1 again." -ExitCode 1
             }
-            $stored = Get-MachineToken
-            $storedHash = if ([string]::IsNullOrWhiteSpace($stored)) { $null } else { Get-Sha256Hex -Text $stored }
-            $stored = $null
-            if ($null -eq $storedHash -or $storedHash -cne $enrollment.TokenHash) {
-                Stop-Setup -Step "step 6 (API token)" -Problem "After storing it, the Machine-scope SORTVIEW_API_TOKEN is not the token that was issued." `
+            $checkExit = Invoke-ApiTokenCheck -ExePath $runtimeExe -CustomerId $customerId -BranchId $branchId -DataRoot $DataRoot
+            if ($checkExit -ne 0) {
+                Stop-Setup -Step "step 6 (API token)" -Problem "After storing it, the Collector could not verify the stored API token (api-token check exit code $checkExit)." `
                     -Unchanged "nothing was installed" -Fix "Ask your SortView administrator for a new enrollment code, then run setup.ps1 again." -ExitCode 1
             }
             $script:State.TokenStored = $true
-            $enrollment.TokenHash = $null
-            Write-Host "  OK: token stored (Machine scope; value never shown)." -ForegroundColor Green
+            Write-Host "  OK: token stored in api_token.dpapi (DPAPI, Administrators + SYSTEM only; value never shown)." -ForegroundColor Green
 
             # The IDs exist only in memory until now, and the code just used can never be used again. So
             # the non-secret details (never the code or the token) are saved, read back and checked
@@ -1232,7 +1237,6 @@ function Invoke-SetupMain {
         # Best-effort scrubbing of secret material held by this run.
         if ($null -ne $enrollment) {
             $enrollment.Token = $null
-            $enrollment.TokenHash = $null
         }
         $code = $null
         $enrollment = $null

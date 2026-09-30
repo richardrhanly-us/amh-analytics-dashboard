@@ -102,3 +102,36 @@ def test_main_writes_json_output(tmp_path, monkeypatch):
     doc = json.loads(output_path.read_text(encoding="utf-8"))
     assert doc["config_loaded"] is True
     assert doc["task_name"] == TASK_NAME
+
+
+# --- API token: the SOURCE only, never the token --------------------------------------------------------------------------
+
+SECRET = "CANARY-support-info-token-000000000001"
+
+
+def test_support_info_shows_the_environment_migration_fallback_and_never_the_token(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", SECRET)
+    output_path = tmp_path / "support-info.json"
+
+    assert main(["--config", str(_write_config(tmp_path)), "--output", str(output_path)]) == 0
+
+    out = capsys.readouterr().out
+    written = output_path.read_text(encoding="utf-8")
+    assert "API token source:    environment (migration fallback)" in out
+    assert json.loads(written)["api_token_source"] == "environment"
+    for text in (out, written):
+        assert SECRET not in text and str(len(SECRET)) not in text
+
+
+def test_support_info_shows_a_dpapi_source_and_never_the_token(tmp_path, monkeypatch, capsys):
+    from collector import api_token_store
+
+    monkeypatch.delenv("SORTVIEW_API_TOKEN", raising=False)
+    monkeypatch.setattr(api_token_store.DpapiTokenStore, "load", lambda self, c, b: SECRET)
+
+    info = gather_support_info(str(_write_config(tmp_path)))
+    main(["--config", str(_write_config(tmp_path))])
+
+    out = capsys.readouterr().out
+    assert info.api_token_source == "dpapi" and "API token source:    dpapi" in out
+    assert SECRET not in out and SECRET not in json.dumps(info.to_dict()) and SECRET not in repr(info)

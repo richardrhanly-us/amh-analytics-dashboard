@@ -123,7 +123,7 @@ def test_dispatcher_default_argv_uses_sys_argv(monkeypatch):
     assert dispatcher.main() == 2
 
 
-def test_dispatcher_contains_all_eight_subcommands():
+def test_dispatcher_contains_all_nine_subcommands():
     # task-xml added for the frozen release-bundle integration phase --
     # deployment/Task-Scheduler-XML generation, not Collector ingestion.
     # version added for release-version hardening -- a config-free report of
@@ -133,10 +133,12 @@ def test_dispatcher_contains_all_eight_subcommands():
     # v2-key added so the AMH's Python-free frozen install can run the local
     # DPAPI secret provisioning CLI docs/collector-v2.md already documents
     # as `python -m collector.v2_keys init|check` (see collector/v2_keys.py);
-    # the five earlier subcommands are unchanged.
+    # the five earlier subcommands are unchanged. api-token added (1.0.11) so
+    # the frozen install can store the API bearer token in api_token.dpapi
+    # (collector/api_token_store.py), reading it from stdin.
     assert set(dispatcher._SUBCOMMANDS) == {
         "run", "preflight", "bootstrap", "support-info", "task-xml",
-        "identity-collision-diag", "v2-key", "version",
+        "identity-collision-diag", "v2-key", "api-token", "version",
     }
     assert {"run", "preflight", "bootstrap", "support-info", "task-xml"} <= set(dispatcher._SUBCOMMANDS)
 
@@ -210,6 +212,7 @@ def test_the_other_subcommands_are_unchanged_by_the_version_addition(capsys):
     assert dispatcher.main(["support-info", "--config", "does-not-exist.json"]) == 2
     assert dispatcher.main(["identity-collision-diag", "--config", "does-not-exist.json"]) == 2
     assert dispatcher.main(["v2-key", "check", "--config", "does-not-exist.json"]) == 2
+    assert dispatcher.main(["api-token", "check", "--config", "does-not-exist.json"]) == 2
     out = capsys.readouterr().out
     assert "config_loads" in out and "did NOT load" in out
     assert dispatcher.main(["bogus"]) == 2
@@ -254,6 +257,15 @@ def test_dispatcher_imports_are_static_not_dynamic_importlib():
     assert "from collector.task_settings import main" in full_text
     assert "from collector.identity_collision_diag import main" in full_text
     assert "from collector.v2_keys import main" in full_text
+    assert "from collector.api_token_store import main" in full_text
+
+
+def test_dispatcher_api_token_forwards_to_collector_api_token_store_main(monkeypatch):
+    seen: list[list[str] | None] = []
+    monkeypatch.setattr("collector.api_token_store.main", lambda argv: seen.append(argv) or 7)
+
+    assert dispatcher.main(["api-token", "check", "--config", "x.json"]) == 7
+    assert seen == [["check", "--config", "x.json"]]
 
 
 # --- static checks on the PyInstaller spec (CI does not build PyInstaller) --
@@ -292,7 +304,7 @@ def test_spec_hiddenimports_cover_all_seven_subcommand_targets():
     for module in (
         "collector.run", "collector.preflight", "collector.bootstrap_state",
         "collector.support_info", "collector.task_settings", "collector.identity_collision_diag",
-        "collector.v2_keys",
+        "collector.v2_keys", "collector.api_token_store",
     ):
         assert f'"{module}"' in text
 

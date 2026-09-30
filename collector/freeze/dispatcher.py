@@ -53,7 +53,9 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 
-_SUBCOMMANDS = ("run", "preflight", "bootstrap", "support-info", "task-xml", "identity-collision-diag", "v2-key", "version")
+_SUBCOMMANDS = (
+    "run", "preflight", "bootstrap", "support-info", "task-xml", "identity-collision-diag", "v2-key", "api-token", "version",
+)
 
 
 def _usage() -> str:
@@ -112,6 +114,11 @@ def main(argv: list[str] | None = None) -> int:
         # call, no state/cursor write -- identical safety contract to
         # `run --v2-dry-run`.
         from collector.identity_collision_diag import main as sub_main
+    elif subcommand == "api-token":
+        # Local API-token provisioning (set|check) into the DPAPI-protected
+        # api_token.dpapi; see collector/api_token_store.py. The token is
+        # read from STDIN by that module -- never an argument here.
+        from collector.api_token_store import main as sub_main
     else:  # "v2-key" -- local DPAPI secret provisioning (init/check), not
         # Collector ingestion; see collector/v2_keys.py's own docstring.
         # `sub_main` here is v2_keys.main itself, which parses its own

@@ -107,6 +107,7 @@ PRODUCT_NAME = "SortView Collector"
 # alike) to run there, not a build-time-only module like this file itself.
 COLLECTOR_RUNTIME_FILES: tuple[str, ...] = (
     "collector/__init__.py",
+    "collector/api_token_store.py",
     "collector/bootstrap_state.py",
     "collector/config.py",
     "collector/identity_collision_diag.py",
@@ -304,10 +305,9 @@ def _release_facing_example_config(source_path: Path) -> str:
     # credential itself. See agent/uploader.py for this repo's established
     # inline-nosec convention for a genuine tool false positive.
     doc["_comment_token"] = (  # nosec B105
-        "SORTVIEW_API_TOKEN is READ FROM THE ENVIRONMENT ONLY -- it must never appear in "
-        "this file. Set it as a Machine-scope environment variable via install.ps1's token "
-        "step (or tools\\set-api-token.ps1 directly) before running the collector or its "
-        "preflight check."
+        "The API token must never appear in this file. It is stored DPAPI-protected in "
+        "<DataRoot>\\secrets\\api_token.dpapi by tools\\set-api-token.ps1 (after install.ps1) "
+        "before running the collector or its preflight check."
     )
     return json.dumps(doc, indent=2) + "\n"
 

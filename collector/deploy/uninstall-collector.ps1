@@ -27,10 +27,12 @@
        after an interactive confirmation prompt (bypassed only by also
        passing -Confirm:$false, an explicit double opt-in for a
        destructive action).
-    4. Prints whether the Machine-scope SORTVIEW_API_TOKEN environment
-       variable still exists and exactly how to remove it -- this script
-       never removes it automatically, since it may be a shared secret
-       intentionally left in place (e.g. if reinstalling shortly after).
+    4. Prints whether the API token file -DataRoot\secrets\api_token.dpapi
+       exists (never its contents; it is kept with -DataRoot unless
+       -PurgeData), and whether the legacy Machine-scope SORTVIEW_API_TOKEN
+       environment variable still exists and exactly how to remove it --
+       this script never removes that variable automatically, since it may
+       be intentionally left in place (e.g. the 1.0.11 migration fallback).
 
 .EXAMPLE
     # Keep config/state/status/logs (the default, recommended way):
@@ -101,6 +103,16 @@ if (Test-Path $DataRoot) {
 
 Write-Host ""
 Write-Host "=== 4. API token ===" -ForegroundColor Cyan
+# Existence only -- the file is never opened here. It lives under -DataRoot, so it is
+# removed exactly when -PurgeData removed -DataRoot above, and kept otherwise (a
+# reinstall, or setup.ps1 resuming an interrupted install, reuses it).
+$tokenFile = Join-Path $DataRoot "secrets\api_token.dpapi"
+if (Test-Path -LiteralPath $tokenFile) {
+    Write-Host "The API token file $tokenFile is still in place (DPAPI, Administrators + SYSTEM only)." -ForegroundColor Yellow
+    Write-Host "It was kept with the rest of -DataRoot; pass -PurgeData to remove it, or delete that one file."
+} else {
+    Write-Host "No API token file ($tokenFile)."
+}
 $tokenStillSet = [Environment]::GetEnvironmentVariable("SORTVIEW_API_TOKEN", "Machine")
 if ($tokenStillSet) {
     Write-Host "SORTVIEW_API_TOKEN is STILL SET as a Machine-scope environment variable." -ForegroundColor Yellow

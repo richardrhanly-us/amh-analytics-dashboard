@@ -14,7 +14,9 @@ Three layers, deliberately distinct:
      scratch "bundle" whose install.ps1 / set-api-token.ps1 / finish-install.ps1
      are stubs carrying the REAL parameter blocks (so a parameter the real tool does
      not have fails binding here). Only the side-effect wrappers are replaced: the
-     admin check, HTTP, prompts, the Machine-scope token, and the Scheduled Task --
+     admin check, HTTP, prompts, the stored API token (api_token.dpapi -- modelled by
+     the fake "machine_token.txt", its name kept from when it was a Machine-scope
+     variable), and the Scheduled Task --
      nothing here touches the real machine, registry, Task Scheduler or network.
      Invoke-SetupTool, the ordering, the gating and the error handling all run for real.
 """
@@ -154,7 +156,7 @@ def test_setup_has_exactly_one_plaintext_conversion_of_each_secret_and_never_exp
 
 
 def test_the_token_reaches_the_token_tool_as_a_secure_string_parameter_never_a_command_line():
-    assert "Parameters @{ Token = $enrollment.Token }" in SETUP_BODY
+    assert "Token = $enrollment.Token; ExePath = $runtimeExe; CustomerId = $customerId; BranchId = $branchId; DataRoot = $DataRoot" in SETUP_BODY
     for forbidden in ("Start-Process", "cmd /c", "cmd.exe", "-ArgumentList", "Invoke-Expression", "iex "):
         assert forbidden not in SETUP_BODY, forbidden
     # The child tools run in-process through & (so a SecureString never becomes an argv entry).
@@ -331,17 +333,20 @@ def test_install_script_gains_only_an_optional_switch_that_hides_the_next_steps_
     assert text.count("SuppressNextSteps") == 2  # the declaration and the one guard; nothing else reads it
 
 
-def test_token_script_takes_an_optional_secure_string_and_stays_quiet_and_unchanged_otherwise():
+def test_token_script_takes_an_optional_secure_string_and_never_prints_anything_derived_from_the_token():
     text = _read(TOKEN_SOURCE)
+    code = "\n".join(l for l in _executable_body(text).splitlines() if not l.strip().startswith("#"))
 
     assert "[SecureString]$Token" in text
     assert '$PSBoundParameters.ContainsKey("Token")' in text
     assert 'Read-Host -AsSecureString -Prompt "Paste the SortView Collector API token (input hidden)"' in text  # default unchanged
-    supplied = text[text.index("if ($tokenFromCaller) {"):text.index("# Confirmation only")]
-    supplied_code = "\n".join(l for l in supplied.splitlines() if not l.strip().startswith("#"))
-    assert "sha256" not in supplied_code.lower() and "length" not in supplied_code.lower()  # nothing derived from the token
-    assert "return" in supplied
-    assert text.count('SetEnvironmentVariable($VariableName, $plainToken, "Machine")') == 1  # one storage implementation
+    assert "sha256" not in code.lower() and ".length" not in code.lower().replace("$secure.length", "")  # nothing derived
+    # One storage implementation -- the Collector's own `api-token set`, fed on STDIN; never the environment.
+    assert "SetEnvironmentVariable" not in code
+    assert code.count("api-token set @tenantArgs") == 1 and code.count("-m collector.api_token_store set @tenantArgs") == 1
+    # Guided setup's explicit tenant: all three together, or none.
+    assert "[int]$CustomerId" in text and "[int]$BranchId" in text and "[string]$DataRoot" in text and "[string]$ExePath" in text
+    assert "-CustomerId, -BranchId and -DataRoot must be given together." in text
 
 
 def test_finish_script_gains_only_the_use_existing_token_switch():
@@ -611,19 +616,107 @@ def test_existing_install_detection_reports_files_and_never_modifies_them(tmp_pa
     assert (install_root / "SortViewCollector.exe").read_text().strip() == "x"
 
 
+_ELEVATION_CHECK = "if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {"
+
+
+def _token_wrapper_without_the_elevation_check(tmp_path: Path) -> Path:
+    """The REAL set-collector-api-token.ps1 with exactly one change: its elevation check is short-circuited, because the test
+    process is not elevated. Asserted to be the only difference."""
+    text = _read(TOKEN_SOURCE)
+    assert text.count(_ELEVATION_CHECK) == 1
+    copy = tmp_path / "set-api-token.ps1"
+    copy.write_text(text.replace(_ELEVATION_CHECK, "if ($false) {"), encoding="utf-8")
+    return copy
+
+
+def _fake_collector(tmp_path: Path, exit_code: int = 0) -> Path:
+    """A stand-in `SortViewCollector.exe` that records its arguments and everything it receives on STDIN."""
+    fake = tmp_path / "FakeCollector.cmd"
+    fake.write_text(
+        "@echo off\r\n"
+        f'echo %* > "{tmp_path / "args.txt"}"\r\n'
+        f'findstr "^" > "{tmp_path / "stdin.txt"}"\r\n'
+        "echo api token stored and protected (value not shown)\r\n"
+        f"exit /b {exit_code}\r\n",
+        encoding="ascii",
+    )
+    return fake
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("tenant", ["config", "explicit"])
+def test_the_token_wrapper_hands_the_token_to_the_collector_on_stdin_and_never_as_an_argument(tmp_path, tenant):
+    wrapper = _token_wrapper_without_the_elevation_check(tmp_path)
+    fake = _fake_collector(tmp_path)
+    config = tmp_path / "collector_config.json"
+    config.write_text("{}", encoding="utf-8")
+    tenant_args = (f"-ConfigPath {ps_quote(config)}" if tenant == "config"
+                   else f"-CustomerId 7 -BranchId 3 -DataRoot {ps_quote(tmp_path / 'data')}")
+
+    result = _run_ps(
+        f"$t = ConvertTo-SecureString {ps_quote(SENTINEL_TOKEN)} -AsPlainText -Force\n"
+        f"& {ps_quote(wrapper)} -ExePath {ps_quote(fake)} {tenant_args} -Token $t\n"
+        "'WRAPPER_OK'"
+    )
+
+    assert "WRAPPER_OK" in result.stdout, result.stdout + result.stderr
+    assert (tmp_path / "stdin.txt").read_text(encoding="ascii").strip() == SENTINEL_TOKEN  # the token went on STDIN...
+    args = (tmp_path / "args.txt").read_text(encoding="ascii")
+    assert SENTINEL_TOKEN not in args  # ...and never on the command line
+    assert args.split()[:2] == ["api-token", "set"]
+    expected = ["--config", str(config)] if tenant == "config" else ["--customer-id", "7", "--branch-id", "3", "--data-root"]
+    assert args.split()[2:2 + len(expected)] == expected
+    assert SENTINEL_TOKEN not in result.stdout + result.stderr
+    assert "SetEnvironmentVariable" not in _read(TOKEN_SOURCE).split("#>", 1)[1]
+
+
+@needs_windows_powershell
+def test_the_token_wrapper_throws_when_the_collector_does_not_store_the_token(tmp_path):
+    wrapper = _token_wrapper_without_the_elevation_check(tmp_path)
+    fake = _fake_collector(tmp_path, exit_code=1)
+    config = tmp_path / "collector_config.json"
+    config.write_text("{}", encoding="utf-8")
+
+    result = _run_ps(
+        f"$t = ConvertTo-SecureString {ps_quote(SENTINEL_TOKEN)} -AsPlainText -Force\n"
+        f"try {{ & {ps_quote(wrapper)} -ExePath {ps_quote(fake)} -ConfigPath {ps_quote(config)} -Token $t; 'NO_THROW' }} "
+        "catch { 'THREW: ' + $_.Exception.Message }"
+    )
+
+    assert "THREW: The Collector did not store the API token (exit code 1)" in result.stdout, result.stdout + result.stderr
+    assert "NO_THROW" not in result.stdout and SENTINEL_TOKEN not in result.stdout + result.stderr
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("partial", ["-CustomerId 7", "-CustomerId 7 -BranchId 3", "-DataRoot 'C:\\x'"])
+def test_the_token_wrapper_refuses_a_partial_explicit_tenant_before_asking_for_anything(tmp_path, partial):
+    wrapper = _token_wrapper_without_the_elevation_check(tmp_path)
+    fake = _fake_collector(tmp_path)
+
+    result = _run_ps(f"try {{ & {ps_quote(wrapper)} -ExePath {ps_quote(fake)} {partial}; 'NO_THROW' }} catch {{ 'THREW: ' + $_.Exception.Message }}")
+
+    assert "THREW: -CustomerId, -BranchId and -DataRoot must be given together." in result.stdout, result.stdout + result.stderr
+    assert not (tmp_path / "args.txt").exists()
+
+
 @needs_windows_powershell
 def test_finish_install_token_step_decision_table():
     finish = _read(FINISH_SOURCE)
     function = _ps_function("Get-TokenStepAction", finish)
+    # (UseExisting, a usable api_token.dpapi, a Machine-scope token) -> action. A stored token and the 1.0.11-only Machine
+    # fallback both count as "a token exists"; a DAMAGED api_token.dpapi never reaches this table (the script stops first).
     cases = [
-        ("$true", "$true", "UseExisting"), ("$true", "$false", "MissingExisting"),
-        ("$false", "$true", "AskKeepOrReplace"), ("$false", "$false", "PromptForToken"),
+        ("$true", "$true", "$false", "UseExisting"), ("$true", "$false", "$true", "UseExisting"),
+        ("$true", "$true", "$true", "UseExisting"), ("$true", "$false", "$false", "MissingExisting"),
+        ("$false", "$true", "$false", "AskKeepOrReplace"), ("$false", "$false", "$true", "AskKeepOrReplace"),
+        ("$false", "$true", "$true", "AskKeepOrReplace"), ("$false", "$false", "$false", "PromptForToken"),
     ]
     script = function + "\n" + "\n".join(
-        f"Get-TokenStepAction -UseExisting {use} -MachineTokenPresent {present}" for use, present, _ in cases
+        f"Get-TokenStepAction -UseExisting {use} -StoredTokenPresent {stored} -MachineTokenPresent {machine}"
+        for use, stored, machine, _ in cases
     )
 
-    assert _run_ps(script).stdout.split() == [expected for _u, _p, expected in cases]
+    assert _run_ps(script).stdout.split() == [expected for *_inputs, expected in cases]
 
 
 # =====================================================================================
@@ -639,7 +732,12 @@ function Add-Call { param($Record) Add-Content -LiteralPath "$FakeDir\calls.json
 function Test-IsAdministrator { @@ADMIN@@ }
 function Get-LocalHostName { 'TEST-PC' }
 function Get-RuntimeVersion { param($ExePath) Add-Call @{ tool = 'runtime-version' }; '@@RUNTIME_VERSION@@' }
-function Get-MachineToken { if (Test-Path "$FakeDir\machine_token.txt") { (Get-Content -LiteralPath "$FakeDir\machine_token.txt" -Raw).Trim() } else { $null } }
+function Test-ApiTokenStored { param($DataRoot) Test-Path "$FakeDir\machine_token.txt" }
+function Invoke-ApiTokenCheck {
+    param($ExePath, $CustomerId, $BranchId, $DataRoot)
+    if ($env:SETUPTEST_CHECK_MODE -eq 'fail') { return 1 }
+    if (Test-Path "$FakeDir\machine_token.txt") { return 0 } else { return 3 }
+}
 function Get-SortViewTask { if (Test-Path "$FakeDir\task.json") { Get-Content -LiteralPath "$FakeDir\task.json" -Raw | ConvertFrom-Json } else { $null } }
 function Set-FakeTaskState { param($State) $t = Get-SortViewTask; $t.State = $State; $t | ConvertTo-Json | Set-Content -LiteralPath "$FakeDir\task.json" }
 function Enable-SortViewTask { Add-Call @{ tool = 'enable-task' }; if ($env:SETUPTEST_ENABLE_FAILS) { throw 'enable failed' }; Set-FakeTaskState 'Ready' }
@@ -716,7 +814,7 @@ if ($null -ne $Token) {
     if ($env:SETUPTEST_TOKEN_MODE -eq 'wrong') { $plain = 'a-different-token-value-entirely-xyz' }
     Set-Content -LiteralPath (Join-Path $env:SETUPTEST_FAKE_DIR 'machine_token.txt') -Value $plain -NoNewline
 }
-Write-Host "Set $VariableName as a Machine environment variable (value not shown)."
+Write-Host "STUB set-api-token: stored in api_token.dpapi (value not shown)."
 """
 
 _FINISH_STUB_BODY = _STUB_HEADER % "finish-install" + _LOG_CALL + r"""
@@ -1021,7 +1119,11 @@ def test_the_permanent_token_is_stored_by_the_token_tool_as_a_secure_string_and_
     (stored,) = result.calls_to("set-api-token")
     assert stored["token_supplied"] is True and stored["token_type"] == "SecureString"
     assert stored["params"]["Token"] == "<securestring>"  # the record never held the value
-    assert result.machine_token == SENTINEL_TOKEN  # stored (in the fake Machine-scope store)
+    # Stored BEFORE install, with the bundle's own runtime, for exactly the tenant and data root install.ps1 then writes.
+    assert stored["params"]["ExePath"] == str(bundle.root / "runtime" / "SortViewCollector.exe")
+    assert (stored["params"]["CustomerId"], stored["params"]["BranchId"]) == (IDS["customer_id"], IDS["branch_id"])
+    assert stored["params"]["DataRoot"] == str(bundle.data_root)
+    assert result.machine_token == SENTINEL_TOKEN  # stored (in the fake api_token.dpapi store)
     assert SENTINEL_TOKEN not in result.output
     assert_no_secret_anywhere_visible(result)
 
@@ -1441,13 +1543,13 @@ def test_a_token_storage_failure_stops_before_installing_and_says_the_code_is_us
 
 
 @needs_windows_powershell
-def test_a_stored_value_that_is_not_the_issued_token_stops_before_installing(tmp_path):
+def test_a_stored_token_the_collector_cannot_verify_stops_before_installing(tmp_path):
     bundle = make_bundle(tmp_path)
 
-    result = run_scenario(bundle, answers=[""], env={"SETUPTEST_TOKEN_MODE": "wrong"})
+    result = run_scenario(bundle, answers=[""], env={"SETUPTEST_CHECK_MODE": "fail"})
 
     assert result.exit_code == 1 and result.calls_to("install") == []
-    assert "is not the token that was issued" in result.output
+    assert "could not verify the stored API token" in result.output
 
 
 @needs_windows_powershell
