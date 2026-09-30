@@ -215,6 +215,7 @@ def db(monkeypatch):
         "CREATE TABLE collector_installations (id INTEGER PRIMARY KEY, organization_id INTEGER, branch_id INTEGER, status TEXT)",
         ("CREATE TABLE agent_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, token_hash TEXT, customer_id INTEGER,"
          " branch_id INTEGER, description TEXT, is_active BOOLEAN, last_used_at TEXT, installation_id INTEGER)"),
+        "CREATE TABLE v2_cutovers (customer_id INTEGER, branch_id INTEGER, cutover_at TEXT, set_at TEXT)",
         *_V1_DDL, *_V2_DDL,
     ]
     with engine.begin() as conn:
@@ -1533,3 +1534,130 @@ def test_the_stream_holds_no_field_the_privacy_contract_forbids(db):
                             "destination", "is_ill", "is_branch_services", "is_collection_services", "ruleset_id", "received_at"}
     for canary in ("CANARY", "B1", "PA", "PB", "101YNY", "101YNN", "AJ", "AA", "example.invalid"):
         assert canary not in stored, canary  # no barcode, patron id, name, title, message code or raw SIP2 anywhere in the rows
+
+
+# =====================================================================================================================
+# 12. v1 /upload closes once the branch's Contract v2 cutover is effective (server-enforced, token-scoped)
+# =====================================================================================================================
+
+V1_PATRON, V1_RAW, V1_TITLE, V1_BARCODE = "CANARY-V1-PATRON-3101", "64 CANARY-V1-RAW-3102", "CANARY-V1-TITLE-3103", "CANARY-V1-BC-3104"
+
+
+def v1_payload(customer=CUSTOMER, branch=BRANCH):
+    return {
+        "checkins": [{"customer_id": customer, "branch_id": branch, "event_time": "2026-01-01 10:00:00", "barcode": V1_BARCODE,
+                      "title": V1_TITLE, "destination": "Main", "bin": "1"}],
+        "rejects": [{"customer_id": customer, "branch_id": branch, "event_time": "2026-01-01 10:01:00", "barcode": V1_BARCODE,
+                     "message": "Item not found"}],
+        "acs": [{"customer_id": customer, "branch_id": branch, "event_time": "2026-01-01 10:02:00", "message_code": "10",
+                 "barcode": V1_BARCODE, "title": V1_TITLE, "patron_id": V1_PATRON, "raw_message": V1_RAW}],
+    }
+
+
+def cut_over(db, cutover_at: datetime | None, *, set_at: datetime, customer=CUSTOMER, branch=BRANCH):
+    """Appends one v2_cutovers row, as scripts/set_v2_cutover.py would (cutover_at None = rollback)."""
+    with db.engine.begin() as conn:
+        conn.execute(text("INSERT INTO v2_cutovers VALUES (:c, :b, :at, :set_at)"),
+                     {"c": customer, "b": branch, "at": cutover_at.isoformat() if cutover_at else None,
+                      "set_at": set_at.isoformat()})
+
+
+def v1_event_rows(db):
+    return sum(db.count(t) for t in ("checkins", "rejects", "acs_events"))
+
+
+def test_v1_upload_after_the_effective_cutover_is_refused_and_writes_nothing(db, caplog):
+    now = datetime.now(UTC)
+    cut_over(db, now - timedelta(hours=1), set_at=now - timedelta(hours=2))
+
+    with caplog.at_level(logging.WARNING):
+        response = client.post("/upload", json=v1_payload(), headers=AUTH)
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": main.V1_UPLOAD_CLOSED_DETAIL}
+    assert v1_event_rows(db) == 0 and db.count("checkins_clean") == 0 and db.count("rejects_clean") == 0
+    assert not any(re.search(r"INSERT INTO (checkins|rejects|acs_events)\b", s) for s in db.sent)
+    for canary in (V1_PATRON, V1_RAW, V1_TITLE, V1_BARCODE, TOKEN):
+        assert canary not in response.text and canary not in caplog.text, canary
+
+
+def test_v1_upload_before_a_future_cutover_is_still_accepted(db):
+    now = datetime.now(UTC)
+    cut_over(db, now + timedelta(days=1), set_at=now - timedelta(minutes=5))
+
+    response = client.post("/upload", json=v1_payload(), headers=AUTH)
+
+    assert response.status_code == 200
+    assert response.json()["checkins_inserted"] == 1 and response.json()["acs_inserted"] == 1
+    assert v1_event_rows(db) == 3
+
+
+def test_v1_upload_for_a_branch_with_no_cutover_is_unchanged(db):
+    response = client.post("/upload", json=v1_payload(), headers=AUTH)
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "success", "checkins_received": 1, "rejects_received": 1, "acs_received": 1,
+                               "checkins_inserted": 1, "rejects_inserted": 1, "acs_inserted": 1}
+
+
+def test_a_rollback_reopens_v1_and_a_recutover_closes_it_again(db):
+    now = datetime.now(UTC)
+    cut_over(db, now - timedelta(days=2), set_at=now - timedelta(days=3))
+    cut_over(db, None, set_at=now - timedelta(days=1))  # the latest row is the rollback
+
+    assert client.post("/upload", json=v1_payload(), headers=AUTH).status_code == 200
+
+    cut_over(db, now - timedelta(minutes=1), set_at=now - timedelta(minutes=2))
+
+    assert client.post("/upload", json=v1_payload(), headers=AUTH).status_code == 403
+    assert v1_event_rows(db) == 3  # only the rows from while the rollback was in effect
+
+
+def test_another_tenants_cutover_does_not_close_this_tenants_v1_upload(db):
+    now = datetime.now(UTC)
+    cut_over(db, now - timedelta(hours=1), set_at=now - timedelta(hours=2), customer=OTHER_CUSTOMER, branch=OTHER_BRANCH)
+
+    assert client.post("/upload", json=v1_payload(), headers=AUTH).status_code == 200
+    assert client.post("/upload", json=v1_payload(OTHER_CUSTOMER, OTHER_BRANCH),
+                       headers={"Authorization": f"Bearer {OTHER_TOKEN}"}).status_code == 403
+
+
+def test_a_cutover_branch_cannot_dodge_the_gate_by_naming_another_tenant_in_the_payload(db):
+    now = datetime.now(UTC)
+    cut_over(db, now - timedelta(hours=1), set_at=now - timedelta(hours=2))
+
+    response = client.post("/upload", json=v1_payload(OTHER_CUSTOMER, OTHER_BRANCH), headers=AUTH)
+
+    assert response.status_code == 403 and v1_event_rows(db) == 0  # scope mismatch: the token decides the tenant
+
+
+def test_v2_upload_and_heartbeat_still_work_after_the_cutover(db):
+    now = datetime.now(UTC)
+    cut_over(db, now - timedelta(hours=1), set_at=now - timedelta(hours=2))
+
+    upload_response = post_upload(upload(checkins=[checkin(1), checkin(2)]))
+    status_response = post_status(status())
+
+    assert upload_response.status_code == 200 and upload_response.json()["checkins_inserted"] == 2
+    assert status_response.status_code == 200
+    assert db.v2_rows() == 2 and v1_event_rows(db) == 0
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [datetime(2020, 1, 1, 12, 0, tzinfo=UTC).replace(tzinfo=None), datetime(2020, 1, 1, 12, 0, tzinfo=UTC),
+     "2020-01-01T12:00:00+00:00"],
+    ids=["naive-datetime", "aware-datetime", "text"],
+)
+def test_every_stored_cutover_spelling_is_read_as_utc_and_closes_v1(monkeypatch, stored):
+    monkeypatch.setattr(main, "get_effective_v2_cutover", lambda *_: stored)
+
+    assert main.v1_upload_closed_since(None, {"customer_id": 1, "branch_id": 1}) == datetime(2020, 1, 1, 12, 0, tzinfo=UTC)
+
+
+def test_the_v1_handler_enforces_the_cutover_gate_before_any_insert():
+    # Regression guard: removing or reordering the server-side gate must fail here, not just in production.
+    source = _function_source("upload")
+
+    assert "v1_upload_closed_since(conn, token_row)" in source
+    assert source.index("v1_upload_closed_since(") < source.index("INSERT INTO checkins")

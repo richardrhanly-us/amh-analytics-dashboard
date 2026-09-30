@@ -4,6 +4,7 @@ import logging
 import os
 import re
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Literal, NoReturn
 
 import sentry_sdk
@@ -27,6 +28,7 @@ from src.services.collector_enrollment_service import (
 from src.services.ingest_v2_models import StatusV2Request, UploadV2Request
 from src.services.ingest_v2_service import (
     EventConflict,
+    get_effective_v2_cutover,
     ingest_key_problem,
     record_heartbeat,
     store_events,
@@ -756,6 +758,26 @@ def record_installation_heartbeat(conn, token_row, installation_id: int, collect
         _reject_installation(token_row, installation_id, "installation status changed during the heartbeat")
 
 
+# Once a branch's Contract v2 cutover is effective, v1 /upload -- whose rows carry raw patron_id / raw_message / barcode /
+# title -- is closed for it. The branch comes from the authenticated token, and the boundary from the same append-only
+# v2_cutovers record the read model uses: no row, a rollback row (cutover_at NULL), or a cutover_at still in the future
+# all leave v1 open exactly as before. /upload-pipeline-status stays open: it carries no patron data, and the Collector's
+# preflight (install and update) still uses it for a v2-mode installation.
+V1_UPLOAD_CLOSED_DETAIL = "Legacy v1 upload is closed for this branch"
+
+
+def v1_upload_closed_since(conn, token_row) -> datetime | None:
+    """The effective cutover instant if v1 uploads are closed for the token's branch, else None."""
+    cutover_at = get_effective_v2_cutover(conn, int(token_row["customer_id"]), int(token_row["branch_id"]))
+    if cutover_at is None:
+        return None
+    if isinstance(cutover_at, str):  # SQLite hands back text; Postgres TIMESTAMPTZ is already a datetime
+        cutover_at = datetime.fromisoformat(cutover_at)
+    if cutover_at.tzinfo is None:
+        cutover_at = cutover_at.replace(tzinfo=UTC)
+    return cutover_at if cutover_at <= datetime.now(UTC) else None
+
+
 @app.get("/")
 def root():
     return {"status": "SortView API running"}
@@ -792,12 +814,20 @@ def upload(request: Request, data: UploadRequest, authorization: str | None = He
         inserted_acs = 0
 
         with engine.begin() as conn:
-            authenticate_agent(
+            token_row = authenticate_agent(
                 conn=conn,
                 authorization=authorization,
                 customer_id=first_customer_id,
                 branch_id=first_branch_id,
             )
+
+            closed_since = v1_upload_closed_since(conn, token_row)
+            if closed_since is not None:
+                logger.warning(
+                    "V1 upload rejected, branch is on Contract v2 | token_id=%s customer_id=%s branch_id=%s cutover_at=%s",
+                    token_row["id"], token_row["customer_id"], token_row["branch_id"], closed_since.isoformat(),
+                )
+                raise HTTPException(status_code=403, detail=V1_UPLOAD_CLOSED_DETAIL)
 
             # Phase E: ON CONFLICT DO NOTHING below is deliberately BARE
             # (no conflict target) on all three tables now, not just

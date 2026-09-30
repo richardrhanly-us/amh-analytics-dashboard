@@ -166,9 +166,16 @@ def find_unhealthy_branches(
                             "(stale/no heartbeat)"
                         )
 
+                # v2 health is healthy/degraded/error (ingest_v2_models.HEALTH_STATUSES);
+                # auth_failure is a v2 last_error_class, never a v2 health status.
                 health_status = row["v2_health_status"]
-                if health_status == "auth_failure":
-                    reasons.append("v2 collector heartbeat reports auth_failure")
+                if health_status == "error":
+                    detail = (
+                        f" ({row['v2_last_error']})"
+                        if row["v2_last_error"]
+                        else ""
+                    )
+                    reasons.append(f"v2 collector heartbeat reports error{detail}")
                 elif health_status == "degraded":
                     detail = (
                         f" ({row['v2_last_error']})"

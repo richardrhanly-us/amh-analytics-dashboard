@@ -103,6 +103,8 @@ def _build_engine(monkeypatch, *, fact_tables: bool):
             "CREATE TABLE agent_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, token_hash TEXT, customer_id INTEGER,"
             " branch_id INTEGER, description TEXT, is_active BOOLEAN, last_used_at TEXT, installation_id INTEGER)"
         ),
+        # Empty: the branch has never been cut over to Contract v2, so v1 /upload stays open for it.
+        "CREATE TABLE v2_cutovers (customer_id INTEGER, branch_id INTEGER, cutover_at TEXT, set_at TEXT)",
         *(_FACT_TABLES if fact_tables else ()),
     ]
     with engine.begin() as conn:
@@ -544,6 +546,27 @@ def test_a_legacy_heartbeat_without_installation_fields_is_still_accepted(api_db
                            json={"customer_id": CUSTOMER, "branch_id": BRANCH, "status": "completed", "checkins_rows": 3})
 
     assert response.status_code == 200 and response.json()["status"] == "success"
+
+
+def test_after_the_v2_cutover_v1_upload_is_closed_but_the_status_heartbeat_stays_open(api_db_with_facts, monkeypatch):
+    # /upload-pipeline-status carries no patron data, and the Collector's preflight (install and update-release) still
+    # posts to it for a v2-mode installation -- closing it would fail every post-cutover update's verification step.
+    columns = ", ".join(f"{name} TEXT" for name in main._PIPELINE_STATUS_UPDATABLE_FIELDS)
+    with api_db_with_facts.begin() as conn:
+        conn.execute(text(f"CREATE TABLE pipeline_status (customer_id INTEGER, branch_id INTEGER, {columns},"
+                          " updated_at TEXT, UNIQUE (customer_id, branch_id))"))
+        conn.execute(text("INSERT INTO v2_cutovers VALUES (:c, :b, '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')"),
+                     {"c": CUSTOMER, "b": BRANCH})
+    monkeypatch.setattr(main, "_pipeline_status_column_sql", lambda field: f":{field}")
+
+    upload = client.post("/upload", json=_v1_payload(), headers=AUTH)
+    heartbeat = client.post("/upload-pipeline-status", headers=AUTH,
+                            json={"customer_id": CUSTOMER, "branch_id": BRANCH, "status": "preflight_check"})
+
+    assert upload.status_code == 403
+    with api_db_with_facts.connect() as conn:
+        assert conn.execute(text("SELECT COUNT(*) FROM acs_events")).scalar() == 0
+    assert heartbeat.status_code == 200 and heartbeat.json()["status"] == "success"
 
 
 # --- 6. the API does not publish its own schema in production ---------------------------------------------------------------
