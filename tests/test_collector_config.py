@@ -360,13 +360,45 @@ def test_the_token_is_never_in_the_config_repr(tmp_path, monkeypatch):
 
 
 def test_load_token_settings_needs_no_token_and_derives_the_v2_secret_folder(tmp_path, monkeypatch):
+    # Native paths on whatever host runs the tests: <root>\data\state.json -> <root>\secrets\api_token.dpapi, a concrete Path
+    # (the store does real file I/O with it).
     monkeypatch.delenv("SORTVIEW_API_TOKEN", raising=False)
     settings = config_module.load_token_settings(_write_config(tmp_path))
     assert (settings.customer_id, settings.branch_id) == (1, 1)
     assert settings.token_path == tmp_path / "secrets" / "api_token.dpapi"
-    # the production layout: C:\ProgramData\SortViewCollector\data\state.json -> ...\secrets\api_token.dpapi
-    assert api_token_store.default_path(r"C:\ProgramData\SortViewCollector\data\state.json") == \
-        Path(r"C:\ProgramData\SortViewCollector\secrets\api_token.dpapi")
+    assert isinstance(settings.token_path, Path)
+
+
+PRODUCTION_STATE_PATH = r"C:\ProgramData\SortViewCollector\data\state.json"
+PRODUCTION_TOKEN_PATH = r"C:\ProgramData\SortViewCollector\secrets\api_token.dpapi"
+
+
+def test_the_production_windows_state_path_derives_the_production_token_path_on_any_host(monkeypatch):
+    # The helper parses with the HOST's path flavor (as collector/v2_config.py does for the v2 secret), and production is
+    # Windows. To check the real derivation code under Windows parsing rules even on a Linux CI runner, the module's `Path`
+    # is swapped for PureWindowsPath -- the helper itself is unchanged.
+    from pathlib import PureWindowsPath
+
+    monkeypatch.setattr(api_token_store, "Path", PureWindowsPath)
+
+    assert api_token_store.default_path(PRODUCTION_STATE_PATH) == PureWindowsPath(PRODUCTION_TOKEN_PATH)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a concrete Windows Path exists only on Windows; the derivation itself "
+                    "is checked on every host by the PureWindowsPath test above")
+def test_on_windows_the_unmodified_helper_derives_the_production_token_path_as_a_concrete_path():
+    # Where production actually runs, the real (native) Path must give the same answer -- and stay a concrete, I/O-capable Path.
+    derived = api_token_store.default_path(PRODUCTION_STATE_PATH)
+    assert derived == Path(PRODUCTION_TOKEN_PATH) and isinstance(derived, Path)
+
+
+def test_an_api_token_path_override_replaces_the_derived_location(tmp_path, monkeypatch):
+    monkeypatch.delenv("SORTVIEW_API_TOKEN", raising=False)
+    override = tmp_path / "elsewhere" / "token.dpapi"
+
+    settings = config_module.load_token_settings(_write_config(tmp_path, api_token_path=str(override)))
+
+    assert settings.token_path == override and isinstance(settings.token_path, Path)
 
 
 # --- the migration fallback has a fixed sunset: the very next release ---------------------------------------------------------
