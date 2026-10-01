@@ -6,7 +6,13 @@ contract is `POST /v2/status`:
 
     contract_version = 2, key_id, status (healthy | degraded | error), last_error_class (null | retryable_infra | auth_failure |
     permanent_rejection | source_unavailable | configuration_error | other), pending_outbox_count, quarantined_count,
-    oldest_pending_event_at, last_success_at, watcher_last_active_at
+    oldest_pending_event_at, last_success_at, watcher_last_active_at,
+    collector_last_run_at, collector_next_run_at, collector_run_duration_ms,
+    collector_schedule_status (healthy | task_missing | task_disabled | no_next_run | query_failed)
+
+The four `collector_*` fields are run and schedule diagnostics (collector/v2_schedule.py, collector/v2_run.py): two
+timestamps read from Windows Task Scheduler, an integer duration and one fixed code. Each is optional and omitted when
+absent, so a server row written by an older collector simply holds NULL for them.
 
 This collector has NO outbox (the Tech Logic files are the durable queue and the cursor only moves after delivery), so
 `pending_outbox_count` is always 0 and `oldest_pending_event_at` is never sent: an outbox is not created to give the number meaning.
@@ -29,7 +35,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from .v2_events import HEALTH_STATUSES, LAST_ERROR_CLASSES, format_time
+from .v2_events import (
+    HEALTH_STATUSES,
+    LAST_ERROR_CLASSES,
+    MAX_RUN_DURATION_MS,
+    SCHEDULE_STATUSES,
+    format_time,
+)
 
 # Failure categories a delivery can end in (what the uploader and the run report, never a message).
 AUTH, CONFIG, PERMANENT, RETRYABLE, OTHER = "auth", "config", "permanent", "retryable", "other"
@@ -52,6 +64,11 @@ class StatusSnapshot:
     last_success_at: datetime | None
     watcher_last_active_at: datetime | None
     pending_outbox_count: int = 0  # always 0: this collector has no outbox
+    # Run / schedule diagnostics. All optional: None is "not reported", and is omitted from the payload.
+    collector_last_run_at: datetime | None = None     # Task Scheduler LastRunTime of the Collector's task
+    collector_next_run_at: datetime | None = None     # Task Scheduler NextRunTime (never computed from the cadence)
+    collector_run_duration_ms: int | None = None      # monotonic elapsed time of this invocation, up to this snapshot
+    collector_schedule_status: str | None = None      # one of SCHEDULE_STATUSES
 
     def __post_init__(self) -> None:
         if self.status not in HEALTH_STATUSES:
@@ -64,10 +81,16 @@ class StatusSnapshot:
                 raise StatusError(f"unapproved field: {name}")
         if self.pending_outbox_count != 0:
             raise StatusError("unapproved field: pending_outbox_count")
-        for name in ("last_success_at", "watcher_last_active_at"):
+        for name in ("last_success_at", "watcher_last_active_at", "collector_last_run_at", "collector_next_run_at"):
             value = getattr(self, name)
             if value is not None and (not isinstance(value, datetime) or value.tzinfo is None):
                 raise StatusError(f"unapproved field: {name}")
+        duration = self.collector_run_duration_ms
+        if duration is not None and (isinstance(duration, bool) or not isinstance(duration, int)
+                                     or not 0 <= duration <= MAX_RUN_DURATION_MS):
+            raise StatusError("unapproved field: collector_run_duration_ms")
+        if self.collector_schedule_status is not None and self.collector_schedule_status not in SCHEDULE_STATUSES:
+            raise StatusError("unapproved field: collector_schedule_status")
 
     def payload(self, key_id: str) -> dict[str, Any]:
         """The request body, field by field. Optional fields that are absent are omitted (the server stores them as NULL)."""
@@ -79,6 +102,14 @@ class StatusSnapshot:
             body["last_success_at"] = format_time(self.last_success_at)
         if self.watcher_last_active_at is not None:
             body["watcher_last_active_at"] = format_time(self.watcher_last_active_at)
+        if self.collector_last_run_at is not None:
+            body["collector_last_run_at"] = format_time(self.collector_last_run_at)
+        if self.collector_next_run_at is not None:
+            body["collector_next_run_at"] = format_time(self.collector_next_run_at)
+        if self.collector_run_duration_ms is not None:
+            body["collector_run_duration_ms"] = self.collector_run_duration_ms
+        if self.collector_schedule_status is not None:
+            body["collector_schedule_status"] = self.collector_schedule_status
         return body
 
 

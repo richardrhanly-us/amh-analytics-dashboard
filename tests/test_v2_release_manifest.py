@@ -26,6 +26,7 @@ V2_MODULES = (
     "collector/v2_rules.py",
     "collector/v2_run.py",
     "collector/v2_safe_errors.py",
+    "collector/v2_schedule.py",
     "collector/v2_status.py",
     "collector/v2_transform.py",
     "collector/v2_uploader.py",

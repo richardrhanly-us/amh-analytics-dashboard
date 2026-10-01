@@ -656,3 +656,77 @@ def test_no_acs_model_declares_a_raw_message_code_or_any_patron_or_identifier_fi
 
     for model in (AcsHoldEvent, AcsNonHoldEvent):
         assert forbidden.isdisjoint(model.model_fields), model
+
+
+# --- heartbeat: collector run / schedule diagnostics -----------------------------------------------------------------
+
+DIAGNOSTIC_FIELDS = ("collector_last_run_at", "collector_next_run_at", "collector_run_duration_ms", "collector_schedule_status")
+
+
+def soon(**delta) -> str:
+    return (datetime.now(UTC) + timedelta(**delta)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_a_heartbeat_with_all_four_diagnostics_is_accepted_and_typed():
+    request = StatusV2Request.model_validate(status(
+        collector_last_run_at=when(seconds=40), collector_next_run_at=soon(minutes=14), collector_run_duration_ms=3240,
+        collector_schedule_status="healthy"))
+
+    assert request.collector_run_duration_ms == 3240 and request.collector_schedule_status == "healthy"
+    assert request.collector_last_run_at.tzinfo is not None and request.collector_next_run_at > request.collector_last_run_at
+
+
+def test_an_older_collectors_heartbeat_without_the_diagnostics_is_still_valid_and_they_are_none():
+    request = StatusV2Request.model_validate(status())
+
+    assert [getattr(request, name) for name in DIAGNOSTIC_FIELDS] == [None, None, None, None]
+    assert set(DIAGNOSTIC_FIELDS) <= set(StatusV2Request.model_fields)
+    assert all(not StatusV2Request.model_fields[name].is_required() for name in DIAGNOSTIC_FIELDS)
+
+
+@pytest.mark.parametrize("value", models.SCHEDULE_STATUSES)
+def test_every_approved_schedule_status_is_accepted(value):
+    assert StatusV2Request.model_validate(status(collector_schedule_status=value)).collector_schedule_status == value
+
+
+def test_the_schedule_status_is_exactly_the_five_approved_codes():
+    assert models.SCHEDULE_STATUSES == ("healthy", "task_missing", "task_disabled", "no_next_run", "query_failed")
+    assert get_args(models.ScheduleStatus) == models.SCHEDULE_STATUSES  # the tuple and the type agree
+
+
+@pytest.mark.parametrize("value", [
+    "Healthy", "HEALTHY", "ok", "error", "degraded", "disabled", "missing", "overdue", "unknown", "",
+    "no future run scheduled", "Get-ScheduledTask : Access is denied. CANARY", "task_missing: CANARY-DETAIL", 1, True,
+    ["healthy"], {"status": "healthy"},
+])
+def test_a_free_text_or_unknown_schedule_status_is_rejected(value):
+    assert rejected(StatusV2Request, status(collector_schedule_status=value))
+
+
+@pytest.mark.parametrize("value", [-1, 86_400_001, 3.24, "3240", True, [3240], {"ms": 3240}])
+def test_the_duration_is_a_bounded_strict_integer(value):
+    assert rejected(StatusV2Request, status(collector_run_duration_ms=value))
+
+
+@pytest.mark.parametrize("value", [0, 1, 3240, 3_600_000, 86_400_000])
+def test_a_duration_within_the_bound_is_accepted(value):
+    assert StatusV2Request.model_validate(status(collector_run_duration_ms=value)).collector_run_duration_ms == value
+    assert models.MAX_RUN_DURATION_MS == 86_400_000
+
+
+@pytest.mark.parametrize("field", ["collector_last_run_at", "collector_next_run_at"])
+@pytest.mark.parametrize("value", ["2026-10-01T15:00:00", "10/01/2026 3:00:00 PM", 1759348800, "soon", True])
+def test_the_schedule_timestamps_must_be_aware_iso_instants(field, value):
+    assert rejected(StatusV2Request, status(**{field: value}))
+
+
+@pytest.mark.parametrize("extra", ["collector_schedule_reason", "collector_schedule_error", "collector_last_error",
+                                   "collector_hostname", "collector_task_name", "collector_stdout", "last_error"])
+def test_no_other_diagnostic_field_and_no_free_text_field_can_ride_along(extra):
+    assert rejected(StatusV2Request, status(collector_schedule_status="healthy", **{extra: "CANARY"})) == ["extra_forbidden"]
+
+
+def test_the_heartbeat_model_is_still_exactly_the_approved_field_set():
+    assert set(StatusV2Request.model_fields) == {
+        "contract_version", "key_id", "status", "last_error_class", "pending_outbox_count", "quarantined_count",
+        "oldest_pending_event_at", "last_success_at", "watcher_last_active_at", *DIAGNOSTIC_FIELDS}

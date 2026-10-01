@@ -1027,7 +1027,8 @@ def load_v2_ingest_status(org_slug, branch_slug):
     query_template = """
         SELECT key_id, status AS key_status, health_status, last_error_class, pending_outbox_count,
                quarantined_count, oldest_pending_event_at, last_success_at, watcher_last_active_at,
-               last_heartbeat_at
+               last_heartbeat_at, collector_last_run_at, collector_next_run_at, collector_run_duration_ms,
+               collector_schedule_status
         FROM ingest_key_ids
         WHERE {org_column} = :org_slug
           AND {branch_column} = :branch_slug
@@ -1049,9 +1050,16 @@ def load_v2_ingest_status(org_slug, branch_slug):
         return None
 
     row = df.iloc[0].to_dict()
-    for key in ("oldest_pending_event_at", "last_success_at", "watcher_last_active_at", "last_heartbeat_at"):
+    for key in ("oldest_pending_event_at", "last_success_at", "watcher_last_active_at", "last_heartbeat_at",
+                "collector_last_run_at", "collector_next_run_at"):
         value = row.get(key)
         row[key] = value.isoformat() if pd.notna(value) and hasattr(value, "isoformat") else None
+    # A heartbeat from a collector that predates the run/schedule diagnostics leaves these NULL, which pandas hands
+    # back as NaN (and turns the integer column into floats): normalise to a plain int / str, or None.
+    duration = row.get("collector_run_duration_ms")
+    row["collector_run_duration_ms"] = int(duration) if pd.notna(duration) else None
+    schedule_status = row.get("collector_schedule_status")
+    row["collector_schedule_status"] = str(schedule_status) if pd.notna(schedule_status) else None
     return row
 
 

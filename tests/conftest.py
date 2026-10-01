@@ -22,7 +22,7 @@ for path in (ROOT_DIR, SRC_DIR):
 # Imported at module level (collection time), not lazily inside a fixture
 # -- see _collector_run_audit_fallback_path below for why that distinction
 # matters here specifically.
-from collector import run_audit
+from collector import run_audit, v2_schedule
 
 # main.py reads DATABASE_URL at import time. Tests never hit a real
 # database (main.engine is monkeypatched), so a placeholder is enough.
@@ -98,5 +98,19 @@ def _collector_run_audit_fallback_path(tmp_path):
     # entirely.
     mp = pytest.MonkeyPatch()
     mp.setattr(run_audit, "DEFAULT_FALLBACK_AUDIT_PATH", tmp_path / "_unused_fallback_runs.jsonl")
+    yield
+    mp.undo()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_scheduled_task_query():
+    # Every Contract v2 run ends by asking Windows Task Scheduler about the "SortView Collector" task
+    # (collector/v2_schedule.py), which starts a real powershell.exe -- a couple of seconds per run, and an answer that
+    # depends on the machine the tests happen to run on. No test may do that: with no PowerShell to start, a run's
+    # schedule diagnostics are the fixed `query_failed` on every platform. Tests of the query itself pass their own
+    # `executable` and `runner`, so they never reach this. (pytest.MonkeyPatch() directly, not the `monkeypatch`
+    # fixture: see _collector_run_audit_fallback_path above.)
+    mp = pytest.MonkeyPatch()
+    mp.setattr(v2_schedule, "powershell_executable", lambda: None)
     yield
     mp.undo()

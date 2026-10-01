@@ -538,7 +538,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise
             print("Configuration error: this build does not include Contract v2", file=sys.stderr)
             return 2
-        return main_v2(cfg, args.config, logger=logger)
+        # start_perf: the v2 heartbeat reports this invocation's duration from here, main()'s start (monotonic).
+        return main_v2(cfg, args.config, logger=logger, started_perf=start_perf)
     if cfg.installation_id is None:
         logger.warning(
             "Config has no installation_id (legacy config): heartbeats will not update "

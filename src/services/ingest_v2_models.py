@@ -75,6 +75,14 @@ NON_HOLD_STATES = ("non_hold_101", "other_code10")
 
 MAX_COUNTER = 10_000_000
 
+# The state of the collector's Windows Scheduled Task, as the collector itself read it from Task Scheduler. `healthy`:
+# the task exists, is enabled, and Windows reports a future next run. The other four are the closed set of reasons it is
+# not: the task is absent, disabled, has no future run, or could not be queried at all. Never a message.
+SCHEDULE_STATUSES = ("healthy", "task_missing", "task_disabled", "no_next_run", "query_failed")
+ScheduleStatus = Literal["healthy", "task_missing", "task_disabled", "no_next_run", "query_failed"]
+
+MAX_RUN_DURATION_MS = 86_400_000  # one day, in milliseconds
+
 # --- timestamps: ISO-8601 WITH an offset, and nothing else -------------------------------------------------------
 
 _ISO_WITH_OFFSET = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})")
@@ -121,6 +129,7 @@ HmacKey = Annotated[str, StringConstraints(pattern=HMAC_HEX_PATTERN)]
 Destination = Annotated[str, StringConstraints(pattern=DESTINATION_PATTERN)]
 Bin = Annotated[str, StringConstraints(pattern=BIN_PATTERN)]
 Counter = Annotated[int, Field(ge=0, le=MAX_COUNTER)]
+RunDurationMs = Annotated[int, Field(ge=0, le=MAX_RUN_DURATION_MS)]
 
 
 class _V2Model(BaseModel):
@@ -206,3 +215,10 @@ class StatusV2Request(_V2Model):
     oldest_pending_event_at: AwareTimestamp | None = None
     last_success_at: AwareTimestamp | None = None
     watcher_last_active_at: AwareTimestamp | None = None
+    # Run / schedule diagnostics (collector/v2_schedule.py). All optional: a collector from before these existed omits
+    # them and they are stored as NULL. Two timestamps Windows Task Scheduler reported for the Collector's task, the
+    # invocation's monotonic duration, and one closed code -- still no free text.
+    collector_last_run_at: AwareTimestamp | None = None
+    collector_next_run_at: AwareTimestamp | None = None
+    collector_run_duration_ms: RunDurationMs | None = None
+    collector_schedule_status: ScheduleStatus | None = None

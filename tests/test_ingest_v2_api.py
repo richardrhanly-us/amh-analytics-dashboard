@@ -67,8 +67,17 @@ def hmac_like(n: int) -> str:
     return hashlib.sha256(f"synthetic-{n}".encode()).hexdigest()
 
 
+# ONE base instant for the whole module, read once at import. `when()` used to call datetime.now(UTC) on every call, so
+# two "identical" events built a moment apart could straddle a one-second boundary and differ in event_time -- which the
+# server rightly treats as a content conflict (same event_key, different content), making idempotency tests fail at
+# random. Every helper timestamp is now an exact offset from this one instant: building the same event twice always
+# gives the same event. Formatting (whole seconds, UTC, "Z") and the meaning of `delta` (that long BEFORE the base) are
+# unchanged.
+_BASE_INSTANT = datetime.now(UTC)
+
+
 def when(**delta) -> str:
-    return (datetime.now(UTC) - timedelta(**delta)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return (_BASE_INSTANT - timedelta(**delta)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def checkin(n=1, **overrides):
@@ -146,7 +155,9 @@ _V2_DDL = (
         " customer_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, algorithm TEXT NOT NULL DEFAULT 'hmac-sha256-v1',"
         " status TEXT NOT NULL DEFAULT 'active', created_at TEXT DEFAULT CURRENT_TIMESTAMP, retired_at TEXT,"
         " last_heartbeat_at TEXT, health_status TEXT, last_error_class TEXT, pending_outbox_count INTEGER,"
-        " quarantined_count INTEGER, oldest_pending_event_at TEXT, last_success_at TEXT, watcher_last_active_at TEXT)"
+        " quarantined_count INTEGER, oldest_pending_event_at TEXT, last_success_at TEXT, watcher_last_active_at TEXT,"
+        " collector_last_run_at TEXT, collector_next_run_at TEXT, collector_run_duration_ms INTEGER,"
+        " collector_schedule_status TEXT)"
     ),
     (
         "CREATE TABLE checkin_events (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL,"
@@ -1661,3 +1672,148 @@ def test_the_v1_handler_enforces_the_cutover_gate_before_any_insert():
 
     assert "v1_upload_closed_since(conn, token_row)" in source
     assert source.index("v1_upload_closed_since(") < source.index("INSERT INTO checkins")
+
+
+# =====================================================================================================================
+# Heartbeat: collector run / schedule diagnostics
+# =====================================================================================================================
+
+_DIAGNOSTIC_COLUMNS = "collector_last_run_at, collector_next_run_at, collector_run_duration_ms, collector_schedule_status"
+
+
+def _diagnostics(db, key=KEY):
+    return db.rows("ingest_key_ids", _DIAGNOSTIC_COLUMNS, f"WHERE key_id = '{key}'")[0]
+
+
+def soon(**delta) -> str:
+    return (datetime.now(UTC) + timedelta(**delta)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_the_four_diagnostics_are_stored_on_the_tenants_own_key_only(db):
+    last_run, next_run = when(seconds=40), soon(minutes=14)
+
+    response = post_status(status(collector_last_run_at=last_run, collector_next_run_at=next_run,
+                                  collector_run_duration_ms=3240, collector_schedule_status="healthy"))
+
+    assert response.status_code == 200 and response.json() == {"status": "success", "contract_version": 2}
+    stored_last, stored_next, duration, schedule = _diagnostics(db)
+    assert (duration, schedule) == (3240, "healthy")
+    assert stored_last.startswith(last_run[:19]) and stored_next.startswith(next_run[:19])
+    # Not on the tenant's other key, and not on the other tenant's key.
+    assert _diagnostics(db, SECOND_KEY) == (None, None, None, None)
+    assert _diagnostics(db, OTHER_TENANT_KEY) == (None, None, None, None)
+
+
+def test_a_token_cannot_write_diagnostics_onto_another_tenants_key(db):
+    response = post_status(status(key=OTHER_TENANT_KEY, collector_run_duration_ms=3240, collector_schedule_status="task_missing"))
+
+    assert response.status_code == 403
+    assert _diagnostics(db, OTHER_TENANT_KEY) == (None, None, None, None)
+
+
+def test_an_older_collectors_heartbeat_stores_null_diagnostics_and_clears_earlier_ones(db):
+    post_status(status(collector_last_run_at=when(seconds=40), collector_next_run_at=soon(minutes=14),
+                       collector_run_duration_ms=3240, collector_schedule_status="healthy"))
+    assert _diagnostics(db)[2:] == (3240, "healthy")
+
+    response = post_status(status())  # exactly what a collector from before the diagnostics sends
+
+    assert response.status_code == 200
+    assert _diagnostics(db) == (None, None, None, None)  # a full snapshot: an omitted field becomes NULL
+    assert _snapshot(db)[0] == "healthy"
+
+
+@pytest.mark.parametrize("value", ["task_missing", "task_disabled", "no_next_run", "query_failed"])
+def test_each_unhealthy_schedule_code_is_stored_as_sent_without_changing_the_overall_status(db, value):
+    post_status(status(status="healthy", collector_schedule_status=value))
+
+    assert _diagnostics(db)[3] == value and _snapshot(db)[0] == "healthy"
+
+
+@pytest.mark.parametrize("body", [
+    {"collector_schedule_status": "Get-ScheduledTask : CANARY-EXCEPTION-TEXT"},
+    {"collector_schedule_status": "error"},
+    {"collector_run_duration_ms": -5}, {"collector_run_duration_ms": 86_400_001}, {"collector_run_duration_ms": "3240"},
+    {"collector_next_run_at": "10/01/2026 3:00:00 PM"}, {"collector_last_run_at": "1999-11-30T06:00:00Z"},
+    {"collector_schedule_reason": "CANARY-FREE-TEXT"},
+])
+def test_an_invalid_diagnostic_rejects_the_whole_heartbeat_and_stores_nothing(db, body):
+    response = post_status(status(**body))
+
+    assert response.status_code == 422 and "CANARY" not in response.text
+    assert _diagnostics(db) == (None, None, None, None) and _snapshot(db)[0] is None
+
+
+def test_a_diagnostics_heartbeat_touches_only_ingest_key_ids(db):
+    post_status(status(collector_last_run_at=when(seconds=40), collector_next_run_at=soon(minutes=14),
+                       collector_run_duration_ms=3240, collector_schedule_status="healthy"))
+
+    assert db.v2_rows() == 0 and db.v1_rows() == 0
+    writes = [s for s in db.sent if s.lstrip().upper().startswith(("UPDATE", "INSERT", "DELETE"))]
+    assert writes and all("ingest_key_ids" in s or "agent_tokens" in s for s in writes)
+    assert not any("pipeline_status" in s for s in db.sent)  # the legacy v1 status row is never read or written
+
+
+# =====================================================================================================================
+# The payload helpers are deterministic, and one second is enough to be a conflict
+# =====================================================================================================================
+
+def _helper_instant(text_: str) -> datetime:
+    return datetime.strptime(text_, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+
+
+def test_rebuilding_an_event_gives_the_same_event_even_while_the_clock_moves(monkeypatch):
+    # The regression: these helpers once read the wall clock on every call, so `checkin(1)` built twice across a
+    # one-second boundary was two different events. Here the module's clock advances a full second on EVERY reading;
+    # helpers that never read it are unaffected, and helpers that do would differ on consecutive calls.
+    import sys
+
+    readings = []
+
+    class TickingClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            readings.append(tz)
+            return _BASE_INSTANT + timedelta(seconds=len(readings))
+
+    monkeypatch.setattr(sys.modules[__name__], "datetime", TickingClock)
+
+    assert when(minutes=5) == when(minutes=5)
+    assert checkin(1) == checkin(1)
+    assert reject(3) == reject(3) and acs_hold(4) == acs_hold(4) and acs_non_hold(2) == acs_non_hold(2)
+    assert readings == []  # not one of them asked the clock
+
+
+def test_when_keeps_its_whole_second_format_and_its_delta_semantics():
+    import re
+
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", when())
+    assert _helper_instant(when()) == _BASE_INSTANT.replace(microsecond=0)                       # the base, to the second
+    assert _helper_instant(when()) - _helper_instant(when(minutes=5)) == timedelta(minutes=5)    # delta = that long BEFORE
+    assert _helper_instant(when(minutes=4, seconds=59)) - _helper_instant(when(minutes=5)) == timedelta(seconds=1)
+    assert _helper_instant(when(hours=3)) < _helper_instant(when(hours=2)) < _helper_instant(when(seconds=30))
+    assert timedelta(0) <= datetime.now(UTC) - _BASE_INSTANT < timedelta(hours=1)                # a recent, real instant
+
+
+_EVENT_TABLE = {"checkins": "checkin_events", "rejects": "reject_events", "acs_items": "acs_item_events"}
+
+
+@pytest.mark.parametrize(("kind", "build"), [("checkins", checkin), ("rejects", reject), ("acs_items", acs_hold)])
+def test_the_same_event_key_one_second_later_is_a_409_conflict_never_a_duplicate(db, kind, build):
+    # The production contract the flaky tests tripped over, stated on purpose: event_time is part of an event's content.
+    # The same identity (event_key) arriving with an event_time even ONE second different is a conflict, not a resend.
+    original = build(1)
+    one_second_later = {**original, "event_time": when(minutes=4, seconds=59)}
+    assert _helper_instant(one_second_later["event_time"]) - _helper_instant(original["event_time"]) == timedelta(seconds=1)
+    empty = {"checkins": [], "rejects": [], "acs_items": []}
+
+    first = post_upload(upload(**{**empty, kind: [original]}))
+    resend = post_upload(upload(**{**empty, kind: [dict(original)]}))
+    conflict = post_upload(upload(**{**empty, kind: [one_second_later]}))
+
+    assert first.status_code == 200 and first.json()[f"{kind}_inserted"] == 1
+    assert resend.status_code == 200 and resend.json()[f"{kind}_duplicates"] == 1     # truly identical: an idempotent resend
+    assert conflict.status_code == 409
+    assert conflict.json() == {"code": "event_conflict", "conflicts": {kind: [0]},
+                               "detail": "An event identity arrived with different content; nothing was stored"}
+    assert db.count(_EVENT_TABLE[kind]) == 1  # the original is untouched

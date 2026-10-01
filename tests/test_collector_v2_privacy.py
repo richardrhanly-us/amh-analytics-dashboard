@@ -261,6 +261,8 @@ def test_the_event_formats_are_the_servers_formats():
     assert v2_events.NON_HOLD_STATES == server.NON_HOLD_STATES and v2_events.HEALTH_STATUSES == server.HEALTH_STATUSES
     assert v2_events.LAST_ERROR_CLASSES == server.LAST_ERROR_CLASSES
     assert v2_status.MAX_COUNTER == server.MAX_COUNTER
+    assert v2_events.SCHEDULE_STATUSES == server.SCHEDULE_STATUSES
+    assert v2_events.MAX_RUN_DURATION_MS == server.MAX_RUN_DURATION_MS
     assert v2_events.KINDS == ("checkins", "rejects", "acs_items")
 
 
@@ -281,6 +283,11 @@ def test_every_payload_field_is_a_field_of_the_server_model():
         assert set(event.payload()) <= set(model.model_fields), model_name
         model.model_validate(event.payload())                       # and the server accepts it
     assert set(v2_status.StatusSnapshot("healthy", None, 0, None, None).payload(KEY_ID)) <= set(server.StatusV2Request.model_fields)
+    full = v2_status.StatusSnapshot("healthy", None, 0, when, when, collector_last_run_at=when,
+                                    collector_next_run_at=when + __import__("datetime").timedelta(minutes=15),
+                                    collector_run_duration_ms=3240, collector_schedule_status="healthy").payload(KEY_ID)
+    assert set(full) <= set(server.StatusV2Request.model_fields)
+    server.StatusV2Request.model_validate(full)                     # and the server accepts the diagnostics
 
 
 def test_the_event_dataclasses_have_exactly_the_payload_fields():
@@ -354,8 +361,8 @@ def short(name):
 
 def test_the_module_inventory_is_what_this_test_assumes():
     assert set(V2_MODULES) == {"v2_classify", "v2_config", "v2_events", "v2_identity", "v2_keys", "v2_normalize", "v2_patrons",
-                               "v2_quarantine", "v2_reader", "v2_rules", "v2_run", "v2_safe_errors", "v2_status", "v2_transform",
-                               "v2_uploader"}
+                               "v2_quarantine", "v2_reader", "v2_rules", "v2_run", "v2_safe_errors", "v2_schedule", "v2_status",
+                               "v2_transform", "v2_uploader"}
 
 
 @pytest.mark.parametrize("stem", [m for m in V2_MODULES if m != BOUNDARY and m not in RAW_LAYER])

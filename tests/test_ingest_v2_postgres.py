@@ -105,8 +105,17 @@ def hmac_like(n: int) -> str:
     return hashlib.sha256(f"synthetic-{n}".encode()).hexdigest()
 
 
+# ONE base instant for the whole module, read once at import. `when()` used to call datetime.now(UTC) on every call, so
+# two "identical" events built a moment apart could straddle a one-second boundary and differ in event_time -- which the
+# server rightly treats as a content conflict (same event_key, different content), making idempotency tests fail at
+# random. Every helper timestamp is now an exact offset from this one instant: building the same event twice always
+# gives the same event. Formatting (whole seconds, UTC, "Z") and the meaning of `delta` (that long BEFORE the base) are
+# unchanged.
+_BASE_INSTANT = datetime.now(UTC)
+
+
 def when(**delta) -> str:
-    return (datetime.now(UTC) - timedelta(**delta)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return (_BASE_INSTANT - timedelta(**delta)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def key_id(n: int) -> str:
@@ -947,7 +956,13 @@ def test_the_amendment_converts_existing_step_3_holds_in_place_and_touches_nothi
         before = rows(engine, "SELECT id, customer_id, branch_id, key_id, event_key, event_time, item_key, destination, is_ill, "
                               "is_branch_services, is_collection_services, ruleset_id, received_at FROM acs_hold_events ORDER BY id")
         v1_before = _v1_snapshot(engine)
-        other_v2_before = {t: rows(engine, f"SELECT * FROM {t} ORDER BY id") for t in ("checkin_events", "reject_events", "ingest_key_ids")}  # nosec B608
+        # The columns each table has BEFORE the upgrade. Later, purely additive migrations may add columns to these
+        # tables (c8d5f2a47e91 adds four NULLable diagnostics columns to ingest_key_ids), so the comparison below is over
+        # exactly these original columns -- every pre-existing value must be identical -- not over `SELECT *`.
+        original_columns = {t: ", ".join(r[0] for r in rows(
+            engine, "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = :t "
+                    "ORDER BY ordinal_position", t=t)) for t in ("checkin_events", "reject_events", "ingest_key_ids")}
+        other_v2_before = {t: rows(engine, f"SELECT {c} FROM {t} ORDER BY id") for t, c in original_columns.items()}  # nosec B608
 
         up = _alembic(db.url, "upgrade", "head")
         assert up.returncode == 0, up.stderr[-2000:]
@@ -957,7 +972,10 @@ def test_the_amendment_converts_existing_step_3_holds_in_place_and_touches_nothi
         assert after == before  # every row, id and timestamp preserved
         assert rows(engine, "SELECT DISTINCT state FROM acs_item_events") == [("hold",)]  # existing rows are all holds
         assert _v1_snapshot(engine) == v1_before  # not one v1 object changed
-        assert {t: rows(engine, f"SELECT * FROM {t} ORDER BY id") for t in other_v2_before} == other_v2_before  # nosec B608
+        assert {t: rows(engine, f"SELECT {c} FROM {t} ORDER BY id") for t, c in original_columns.items()} == other_v2_before  # nosec B608
+        # ... and whatever a later migration added to ingest_key_ids holds nothing for these pre-existing rows.
+        assert rows(engine, "SELECT DISTINCT collector_last_run_at, collector_next_run_at, collector_run_duration_ms, "
+                            "collector_schedule_status FROM ingest_key_ids") == [(None, None, None, None)]
         with pytest.raises(IntegrityError), engine.begin() as conn:  # the identity index survived the rename
             _insert_item(conn, e=hmac_like(1), item=hmac_like(101), dest="main")
         engine.dispose()
@@ -1016,3 +1034,142 @@ def test_the_downgrade_restores_step_3_exactly_when_only_holds_exist_and_the_upg
         assert up.returncode == 0, up.stderr[-2000:]
         assert rows(engine, "SELECT id, event_key, destination, is_ill FROM acs_item_events ORDER BY id") == holds
         engine.dispose()
+
+
+# =====================================================================================================================
+# Collector run / schedule diagnostics (migration c8d5f2a47e91)
+# =====================================================================================================================
+
+def test_the_diagnostic_columns_have_the_approved_types_and_are_nullable(engine):
+    columns = _columns(engine, "ingest_key_ids")
+
+    assert columns["collector_last_run_at"] == ("timestamp with time zone", "YES")
+    assert columns["collector_next_run_at"] == ("timestamp with time zone", "YES")
+    assert columns["collector_run_duration_ms"] == ("integer", "YES")
+    assert columns["collector_schedule_status"] == ("text", "YES")
+    assert rows(engine, "SELECT collector_last_run_at, collector_next_run_at, collector_run_duration_ms, "
+                        "collector_schedule_status FROM ingest_key_ids WHERE key_id = :k", k=KEY) == [(None, None, None, None)]
+
+
+@pytest.mark.parametrize("statement", [
+    "UPDATE ingest_key_ids SET collector_schedule_status = 'error' WHERE key_id = :k",
+    "UPDATE ingest_key_ids SET collector_schedule_status = 'Healthy' WHERE key_id = :k",
+    "UPDATE ingest_key_ids SET collector_schedule_status = 'Get-ScheduledTask : CANARY' WHERE key_id = :k",
+    "UPDATE ingest_key_ids SET collector_schedule_status = '' WHERE key_id = :k",
+    "UPDATE ingest_key_ids SET collector_run_duration_ms = -1 WHERE key_id = :k",
+    "UPDATE ingest_key_ids SET collector_run_duration_ms = 86400001 WHERE key_id = :k",
+])
+def test_the_database_itself_refuses_a_schedule_status_or_duration_outside_the_approved_range(engine, statement):
+    with pytest.raises(IntegrityError), engine.begin() as conn:
+        conn.execute(text(statement), {"k": KEY})
+
+
+def test_the_database_accepts_every_approved_schedule_status_and_the_duration_bounds(engine):
+    from src.services import ingest_v2_models as models
+
+    with engine.begin() as conn:
+        for value in models.SCHEDULE_STATUSES:
+            conn.execute(text("UPDATE ingest_key_ids SET collector_schedule_status = :v WHERE key_id = :k"), {"v": value, "k": KEY})
+        for value in (0, models.MAX_RUN_DURATION_MS):
+            conn.execute(text("UPDATE ingest_key_ids SET collector_run_duration_ms = :v WHERE key_id = :k"), {"v": value, "k": KEY})
+    definition = scalar(engine, "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = "
+                                "'ingest_key_ids_collector_schedule_status_chk'")
+    assert all(f"'{value}'" in definition for value in models.SCHEDULE_STATUSES)
+
+
+def test_a_real_heartbeat_persists_the_diagnostics_as_timestamptz_scoped_to_the_tenant(api, engine):
+    last_run = (datetime.now(UTC) - timedelta(seconds=40)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    next_run = (datetime.now(UTC) + timedelta(minutes=14)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    response = api.post("/v2/status", headers={"Authorization": f"Bearer {TOKEN}"}, json={
+        "contract_version": 2, "key_id": KEY, "status": "healthy", "collector_last_run_at": last_run,
+        "collector_next_run_at": next_run, "collector_run_duration_ms": 3240, "collector_schedule_status": "healthy"})
+
+    assert response.status_code == 200
+    ((stored_last, stored_next, duration, schedule),) = rows(
+        engine, "SELECT collector_last_run_at, collector_next_run_at, collector_run_duration_ms, collector_schedule_status "
+                "FROM ingest_key_ids WHERE key_id = :k", k=KEY)
+    assert (duration, schedule) == (3240, "healthy")
+    assert stored_last.tzinfo is not None and stored_last.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ") == last_run
+    assert stored_next.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ") == next_run
+    # Every other key -- the tenant's second key, the retired one, the other tenant's -- is untouched.
+    assert scalar(engine, "SELECT count(*) FROM ingest_key_ids WHERE collector_schedule_status IS NOT NULL") == 1
+    assert scalar(engine, "SELECT count(*) FROM ingest_key_ids WHERE key_id <> :k AND (collector_last_run_at IS NOT NULL "
+                          "OR collector_next_run_at IS NOT NULL OR collector_run_duration_ms IS NOT NULL)", k=KEY) == 0
+
+
+def test_the_migration_added_no_grant_policy_index_or_trigger_for_the_diagnostics(engine):
+    policies = rows(engine, "SELECT policyname, cmd FROM pg_policies WHERE tablename = 'ingest_key_ids' ORDER BY policyname")
+    assert policies == [("tenant_isolation_insert", "INSERT"), ("tenant_isolation_select", "SELECT"),
+                        ("tenant_isolation_update", "UPDATE")]  # exactly the RLS phase 1 policies, per row, unchanged
+    assert scalar(engine, "SELECT relrowsecurity FROM pg_class WHERE relname = 'ingest_key_ids'") is True
+    assert scalar(engine, "SELECT count(*) FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid "
+                          "WHERE c.relname = 'ingest_key_ids' AND a.attacl IS NOT NULL") == 0  # no column-level grant
+    assert scalar(engine, "SELECT count(*) FROM pg_indexes WHERE tablename = 'ingest_key_ids' AND indexdef LIKE '%collector_%'") == 0
+    assert scalar(engine, "SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                          "WHERE c.relname = 'ingest_key_ids' AND NOT t.tgisinternal") == 0
+
+
+# =====================================================================================================================
+# The payload helpers are deterministic, and one second is enough to be a conflict
+# =====================================================================================================================
+
+def _helper_instant(text_: str) -> datetime:
+    return datetime.strptime(text_, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+
+
+def test_rebuilding_an_event_gives_the_same_event_even_while_the_clock_moves(monkeypatch):
+    # The regression: these helpers once read the wall clock on every call, so `checkin(1)` built twice across a
+    # one-second boundary was two different events. Here the module's clock advances a full second on EVERY reading;
+    # helpers that never read it are unaffected, and helpers that do would differ on consecutive calls.
+    import sys
+
+    readings = []
+
+    class TickingClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            readings.append(tz)
+            return _BASE_INSTANT + timedelta(seconds=len(readings))
+
+    monkeypatch.setattr(sys.modules[__name__], "datetime", TickingClock)
+
+    assert when(minutes=5) == when(minutes=5)
+    assert checkin(1) == checkin(1)
+    assert reject(3) == reject(3) and acs_hold(4) == acs_hold(4) and acs_non_hold(2) == acs_non_hold(2)
+    assert readings == []  # not one of them asked the clock
+
+
+def test_when_keeps_its_whole_second_format_and_its_delta_semantics():
+    import re
+
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", when())
+    assert _helper_instant(when()) == _BASE_INSTANT.replace(microsecond=0)                       # the base, to the second
+    assert _helper_instant(when()) - _helper_instant(when(minutes=5)) == timedelta(minutes=5)    # delta = that long BEFORE
+    assert _helper_instant(when(minutes=4, seconds=59)) - _helper_instant(when(minutes=5)) == timedelta(seconds=1)
+    assert _helper_instant(when(hours=3)) < _helper_instant(when(hours=2)) < _helper_instant(when(seconds=30))
+    assert timedelta(0) <= datetime.now(UTC) - _BASE_INSTANT < timedelta(hours=1)                # a recent, real instant
+
+
+_EVENT_TABLE = {"checkins": "checkin_events", "rejects": "reject_events", "acs_items": "acs_item_events"}
+
+
+@pytest.mark.parametrize(("kind", "build"), [("checkins", checkin), ("rejects", reject), ("acs_items", acs_hold)])
+def test_the_same_event_key_one_second_later_is_a_conflict_never_a_duplicate(engine, kind, build):
+    # The production contract the flaky tests tripped over, stated on purpose: event_time is part of an event's content.
+    # The same identity (event_key) arriving with an event_time even ONE second different is a conflict, not a resend.
+    original = build(1)
+    one_second_later = {**original, "event_time": when(minutes=4, seconds=59)}
+    assert _helper_instant(one_second_later["event_time"]) - _helper_instant(original["event_time"]) == timedelta(seconds=1)
+    assert {k: v for k, v in one_second_later.items() if k != "event_time"} == {k: v for k, v in original.items() if k != "event_time"}
+
+    assert _store(engine, **{kind: [original]})[f"{kind}_inserted"] == 1
+    assert _store(engine, **{kind: [dict(original)]})[f"{kind}_duplicates"] == 1      # truly identical: an idempotent resend
+
+    with pytest.raises(service.EventConflict) as caught:
+        _store(engine, **{kind: [one_second_later]})
+
+    assert caught.value.conflicts == {kind: [0]}
+    table = _EVENT_TABLE[kind]
+    stored = rows(engine, f"SELECT event_time FROM {table}")  # nosec B608 - a fixed table name
+    assert len(stored) == 1 and stored[0][0].astimezone(UTC) == _helper_instant(original["event_time"])  # the original, untouched

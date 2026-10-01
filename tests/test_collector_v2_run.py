@@ -525,8 +525,10 @@ def test_a_healthy_heartbeat_has_the_exact_v2_fields_and_no_outbox(env):
     session = ScriptedSession()
     env.run(session)
     (heartbeat,) = session.statuses()
+    # The schedule query cannot run under test (tests/conftest.py), so it reports the fixed `query_failed` and no timestamps.
     assert set(heartbeat) == {"contract_version", "key_id", "status", "pending_outbox_count", "quarantined_count", "last_success_at",
-                              "watcher_last_active_at"}
+                              "watcher_last_active_at", "collector_run_duration_ms", "collector_schedule_status"}
+    assert heartbeat["collector_schedule_status"] == "query_failed"
     assert heartbeat["status"] == "healthy" and heartbeat["pending_outbox_count"] == 0 and heartbeat["quarantined_count"] == 0
     assert "oldest_pending_event_at" not in heartbeat and "last_error_class" not in heartbeat
     assert heartbeat["status"] in HEALTH_STATUSES
@@ -592,7 +594,8 @@ def test_a_status_snapshot_has_no_field_that_could_carry_text():
     import dataclasses
     fields = {f.name: f.type for f in dataclasses.fields(v2_status.StatusSnapshot)}
     assert set(fields) == {"status", "last_error_class", "quarantined_count", "last_success_at", "watcher_last_active_at",
-                           "pending_outbox_count"}
+                           "pending_outbox_count", "collector_last_run_at", "collector_next_run_at",
+                           "collector_run_duration_ms", "collector_schedule_status"}
     assert not any("error" == name or "message" in name or "detail" in name or "text" in name for name in fields)
 
 
@@ -725,7 +728,8 @@ def test_no_server_response_or_exception_text_reaches_a_log_the_state_the_status
         assert needle not in everything, needle
     heartbeat = session.statuses()[-1]
     assert set(heartbeat) <= {"contract_version", "key_id", "status", "last_error_class", "pending_outbox_count", "quarantined_count",
-                              "last_success_at", "watcher_last_active_at"}
+                              "last_success_at", "watcher_last_active_at", "collector_last_run_at", "collector_next_run_at",
+                              "collector_run_duration_ms", "collector_schedule_status"}
 
 
 def test_the_token_is_only_ever_sent_in_the_authorization_header(env):
@@ -869,10 +873,12 @@ def test_a_config_without_contract_mode_or_with_v1_still_runs_the_v1_path(tmp_pa
 def test_contract_mode_v2_dispatches_to_the_v2_runner(tmp_path, monkeypatch):
     env = Env(tmp_path, monkeypatch)
     seen = {}
-    monkeypatch.setattr(v2_run, "main_v2", lambda cfg, path, *, logger: seen.update(path=path) or 0)
+    monkeypatch.setattr(v2_run, "main_v2",
+                        lambda cfg, path, *, logger, started_perf: seen.update(path=path, started_perf=started_perf) or 0)
     monkeypatch.setattr(collector_run, "run_once", lambda *a, **k: pytest.fail("the v1 path ran in v2 mode"))
     assert collector_run.main(["--config", str(env.config_path)]) == 0
-    assert seen == {"path": str(env.config_path)}
+    assert seen["path"] == str(env.config_path)
+    assert isinstance(seen["started_perf"], float)  # main()'s own monotonic start reading, for the run duration
 
 
 def test_v2_dry_run_flag_dispatches_even_from_a_v1_config_and_before_any_v1_configuration(tmp_path, monkeypatch):

@@ -37,6 +37,18 @@ LAST_ERROR_CLASSES = (
     "retryable_infra", "auth_failure", "permanent_rejection", "source_unavailable", "configuration_error", "other",
 )
 
+# The Windows Scheduled Task's state as the heartbeat reports it (collector/v2_schedule.py): one fixed code, never text.
+# Anything but SCHEDULE_HEALTHY is unhealthy; the other four say why.
+SCHEDULE_HEALTHY = "healthy"
+SCHEDULE_TASK_MISSING = "task_missing"
+SCHEDULE_TASK_DISABLED = "task_disabled"
+SCHEDULE_NO_NEXT_RUN = "no_next_run"
+SCHEDULE_QUERY_FAILED = "query_failed"
+SCHEDULE_STATUSES = (
+    SCHEDULE_HEALTHY, SCHEDULE_TASK_MISSING, SCHEDULE_TASK_DISABLED, SCHEDULE_NO_NEXT_RUN, SCHEDULE_QUERY_FAILED,
+)
+MAX_RUN_DURATION_MS = 86_400_000  # one day: far beyond the task's one-hour execution limit, small enough to be a sanity bound
+
 # The three payload lists, in the order the server names them.
 KIND_CHECKINS, KIND_REJECTS, KIND_ACS_ITEMS = "checkins", "rejects", "acs_items"
 KINDS = (KIND_CHECKINS, KIND_REJECTS, KIND_ACS_ITEMS)

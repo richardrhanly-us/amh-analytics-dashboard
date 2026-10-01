@@ -92,6 +92,7 @@ def render_live_today(
     refresh_interval_minutes,
     can_view_transits=True,
     can_view_internal_workflow=True,
+    collector_diagnostics_lines=None,
 ):
     with st.container(key="sv_live_controls_row"):
         pause_col, refresh_col, check_col, status_col = st.columns(
@@ -140,6 +141,14 @@ def render_live_today(
                 unsafe_allow_html=True,
             )
 
+            # Collector run/schedule diagnostics: four plain-text lines, present only for a Contract v2 branch
+            # (None for v1, whose panel is unchanged). Each ends with markdown's two-space hard line break. In the
+            # f-string below the block sits on its own line ending in a backslash: a line continuation, so an
+            # empty block adds nothing at all -- not even a newline -- and the lines around it are untouched.
+            collector_diagnostics_block = "".join(
+                f"{line}  \n" for line in (collector_diagnostics_lines or [])
+            )
+
             with st.expander(expander_label, expanded=pipeline_expanded):
                 st.markdown(
                     "##### Pipeline Status"
@@ -149,6 +158,7 @@ Latest Checkin in DB: {latest_checkin_str} ({latest_checkin_ago})
 Latest Status Row Written: {pipeline_status_written_str} ({pipeline_status_written_ago})  
 Last Pipeline Attempt: {pipeline_last_attempt_str} ({pipeline_last_attempt_ago})  
 Last Successful Upload Run: {pipeline_last_run_str} ({pipeline_last_run_ago})  
+{collector_diagnostics_block}\
 Latest Result: {pipeline_result_text}  
 Status Code: `{status_code_text}`
                     """

@@ -119,6 +119,56 @@ durable queue, so the next run re-reads and resends the identical events (the se
 Logs, status files and the heartbeat contain fixed codes and integers only; exceptions are reported by **type and code location**,
 never by message, and are raised outside `except` blocks so no message survives as `__context__`.
 
+### Run and schedule diagnostics
+
+Each heartbeat also carries four diagnostics about the invocation and its Windows Scheduled Task (`collector/v2_schedule.py`).
+The dashboard's Pipeline Status panel shows them as *Last Collector Run*, *Next Scheduled Run*, *Latest Run Duration* and
+*Collector Schedule*.
+
+| Field | Source and meaning |
+|---|---|
+| `collector_last_run_at` | Windows Task Scheduler `LastRunTime` for the "SortView Collector" task. It is the scheduler's most recent launch of the task however it was started: a run started with `Start-ScheduledTask` or from the Task Scheduler UI updates it exactly as a trigger does. |
+| `collector_next_run_at` | Task Scheduler `NextRunTime`, as Windows reports it. It is never computed from the cadence: if Windows has no next run, none is reported. |
+| `collector_run_duration_ms` | How long the invocation took, measured with `time.perf_counter()` (a monotonic clock), never by subtracting wall-clock timestamps. It runs from the start of `collector.run`'s `main()` to the construction of the heartbeat, so it includes configuration and setup, v2 preparation, source processing, delivery, the local status-file write and the Windows Task Scheduler query. It excludes only the heartbeat POST, because a heartbeat cannot report the finished duration of its own request. |
+| `collector_schedule_status` | One fixed code, never text: `healthy`, `task_missing`, `task_disabled`, `no_next_run` or `query_failed`. |
+
+**How the schedule is read.** The collector starts Windows PowerShell by its absolute path under the system directory, with
+`-NoProfile -NonInteractive -EncodedCommand` and a fixed script that calls `Get-ScheduledTask` and `Get-ScheduledTaskInfo` and
+prints one JSON object: booleans, the task state as an integer, and the two times already in UTC and formatted with the
+invariant culture. Nothing is parsed from localized `schtasks` output. The query takes a couple of seconds; that time is part
+of the invocation and is counted in the duration.
+
+**Nominal** means the query succeeded, the task exists, it is enabled, and Windows reports a next run in the future. A task
+state of Running is normal (it is the collector's own run), as is Ready.
+
+| Status | When |
+|---|---|
+| `healthy` | Nominal, as above. |
+| `task_missing` | No task named "SortView Collector" at the scheduler's root. |
+| `task_disabled` | The task exists but is disabled. |
+| `no_next_run` | The task is enabled but Windows reports no usable future run. |
+| `query_failed` | The schedule could not be read: not Windows, PowerShell missing, a timeout, a non-zero exit, or output that is not exactly the expected object. |
+
+The collector fails closed: anything it cannot verify is `query_failed`, and it reports no timestamp from an answer that
+failed validation. Nothing the child process prints, and no exception text, is ever logged or sent; the only thing recorded
+is the fixed code (`v2 schedule checked | schedule_status=<code>`).
+
+**What the dashboard does with it.** `task_missing`, `task_disabled` and `no_next_run` turn the panel's headline to
+"Pipeline Schedule Error" at once. `query_failed` shows an error on the schedule line but only degrades an otherwise healthy
+pipeline, since arriving heartbeats show the collector is running. An ingestion error, including an auth failure, keeps its own
+headline. The dashboard also checks the clock: a `healthy` schedule whose next run is more than two cadences (30 minutes) in
+the past, with no newer heartbeat, is shown as overdue. Two cadences, not one, because the task's
+`MultipleInstancesPolicy=IgnoreNew` lets one trigger be skipped legitimately while an earlier run is still going.
+
+**Deployment order.** (1) apply migration `c8d5f2a47e91`; (2) deploy the API and dashboard that accept, store and read the
+fields; (3) deploy the new Collector release. A Collector that sends these fields must not be deployed against the old API,
+which rejects unknown heartbeat fields and would refuse the whole heartbeat. An older Collector against the new API is fine:
+its heartbeat is accepted and the four fields are stored as NULL.
+
+The query runs as whatever account runs the Collector (SYSTEM for the scheduled task, which can read every task). If a
+Group Policy execution policy or a missing ScheduledTasks module prevents it, the result is `query_failed`; confirm a
+`healthy` result from a real scheduled run on the Collector machine after installing a release that includes this.
+
 ## Dry run
 
 `python -m collector.run --config <config.json> --v2-dry-run` transforms a bounded **tail** of each source and prints only

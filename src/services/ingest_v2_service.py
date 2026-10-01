@@ -221,7 +221,8 @@ def latest_ingest_status(conn, customer_id: int, branch_id: int) -> dict[str, An
         text("""
             SELECT key_id, status AS key_status, health_status, last_error_class, pending_outbox_count,
                    quarantined_count, oldest_pending_event_at, last_success_at, watcher_last_active_at,
-                   last_heartbeat_at
+                   last_heartbeat_at, collector_last_run_at, collector_next_run_at, collector_run_duration_ms,
+                   collector_schedule_status
             FROM ingest_key_ids
             WHERE customer_id = :customer_id AND branch_id = :branch_id AND status = 'active'
             ORDER BY last_heartbeat_at DESC NULLS LAST
@@ -401,7 +402,11 @@ _HEARTBEAT_SQL = """
         quarantined_count = :quarantined_count,
         oldest_pending_event_at = :oldest_pending_event_at,
         last_success_at = :last_success_at,
-        watcher_last_active_at = :watcher_last_active_at
+        watcher_last_active_at = :watcher_last_active_at,
+        collector_last_run_at = :collector_last_run_at,
+        collector_next_run_at = :collector_next_run_at,
+        collector_run_duration_ms = :collector_run_duration_ms,
+        collector_schedule_status = :collector_schedule_status
     WHERE key_id = :key_id
       AND customer_id = :customer_id
       AND branch_id = :branch_id
@@ -421,5 +426,10 @@ def record_heartbeat(conn, *, customer_id: int, branch_id: int, data: StatusV2Re
         "last_error_class": data.last_error_class, "pending_outbox_count": data.pending_outbox_count,
         "quarantined_count": data.quarantined_count, "oldest_pending_event_at": stamp(data.oldest_pending_event_at),
         "last_success_at": stamp(data.last_success_at), "watcher_last_active_at": stamp(data.watcher_last_active_at),
+        # Full-snapshot semantics apply to these too: a heartbeat without them (an older collector) stores NULL.
+        "collector_last_run_at": stamp(data.collector_last_run_at),
+        "collector_next_run_at": stamp(data.collector_next_run_at),
+        "collector_run_duration_ms": data.collector_run_duration_ms,
+        "collector_schedule_status": data.collector_schedule_status,
     })
     return result.rowcount == 1

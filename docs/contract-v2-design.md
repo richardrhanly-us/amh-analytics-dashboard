@@ -108,6 +108,37 @@ Every heartbeat is a **full snapshot** of these fields (an omitted optional fiel
 an upload. It never writes `pipeline_status`, `collector_installations` or any v1 table, so the v1 dashboard does not see a v2
 collector's health until the dashboard step reads it. Body limit 16 KiB.
 
+### 4.1 Collector run and schedule diagnostics
+
+Four further optional fields, added by migration `c8d5f2a47e91` (four NULLable columns on `ingest_key_ids`). They carry what
+the collector learned from Windows Task Scheduler about its own task, and how long the invocation took. Like every other
+heartbeat field they are typed and closed: two timestamps, one integer, one code. There is no reason or message field.
+
+```
+  "collector_last_run_at": null | ISO-8601 with offset, "collector_next_run_at": null | ISO-8601 with offset,
+  "collector_run_duration_ms": null | int (0..86,400,000),
+  "collector_schedule_status": null | "healthy|task_missing|task_disabled|no_next_run|query_failed"
+```
+
+| Field | Meaning |
+|---|---|
+| `collector_last_run_at` | Windows Task Scheduler `LastRunTime` for the "SortView Collector" task: the scheduler's most recent launch of it, however that launch was started (its trigger, `Start-ScheduledTask`, or Run in the Task Scheduler UI). |
+| `collector_next_run_at` | Task Scheduler `NextRunTime`: the run Windows currently has scheduled. Reported, never computed from the cadence. |
+| `collector_run_duration_ms` | Elapsed time of the invocation on a monotonic clock, from process start to the construction of this heartbeat. The heartbeat POST itself is the only part not included. |
+| `collector_schedule_status` | `healthy`: the task exists, is enabled, was queried successfully and has a usable future next run. `task_missing`, `task_disabled`, `no_next_run`: it does not, and why. `query_failed`: the collector could not read its schedule at all. |
+
+A collector from before these fields omits them; the model accepts that and they are stored as NULL (and, each heartbeat being
+a full snapshot, an older collector's heartbeat sets them back to NULL). The dashboard shows NULL as "N/A" / "Unknown" and
+draws no conclusion from it.
+
+They need no grant and no policy: the runtime role's table-level privileges on `ingest_key_ids` cover columns added later, and
+the row level security policies on the table are per row.
+
+**Deployment order.** (1) apply migration `c8d5f2a47e91`; (2) deploy the API and dashboard that accept, store and read the
+fields; (3) deploy the new Collector release that sends them. A new Collector must not be deployed against the old API: the
+old heartbeat model forbids unknown fields, so the whole heartbeat would be rejected (422) and the tenant's v2 status would stop
+updating. The reverse is safe at every step: the new API accepts an older Collector's heartbeat unchanged.
+
 ## 5. Dedup and conflict behaviour
 
 * The dedup identity is `(customer_id, branch_id, key_id, event_key)` per table. It replaces v1's semantic keys, which depend
