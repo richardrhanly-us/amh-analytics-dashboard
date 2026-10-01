@@ -298,8 +298,14 @@ def test_no_trigger_exists_on_a_v2_table(engine):
 
 
 def test_the_two_v1_sync_triggers_are_still_the_only_triggers_on_the_v1_event_tables(engine):
-    assert sorted(r[0] for r in rows(engine, "SELECT tgname FROM pg_trigger WHERE NOT tgisinternal")) == [
-        "trg_sync_checkins_to_clean", "trg_sync_rejects_to_clean"]
+    # Every trigger in the database, with its table. The only one that is not a v1 sync trigger is the append-only guard
+    # on tenant_lifecycle_events (a7c4e19d5b02), which is on no event table.
+    assert sorted((r[0], r[1]) for r in rows(
+        engine, "SELECT tgrelid::regclass::text, tgname FROM pg_trigger WHERE NOT tgisinternal")) == [
+        ("checkins", "trg_sync_checkins_to_clean"),
+        ("rejects", "trg_sync_rejects_to_clean"),
+        ("tenant_lifecycle_events", "trg_tenant_lifecycle_events_append_only"),
+    ]
 
 
 SECRET_WORDS = ("secret", "hmac", "salt", "seed", "password", "passphrase", "private", "material", "credential", "token", "signing")

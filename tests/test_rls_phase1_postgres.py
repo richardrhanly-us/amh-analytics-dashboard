@@ -161,6 +161,16 @@ def _create_runtime_role(owner_engine, role_name: str) -> None:
         conn.execute(text(f"GRANT SELECT ON TABLE public.branches TO {role_name}"))
         conn.execute(text(f"GRANT SELECT ON TABLE public.collector_installations TO {role_name}"))
         conn.execute(text(f"GRANT SELECT ON TABLE public.customers TO {role_name}"))
+        # v1 POST /upload reads v2_cutovers on every request since commit
+        # 1394b41 ("Close v1 uploads after v2 cutover":
+        # main.v1_upload_closed_since -> get_effective_v2_cutover). That
+        # commit landed after this fixture was written and the grant was
+        # never added here, so the upload answered 500 (permission denied)
+        # as this role. Production sortview_app holds exactly this: SELECT
+        # only on v2_cutovers, and no access to its sequence (confirmed in
+        # the 2026-10-01 privilege inventory; recorded in
+        # scripts/runtime_role_privileges.py).
+        conn.execute(text(f"GRANT SELECT ON TABLE public.v2_cutovers TO {role_name}"))
         # Deliberately NO grant of any kind on checkins_clean/rejects_clean.
         # sync_checkins_to_clean()/sync_rejects_to_clean() are SECURITY
         # DEFINER as of migration 67d06f4ccd24, so their INSERT ... ON

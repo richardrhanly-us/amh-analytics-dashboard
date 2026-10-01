@@ -594,13 +594,14 @@ def _installation(**overrides):
     return row
 
 
-def _patch_manage(monkeypatch, *, row=None, set_status=None, assign=None, update=None, create=None, enroll=None):
+def _patch_manage(monkeypatch, *, row=None, set_status=None, assign=None, update=None, create=None, enroll=None,
+                  offboard=None):
     import services.collector_enrollment_service as enrollment
     import services.platform_admin_service as platform
     import services.tenant_service as tenant
 
     _patch_super_admin_auth(monkeypatch)
-    calls = {"set_status": [], "assign": [], "update": [], "create": [], "enroll": []}
+    calls = {"set_status": [], "assign": [], "update": [], "create": [], "enroll": [], "offboard": []}
 
     def recording(name, outcome=None, result=None):
         def call(**kwargs):
@@ -612,6 +613,7 @@ def _patch_manage(monkeypatch, *, row=None, set_status=None, assign=None, update
 
     monkeypatch.setattr(platform, "list_libraries_with_status", lambda: [row or _library_row()])
     monkeypatch.setattr(platform, "set_library_active_status", set_status or recording("set_status"))
+    monkeypatch.setattr(platform, "offboard_library", offboard or recording("offboard"))
     monkeypatch.setattr(tenant, "list_collector_installations_for_organization", lambda organization_id: [_installation()])
     monkeypatch.setattr(tenant, "assign_operational_identity",
                         assign or recording("assign", result={"operational_customer_id": 50, "operational_branch_id": 2}))
@@ -771,6 +773,86 @@ def test_manage_page_still_shows_a_generated_enrollment_code_once(monkeypatch):
 
     assert not at.error and not at.exception
     assert "ABCD-EFGH-JKLM" in _rendered(at)  # the code is deliberately shown to the super admin
+
+
+# --- permanent offboarding: a separate control from Suspend/Reactivate ------------------------------------------------
+
+OFFBOARD_MESSAGE = (
+    f"The library could not be offboarded; nothing was changed. Offboarding is safe to run again. {_HINT}"
+)
+OFFBOARD_CONFIRMATION_MESSAGE = "The Org Slug you typed does not match this library. Nothing was changed."
+OFFBOARD_BUTTON = "Offboard Library Permanently"
+
+
+def _offboard_with(at: AppTest, typed: str) -> None:
+    _text_input(at, "Type the Org Slug to confirm").input(typed)
+    _button(at, OFFBOARD_BUTTON).click()
+    at.run()
+
+
+@pytest.mark.parametrize("status", ["active", "trial", "suspended"])
+def test_manage_page_offboards_only_after_the_slug_is_typed_and_records_the_super_admin(monkeypatch, status):
+    calls = _patch_manage(monkeypatch, row=_library_row(organization_status=status))
+
+    at = _run_manage()
+    _offboard_with(at, "acme")
+
+    assert not at.error and not at.exception
+    assert calls["offboard"] == [
+        {"organization_id": 10, "confirm_slug": "acme", "actor_user_id": 7, "actor_label": "root@example.invalid"}]
+    assert calls["set_status"] == []  # never reached through suspend/reactivate
+
+
+@pytest.mark.parametrize("typed", ["", "acme-library", "ACME", "Acme Library"])
+def test_manage_page_does_not_offboard_on_a_wrong_or_missing_confirmation(monkeypatch, typed):
+    calls = _patch_manage(monkeypatch)
+
+    at = _run_manage()
+    _offboard_with(at, typed)
+
+    assert [e.value for e in at.error] == [OFFBOARD_CONFIRMATION_MESSAGE] and calls["offboard"] == []
+
+
+def test_suspending_or_reactivating_never_offboards(monkeypatch):
+    calls = _patch_manage(monkeypatch, row=_library_row(organization_status="active"))
+    at = _run_manage()
+    _button(at, "Suspend Library").click()
+    at.run()
+
+    calls_suspended = _patch_manage(monkeypatch, row=_library_row(organization_status="suspended"))
+    at = _run_manage()
+    _button(at, "Reactivate Library").click()
+    at.run()
+
+    assert calls["offboard"] == [] and calls_suspended["offboard"] == []
+    assert len(calls["set_status"]) == 1 and len(calls_suspended["set_status"]) == 1
+
+
+def test_manage_page_shows_a_fixed_message_when_offboarding_fails(monkeypatch, caplog):
+    _patch_manage(monkeypatch, offboard=_failing("offboard"))
+
+    with caplog.at_level(logging.DEBUG, logger=MANAGE_LOGGER):
+        at = _run_manage()
+        _offboard_with(at, "acme")
+
+    _assert_contained(at, caplog, log_message="Library offboard failed", expected_errors=[OFFBOARD_MESSAGE])
+
+
+def test_a_cancelled_library_offers_no_lifecycle_or_provisioning_control(monkeypatch):
+    calls = _patch_manage(monkeypatch, row=_library_row(organization_status="cancelled"))
+
+    at = _run_manage()
+
+    assert not at.exception
+    labels = [b.label for b in at.button]
+    for gone in ("Suspend Library", "Reactivate Library", OFFBOARD_BUTTON, "Save Installation", "Add Installation",
+                 "Generate Enrollment Code"):
+        assert gone not in labels, gone
+    rendered = _rendered(at)
+    assert "This library is Cancelled (permanently offboarded)" in rendered
+    assert "Unavailable: this library is Cancelled." in rendered  # no installer values either
+    assert "Main AMH Sorter" in rendered  # the installation record itself is still shown, read-only
+    assert all(calls[name] == [] for name in calls)
 
 
 # =====================================================================================================================
