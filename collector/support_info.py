@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .config import TOKEN_SOURCE_ENVIRONMENT, ConfigError, load_config
+from .config import ConfigError, load_config
 from .state import load_status
 from .task_settings import TASK_NAME
 
@@ -34,7 +34,7 @@ class SupportInfo:
     config_loaded: bool
     config_error: str | None
     last_status: dict[str, Any] | None
-    # Where the API token was resolved from ("dpapi" / "environment") -- never the token, its length or a hash.
+    # Where the API token was resolved from ("dpapi", the only source) -- never the token, its length or a hash.
     api_token_source: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -100,10 +100,7 @@ def _print_support_info(info: SupportInfo) -> None:
         print(f"Config did NOT load: {info.config_error}")
         return
 
-    if info.api_token_source == TOKEN_SOURCE_ENVIRONMENT:
-        print("API token source:    environment (migration fallback)")
-    else:
-        print(f"API token source:    {info.api_token_source}")
+    print(f"API token source:    {info.api_token_source}")
 
     if info.last_status is None:
         print("No status.json found yet -- the collector has not completed a run.")

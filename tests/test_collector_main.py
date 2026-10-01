@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from collector_token_support import store_api_token
 
 from collector import run as run_mod
 
@@ -86,20 +87,20 @@ def test_missing_config_argument_exits_nonzero():
 
 
 def test_invalid_config_path_returns_exit_code_2(monkeypatch, tmp_path):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     exit_code = run_mod.main(["--config", str(tmp_path / "does-not-exist.json")])
     assert exit_code == 2
 
 
 def test_missing_api_token_returns_exit_code_2(monkeypatch, tmp_path):
-    monkeypatch.delenv("SORTVIEW_API_TOKEN", raising=False)
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", "valid-environment-token-0001")  # valid, and irrelevant: no api_token.dpapi
     config_path = _write_config(tmp_path)
     exit_code = run_mod.main(["--config", str(config_path)])
     assert exit_code == 2
 
 
 def test_clean_run_with_no_source_data_exits_zero(monkeypatch, tmp_path):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config(tmp_path)
     monkeypatch.setattr(run_mod.uploader, "build_session", lambda: FakeSession())
     _configure_a_passthrough_parser_for_testing(monkeypatch)
@@ -109,7 +110,7 @@ def test_clean_run_with_no_source_data_exits_zero(monkeypatch, tmp_path):
 
 
 def test_upload_failure_exits_nonzero(monkeypatch, tmp_path):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config(tmp_path)
     (tmp_path / "Checkins.txt").write_text("line one\n", encoding="utf-8")
     _configure_a_passthrough_parser_for_testing(monkeypatch)
@@ -146,7 +147,7 @@ def test_ordinary_cli_invocation_parses_and_uploads_real_checkins_data(monkeypat
     Tech Logic checkins line via the real, unchanged
     agent/parser/checkins.py and upload it in the exact backend row
     shape, through main()'s own default path."""
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config(tmp_path)
     real_line = "Sunny days /|33472004192508|MLEPB|E KERBEL NATURE|000|1|False||4|N|N|N|8/31/2026|4:18:39 PM"
     (tmp_path / "Checkins.txt").write_text(real_line + "\n", encoding="utf-8")
@@ -176,7 +177,7 @@ def test_unknown_source_name_still_fails_closed(monkeypatch, tmp_path, capsys):
     actually provides -- e.g. a config typo, or a not-yet-supported
     fourth source. No monkeypatching of collector.parsers here either;
     this exercises the real production seam's edge case."""
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     doc = {
         "customer_id": 1,
         "branch_id": 1,
@@ -208,7 +209,7 @@ def test_unanticipated_exception_still_exits_nonzero(monkeypatch, tmp_path, caps
     handling entirely must still produce a nonzero exit -- this is the
     same fail-fast discipline already proven for the continuous agent's
     main() (see tests/test_agent_main_smoke.py), applied here."""
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config(tmp_path)
     monkeypatch.setattr(run_mod.uploader, "build_session", lambda: FakeSession())
 
@@ -222,7 +223,7 @@ def test_unanticipated_exception_still_exits_nonzero(monkeypatch, tmp_path, caps
 
 
 def test_successful_run_exits_zero_and_persists_state(monkeypatch, tmp_path):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config(tmp_path)
     (tmp_path / "Checkins.txt").write_text("line one\n", encoding="utf-8")
     monkeypatch.setattr(run_mod.uploader, "build_session", lambda: FakeSession())
@@ -258,7 +259,7 @@ def _drop_collector_log_handlers():
 
 
 def test_legacy_config_without_installation_id_runs_and_logs_a_warning(monkeypatch, tmp_path):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     _drop_collector_log_handlers()
     config_path = _write_config(tmp_path)  # no installation_id
     session = FakeSession()
@@ -277,7 +278,7 @@ def test_legacy_config_without_installation_id_runs_and_logs_a_warning(monkeypat
 
 
 def test_config_with_installation_id_runs_without_the_legacy_warning(monkeypatch, tmp_path):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     _drop_collector_log_handlers()
     config_path = _write_config_with(tmp_path, installation_id=41)
     session = FakeSession()
@@ -296,7 +297,7 @@ def test_config_with_installation_id_runs_without_the_legacy_warning(monkeypatch
 
 
 def test_invalid_installation_id_in_config_exits_with_config_error(monkeypatch, tmp_path):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config_with(tmp_path, installation_id="not-a-number")
 
     assert run_mod.main(["--config", str(config_path)]) == 2

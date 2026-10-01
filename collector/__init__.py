@@ -140,10 +140,22 @@ from __future__ import annotations
 # `SortViewCollector.exe api-token set|check` subcommand, which reads the
 # token from STDIN only. collector/config.py's resolve_api_token is the one
 # place the token is resolved, for the run, preflight, bootstrap and
-# support-info alike. TEMPORARY, 1.0.11 ONLY: when api_token.dpapi is
-# ABSENT, the environment variable is still used (a migration fallback, so a
-# machine can be updated before its token is moved); a present file that
+# support-info alike. In 1.0.11 ONLY, when api_token.dpapi was ABSENT the
+# environment variable was still used (a one-release migration fallback, so
+# a machine could be updated before its token was moved); a present file that
 # cannot be used fails closed and never falls back. Preflight now reports the
 # token's source instead of its length. No change to the v2 secret, the
 # uploader, the v1/v2 contracts or the privacy boundary.
-__version__ = "1.0.11"
+# 1.0.12 removes that migration fallback: api_token.dpapi is MANDATORY and
+# is the Collector's only token source. No Collector runtime or deploy path
+# reads SORTVIEW_API_TOKEN any more -- a valid environment token with no
+# api_token.dpapi does not start the Collector, and a missing, damaged,
+# exposed or wrong-tenant file fails closed exactly as before. finish-install
+# no longer accepts a Machine-scope token or seeds the process environment
+# from it; the updaters never create or migrate a token, so a machine must
+# have api_token.dpapi stored BEFORE it is updated (otherwise the new
+# runtime's preflight fails and the task stays disabled). A leftover
+# Machine-scope variable is ignored, never removed automatically. The storage
+# model itself (DPAPI scope, entropy, ACL, tenant binding, `api-token
+# set|check` and its exit codes) is unchanged.
+__version__ = "1.0.12"

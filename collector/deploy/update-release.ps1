@@ -79,20 +79,21 @@
     executes for a frozen update.
 
     Never touches -DataRoot (config\, data\, logs\, secrets\ -- including
-    the API token file secrets\api_token.dpapi) or the Machine-scope
-    SORTVIEW_API_TOKEN -- only the application runtime (-InstallRoot) is
-    replaced, for either kind.
+    the API token file secrets\api_token.dpapi) -- only the application
+    runtime (-InstallRoot) is replaced, for either kind. It never reads,
+    sets or removes any environment variable for the token either: a
+    leftover Machine-scope SORTVIEW_API_TOKEN is simply ignored by the
+    runtime, and cleaning it up is a separate, explicit operator step.
 
-    API TOKEN (1.0.11): the verification preflight resolves the token
-    exactly as the runtime does and prints its source. Updating to 1.0.11
-    therefore needs NO token step: with no api_token.dpapi it keeps using
-    the Machine-scope SORTVIEW_API_TOKEN (the 1.0.11-only migration
-    fallback -- as before, it must be visible to this elevated session);
-    with a stored api_token.dpapi it uses that. A PRESENT but unusable
-    api_token.dpapi never falls back: preflight fails and, as for any
-    failed verification, the task is left DISABLED -- fix it with
-    tools\set-api-token.ps1 (or, before the old token is revoked, remove
-    that file) and re-enable.
+    API TOKEN -- DPAPI REQUIRED: the verification preflight resolves the
+    token exactly as the runtime does -- from api_token.dpapi only -- and
+    prints its source. With a stored, usable api_token.dpapi the update
+    needs NO token step. With NO api_token.dpapi, or one that cannot be
+    used, the new runtime's preflight fails and, as for any failed
+    verification, the task is left DISABLED: nothing else can supply the
+    token, and this script never creates or migrates one. Store it with
+    tools\set-api-token.ps1 (BEFORE updating a machine that has none),
+    re-run preflight, and re-enable.
 
 .EXAMPLE
     .\update.ps1 -InstallRoot "C:\SortView\Collector" `

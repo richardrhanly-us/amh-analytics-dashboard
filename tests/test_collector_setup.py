@@ -61,7 +61,7 @@ def _powershell() -> str:
 
 needs_windows_powershell = pytest.mark.skipif(
     sys.platform != "win32" or _POWERSHELL is None,
-    reason="the setup scenarios run real Windows PowerShell (SecureString/Machine-scope semantics)",
+    reason="the setup scenarios run real Windows PowerShell (SecureString semantics)",
 )
 
 
@@ -703,20 +703,32 @@ def test_the_token_wrapper_refuses_a_partial_explicit_tenant_before_asking_for_a
 def test_finish_install_token_step_decision_table():
     finish = _read(FINISH_SOURCE)
     function = _ps_function("Get-TokenStepAction", finish)
-    # (UseExisting, a usable api_token.dpapi, a Machine-scope token) -> action. A stored token and the 1.0.11-only Machine
-    # fallback both count as "a token exists"; a DAMAGED api_token.dpapi never reaches this table (the script stops first).
+    # (UseExisting, a usable api_token.dpapi) -> action. Only a stored token counts as "a token exists" -- there is no
+    # second input; a DAMAGED api_token.dpapi never reaches this table (the script stops first).
+    assert "param([bool]$UseExisting, [bool]$StoredTokenPresent)" in function
     cases = [
-        ("$true", "$true", "$false", "UseExisting"), ("$true", "$false", "$true", "UseExisting"),
-        ("$true", "$true", "$true", "UseExisting"), ("$true", "$false", "$false", "MissingExisting"),
-        ("$false", "$true", "$false", "AskKeepOrReplace"), ("$false", "$false", "$true", "AskKeepOrReplace"),
-        ("$false", "$true", "$true", "AskKeepOrReplace"), ("$false", "$false", "$false", "PromptForToken"),
+        ("$true", "$true", "UseExisting"), ("$true", "$false", "MissingExisting"),
+        ("$false", "$true", "AskKeepOrReplace"), ("$false", "$false", "PromptForToken"),
     ]
     script = function + "\n" + "\n".join(
-        f"Get-TokenStepAction -UseExisting {use} -StoredTokenPresent {stored} -MachineTokenPresent {machine}"
-        for use, stored, machine, _ in cases
+        f"Get-TokenStepAction -UseExisting {use} -StoredTokenPresent {stored}" for use, stored, _ in cases
     )
 
     assert _run_ps(script).stdout.split() == [expected for *_inputs, expected in cases]
+
+
+@needs_windows_powershell
+def test_finish_install_token_step_ignores_a_claimed_machine_token():
+    # The third input is gone. A caller that still claims "a Machine token is present" changes nothing (a plain PowerShell
+    # function ignores an unknown argument): with no stored token the answer is still "no token" in both modes.
+    function = _ps_function("Get-TokenStepAction", _read(FINISH_SOURCE))
+    assert "MachineTokenPresent" not in function
+    script = function + (
+        "\nGet-TokenStepAction -UseExisting $true -StoredTokenPresent $false -MachineTokenPresent $true"
+        "\nGet-TokenStepAction -UseExisting $false -StoredTokenPresent $false -MachineTokenPresent $true"
+    )
+
+    assert _run_ps(script).stdout.split() == ["MissingExisting", "PromptForToken"]
 
 
 # =====================================================================================
@@ -2550,7 +2562,7 @@ def test_a_saved_enrollment_without_the_token_fails_safely_and_touches_nothing(t
     record_path = write_recovery(bundle)
     before = _snapshot(bundle.data_root)
 
-    result = run_scenario(bundle, answers=[""])  # no Machine-scope token at all
+    result = run_scenario(bundle, answers=[""])  # no stored token at all
 
     assert result.exit_code == 2
     assert result.tools() == ["install-verify", "runtime-version"]  # no HTTP, no code prompt, no installer

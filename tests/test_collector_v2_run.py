@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import requests
+from collector_token_support import break_api_token, store_api_token
 from collector_v2_support import (
     BARCODE_CI,
     KEY_ID,
@@ -50,7 +51,7 @@ class Env:
 
     def __init__(self, tmp_path, monkeypatch, **v2_extra):
         self.root = tmp_path / "root"
-        monkeypatch.setenv("SORTVIEW_API_TOKEN", TOKEN)
+        store_api_token(monkeypatch, TOKEN)
         self.config_path = write_config(self.root, v2_extra=v2_extra)
         self.cfg = load_config(self.config_path)
         self.v2 = load_v2(self.config_path)
@@ -1026,6 +1027,7 @@ def minimal_dry_config(root, *, rules_path=True, state_path=False, timezone="Ame
 def seed_minimal_install(tmp_path, monkeypatch):
     env = Env(tmp_path, monkeypatch)
     env.put_all()
+    break_api_token(monkeypatch)  # from here on there is NO api_token.dpapi -- the only source the Collector has
     monkeypatch.delenv("SORTVIEW_API_TOKEN", raising=False)
     return env
 

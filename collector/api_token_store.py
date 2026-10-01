@@ -1,8 +1,9 @@
-"""The Collector's API bearer token, stored as a Windows DPAPI blob instead of a Machine-scope environment variable.
+"""The Collector's API bearer token, stored as a Windows DPAPI blob -- the Collector's ONLY token source.
 
-A Machine-scope `SORTVIEW_API_TOKEN` is readable by every local user (and copied into every process an interactive user
-starts). This module keeps the token instead in ONE file, `<root>\\secrets\\api_token.dpapi` (the same folder as the v2
-secret), and is the only code that writes or reads it:
+A Machine-scope environment variable (how the token was kept before 1.0.11) is readable by every local user and copied
+into every process an interactive user starts, so the Collector no longer reads one at all. This module keeps the token
+in ONE file, `<root>\\secrets\\api_token.dpapi` (the same folder as the v2 secret), and is the only code that writes or
+reads it:
 
   * DPAPI MACHINE scope (`CRYPTPROTECT_LOCAL_MACHINE`), UI forbidden, with this module's OWN fixed entropy -- distinct
     from collector/v2_keys.py's, so neither blob can be mistaken for the other. Machine scope is required: the blob is
@@ -226,7 +227,8 @@ class DpapiTokenStore:
 
     def _require_present(self) -> None:
         """token_missing ONLY when nothing is at the path; anything else that is not a readable regular file is
-        token_unreadable -- the same "definitely absent" rule collector/config.py applies before its environment fallback."""
+        token_unreadable -- so "absent" (store one) is never confused with "damaged or unreachable" (investigate). Both fail
+        closed in collector/config.py; the distinction is diagnostic only."""
         try:
             mode = os.stat(self.path).st_mode
         except (FileNotFoundError, NotADirectoryError):
@@ -285,7 +287,7 @@ class DpapiTokenStore:
     def load(self, customer_id: int, branch_id: int) -> str:
         """The token, only if the ACL is verified, the blob decrypts, the payload is well-formed and it is bound to this
         customer_id + branch_id. Fails closed with a fixed code otherwise."""
-        self._require_present()  # first: with nothing there, the tenant is irrelevant and the caller may fall back
+        self._require_present()  # first: with nothing there, the tenant is irrelevant and the answer is token_missing
         _validate_tenant(customer_id, branch_id)
         require_protected(self.acl_state())  # before a single byte is read
         blob = b""
@@ -361,7 +363,8 @@ def main(argv: list[str] | None = None) -> int:
     from the same three values install.ps1 will write (the file is then `<data-root>\\secrets\\api_token.dpapi`, exactly
     where the config will look). Output is one fixed line; the token (and anything derived from it) is never shown.
     Exit codes: 0 ok, 1 present but unusable / could not be stored, 2 configuration or usage error, 3 (`check` only) no
-    token file at all -- so a caller can tell "absent" (the 1.0.11 environment fallback applies) from "damaged" (never)."""
+    token file at all -- so a caller can tell "absent" (store a token) from "damaged" (investigate). Neither is usable:
+    there is no fallback source."""
     parser = argparse.ArgumentParser(description="SortView Collector -- API token storage (token read from stdin only)")
     parser.add_argument("command", choices=("set", "check"))
     parser.add_argument("--config")

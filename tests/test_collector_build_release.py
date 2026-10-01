@@ -28,6 +28,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from collector_token_support import store_api_token
 
 from collector import __version__ as SOURCE_VERSION
 from collector import build_release, deploy_manifest
@@ -167,12 +168,66 @@ def test_the_api_token_store_is_a_packaged_runtime_module(built_bundle):
 
 
 def test_the_update_scripts_never_touch_the_api_token_file_or_the_environment_variable():
-    # Updating replaces only -InstallRoot: a stored api_token.dpapi (and, in the migration release, the Machine-scope
-    # variable) survives every update untouched, so an update can never be what loses the token.
+    # Updating replaces only -InstallRoot: a stored api_token.dpapi survives every update untouched, so an update can never
+    # be what loses the token. The updaters also never CREATE or MIGRATE one, and never read, set or remove the legacy
+    # Machine-scope variable (the runtime ignores it; cleaning it up is an explicit operator action).
     for name in ("update-release.ps1", "update-collector.ps1"):
         code = _code_only(_executable_body(_read_ps1(name)))
         assert "api_token" not in code and "secrets" not in code, name
-        assert "SetEnvironmentVariable" not in code and "SORTVIEW_API_TOKEN" not in code, name
+        assert "api-token" not in code and "set-api-token" not in code and "set-collector-api-token" not in code, name
+        for forbidden in ("SetEnvironmentVariable", "GetEnvironmentVariable", "SORTVIEW_API_TOKEN", "$env:"):
+            assert forbidden not in code, (name, forbidden)
+
+
+def test_the_update_scripts_document_that_dpapi_is_required_not_a_migration_fallback():
+    for name in ("update-release.ps1", "update-collector.ps1"):
+        text = _read_ps1(name)
+        assert "DPAPI REQUIRED" in text, name
+        assert "migration" not in text.lower() and "fallback" not in text.lower(), name
+
+
+def test_a_failed_new_runtime_preflight_leaves_the_task_disabled_in_both_updaters():
+    # With no api_token.dpapi the new runtime's preflight exits non-zero (config_loads fails -- see
+    # tests/test_collector_preflight.py); the updaters treat ANY non-zero exit as failed verification and never re-enable.
+    for name in ("update-release.ps1", "update-collector.ps1"):
+        code = _code_only(_executable_body(_read_ps1(name)))
+        failed = code.index("if ($preflightExitCode -ne 0) {")
+        passed = code.index('Write-Host "Preflight passed against the new runtime."')
+        enable = code.index("Enable-ScheduledTask -TaskName $TaskName | Out-Null")
+        assert failed < passed < enable, name  # the only re-enable is after the pass
+        failure_branch = code[failed : code.index("\n}\n", failed)]
+        assert "UPDATE FAILED VERIFICATION" in failure_branch, name
+        # The branch ends the script (directly, or through the helper that says "left DISABLED" and exits 1).
+        last_statement = failure_branch.rstrip().splitlines()[-1].strip()
+        assert last_statement == "exit 1" or last_statement.startswith("Restore-DisabledTaskAndFail "), (name, last_statement)
+        assert code.count("Enable-ScheduledTask -TaskName $TaskName | Out-Null") == 1, name
+    helper = _code_only(_executable_body(_read_ps1("update-release.ps1")))
+    helper = helper[helper.index("function Restore-DisabledTaskAndFail"):]
+    helper = helper[: helper.index("\n}\n")]
+    assert "The task is left DISABLED" in helper and helper.rstrip().endswith("exit 1")
+
+
+COLLECTOR_OPERATION_SCRIPTS = (
+    "finish-collector-install.ps1", "install-collector.ps1", "install-release.ps1", "setup-collector.ps1",
+    "update-collector.ps1", "update-release.ps1", "set-collector-api-token.ps1", "register-collector-task.ps1",
+    "run-preflight-as-system.ps1", "configure_v2.ps1",
+)
+
+
+def test_no_install_finish_or_update_script_reads_or_sets_the_environment_token():
+    # No deploy path can hand the Collector a token through the environment: nothing reads the Machine-scope variable,
+    # nothing seeds a process-scope one for a child, nothing sets either.
+    for name in COLLECTOR_OPERATION_SCRIPTS:
+        code = _code_only(_executable_body(_read_ps1(name)))
+        for forbidden in ("SORTVIEW_API_TOKEN", "GetEnvironmentVariable", "SetEnvironmentVariable"):
+            assert forbidden not in code, (name, forbidden)
+
+
+def test_uninstall_only_reports_a_leftover_machine_variable_and_never_removes_or_uses_it():
+    code = _code_only(_executable_body(_read_ps1("uninstall-collector.ps1")))
+    uses = [line.strip() for line in code.splitlines() if "SORTVIEW_API_TOKEN" in line and not line.strip().startswith("Write-Host")]
+    assert uses == ['$tokenStillSet = [Environment]::GetEnvironmentVariable("SORTVIEW_API_TOKEN", "Machine")']
+    assert "SetEnvironmentVariable" not in _without_strings(code) and "$env:" not in code
 
 
 def test_uninstall_only_reports_the_api_token_file_and_removes_it_only_with_purge_data():
@@ -1536,7 +1591,7 @@ def test_generated_config_uses_the_supplied_values_and_loads_in_the_collector(tm
     # ...and the Collector's own config loader accepts exactly this output.
     config_file = tmp_path / "collector_config.json"
     config_file.write_text(text, encoding="utf-8")
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token-not-a-real-token")
+    store_api_token(monkeypatch, "test-token-not-a-real-token")
     cfg = load_config(config_file)
     assert (cfg.customer_id, cfg.branch_id, cfg.installation_id) == (42, 9, 17)
     assert [s.name for s in cfg.sources] == ["checkins", "rejects", "acs"]
@@ -1614,12 +1669,13 @@ def test_installer_has_no_direct_database_dependency():
 #   1. Static checks: which tools it calls, in what ORDER, and what it must
 #      never contain (a task-enabling cmdlet, -Force, -Enabled, a state-file
 #      delete, a printed token). CI cannot run it -- it needs administrator
-#      rights, a Machine-scope token, and the machine's Scheduled Tasks.
+#      rights, a stored api_token.dpapi, and the machine's Scheduled Tasks.
 #   2. Behavioral checks of its five PURE helpers, extracted verbatim and run
 #      by PowerShell if one is available (skipped otherwise). They touch
 #      nothing on the machine.
 
 FINISH_SCRIPT = "finish-collector-install.ps1"
+FINISH_TOKEN_STEP = "$seededNow = $false"  # the first statement after Step 0's read-only checks
 FINISH_MAPPING = ("collector/deploy/finish-collector-install.ps1", "tools/finish-install.ps1")
 
 STEP_CALLS = (
@@ -1649,9 +1705,9 @@ def _without_strings(code: str) -> str:
 
 
 def _finish_pre_token() -> str:
-    """Step 0 -- everything before the token/env handling begins."""
+    """Step 0 -- everything before the token step begins."""
     main = _finish_main()
-    return main[: main.index("$hadProcessToken =")]
+    return main[: main.index(FINISH_TOKEN_STEP)]
 
 
 # --- shipping -------------------------------------------------------------------
@@ -1751,7 +1807,7 @@ def test_finish_requires_elevation_before_any_prompt_or_child_process():
     assert "-ExitCode 1" in main[guard : guard + 500]
     for later in (
         "Read-Host", "Get-ScheduledTask", "Test-Path $ConfigPath", "Get-Content", *STEP_CALLS,
-        "$env:SORTVIEW_API_TOKEN = ",
+        "& $ExePath api-token check",
     ):
         assert guard < main.index(later), later
 
@@ -1778,7 +1834,7 @@ def test_finish_inspects_the_scheduled_task_before_the_token_prompt():
 
     assert lookup < decision < main.index("Read-Host")
     assert decision < main.index("& $SetTokenScript")
-    assert lookup < main.index("$hadProcessToken =")
+    assert lookup < main.index(FINISH_TOKEN_STEP)
     # A lookup that itself fails is refused (2), not assumed to mean "no task".
     lookup_block = main[main.index("$existingTask = $null"):decision]
     assert "catch {" in lookup_block and "-ExitCode 2" in lookup_block
@@ -1810,20 +1866,24 @@ def test_finish_step_0_is_read_only():
 
     assert "Read-Host" not in pre
     assert "& $" not in pre
-    assert "SORTVIEW_API_TOKEN" not in pre
+    assert "$env:" not in pre.lower() and "EnvironmentVariable" not in pre
     assert "Get-ScheduledTask" in pre
 
 
 # --- Step 1: token -------------------------------------------------------------------
 
 
-def test_finish_prompts_keep_or_replace_only_when_a_machine_token_exists():
+def test_finish_prompts_keep_or_replace_only_when_a_stored_token_exists():
     main = _finish_main()
-    # The presence of a Machine token is judged once and decides the branch (Get-TokenStepAction);
-    # the keep/replace prompt lives only in the AskKeepOrReplace branch.
+    # Whether a token exists is judged once, from the Collector's own `api-token check` exit code and nothing else, and
+    # decides the branch (Get-TokenStepAction); the keep/replace prompt lives only in the AskKeepOrReplace branch.
     guard = main.index('} elseif ($tokenAction -eq "AskKeepOrReplace") {')
     prompt = main.index("Read-Host")
-    assert "-MachineTokenPresent (-not [string]::IsNullOrWhiteSpace($machineToken))" in main[:guard]
+    assert (
+        "$tokenAction = Get-TokenStepAction -UseExisting ([bool]$UseExistingMachineToken) -StoredTokenPresent ($storedTokenCheck -eq 0)\n"
+        in main[:guard]
+    )
+    assert "MachineTokenPresent" not in _finish_code()
 
     assert main.count("Read-Host") == 1
     assert guard < prompt < main.index("if ($runTokenTool) {")
@@ -1842,8 +1902,8 @@ def test_finish_checks_the_stored_token_first_and_never_bypasses_a_damaged_one()
     damaged = main.index("if ($storedTokenCheck -ne 0 -and $storedTokenCheck -ne 3) {")
     decide = main.index("$tokenAction = Get-TokenStepAction")
 
-    assert main.index("$hadProcessToken =") < first_check < damaged < decide
-    block = main[damaged : main.index("\n    }\n", damaged)]
+    assert main.index(FINISH_TOKEN_STEP) < first_check < damaged < decide
+    block = main[damaged : main.index("\n}\n", damaged)]
     assert "Stop-Setup" in block and "-ExitCode 1" in block and "never bypassed" in block
     assert "-StoredTokenPresent ($storedTokenCheck -eq 0)" in main[decide : main.index('if ($tokenAction -eq "MissingExisting")')]
 
@@ -1856,39 +1916,32 @@ def test_finish_runs_the_token_tool_only_when_needed_and_verifies_with_the_colle
 
     assert run_tool < call < verify < main.index("& $ExePath preflight")
     after = main[verify : main.index("& $ExePath preflight")]
-    # A stored token is used as-is; a token the tool just stored MUST check out (no fallback can stand in for it);
-    # otherwise only an ABSENT file (exit 3) plus a Machine token is the migration fallback.
-    assert "if ($storedTokenCheck -eq 0) {" in after
-    assert "} elseif ($runTokenTool -or $storedTokenCheck -ne 3 -or [string]::IsNullOrWhiteSpace($machineToken)) {" in after
-    assert "-ExitCode 1" in after
-    assert after.index("} elseif ($runTokenTool") < after.index("$env:SORTVIEW_API_TOKEN = $machineToken")
+    # After the token step the Collector's own check MUST exit 0 -- whether the token was kept or just stored. Exit 3
+    # (no api_token.dpapi at all) is a stop like any other non-zero: nothing else can stand in for the file.
+    gate = after.index("if ($storedTokenCheck -ne 0) {")
+    stop = after[gate : after.index("\n}\n", gate)]
+    assert "Stop-Setup" in stop and "-ExitCode 1" in stop
+    assert 'if ($storedTokenCheck -eq 3) { "no api_token.dpapi is stored" }' in stop
+    assert "only token source" in stop
+    # ...and that gate is the only thing between the check and the first preflight: no other branch accepts anything.
+    assert "elseif" not in after and "} else {" not in after.replace('} else { "api_token.dpapi cannot be used" }', "")
+    assert after.index("\n}\n", gate) < after.index('"  OK: token stored in api_token.dpapi (DPAPI, Administrators + SYSTEM only)."')
 
 
-TOKEN_LINE_ALLOW_LIST = {
-    '$machineToken = [Environment]::GetEnvironmentVariable("SORTVIEW_API_TOKEN", "Machine")',
-    # Whether a token exists (never its value) feeds Get-TokenStepAction.
-    "-MachineTokenPresent (-not [string]::IsNullOrWhiteSpace($machineToken))",
-    "} elseif ($runTokenTool -or $storedTokenCheck -ne 3 -or [string]::IsNullOrWhiteSpace($machineToken)) {",
-    "$env:SORTVIEW_API_TOKEN = $machineToken",
-    "$machineToken = $null",
-    '$hadProcessToken = Test-Path -Path "Env:SORTVIEW_API_TOKEN"',
-    "$previousProcessToken = $env:SORTVIEW_API_TOKEN",
-    "$env:SORTVIEW_API_TOKEN = $previousProcessToken",
-    'Remove-Item -Path "Env:SORTVIEW_API_TOKEN" -ErrorAction SilentlyContinue',
-    "$previousProcessToken = $null",
-}
-
-
-def test_finish_never_prints_the_token_and_touches_it_only_through_an_allow_list_of_statements():
-    for line in _finish_main().splitlines():
-        stripped = line.strip()
-        if re.search(r"\$machineToken|\$previousProcessToken|\$env:SORTVIEW_API_TOKEN|Env:SORTVIEW_API_TOKEN", stripped):
-            assert stripped in TOKEN_LINE_ALLOW_LIST, f"unexpected use of the token: {stripped}"
-    # The helper functions never see it either.
-    helpers = _finish_code()
-    helpers = helpers[: helpers.index("$currentPrincipal = New-Object")]
-    assert "SORTVIEW_API_TOKEN" not in helpers
-    assert "$env:" not in helpers.lower()
+def test_finish_never_holds_reads_or_sets_a_token_value_in_any_scope():
+    # The script never has the token: it asks the Collector whether one is stored (an exit code) and lets the token tool
+    # store one. No Machine-scope read, no process-scope seeding for child processes, no restore afterwards.
+    code = _finish_code()
+    for forbidden in (
+        "SORTVIEW_API_TOKEN", "EnvironmentVariable", "$env:", "Env:", "$machineToken", "$hadProcessToken",
+        "$previousProcessToken", "MachineTokenPresent",
+    ):
+        assert forbidden not in code, forbidden
+    assert "env:" not in code.lower()
+    # The whole script, help text included, no longer describes any environment credential.
+    text = _read_ps1(FINISH_SCRIPT)
+    for stale in ("SORTVIEW_API_TOKEN", "Machine-scope", "Machine scope", "migration", "fallback"):
+        assert stale not in text, stale
 
 
 def test_finish_never_writes_the_token_or_anything_else_to_a_file_or_a_command_line():
@@ -1906,34 +1959,19 @@ def test_finish_never_writes_the_token_or_anything_else_to_a_file_or_a_command_l
             assert "token" not in line.replace("$SetTokenScript", "").replace("api-token check", "").lower(), line
 
 
-def test_finish_copies_the_machine_token_into_the_process_environment_before_the_first_child_that_needs_it():
-    # Only on the migration-fallback branch (no api_token.dpapi); with a stored token nothing is copied at all.
+def test_finish_requires_a_usable_stored_token_before_the_first_child_that_needs_it():
     main = _finish_main()
-    saved = main.index("$previousProcessToken = $env:SORTVIEW_API_TOKEN")
-    verified = main.index("} elseif ($runTokenTool -or $storedTokenCheck -ne 3 -or [string]::IsNullOrWhiteSpace($machineToken)) {")
-    copied = main.index("$env:SORTVIEW_API_TOKEN = $machineToken")
+    gate = main.index("if ($storedTokenCheck -ne 0) {", main.index("& $SetTokenScript"))
 
-    assert main.index("$hadProcessToken =") < saved < copied
-    assert verified < copied < main.index("& $ExePath preflight")
-    assert copied < main.index("& $PreflightSystemScript") < main.index("& $ExePath bootstrap")
-    # The variable is captured BEFORE it is overwritten, and never overwritten earlier.
-    assert main.count("$env:SORTVIEW_API_TOKEN = ") == 2  # the copy, and the restore in finally
+    assert gate < main.index("& $ExePath preflight") < main.index("& $PreflightSystemScript") < main.index("& $ExePath bootstrap")
 
 
-def test_finish_restores_or_removes_the_process_token_in_a_top_level_finally_around_every_step():
+def test_finish_has_no_environment_to_restore_so_nothing_runs_after_the_final_exit():
     main = _finish_main()
-    try_start = main.index("\ntry {\n", main.index("$hadProcessToken ="))
-    finally_start = main.rindex("\n} finally {\n")
-    cleanup = main[finally_start:]
 
-    assert try_start < main.index("& $SetTokenScript")
-    assert main.index("& $RegisterTaskScript") < main.index("exit 0") < finally_start
-    assert main.index("$env:SORTVIEW_API_TOKEN = $machineToken") > try_start
-    assert "if ($hadProcessToken) {" in cleanup
-    assert "$env:SORTVIEW_API_TOKEN = $previousProcessToken" in cleanup
-    assert 'Remove-Item -Path "Env:SORTVIEW_API_TOKEN"' in cleanup
-    assert cleanup.rstrip().endswith("}")  # nothing runs after it
-    assert main.count("finally") == 1
+    assert "finally" not in main  # the only cleanup there ever was restored the process-scope token
+    assert main.index("& $RegisterTaskScript") < main.index("\nexit 0")
+    assert main.rstrip().endswith("exit 0")
 
 
 # --- order and exit-code gating --------------------------------------------------------
@@ -1996,7 +2034,7 @@ def test_finish_every_stop_names_the_step_what_is_unchanged_and_what_to_do_with_
         assert re.search(r"-ExitCode [12]$", call), call
     assert "exit $ExitCode" in code[code.index("function Stop-Setup"): code.index("function ConvertTo-ComparablePath")]
     # Only 0 (the very last statement of the try) and Stop-Setup ever exit.
-    assert re.findall(r"^[ \t]*exit .*$", main, re.MULTILINE) == ["    exit 0"]
+    assert re.findall(r"^[ \t]*exit .*$", main, re.MULTILINE) == ["exit 0"]
     assert re.search(r"^\s*return\s*$", code, re.MULTILINE) is None
 
 
@@ -2006,7 +2044,7 @@ def test_finish_every_stop_names_the_step_what_is_unchanged_and_what_to_do_with_
 def test_finish_inspects_state_json_and_skips_bootstrap_when_it_is_valid():
     main = _finish_main()
     exists = main.index("if (Test-Path -LiteralPath $StatePath) {")
-    fresh = main.index("} else {\n        & $ExePath bootstrap --config $ConfigPath")
+    fresh = main.index("} else {\n    & $ExePath bootstrap --config $ConfigPath")
     existing_branch = main[exists:fresh]
 
     assert exists < fresh
@@ -2019,7 +2057,7 @@ def test_finish_inspects_state_json_and_skips_bootstrap_when_it_is_valid():
 def test_finish_refuses_an_invalid_incomplete_or_unreadable_state_file_with_exit_2_and_touches_nothing():
     main = _finish_main()
     exists = main.index("if (Test-Path -LiteralPath $StatePath) {")
-    existing_branch = main[exists : main.index("} else {\n        & $ExePath bootstrap --config $ConfigPath")]
+    existing_branch = main[exists : main.index("} else {\n    & $ExePath bootstrap --config $ConfigPath")]
 
     assert existing_branch.count("Stop-Setup") == 3  # not a file / unreadable / invalid-or-incomplete
     assert existing_branch.count("-ExitCode 2") == 3
@@ -2040,12 +2078,9 @@ def test_finish_verifies_the_state_file_after_a_fresh_bootstrap():
 
 def test_finish_never_deletes_overwrites_moves_or_rewrites_files():
     code = _without_strings(_finish_code())
-    # The single Remove-Item is the process-env restore in the finally block.
-    assert code.count("Remove-Item") == 1
-    assert _finish_code().count('Remove-Item -Path "Env:SORTVIEW_API_TOKEN"') == 1
 
     for forbidden in (
-        "Move-Item", "Rename-Item", "Copy-Item", "New-Item", "Clear-Content", "Set-Content", "Out-File",
+        "Remove-Item", "Move-Item", "Rename-Item", "Copy-Item", "New-Item", "Clear-Content", "Set-Content", "Out-File",
         "Set-ItemProperty", "Set-Acl", "icacls", "takeown", "[System.IO.File]", "WriteAll", "Clear-Item",
     ):
         assert forbidden not in code, forbidden

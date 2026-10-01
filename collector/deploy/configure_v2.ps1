@@ -334,7 +334,7 @@ function Invoke-ConfigureV2Main {
             $supportInfo = Invoke-SupportInfo -ExePath $exePath -ConfigPath $candidatePath
             Write-Host $supportInfo.Output
             if ($supportInfo.ExitCode -ne 0) {
-                Stop-ConfigureV2 -Problem "The candidate config did not load with the real collector config loader (support-info exited $($supportInfo.ExitCode)) -- production config left unchanged. If this is unexpected, check the stored API token: SortViewCollector.exe api-token check --config <ConfigPath> (1.0.11: or, while no token file is stored, that the migration-fallback SORTVIEW_API_TOKEN is visible to THIS elevated process -- a Machine-scope variable set after this shell started needs a fresh session)." -ExitCode 1
+                Stop-ConfigureV2 -Problem "The candidate config did not load with the real collector config loader (support-info exited $($supportInfo.ExitCode)) -- production config left unchanged. If this is unexpected, check the stored API token: SortViewCollector.exe api-token check --config <ConfigPath> (the stored token file is the only token source; store one with tools\set-api-token.ps1 if it is missing)." -ExitCode 1
             }
             $dryRun = Invoke-V2DryRun -ExePath $exePath -ConfigPath $candidatePath
             Write-Host $dryRun.Output

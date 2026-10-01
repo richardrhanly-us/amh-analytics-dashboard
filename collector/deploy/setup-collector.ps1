@@ -55,7 +55,9 @@
          (the token stays stored).
       7. install.ps1 is run with the returned IDs (manifest verification,
          config, directories and every existing safety check stay canonical).
-      8. tools\finish-install.ps1 is run with -UseExistingMachineToken: the
+      8. tools\finish-install.ps1 is run with -UseExistingMachineToken (a
+         historical name: it means "use the token already stored in
+         api_token.dpapi", never an environment variable): the
          interactive preflight, the SYSTEM-context preflight, the starting-
          cursor bootstrap (state must cover every source) and Scheduled Task
          registration -- DISABLED.
@@ -215,8 +217,8 @@ function ConvertFrom-SecureStringPlain {
 }
 
 function Test-ApiTokenStored {
-    # Whether <DataRoot>\secrets\api_token.dpapi exists -- never its content. (Collector 1.0.11+ keeps its
-    # token there, DPAPI-protected, Administrators + SYSTEM only; this elevated script may look.)
+    # Whether <DataRoot>\secrets\api_token.dpapi exists -- never its content. (The Collector keeps its
+    # token there and only there, DPAPI-protected, Administrators + SYSTEM only; this elevated script may look.)
     param([string]$DataRoot)
     return (Test-Path -LiteralPath (Join-Path $DataRoot "secrets\api_token.dpapi"))
 }

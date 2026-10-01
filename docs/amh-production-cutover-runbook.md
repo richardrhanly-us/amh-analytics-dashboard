@@ -58,7 +58,7 @@ full unattended commercial deployment (see "What this is NOT" below).
 | Logs | `C:\ProgramData\SortView\logs\agent.log` | Bounded, rotating (`agent/runtime/logging_setup.py`). |
 | Diagnostics | `C:\ProgramData\SortView\diagnostics\diagnostics.json` | Local-only, richer than the backend heartbeat. |
 | Installation identity | `C:\ProgramData\SortView\identity\agent_identity.json` | Minted once, never regenerated except on deliberate reinstall. |
-| API token | **Not a file.** A Machine-scope Windows environment variable, `SORTVIEW_API_TOKEN`. | See "Secret handling" below. |
+| API token | **Not a file.** A Machine-scope Windows environment variable, `SORTVIEW_API_TOKEN` -- for this continuous agent (`agent\`) only. | See "Secret handling" below. The SortView Collector does **not** use this variable. |
 
 This is the SAME `C:\ProgramData\SortView\` convention already
 established and exercised by all three shadow runs -- production uses a
@@ -112,6 +112,12 @@ directly -- see the new Stage 12 below, which validates exactly that,
 safely.
 
 ### Secret handling: `SORTVIEW_API_TOKEN`
+
+> **Scope: the continuous agent (`agent\`) only.** This section does not describe the SortView Collector
+> (`collector\`, the v1 production runtime). The Collector keeps its token in
+> `C:\ProgramData\SortViewCollector\secrets\api_token.dpapi` (DPAPI, Administrators + SYSTEM only) and, from
+> Collector 1.0.12, never reads `SORTVIEW_API_TOKEN` at all -- setting this variable does not give a Collector a
+> token. See `docs/collector-v1-admin-guide.md`, *Token setup*.
 
 The agent already only ever reads this from the environment (no code
 change was needed or made). For unattended production use:
@@ -517,7 +523,9 @@ NBPL cutover above:
 - Automated API token provisioning as part of a tenant-onboarding flow,
   and a stronger secret store than a Machine env var (Windows Credential
   Manager / DPAPI) once more than one admin needs to manage tokens
-  across more than one site.
+  across more than one site. (The SortView Collector already has both:
+  enrollment-driven provisioning and a DPAPI-only token store,
+  `api_token.dpapi`. This item remains open for the continuous agent only.)
 - An update/upgrade mechanism (currently: manual code copy + task
   restart; the schema-v3 boundary this project just went through shows
   why update tooling needs to know how to detect and message a required

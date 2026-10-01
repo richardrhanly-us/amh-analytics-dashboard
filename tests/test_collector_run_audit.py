@@ -19,6 +19,7 @@ import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from collector_token_support import store_api_token
 
 from collector import run as run_mod
 from collector import run_audit
@@ -356,7 +357,7 @@ def test_file_lock_times_out_rather_than_hanging_forever(tmp_path):
 
 
 def test_successful_run_record(monkeypatch, tmp_path):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config(tmp_path)
     (tmp_path / "Checkins.txt").write_text("line one\n", encoding="utf-8")
     session = FakeSession(script=[_FakeResponse(200, {"status": "success", "checkins_inserted": 1})])
@@ -382,7 +383,7 @@ def test_successful_run_record(monkeypatch, tmp_path):
 
 
 def test_no_new_rows_run_record(monkeypatch, tmp_path):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config(tmp_path)
     monkeypatch.setattr(run_mod.uploader, "build_session", lambda: FakeSession())
     _configure_a_passthrough_parser_for_testing(monkeypatch)
@@ -397,7 +398,7 @@ def test_no_new_rows_run_record(monkeypatch, tmp_path):
 
 
 def test_upload_failure_record(monkeypatch, tmp_path):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config(tmp_path)
     (tmp_path / "Checkins.txt").write_text("line one\n", encoding="utf-8")
     _configure_a_passthrough_parser_for_testing(monkeypatch)
@@ -420,7 +421,7 @@ def test_upload_failure_record(monkeypatch, tmp_path):
 
 
 def test_corrupt_state_failure_record(monkeypatch, tmp_path):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config(tmp_path)
     (tmp_path / "state.json").write_text("{not valid json", encoding="utf-8")
     session = FakeSession()
@@ -445,7 +446,7 @@ def test_corrupt_state_failure_record(monkeypatch, tmp_path):
 
 
 def test_config_failure_before_cfg_exists_writes_to_the_fallback_path(monkeypatch, tmp_path):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
 
     exit_code = run_mod.main(["--config", str(tmp_path / "does-not-exist.json")])
     assert exit_code == 2
@@ -464,7 +465,7 @@ def test_config_failure_before_cfg_exists_writes_to_the_fallback_path(monkeypatc
 
 
 def test_parser_not_configured_failure_record(monkeypatch, tmp_path, capsys):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     doc = {
         "customer_id": 1,
         "branch_id": 1,
@@ -493,7 +494,7 @@ def test_parser_not_configured_failure_record(monkeypatch, tmp_path, capsys):
 
 
 def test_unhandled_exception_record(monkeypatch, tmp_path):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config(tmp_path)
     monkeypatch.setattr(run_mod.uploader, "build_session", lambda: FakeSession())
 
@@ -515,7 +516,7 @@ def test_unhandled_exception_record(monkeypatch, tmp_path):
 
 
 def test_offsets_before_and_after_advance_across_two_runs(monkeypatch, tmp_path):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config(tmp_path)
     _configure_a_passthrough_parser_for_testing(monkeypatch)
     monkeypatch.setattr(run_mod.uploader, "build_session", lambda: FakeSession())
@@ -546,7 +547,7 @@ def test_offsets_before_and_after_advance_across_two_runs(monkeypatch, tmp_path)
 
 
 def test_new_records_and_uploaded_counters_reflect_backend_dedup(monkeypatch, tmp_path):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config(tmp_path)
     (tmp_path / "Checkins.txt").write_text("line one\nline two\n", encoding="utf-8")
     _configure_a_passthrough_parser_for_testing(monkeypatch)
@@ -565,7 +566,7 @@ def test_new_records_and_uploaded_counters_reflect_backend_dedup(monkeypatch, tm
 
 
 def test_duration_ms_uses_monotonic_clock_not_wall_clock(monkeypatch, tmp_path):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config(tmp_path)
     monkeypatch.setattr(run_mod.uploader, "build_session", lambda: FakeSession())
     _configure_a_passthrough_parser_for_testing(monkeypatch)
@@ -595,7 +596,7 @@ def test_duration_ms_uses_monotonic_clock_not_wall_clock(monkeypatch, tmp_path):
 
 
 def test_multiple_invocations_append_multiple_records(monkeypatch, tmp_path):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config(tmp_path)
     monkeypatch.setattr(run_mod.uploader, "build_session", lambda: FakeSession())
     _configure_a_passthrough_parser_for_testing(monkeypatch)
@@ -609,7 +610,7 @@ def test_multiple_invocations_append_multiple_records(monkeypatch, tmp_path):
 
 
 def test_audit_write_failure_does_not_change_collector_exit_or_result(monkeypatch, tmp_path):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config(tmp_path)
     (tmp_path / "Checkins.txt").write_text("line one\n", encoding="utf-8")
     monkeypatch.setattr(run_mod.uploader, "build_session", lambda: FakeSession())
@@ -626,7 +627,7 @@ def test_audit_write_failure_does_not_change_collector_exit_or_result(monkeypatc
 
 
 def test_audit_prune_failure_does_not_change_collector_exit_or_result(monkeypatch, tmp_path):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config(tmp_path)
     (tmp_path / "Checkins.txt").write_text("line one\n", encoding="utf-8")
     monkeypatch.setattr(run_mod.uploader, "build_session", lambda: FakeSession())
@@ -658,7 +659,7 @@ def test_privacy_canary_forbidden_content_never_appears_in_a_run_record(monkeypa
     title, destination, reject error message, source line content/path,
     and credentials. Only aggregate counts, offsets, source NAMES, and
     safe codes may appear."""
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "CANARY-SECRET-TOKEN-abc123")
+    store_api_token(monkeypatch, "CANARY-SECRET-TOKEN-abc123")
     doc = {
         "customer_id": 1,
         "branch_id": 1,

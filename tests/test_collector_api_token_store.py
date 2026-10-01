@@ -662,7 +662,6 @@ def test_check_never_prints_the_token(tmp_path, capsys, monkeypatch):
 
 def test_set_needs_no_token_to_exist_first_even_with_a_placeholder_free_config(tmp_path, monkeypatch, captured_provision):
     # load_config() would refuse (no token yet); `set` only needs the tenant and the path.
-    monkeypatch.delenv("SORTVIEW_API_TOKEN", raising=False)
     monkeypatch.setattr(sys, "stdin", _Stdin(TOKEN))
     assert api_token_store.main(["set", "--config", str(_write_config(tmp_path))]) == 0
 

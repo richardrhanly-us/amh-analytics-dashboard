@@ -105,7 +105,10 @@ Before starting the new agent at all, confirm:
 - [ ] `SORTVIEW_API_TOKEN` is either unset or set to a value that is
       never actually used this session (shadow mode never sends it
       anywhere, but confirm no other process on the machine would pick
-      it up unexpectedly).
+      it up unexpectedly). Note: the SortView Collector is not such a
+      process -- from Collector 1.0.12 it reads its token only from
+      `C:\ProgramData\SortViewCollector\secrets\api_token.dpapi` and
+      ignores this variable entirely.
 - [ ] Confirm (by code, not assumption) that shadow mode cannot produce
       a production write -- see this repo's `agent/README.md` "Safety
       properties" section for the structural reason (`upload_enabled`/
