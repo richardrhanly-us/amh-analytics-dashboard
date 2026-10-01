@@ -36,6 +36,7 @@ from services.collector_enrollment_service import (
 )
 from services.platform_admin_service import (
     list_libraries_with_status,
+    offboard_library,
     set_library_active_status,
 )
 from services.privacy_hardening import (
@@ -66,6 +67,14 @@ ASSIGN_FAILED_MESSAGE = (
 )
 SUSPEND_FAILED_MESSAGE = f"The library could not be suspended. Please try again. {_SUPPORT_HINT}"
 REACTIVATE_FAILED_MESSAGE = f"The library could not be reactivated. Please try again. {_SUPPORT_HINT}"
+OFFBOARD_FAILED_MESSAGE = (
+    f"The library could not be offboarded; nothing was changed. Offboarding is safe to run again. {_SUPPORT_HINT}"
+)
+OFFBOARD_CONFIRMATION_MESSAGE = "The Org Slug you typed does not match this library. Nothing was changed."
+CANCELLED_READ_ONLY_MESSAGE = (
+    "This library is Cancelled (permanently offboarded). Its installation records are read-only: no installation "
+    "can be added or edited, and no enrollment code or installer values can be issued."
+)
 INSTALLATION_UPDATE_FAILED_MESSAGE = (
     f"The installation could not be updated. Check the values and try again. {_SUPPORT_HINT}"
 )
@@ -317,6 +326,42 @@ with detail_col2:
     else:
         st.error(f"Unrecognised library status {org_status!r}; no action is available.")
 
+    # Permanent offboarding is a separate action from Suspend/Reactivate above and is
+    # never reached through them. The service re-checks the slug; this page's check
+    # only saves a round trip.
+    if org_status in ("active", "trial", "suspended"):
+        with st.expander("Offboard Library (permanent)"):
+            st.warning(
+                "PERMANENT. Offboarding sets the library to Cancelled and revokes every agent "
+                "token, retires every Collector installation, revokes unused enrollment codes "
+                "and retires ingest keys. It cannot be undone from this page and the library "
+                "cannot be reactivated. No data is deleted: deleting data is a separate, "
+                "operator-run purge. To pause a library instead, use Suspend."
+            )
+            offboard_confirmation = st.text_input(
+                "Type the Org Slug to confirm",
+                key=f"offboard_confirmation_{library_organization_id}",
+            )
+            if st.button("Offboard Library Permanently", key=f"offboard_library_{library_organization_id}"):
+                if offboard_confirmation.strip() != str(selected_row["organization_slug"]):
+                    st.error(OFFBOARD_CONFIRMATION_MESSAGE)
+                else:
+                    try:
+                        offboard_library(
+                            organization_id=library_organization_id,
+                            confirm_slug=offboard_confirmation,
+                            actor_user_id=int(auth_user["id"]),
+                            actor_label=str(auth_user["email"]),
+                        )
+                    except Exception as exc:
+                        log_safe_exception(logger, "Library offboard failed", exc)
+                        st.error(OFFBOARD_FAILED_MESSAGE)
+                    else:
+                        st.success("Library offboarded. All Collector and dashboard access is cut off.")
+                        st.rerun()
+
+library_cancelled = org_status == "cancelled"
+
 st.subheader("Collector Installations")
 st.caption(
     "Server-side records of deployed Collectors for this library. Installed At is the first "
@@ -360,6 +405,11 @@ if installations:
         hide_index=True,
     )
 
+# The service functions refuse a cancelled organization themselves; hiding the
+# controls here only keeps the page from offering what would be refused.
+if library_cancelled:
+    st.info(CANCELLED_READ_ONLY_MESSAGE)
+elif installations:
     installations_by_id = {int(row["id"]): row for row in installations}
     selected_installation_id = st.selectbox(
         "Edit installation",
@@ -455,7 +505,7 @@ if installations:
 else:
     st.info("No collector installations recorded for this library.")
 
-if pd.notna(primary_branch_id):
+if pd.notna(primary_branch_id) and not library_cancelled:
     with st.expander("Add installation"):
         with st.form("add_installation_form"):
             new_name = st.text_input("Installation name", value="Main AMH Sorter")
@@ -496,7 +546,9 @@ installer_installations = {
     and int(row["branch_id"]) == int(primary_branch_id)
     and row["status"] in INSTALLER_INSTALLATION_STATUSES
 }
-if selected_customer_id is None or selected_operational_branch_id is None:
+if library_cancelled:
+    st.info("Unavailable: this library is Cancelled.")
+elif selected_customer_id is None or selected_operational_branch_id is None:
     st.info("Unavailable until the operational identity is assigned.")
 elif not installer_installations:
     st.info(

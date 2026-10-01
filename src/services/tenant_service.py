@@ -435,11 +435,15 @@ def create_collector_installation(
 ) -> dict[str, Any]:
     name = _validate_installation_fields(name, status)
 
+    # The organization's status comes back with the branch, so the cancelled
+    # check below costs no extra statement.
     sql_find_branch = text("""
-        SELECT id
-        FROM branches
-        WHERE id = :branch_id
-          AND organization_id = :organization_id
+        SELECT b.id, o.status AS organization_status
+        FROM branches b
+        JOIN organizations o
+          ON o.id = b.organization_id
+        WHERE b.id = :branch_id
+          AND b.organization_id = :organization_id
         LIMIT 1
     """)
 
@@ -462,6 +466,12 @@ def create_collector_installation(
         if not branch:
             raise RuntimeError(
                 f"Branch {branch_id} not found for organization {organization_id}"
+            )
+        # A cancelled (permanently offboarded) organization can never gain a
+        # new installation. Authoritative here, whatever the page shows.
+        if branch.get("organization_status") == "cancelled":
+            raise RuntimeError(
+                f"Organization {organization_id} is cancelled; it cannot have a new Collector installation"
             )
 
         row = conn.execute(
@@ -552,6 +562,10 @@ def update_collector_installation(
     installation can never be edited through another tenant's context.
     installed_at is stamped once, the first time an installation becomes
     'active'; last_seen_at is never touched here.
+
+    An installation of a cancelled (permanently offboarded) organization is
+    never updated: the guard is part of the UPDATE itself, so it cannot be
+    raced, and such an installation is reported like one that was not found.
     """
     name = _validate_installation_fields(name, status)
 
@@ -568,6 +582,12 @@ def update_collector_installation(
             updated_at = NOW()
         WHERE id = :installation_id
           AND organization_id = :organization_id
+          AND NOT EXISTS (
+              SELECT 1
+              FROM organizations o
+              WHERE o.id = :organization_id
+                AND o.status = 'cancelled'
+          )
         RETURNING
             id, organization_id, branch_id, name, hostname, collector_version,
             status, installed_at, last_seen_at, created_at, updated_at
@@ -590,6 +610,7 @@ def update_collector_installation(
     if not row:
         raise RuntimeError(
             f"Collector installation {installation_id} not found for organization {organization_id}"
+            " (or the organization is cancelled)"
         )
     return dict(row)
 

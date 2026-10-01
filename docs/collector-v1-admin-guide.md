@@ -496,6 +496,15 @@ leftover legacy Machine-scope `SORTVIEW_API_TOKEN` environment variable
 the script tells you whether it's still set and the exact command to
 remove it yourself.
 
+Two things the uninstaller never removes, because they live outside both
+`<InstallRoot>` and `<DataRoot>`: the runtime backups an update leaves beside
+the install (`<InstallRoot>.backup-<timestamp>` and `...-full`; code only, no
+data) and the legacy agent's `C:\SortViewAgent` folder. Delete those by hand
+when removing SortView from a machine for good. The Tech Logic source logs
+are the vendor's and are never touched. For the full picture of what remains
+where when a library stops using SortView, see
+`docs/data-lifecycle-offboarding.md`.
+
 ## Reboot validation (required onsite, not provable by unit tests)
 
 1. Confirm the task is registered and `SYSTEM` is its principal:

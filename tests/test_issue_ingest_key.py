@@ -38,13 +38,14 @@ def url(tmp_path):
     path = tmp_path / "keys.db"
     engine = create_engine(f"sqlite:///{path}")
     with engine.begin() as conn:
-        conn.execute(text("CREATE TABLE organizations (id INTEGER PRIMARY KEY, operational_customer_id INTEGER)"))
+        conn.execute(text("CREATE TABLE organizations (id INTEGER PRIMARY KEY, operational_customer_id INTEGER,"
+                          " status TEXT NOT NULL DEFAULT 'active')"))
         conn.execute(text("CREATE TABLE branches (id INTEGER PRIMARY KEY, organization_id INTEGER, operational_branch_id INTEGER)"))
         conn.execute(text(
             "CREATE TABLE ingest_key_ids (id INTEGER PRIMARY KEY AUTOINCREMENT, key_id TEXT NOT NULL UNIQUE,"
             " customer_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, algorithm TEXT NOT NULL, status TEXT NOT NULL,"
             " created_at TEXT DEFAULT CURRENT_TIMESTAMP, retired_at TEXT)"))
-        conn.execute(text("INSERT INTO organizations VALUES (1, :c)"), {"c": CUSTOMER})
+        conn.execute(text("INSERT INTO organizations (id, operational_customer_id) VALUES (1, :c)"), {"c": CUSTOMER})
         conn.execute(text("INSERT INTO branches VALUES (1, 1, :b)"), {"b": BRANCH})
     engine.dispose()
     return f"sqlite:///{path}"

@@ -91,8 +91,8 @@ def main(argv: list[str] | None = None, out: TextIO | None = None) -> int:
             if args.command == "issue":
                 try:
                     key_id = issue_ingest_key(conn, args.customer_id, args.branch_id)
-                except ValueError:
-                    print("REFUSED: customer_id / branch_id is not a mapped operational tenant. Nothing was written.", file=out)
+                except ValueError as exc:  # a fixed reason: unmapped tenant, or a cancelled organization
+                    print(f"REFUSED: {exc}. Nothing was written.", file=out)
                     return EXIT_REFUSED
                 print(f"ISSUED key_id={key_id} for customer_id={args.customer_id} branch_id={args.branch_id}", file=out)
                 print("Give this key_id to the collector. It is not a secret; the HMAC secret is generated locally "

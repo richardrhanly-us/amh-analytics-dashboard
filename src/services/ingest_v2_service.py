@@ -145,6 +145,28 @@ _ROW_BUILDERS: dict[str, Callable[[Any], dict[str, Any]]] = {
 }
 
 
+# --- tenant guard shared by the provisioning writes ----------------------------------------------------------------
+
+def _require_provisionable_tenant(conn, customer_id: int, branch_id: int) -> None:
+    """Raises ValueError unless (customer_id, branch_id) is the fully mapped operational pair of an organization that is
+    not cancelled. A cancelled organization is permanently offboarded: it can never be issued a key or given a cutover,
+    whoever calls and from wherever. (A suspended one still can -- suspension is reversible and changes nothing here.)"""
+    row = conn.execute(
+        text("""
+            SELECT o.status
+            FROM organizations o
+            JOIN branches b ON b.organization_id = o.id
+            WHERE o.operational_customer_id = :customer_id
+              AND b.operational_branch_id = :branch_id
+        """),
+        {"customer_id": customer_id, "branch_id": branch_id},
+    ).first()
+    if row is None:
+        raise ValueError("customer_id / branch_id is not a mapped operational tenant")
+    if row[0] == "cancelled":
+        raise ValueError("the organization is cancelled (permanently offboarded)")
+
+
 # --- key registry -------------------------------------------------------------------------------------------------
 
 def ingest_key_problem(conn, customer_id: int, branch_id: int, key_id: str) -> str | None:
@@ -165,19 +187,9 @@ def ingest_key_problem(conn, customer_id: int, branch_id: int, key_id: str) -> s
 
 def issue_ingest_key(conn, customer_id: int, branch_id: int) -> str:
     """Registers a NEW server-issued key for one tenant and returns its `key_id` (a random UUIDv4; non-secret). The tenant
-    must be the fully mapped operational pair -- the same bridge the token lookup uses -- or nothing is written."""
-    mapped = conn.execute(
-        text("""
-            SELECT 1
-            FROM organizations o
-            JOIN branches b ON b.organization_id = o.id
-            WHERE o.operational_customer_id = :customer_id
-              AND b.operational_branch_id = :branch_id
-        """),
-        {"customer_id": customer_id, "branch_id": branch_id},
-    ).first()
-    if mapped is None:
-        raise ValueError("customer_id / branch_id is not a mapped operational tenant")
+    must be the fully mapped operational pair -- the same bridge the token lookup uses -- and its organization must not be
+    cancelled (permanently offboarded), or nothing is written."""
+    _require_provisionable_tenant(conn, customer_id, branch_id)
     key_id = str(uuid.uuid4())
     conn.execute(
         text("""
@@ -222,23 +234,6 @@ def latest_ingest_status(conn, customer_id: int, branch_id: int) -> dict[str, An
 
 # --- v2 cutovers (mixed-era read-model boundary) -------------------------------------------------------------------
 
-def _mapped_operational_tenant(conn, customer_id: int, branch_id: int) -> bool:
-    """True if (customer_id, branch_id) is the fully mapped operational pair for some organization/branch -- the same
-    bridge issue_ingest_key uses, reused here so a cutover can never be recorded against an unmapped or mistyped
-    tenant pair."""
-    mapped = conn.execute(
-        text("""
-            SELECT 1
-            FROM organizations o
-            JOIN branches b ON b.organization_id = o.id
-            WHERE o.operational_customer_id = :customer_id
-              AND b.operational_branch_id = :branch_id
-        """),
-        {"customer_id": customer_id, "branch_id": branch_id},
-    ).first()
-    return mapped is not None
-
-
 def record_v2_cutover(
     conn,
     customer_id: int,
@@ -251,11 +246,10 @@ def record_v2_cutover(
     docstring: never UPDATE, never DELETE). `cutover_at=None` records an explicit rollback to v1-only, distinguishable
     from "never cut over" (no rows at all) by the mere presence of this row. Returns the new row's id.
 
-    Raises ValueError if the tenant is not the fully mapped operational pair, or if `set_by` is blank -- the same
-    guardrails issue_ingest_key applies, so a cutover can never be recorded for an unmapped tenant or an anonymous
-    operator."""
-    if not _mapped_operational_tenant(conn, customer_id, branch_id):
-        raise ValueError("customer_id / branch_id is not a mapped operational tenant")
+    Raises ValueError if the tenant is not the fully mapped operational pair, if its organization is cancelled, or if
+    `set_by` is blank -- the same guardrails issue_ingest_key applies, so a cutover can never be recorded for an unmapped
+    or offboarded tenant, or by an anonymous operator."""
+    _require_provisionable_tenant(conn, customer_id, branch_id)
     if not (set_by or "").strip():
         raise ValueError("set_by is required and cannot be blank")
     row = conn.execute(

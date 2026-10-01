@@ -214,6 +214,18 @@ Result: **PASS**. The restore procedure has now been validated against the
 real production schema and a production-derived dataset without performing
 any destructive operation against the production branch itself.
 
+## point-in-time history and tenant offboarding
+
+Everything above cuts both ways. The same history that lets a bad `DELETE`
+be undone means a deliberate one is not immediate physical erasure: after a
+tenant's data is purged (`docs/data-lifecycle-offboarding.md`), the rows
+stay restorable until the retention window has passed, and any branch
+created before the purge -- including a `preserve_under_name` snapshot or a
+recovery-drill branch left behind -- keeps them until it is deleted. Clean
+up drill and snapshot branches promptly, and remember that restoring
+production to a point before a purge brings the purged tenant back, so the
+offboarding and the purge must then be repeated.
+
 ## what this doc does not cover
 
 - **Production itself has not been destructively restored.** Recovery has
