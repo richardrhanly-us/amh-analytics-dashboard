@@ -6,7 +6,7 @@
     plain file, a log, Git, or the console.
 
 .DESCRIPTION
-    Collector 1.0.11+ reads its API token from api_token.dpapi (DPAPI machine
+    The Collector reads its API token ONLY from api_token.dpapi (DPAPI machine
     scope, bound to the config's customer_id/branch_id, in the
     Administrators+SYSTEM-only secrets folder -- see
     collector/api_token_store.py). This script owns NO file format and no
@@ -18,10 +18,10 @@
     which writes it atomically -- replacing any token already stored, which is
     how a token is rotated -- then verifies the folder's ACL.
 
-    It no longer sets the Machine-scope SORTVIEW_API_TOKEN environment
-    variable (readable by every local user). It never removes one either: in
-    1.0.11 an existing variable is still the migration fallback whenever
-    api_token.dpapi is absent, and removing it is a separate, later step
+    It neither sets nor reads the legacy Machine-scope SORTVIEW_API_TOKEN
+    environment variable (readable by every local user), which the
+    Collector ignores entirely. It never removes one either: cleaning up a
+    leftover variable is a separate, explicit operator step
     (docs/deployment.md).
 
     This script:

@@ -443,10 +443,12 @@ def test_v2_settings_load_with_sibling_defaults_and_a_zone(tmp_path):
     assert cfg.secret_path.name == "v2_key.dpapi" and cfg.rules_path.name == "classification_rules.json"
 
 
-def test_v2_uses_its_own_state_and_status_files_never_the_v1_ones(tmp_path):
+def test_v2_uses_its_own_state_and_status_files_never_the_v1_ones(tmp_path, monkeypatch):
+    from collector_token_support import store_api_token
+
     from collector.config import load_config
     path = write_config(tmp_path / "root")
-    os.environ["SORTVIEW_API_TOKEN"] = "x"
+    store_api_token(monkeypatch, "x")
     v1, v2 = load_config(path), v2_config.load_v2_config(path, require=True)
     assert v2.state_path != v1.state_path and v2.status_path != v1.status_path
 

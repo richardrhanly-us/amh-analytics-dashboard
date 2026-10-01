@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from collector_token_support import store_api_token
 
 from collector import bootstrap_state, state
 from collector.config import load_config
@@ -38,7 +39,7 @@ def _write_config(tmp_path, **overrides):
 
 
 def _load(tmp_path, monkeypatch, **overrides):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config(tmp_path, **overrides)
     return load_config(config_path)
 
@@ -229,7 +230,7 @@ def test_main_returns_0_and_prints_seeded_offsets(tmp_path, monkeypatch, capsys)
     (tmp_path / "Checkins.txt").write_bytes(b"line one\n")
     (tmp_path / "Rejects.txt").write_bytes(b"reject one\n")
     (tmp_path / "ACS Log.txt").write_bytes(b"acs one\n")
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config(tmp_path)
 
     exit_code = bootstrap_state.main(["--config", str(config_path)])
@@ -250,7 +251,7 @@ def test_main_returns_2_when_state_already_exists(tmp_path, monkeypatch):
     (tmp_path / "Checkins.txt").write_bytes(b"line one\n")
     (tmp_path / "Rejects.txt").write_bytes(b"reject one\n")
     (tmp_path / "ACS Log.txt").write_bytes(b"acs one\n")
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config(tmp_path)
     cfg = load_config(config_path)
     state.save_state(cfg.state_path, state.empty_state())
@@ -268,7 +269,7 @@ def test_main_has_no_force_flag(tmp_path, monkeypatch):
     (tmp_path / "Checkins.txt").write_bytes(b"line one\n")
     (tmp_path / "Rejects.txt").write_bytes(b"reject one\n")
     (tmp_path / "ACS Log.txt").write_bytes(b"acs one\n")
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config(tmp_path)
 
     with pytest.raises(SystemExit):
@@ -278,7 +279,7 @@ def test_main_has_no_force_flag(tmp_path, monkeypatch):
 def test_main_returns_1_for_missing_source(tmp_path, monkeypatch):
     (tmp_path / "Rejects.txt").write_bytes(b"reject one\n")
     (tmp_path / "ACS Log.txt").write_bytes(b"acs one\n")
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     config_path = _write_config(tmp_path)
 
     exit_code = bootstrap_state.main(["--config", str(config_path)])

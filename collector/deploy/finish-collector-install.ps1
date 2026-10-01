@@ -36,31 +36,24 @@
     GUIDED SETUP: setup.ps1 (the enrollment-driven setup) stores the token
     itself and then runs this script with -UseExistingMachineToken. That
     switch changes exactly one thing: step 1 neither asks keep/replace nor
-    runs the token tool -- it requires a token to already be on this
-    machine (stopping if there is none) and uses it. Everything else is
-    unchanged, and without the switch the behavior below is exactly as
-    before.
+    runs the token tool -- it requires a usable token to already be stored
+    in api_token.dpapi (stopping if there is none) and uses it. Everything
+    else is unchanged. The switch keeps its original NAME only so existing
+    callers keep working: it means "use the token already stored in
+    api_token.dpapi" and has nothing to do with any environment variable.
 
-    TOKEN (1.0.11): the Collector reads its token from
+    TOKEN: the Collector reads its token ONLY from
     <DataRoot>\secrets\api_token.dpapi (DPAPI, Administrators + SYSTEM only;
-    collector/api_token_store.py). Step 1 first asks the Collector itself
-    (`SortViewCollector.exe api-token check`): a stored, usable token counts
-    as the existing token; a file that EXISTS but cannot be used stops the
+    collector/api_token_store.py). Step 1 asks the Collector itself
+    (`SortViewCollector.exe api-token check`): a token "exists" only when
+    that check exits 0. A file that EXISTS but cannot be used stops the
     script -- it is never bypassed. If a token exists you are asked whether
     to keep or replace it; replacing, or entering a first one, always
     stores it in api_token.dpapi via tools\set-api-token.ps1 (the value is
     never displayed, written to a plain file, a log, or a command line).
-    With a stored token nothing is copied anywhere.
-
-    MIGRATION FALLBACK (1.0.11 ONLY): while api_token.dpapi is absent, an
-    existing Machine-scope SORTVIEW_API_TOKEN is still accepted, exactly as
-    before this release. A Machine-scope variable does NOT reach this
-    process's own environment on its own, and the Collector's preflight and
-    bootstrap read it from THEIR process environment -- so in that case
-    only, the Machine value is copied into this process's
-    SORTVIEW_API_TOKEN for the duration of the run and the previous process
-    value (if any) is restored, or the variable removed, in a top-level
-    finally. This script never sets or removes the Machine-scope variable.
+    After the token step the check must exit 0, or the script stops (exit
+    code 3 = no api_token.dpapi at all). No environment variable is read,
+    set or removed by this script, and none can stand in for the file.
 
     BOOTSTRAP: bootstrap's exit code 2 means BOTH "bad config" and "state
     already exists", so it is not trusted alone. state.json is inspected
@@ -119,7 +112,7 @@ function Stop-Setup {
     # One place for every stop: names the step, what was left unchanged, and
     # what to correct -- then exits non-zero. `exit` (not a bare return)
     # because a bare return leaves the exit code 0, which automation reads
-    # as success. Exiting from here still runs the top-level finally.
+    # as success.
     param(
         [Parameter(Mandatory)][string]$Step,
         [Parameter(Mandatory)][string]$Problem,
@@ -327,21 +320,19 @@ function Get-ExistingTaskDecision {
 }
 
 function Get-TokenStepAction {
-    # What step 1 does. A token already stored in api_token.dpapi counts as "a token
-    # exists" first; in 1.0.11 only, a Machine-scope SORTVIEW_API_TOKEN also does
-    # (the migration fallback, used only while api_token.dpapi is absent).
+    # What step 1 does. "A token exists" means exactly one thing: the Collector's own
+    # `api-token check` exited 0 (a usable api_token.dpapi). Nothing else counts.
     # A PRESENT-but-unusable api_token.dpapi never reaches this function: it stops.
     #   UseExisting     -> switch given and a token exists: use it, ask nothing
     #   MissingExisting -> switch given but no token: stop (never prompt)
     #   AskKeepOrReplace / PromptForToken -> interactive: keep/replace an existing
     #                      token, or store a new one (always into api_token.dpapi)
-    param([bool]$UseExisting, [bool]$StoredTokenPresent, [bool]$MachineTokenPresent)
-    $tokenPresent = $StoredTokenPresent -or $MachineTokenPresent
+    param([bool]$UseExisting, [bool]$StoredTokenPresent)
     if ($UseExisting) {
-        if ($tokenPresent) { return "UseExisting" }
+        if ($StoredTokenPresent) { return "UseExisting" }
         return "MissingExisting"
     }
-    if ($tokenPresent) { return "AskKeepOrReplace" }
+    if ($StoredTokenPresent) { return "AskKeepOrReplace" }
     return "PromptForToken"
 }
 
@@ -429,233 +420,210 @@ if ($taskDecision.Decision -eq "Refuse") {
 }
 Write-Host "  OK: frozen runtime, config, and sibling tools are present; task check: $($taskDecision.Reason)." -ForegroundColor Green
 
-# The token is copied into THIS process's environment for the child
-# processes below and put back exactly as it was in the finally at the end.
-$hadProcessToken = Test-Path -Path "Env:SORTVIEW_API_TOKEN"
-$previousProcessToken = $env:SORTVIEW_API_TOKEN
 $seededNow = $false
 $registeredNow = $false
 
-try {
-    # === STEP 1: API token ==================================================
-    Write-Host ""
-    Write-Host "=== Step 1 of 5: API token ===" -ForegroundColor Cyan
+# === STEP 1: API token ==================================================
+Write-Host ""
+Write-Host "=== Step 1 of 5: API token ===" -ForegroundColor Cyan
 
-    # The Collector's own check of api_token.dpapi: 0 = stored and usable, 3 = no file at all.
-    # Anything else is a PRESENT but unusable file -- a stop, never bypassed by the fallback below.
-    & $ExePath api-token check --config $ConfigPath | Out-Host
-    $storedTokenCheck = $LASTEXITCODE
-    if ($storedTokenCheck -ne 0 -and $storedTokenCheck -ne 3) {
-        Stop-Setup -Step "step 1 of 5 (API token)" -Problem "api_token.dpapi exists but cannot be used (exit code $storedTokenCheck; reason above). It is never bypassed." `
-            -Unchanged "no preflight, bootstrap, or Scheduled Task step was run" `
-            -Fix "Store a valid token with tools\set-api-token.ps1 (it replaces the file), then re-run this script." -ExitCode 1
-    }
-    $machineToken = [Environment]::GetEnvironmentVariable("SORTVIEW_API_TOKEN", "Machine")
-    $runTokenTool = $true
-    $tokenAction = Get-TokenStepAction -UseExisting ([bool]$UseExistingMachineToken) -StoredTokenPresent ($storedTokenCheck -eq 0) `
-        -MachineTokenPresent (-not [string]::IsNullOrWhiteSpace($machineToken))
-    $existingTokenLabel = if ($storedTokenCheck -eq 0) { "stored in api_token.dpapi" } else { "the Machine-scope SORTVIEW_API_TOKEN (1.0.11 migration fallback)" }
-    if ($tokenAction -eq "MissingExisting") {
-        Stop-Setup -Step "step 1 of 5 (API token)" -Problem "-UseExistingMachineToken was given, but no API token is stored on this machine (no api_token.dpapi and no Machine-scope SORTVIEW_API_TOKEN)." `
-            -Unchanged "no preflight, bootstrap, or Scheduled Task step was run" `
-            -Fix "Run setup.ps1 again (it stores the token), or run this script without -UseExistingMachineToken to enter one." -ExitCode 1
-    }
-    if ($tokenAction -eq "UseExisting") {
-        Write-Host "Using the API token already on this machine: $existingTokenLabel (value not shown)."
-        $runTokenTool = $false
-    } elseif ($tokenAction -eq "AskKeepOrReplace") {
-        Write-Host "An API token is already on this machine: $existingTokenLabel (value not shown). Replacing it stores the new token in api_token.dpapi."
-        $choice = "Invalid"
-        while ($choice -eq "Invalid") {
-            $answer = $null
-            try {
-                $answer = Read-Host "Keep the existing token, or replace it? [K]eep / [R]eplace (Enter = keep)"
-            } catch {
-                Stop-Setup -Step "step 1 of 5 (API token)" -Problem "Could not prompt: this script must run in an interactive PowerShell session." `
-                    -Unchanged "the existing token was not changed" -Fix "Run this script from an interactive, elevated PowerShell window." -ExitCode 1
-            }
-            $choice = Get-TokenChoice -Answer $answer
-            if ($choice -eq "Invalid") { Write-Host "Please answer K (keep) or R (replace)." -ForegroundColor Yellow }
-        }
-        $runTokenTool = ($choice -eq "Replace")
-    }
-
-    if ($runTokenTool) {
-        try {
-            & $SetTokenScript -InstallRoot $InstallRoot -ConfigPath $ConfigPath
-        } catch {
-            Stop-Setup -Step "step 1 of 5 (API token)" -Problem "Token setup failed: $($_.Exception.Message)" `
-                -Unchanged "no preflight, bootstrap, or Scheduled Task step was run" -Fix "Re-run and enter the token again." -ExitCode 1
-        }
-    } else {
-        Write-Host "Keeping the existing token."
-    }
-
-    # Verify with the Collector itself what it will actually use.
-    & $ExePath api-token check --config $ConfigPath | Out-Host
-    $storedTokenCheck = $LASTEXITCODE
-    $machineToken = [Environment]::GetEnvironmentVariable("SORTVIEW_API_TOKEN", "Machine")
-    if ($storedTokenCheck -eq 0) {
-        Write-Host "  OK: token stored in api_token.dpapi (DPAPI, Administrators + SYSTEM only); nothing is copied into this process." -ForegroundColor Green
-    } elseif ($runTokenTool -or $storedTokenCheck -ne 3 -or [string]::IsNullOrWhiteSpace($machineToken)) {
-        Stop-Setup -Step "step 1 of 5 (API token)" -Problem "No usable API token after token setup (api_token.dpapi check exit code $storedTokenCheck; no Machine-scope fallback applies)." `
-            -Unchanged "no preflight, bootstrap, or Scheduled Task step was run" -Fix "Re-run and enter the token when prompted." -ExitCode 1
-    } else {
-        # 1.0.11 MIGRATION FALLBACK ONLY: no api_token.dpapi yet, so the Collector uses the Machine-scope variable.
-        # Machine scope does not reach this process on its own -- see .DESCRIPTION.
-        $env:SORTVIEW_API_TOKEN = $machineToken
-        Write-Host "  OK: using the Machine-scope SORTVIEW_API_TOKEN -- the 1.0.11 migration fallback (no api_token.dpapi yet); made available to this run's child processes." -ForegroundColor Yellow
-    }
-    $machineToken = $null
-
-    # === STEP 2: interactive preflight ======================================
-    Write-Host ""
-    Write-Host "=== Step 2 of 5: interactive preflight ===" -ForegroundColor Cyan
-    & $ExePath preflight --config $ConfigPath
-    if ($LASTEXITCODE -ne 0) {
-        Stop-Setup -Step "step 2 of 5 (interactive preflight)" -Problem "Preflight reported FAIL (exit code $LASTEXITCODE) -- see the [FAIL] lines above." `
-            -Unchanged "the token stays set; no state file, and no Scheduled Task, was created by this run" `
-            -Fix "Correct what the [FAIL] lines name (source files, network/proxy, token, config), then re-run." -ExitCode 1
-    }
-    Write-Host "  OK: interactive preflight passed." -ForegroundColor Green
-
-    # === STEP 3: SYSTEM-context preflight ===================================
-    Write-Host ""
-    Write-Host "=== Step 3 of 5: SYSTEM-context preflight ===" -ForegroundColor Cyan
-    # Sentinel: a child that ends without setting an exit code must not be
-    # mistaken for success by a stale $LASTEXITCODE from an earlier command.
-    $global:LASTEXITCODE = 99
-    try {
-        & $PreflightSystemScript -InstallRoot $InstallRoot -ConfigPath $ConfigPath
-    } catch {
-        Stop-Setup -Step "step 3 of 5 (SYSTEM-context preflight)" -Problem "The SYSTEM preflight tool failed to run: $($_.Exception.Message)" `
-            -Unchanged "the token stays set; no state file, and no Scheduled Task, was created by this run" -Fix "Resolve the error above, then re-run." -ExitCode 1
-    }
-    if ($LASTEXITCODE -ne 0) {
-        Stop-Setup -Step "step 3 of 5 (SYSTEM-context preflight)" -Problem "SYSTEM-context preflight did not pass (exit code $LASTEXITCODE) -- see the result lines above." `
-            -Unchanged "the token stays set; no state file, and no Scheduled Task, was created by this run" `
-            -Fix "Fix the SYSTEM-specific problem named above (file permissions, proxy, Machine-scope token), then re-run." -ExitCode 1
-    }
-    Write-Host "  OK: SYSTEM-context preflight passed." -ForegroundColor Green
-
-    # === STEP 4: bootstrap the starting cursor ==============================
-    Write-Host ""
-    Write-Host "=== Step 4 of 5: starting cursor (bootstrap) ===" -ForegroundColor Cyan
-    if (Test-Path -LiteralPath $StatePath) {
-        # Bootstrap's exit code 2 is ambiguous (bad config / state exists),
-        # so an existing state file is judged here, never handed to bootstrap.
-        if (-not (Test-Path -LiteralPath $StatePath -PathType Leaf)) {
-            Stop-Setup -Step "step 4 of 5 (bootstrap)" -Problem "'$StatePath' exists but is not a file." `
-                -Unchanged "nothing was written or deleted" -Fix "Investigate '$StatePath'; it must be the Collector's state.json." -ExitCode 2
-        }
-        $stateText = $null
-        try {
-            $stateText = Get-Content -LiteralPath $StatePath -Raw -Encoding UTF8
-        } catch {
-            Stop-Setup -Step "step 4 of 5 (bootstrap)" -Problem "The existing state file could not be read: $($_.Exception.Message)" `
-                -Unchanged "state.json was not modified or deleted" -Fix "Investigate '$StatePath' yourself; this script never overwrites it." -ExitCode 2
-        }
-        $stateProblems = @(Get-FinishStateProblems -StateText $stateText -SourceNames $SourceNames -ExpectedSchemaVersion $ExpectedStateSchemaVersion)
-        if ($stateProblems.Count -gt 0) {
-            foreach ($problem in $stateProblems) { Write-Host "  $problem" -ForegroundColor Red }
-            Stop-Setup -Step "step 4 of 5 (bootstrap)" -Problem "An existing state file is invalid or incomplete (listed above)." `
-                -Unchanged "state.json was not modified or deleted" `
-                -Fix "Investigate and recover '$StatePath' yourself as a deliberate action; this script never overwrites or deletes it." -ExitCode 2
-        }
-        Write-Host "  OK: state file already exists and covers every configured source -- bootstrap skipped." -ForegroundColor Green
-    } else {
-        & $ExePath bootstrap --config $ConfigPath
-        if ($LASTEXITCODE -ne 0) {
-            Stop-Setup -Step "step 4 of 5 (bootstrap)" -Problem "Bootstrap failed (exit code $LASTEXITCODE) -- see the message above." `
-                -Unchanged "no Scheduled Task was created by this run" -Fix "Correct what the message names (usually a missing/unreadable source file), then re-run." -ExitCode 1
-        }
-        $verifyText = $null
-        if (Test-Path -LiteralPath $StatePath -PathType Leaf) {
-            $verifyText = Get-Content -LiteralPath $StatePath -Raw -Encoding UTF8
-        }
-        $verifyProblems = @(Get-FinishStateProblems -StateText $verifyText -SourceNames $SourceNames -ExpectedSchemaVersion $ExpectedStateSchemaVersion)
-        if ($verifyProblems.Count -gt 0) {
-            foreach ($problem in $verifyProblems) { Write-Host "  $problem" -ForegroundColor Red }
-            Stop-Setup -Step "step 4 of 5 (bootstrap)" -Problem "Bootstrap exited 0 but the state file is not valid for every configured source (listed above)." `
-                -Unchanged "state.json was not modified or deleted by this script; no Scheduled Task was created" `
-                -Fix "Investigate '$StatePath'; do not delete it blindly." -ExitCode 1
-        }
-        $seededNow = $true
-        Write-Host "  OK: starting cursor seeded for: $($SourceNames -join ', ')." -ForegroundColor Green
-    }
-
-    # === STEP 5: register the Scheduled Task (DISABLED) =====================
-    Write-Host ""
-    Write-Host "=== Step 5 of 5: Scheduled Task ===" -ForegroundColor Cyan
-    if ($taskDecision.Decision -eq "AlreadyRegistered") {
-        Write-Host "  OK: '$TaskName' is already registered and Disabled, and matches this install -- registration skipped." -ForegroundColor Green
-    } else {
-        # Never -Enabled, never -Force: the task is registered DISABLED.
-        try {
-            & $RegisterTaskScript -InstallRoot $InstallRoot -ConfigPath $ConfigPath
-        } catch {
-            Stop-Setup -Step "step 5 of 5 (Scheduled Task)" -Problem "Task registration failed: $($_.Exception.Message)" `
-                -Unchanged "the token and state.json stay in place; the task was not enabled" -Fix "Resolve the error above, then re-run." -ExitCode 1
-        }
-
-        # register-task.ps1 does not give a reliable exit code, so the task
-        # itself is verified.
-        $verifyTask = $null
-        try {
-            $verifyTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-        } catch {
-            Stop-Setup -Step "step 5 of 5 (Scheduled Task)" -Problem "Could not verify the task after registration: $($_.Exception.Message)" `
-                -Unchanged "the token and state.json stay in place; the task was not enabled" -Fix "Check the task by hand, then re-run." -ExitCode 1
-        }
-        if ($null -eq $verifyTask) {
-            Stop-Setup -Step "step 5 of 5 (Scheduled Task)" -Problem "Registration finished but '$TaskName' does not exist." `
-                -Unchanged "the token and state.json stay in place" -Fix "Read the registration output above, resolve it, then re-run." -ExitCode 1
-        }
-        $verifyDecision = Get-ExistingTaskDecision -TaskState ([string]$verifyTask.State) -Actions @($verifyTask.Actions) `
-            -ExpectedExe $ExePath -ExpectedConfigPath $ConfigPath
-        if ($verifyDecision.Decision -ne "AlreadyRegistered") {
-            Stop-Setup -Step "step 5 of 5 (Scheduled Task)" -Problem "The registered task is not the expected Disabled task: $($verifyDecision.Reason)." `
-                -Unchanged "the task was not changed by this script" `
-                -Fix "Inspect '$TaskName' in Task Scheduler. It must be Disabled and run '$ExePath' with: run --config `"$ConfigPath`"." -ExitCode 2
-        }
-        $registeredNow = $true
-        Write-Host "  OK: '$TaskName' registered -- State: Disabled." -ForegroundColor Green
-    }
-
-    # === STEP 6: summary ====================================================
-    Write-Host ""
-    Write-Host "=== SortView Collector setup COMPLETE. The task is registered DISABLED. ===" -ForegroundColor Green
-    Write-Host ""
-    Write-Host "  [OK] API token set (Machine scope; value never shown)"
-    Write-Host "  [OK] Interactive preflight passed"
-    Write-Host "  [OK] SYSTEM-context preflight passed"
-    if ($seededNow) {
-        Write-Host "  [OK] Starting cursor seeded for: $($SourceNames -join ', ')"
-    } else {
-        Write-Host "  [OK] Starting cursor already seeded"
-    }
-    if ($registeredNow) {
-        Write-Host "  [OK] Scheduled Task '$TaskName' registered -- State: Disabled"
-    } else {
-        Write-Host "  [OK] Scheduled Task '$TaskName' already registered -- State: Disabled"
-    }
-    Write-Host ""
-    Write-Host "NOTHING WILL RUN until you enable the task." -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "When you are ready, enable it:"
-    Write-Host '    Enable-ScheduledTask -TaskName "SortView Collector"'
-    Write-Host ""
-    Write-Host "Optional immediate run after enabling (otherwise it runs at its next 15-minute trigger):"
-    Write-Host '    Start-ScheduledTask -TaskName "SortView Collector"'
-    Write-Host ""
-    Write-Host "This script does not run either command."
-    exit 0
-} finally {
-    # Put this process's SORTVIEW_API_TOKEN back exactly as it was found.
-    if ($hadProcessToken) {
-        $env:SORTVIEW_API_TOKEN = $previousProcessToken
-    } else {
-        Remove-Item -Path "Env:SORTVIEW_API_TOKEN" -ErrorAction SilentlyContinue
-    }
-    $previousProcessToken = $null
+# The Collector's own check of api_token.dpapi: 0 = stored and usable, 3 = no file at all.
+# Anything else is a PRESENT but unusable file -- a stop, never bypassed.
+& $ExePath api-token check --config $ConfigPath | Out-Host
+$storedTokenCheck = $LASTEXITCODE
+if ($storedTokenCheck -ne 0 -and $storedTokenCheck -ne 3) {
+    Stop-Setup -Step "step 1 of 5 (API token)" -Problem "api_token.dpapi exists but cannot be used (exit code $storedTokenCheck; reason above). It is never bypassed." `
+        -Unchanged "no preflight, bootstrap, or Scheduled Task step was run" `
+        -Fix "Store a valid token with tools\set-api-token.ps1 (it replaces the file), then re-run this script." -ExitCode 1
 }
+$runTokenTool = $true
+$tokenAction = Get-TokenStepAction -UseExisting ([bool]$UseExistingMachineToken) -StoredTokenPresent ($storedTokenCheck -eq 0)
+if ($tokenAction -eq "MissingExisting") {
+    Stop-Setup -Step "step 1 of 5 (API token)" -Problem "-UseExistingMachineToken was given, but no API token is stored on this machine (no api_token.dpapi)." `
+        -Unchanged "no preflight, bootstrap, or Scheduled Task step was run" `
+        -Fix "Run setup.ps1 again (it stores the token), or run this script without -UseExistingMachineToken to enter one." -ExitCode 1
+}
+if ($tokenAction -eq "UseExisting") {
+    Write-Host "Using the API token already stored in api_token.dpapi (value not shown)."
+    $runTokenTool = $false
+} elseif ($tokenAction -eq "AskKeepOrReplace") {
+    Write-Host "An API token is already stored in api_token.dpapi (value not shown). Replacing it overwrites that file with the new token."
+    $choice = "Invalid"
+    while ($choice -eq "Invalid") {
+        $answer = $null
+        try {
+            $answer = Read-Host "Keep the existing token, or replace it? [K]eep / [R]eplace (Enter = keep)"
+        } catch {
+            Stop-Setup -Step "step 1 of 5 (API token)" -Problem "Could not prompt: this script must run in an interactive PowerShell session." `
+                -Unchanged "the existing token was not changed" -Fix "Run this script from an interactive, elevated PowerShell window." -ExitCode 1
+        }
+        $choice = Get-TokenChoice -Answer $answer
+        if ($choice -eq "Invalid") { Write-Host "Please answer K (keep) or R (replace)." -ForegroundColor Yellow }
+    }
+    $runTokenTool = ($choice -eq "Replace")
+}
+
+if ($runTokenTool) {
+    try {
+        & $SetTokenScript -InstallRoot $InstallRoot -ConfigPath $ConfigPath
+    } catch {
+        Stop-Setup -Step "step 1 of 5 (API token)" -Problem "Token setup failed: $($_.Exception.Message)" `
+            -Unchanged "no preflight, bootstrap, or Scheduled Task step was run" -Fix "Re-run and enter the token again." -ExitCode 1
+    }
+} else {
+    Write-Host "Keeping the existing token."
+}
+
+# Verify with the Collector itself what it will actually use. api_token.dpapi is its only token source,
+# so anything but 0 stops here (3 = no token file at all).
+& $ExePath api-token check --config $ConfigPath | Out-Host
+$storedTokenCheck = $LASTEXITCODE
+if ($storedTokenCheck -ne 0) {
+    $tokenProblem = if ($storedTokenCheck -eq 3) { "no api_token.dpapi is stored" } else { "api_token.dpapi cannot be used" }
+    Stop-Setup -Step "step 1 of 5 (API token)" -Problem "No usable API token after token setup: $tokenProblem (api-token check exit code $storedTokenCheck). api_token.dpapi is the Collector's only token source." `
+        -Unchanged "no preflight, bootstrap, or Scheduled Task step was run" -Fix "Re-run and enter the token when prompted." -ExitCode 1
+}
+Write-Host "  OK: token stored in api_token.dpapi (DPAPI, Administrators + SYSTEM only)." -ForegroundColor Green
+
+# === STEP 2: interactive preflight ======================================
+Write-Host ""
+Write-Host "=== Step 2 of 5: interactive preflight ===" -ForegroundColor Cyan
+& $ExePath preflight --config $ConfigPath
+if ($LASTEXITCODE -ne 0) {
+    Stop-Setup -Step "step 2 of 5 (interactive preflight)" -Problem "Preflight reported FAIL (exit code $LASTEXITCODE) -- see the [FAIL] lines above." `
+        -Unchanged "the token stays stored; no state file, and no Scheduled Task, was created by this run" `
+        -Fix "Correct what the [FAIL] lines name (source files, network/proxy, token, config), then re-run." -ExitCode 1
+}
+Write-Host "  OK: interactive preflight passed." -ForegroundColor Green
+
+# === STEP 3: SYSTEM-context preflight ===================================
+Write-Host ""
+Write-Host "=== Step 3 of 5: SYSTEM-context preflight ===" -ForegroundColor Cyan
+# Sentinel: a child that ends without setting an exit code must not be
+# mistaken for success by a stale $LASTEXITCODE from an earlier command.
+$global:LASTEXITCODE = 99
+try {
+    & $PreflightSystemScript -InstallRoot $InstallRoot -ConfigPath $ConfigPath
+} catch {
+    Stop-Setup -Step "step 3 of 5 (SYSTEM-context preflight)" -Problem "The SYSTEM preflight tool failed to run: $($_.Exception.Message)" `
+        -Unchanged "the token stays stored; no state file, and no Scheduled Task, was created by this run" -Fix "Resolve the error above, then re-run." -ExitCode 1
+}
+if ($LASTEXITCODE -ne 0) {
+    Stop-Setup -Step "step 3 of 5 (SYSTEM-context preflight)" -Problem "SYSTEM-context preflight did not pass (exit code $LASTEXITCODE) -- see the result lines above." `
+        -Unchanged "the token stays stored; no state file, and no Scheduled Task, was created by this run" `
+        -Fix "Fix the SYSTEM-specific problem named above (file permissions, proxy, SYSTEM's access to api_token.dpapi), then re-run." -ExitCode 1
+}
+Write-Host "  OK: SYSTEM-context preflight passed." -ForegroundColor Green
+
+# === STEP 4: bootstrap the starting cursor ==============================
+Write-Host ""
+Write-Host "=== Step 4 of 5: starting cursor (bootstrap) ===" -ForegroundColor Cyan
+if (Test-Path -LiteralPath $StatePath) {
+    # Bootstrap's exit code 2 is ambiguous (bad config / state exists),
+    # so an existing state file is judged here, never handed to bootstrap.
+    if (-not (Test-Path -LiteralPath $StatePath -PathType Leaf)) {
+        Stop-Setup -Step "step 4 of 5 (bootstrap)" -Problem "'$StatePath' exists but is not a file." `
+            -Unchanged "nothing was written or deleted" -Fix "Investigate '$StatePath'; it must be the Collector's state.json." -ExitCode 2
+    }
+    $stateText = $null
+    try {
+        $stateText = Get-Content -LiteralPath $StatePath -Raw -Encoding UTF8
+    } catch {
+        Stop-Setup -Step "step 4 of 5 (bootstrap)" -Problem "The existing state file could not be read: $($_.Exception.Message)" `
+            -Unchanged "state.json was not modified or deleted" -Fix "Investigate '$StatePath' yourself; this script never overwrites it." -ExitCode 2
+    }
+    $stateProblems = @(Get-FinishStateProblems -StateText $stateText -SourceNames $SourceNames -ExpectedSchemaVersion $ExpectedStateSchemaVersion)
+    if ($stateProblems.Count -gt 0) {
+        foreach ($problem in $stateProblems) { Write-Host "  $problem" -ForegroundColor Red }
+        Stop-Setup -Step "step 4 of 5 (bootstrap)" -Problem "An existing state file is invalid or incomplete (listed above)." `
+            -Unchanged "state.json was not modified or deleted" `
+            -Fix "Investigate and recover '$StatePath' yourself as a deliberate action; this script never overwrites or deletes it." -ExitCode 2
+    }
+    Write-Host "  OK: state file already exists and covers every configured source -- bootstrap skipped." -ForegroundColor Green
+} else {
+    & $ExePath bootstrap --config $ConfigPath
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Setup -Step "step 4 of 5 (bootstrap)" -Problem "Bootstrap failed (exit code $LASTEXITCODE) -- see the message above." `
+            -Unchanged "no Scheduled Task was created by this run" -Fix "Correct what the message names (usually a missing/unreadable source file), then re-run." -ExitCode 1
+    }
+    $verifyText = $null
+    if (Test-Path -LiteralPath $StatePath -PathType Leaf) {
+        $verifyText = Get-Content -LiteralPath $StatePath -Raw -Encoding UTF8
+    }
+    $verifyProblems = @(Get-FinishStateProblems -StateText $verifyText -SourceNames $SourceNames -ExpectedSchemaVersion $ExpectedStateSchemaVersion)
+    if ($verifyProblems.Count -gt 0) {
+        foreach ($problem in $verifyProblems) { Write-Host "  $problem" -ForegroundColor Red }
+        Stop-Setup -Step "step 4 of 5 (bootstrap)" -Problem "Bootstrap exited 0 but the state file is not valid for every configured source (listed above)." `
+            -Unchanged "state.json was not modified or deleted by this script; no Scheduled Task was created" `
+            -Fix "Investigate '$StatePath'; do not delete it blindly." -ExitCode 1
+    }
+    $seededNow = $true
+    Write-Host "  OK: starting cursor seeded for: $($SourceNames -join ', ')." -ForegroundColor Green
+}
+
+# === STEP 5: register the Scheduled Task (DISABLED) =====================
+Write-Host ""
+Write-Host "=== Step 5 of 5: Scheduled Task ===" -ForegroundColor Cyan
+if ($taskDecision.Decision -eq "AlreadyRegistered") {
+    Write-Host "  OK: '$TaskName' is already registered and Disabled, and matches this install -- registration skipped." -ForegroundColor Green
+} else {
+    # Never -Enabled, never -Force: the task is registered DISABLED.
+    try {
+        & $RegisterTaskScript -InstallRoot $InstallRoot -ConfigPath $ConfigPath
+    } catch {
+        Stop-Setup -Step "step 5 of 5 (Scheduled Task)" -Problem "Task registration failed: $($_.Exception.Message)" `
+            -Unchanged "the token and state.json stay in place; the task was not enabled" -Fix "Resolve the error above, then re-run." -ExitCode 1
+    }
+
+    # register-task.ps1 does not give a reliable exit code, so the task
+    # itself is verified.
+    $verifyTask = $null
+    try {
+        $verifyTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    } catch {
+        Stop-Setup -Step "step 5 of 5 (Scheduled Task)" -Problem "Could not verify the task after registration: $($_.Exception.Message)" `
+            -Unchanged "the token and state.json stay in place; the task was not enabled" -Fix "Check the task by hand, then re-run." -ExitCode 1
+    }
+    if ($null -eq $verifyTask) {
+        Stop-Setup -Step "step 5 of 5 (Scheduled Task)" -Problem "Registration finished but '$TaskName' does not exist." `
+            -Unchanged "the token and state.json stay in place" -Fix "Read the registration output above, resolve it, then re-run." -ExitCode 1
+    }
+    $verifyDecision = Get-ExistingTaskDecision -TaskState ([string]$verifyTask.State) -Actions @($verifyTask.Actions) `
+        -ExpectedExe $ExePath -ExpectedConfigPath $ConfigPath
+    if ($verifyDecision.Decision -ne "AlreadyRegistered") {
+        Stop-Setup -Step "step 5 of 5 (Scheduled Task)" -Problem "The registered task is not the expected Disabled task: $($verifyDecision.Reason)." `
+            -Unchanged "the task was not changed by this script" `
+            -Fix "Inspect '$TaskName' in Task Scheduler. It must be Disabled and run '$ExePath' with: run --config `"$ConfigPath`"." -ExitCode 2
+    }
+    $registeredNow = $true
+    Write-Host "  OK: '$TaskName' registered -- State: Disabled." -ForegroundColor Green
+}
+
+# === STEP 6: summary ====================================================
+Write-Host ""
+Write-Host "=== SortView Collector setup COMPLETE. The task is registered DISABLED. ===" -ForegroundColor Green
+Write-Host ""
+Write-Host "  [OK] API token stored in api_token.dpapi (DPAPI; Administrators + SYSTEM only; value never shown)"
+Write-Host "  [OK] Interactive preflight passed"
+Write-Host "  [OK] SYSTEM-context preflight passed"
+if ($seededNow) {
+    Write-Host "  [OK] Starting cursor seeded for: $($SourceNames -join ', ')"
+} else {
+    Write-Host "  [OK] Starting cursor already seeded"
+}
+if ($registeredNow) {
+    Write-Host "  [OK] Scheduled Task '$TaskName' registered -- State: Disabled"
+} else {
+    Write-Host "  [OK] Scheduled Task '$TaskName' already registered -- State: Disabled"
+}
+Write-Host ""
+Write-Host "NOTHING WILL RUN until you enable the task." -ForegroundColor Yellow
+Write-Host ""
+Write-Host "When you are ready, enable it:"
+Write-Host '    Enable-ScheduledTask -TaskName "SortView Collector"'
+Write-Host ""
+Write-Host "Optional immediate run after enabling (otherwise it runs at its next 15-minute trigger):"
+Write-Host '    Start-ScheduledTask -TaskName "SortView Collector"'
+Write-Host ""
+Write-Host "This script does not run either command."
+exit 0

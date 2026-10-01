@@ -51,8 +51,8 @@
     prompt, handed on STDIN to this install's `python -m
     collector.api_token_store set`, which stores it in
     -DataRoot\secrets\api_token.dpapi (DPAPI, Administrators + SYSTEM
-    only) -- never in the config, a plain file or a log. (The legacy
-    Machine-scope SORTVIEW_API_TOKEN is only a 1.0.11 migration fallback.)
+    only) -- never in the config, a plain file or a log. That file is the
+    Collector's only token source: no environment variable is read.
 
 .EXAMPLE
     .\install-collector.ps1 `

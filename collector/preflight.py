@@ -19,8 +19,8 @@ WHY THIS MATTERS UNDER SYSTEM SPECIFICALLY: running this INTERACTIVELY
 (as whichever admin account happens to run the installer) proves nothing
 about whether the actual Scheduled Task -- which runs as SYSTEM, a
 completely different security principal with its own file permissions,
-its own (largely empty) per-user proxy configuration, and its own view
-of Machine-scope environment variables -- can do the same things. See
+its own (largely empty) per-user proxy configuration, and its own
+environment -- can do the same things. See
 collector/deploy/run-preflight-as-system.ps1 for the mechanism that runs
 THIS SAME module under the real SYSTEM identity via a temporary,
 self-cleaning Scheduled Task. Nothing in this module assumes or hides
@@ -66,13 +66,7 @@ from urllib.parse import urlsplit
 import requests
 
 from . import uploader
-from .config import (
-    TOKEN_SOURCE_DPAPI,
-    TOKEN_SOURCE_ENVIRONMENT,
-    CollectorConfig,
-    ConfigError,
-    load_config,
-)
+from .config import TOKEN_SOURCE_DPAPI, CollectorConfig, ConfigError, load_config
 
 
 @dataclass(frozen=True)
@@ -138,16 +132,12 @@ def _check_dir_writable(name: str, target_dir: Path) -> CheckResult:
 
 def _check_token_source(cfg: CollectorConfig) -> CheckResult:
     """Reports WHERE load_config's single token resolution found the token -- never the token, its length or any hash.
-    Preflight reads the token exactly as the runtime does (cfg.api_token), with no second read of its own."""
+    Preflight reads the token exactly as the runtime does (cfg.api_token), with no second read of its own. api_token.dpapi
+    is the only valid source; a missing or unusable file normally fails earlier, in load_config (config_loads)."""
     if not cfg.api_token or not cfg.api_token.strip():
         return CheckResult("api_token_source", False, "no API token was resolved for THIS process identity")
     if cfg.api_token_source == TOKEN_SOURCE_DPAPI:
         return CheckResult("api_token_source", True, "token source: dpapi (api_token.dpapi, ACL verified)")
-    if cfg.api_token_source == TOKEN_SOURCE_ENVIRONMENT:
-        return CheckResult(
-            "api_token_source", True,
-            "token source: environment (migration fallback) -- store it with `api-token set` to stop using SORTVIEW_API_TOKEN",
-        )
     return CheckResult("api_token_source", False, f"unrecognized token source {cfg.api_token_source!r}")
 
 

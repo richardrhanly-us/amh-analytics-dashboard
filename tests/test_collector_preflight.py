@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 import requests
+from collector_token_support import break_api_token, store_api_token
 
 from collector import preflight as preflight_module
 from collector.config import CollectorConfig, SourceConfig
@@ -93,7 +94,6 @@ def _result(report, name):
 
 
 def test_all_checks_pass_report_is_overall_pass(tmp_path, monkeypatch):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     monkeypatch.delenv("DATABASE_URL", raising=False)
     cfg = _cfg(tmp_path)
     (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
@@ -115,7 +115,6 @@ def test_one_failing_check_makes_overall_report_fail(tmp_path, monkeypatch):
 
 
 def test_report_serializes_to_dict_with_all_checks(tmp_path, monkeypatch):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     monkeypatch.delenv("DATABASE_URL", raising=False)
     cfg = _cfg(tmp_path)
     (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
@@ -132,7 +131,6 @@ def test_report_serializes_to_dict_with_all_checks(tmp_path, monkeypatch):
 
 
 def test_missing_source_fails_source_exists_check(tmp_path, monkeypatch):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     cfg = _cfg(tmp_path)  # Checkins.txt never created
 
     report = run_preflight(cfg, session=FakeSession())
@@ -142,7 +140,6 @@ def test_missing_source_fails_source_exists_check(tmp_path, monkeypatch):
 
 
 def test_unreadable_source_fails_readable_check(tmp_path, monkeypatch):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     cfg = _cfg(tmp_path)
     # A directory at the configured path exists but can never be opened
     # as a file -- a portable, reliable way to simulate "exists but not
@@ -159,7 +156,6 @@ def test_unreadable_source_fails_readable_check(tmp_path, monkeypatch):
 
 
 def test_unwritable_state_dir_fails_its_check(tmp_path, monkeypatch):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
     # Point state_path at a location that cannot be created as a
     # directory (a file already occupies that path segment).
@@ -173,7 +169,6 @@ def test_unwritable_state_dir_fails_its_check(tmp_path, monkeypatch):
 
 
 def test_writable_status_and_log_dirs_pass(tmp_path, monkeypatch):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
     cfg = _cfg(tmp_path)
 
@@ -199,47 +194,49 @@ def test_a_blank_resolved_token_fails_the_token_source_check(tmp_path):
     assert "THIS process identity" in result.detail  # actionable hint, not a generic message
 
 
-@pytest.mark.parametrize(
-    ("source", "expected"),
-    [("dpapi", "token source: dpapi"), ("environment", "token source: environment (migration fallback)")],
-)
-def test_the_token_source_check_reports_where_the_token_came_from_and_nothing_about_it(tmp_path, source, expected):
+def test_the_token_source_check_reports_where_the_token_came_from_and_nothing_about_it(tmp_path):
     token = "CANARY-PREFLIGHT-TOKEN-0000000001"
-    cfg = _cfg(tmp_path, api_token=token, api_token_source=source)
+    cfg = _cfg(tmp_path, api_token=token, api_token_source="dpapi")
 
     result = _result(run_preflight(cfg, session=FakeSession()), "api_token_source")
 
     assert result.passed is True
-    assert result.detail.startswith(expected)
+    assert result.detail.startswith("token source: dpapi")
     assert token not in result.detail and str(len(token)) not in result.detail and "length" not in result.detail
 
 
-def test_an_unrecognized_token_source_fails(tmp_path):
-    result = _result(run_preflight(_cfg(tmp_path, api_token_source="clipboard"), session=FakeSession()), "api_token_source")
+def test_a_config_built_without_naming_a_source_is_dpapi():
+    # The dataclass default is the only source there is -- never a second, weaker one.
+    assert CollectorConfig.__dataclass_fields__["api_token_source"].default == "dpapi"
+
+
+@pytest.mark.parametrize("source", ["environment", "clipboard", "", "DPAPI"])
+def test_dpapi_is_the_only_token_source_that_passes(tmp_path, source):
+    # "environment" was a PASS in the one migration release; it is now just another unrecognized source.
+    result = _result(run_preflight(_cfg(tmp_path, api_token_source=source), session=FakeSession()), "api_token_source")
 
     assert result.passed is False
+    assert "unrecognized token source" in result.detail and "migration" not in result.detail
 
 
 def test_preflight_reads_the_token_only_through_load_config_never_the_environment_itself(tmp_path, monkeypatch):
-    # Preflight must see exactly what the runtime sees: with the resolved token on the config, a different (or absent)
-    # environment variable changes nothing.
-    monkeypatch.delenv("SORTVIEW_API_TOKEN", raising=False)
+    # Preflight must see exactly what the runtime sees: the token load_config resolved. The environment variable is
+    # not a token source at all, so the module never even names it.
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", "a-different-environment-token-0001")
     session = FakeSession()
     cfg = _cfg(tmp_path, api_token="resolved-by-load-config-0001", api_token_source="dpapi")
 
     assert _result(run_preflight(cfg, session=session), "api_token_source").passed is True
     assert _result(run_preflight(cfg, session=session), "api_authentication").passed is True
     source = Path(preflight_module.__file__).read_text(encoding="utf-8")
-    assert not re.search(r"(environ(\.get)?\s*[\[(]|getenv\s*\()\s*['\"]SORTVIEW_API_TOKEN", source)
+    assert "SORTVIEW_API_TOKEN" not in source and not re.search(r"migration fallback", source, re.IGNORECASE)
 
 
 def test_preflight_main_with_a_dpapi_token_authenticates_with_it_and_says_so(tmp_path, monkeypatch, capsys):
     # The whole CLI path: load_config resolves the token from api_token.dpapi (store stubbed -- no real DPAPI here),
-    # and the auth probe carries exactly that token.
-    from collector import api_token_store
-
-    monkeypatch.delenv("SORTVIEW_API_TOKEN", raising=False)
-    monkeypatch.setattr(api_token_store.DpapiTokenStore, "load", lambda self, c, b: "from-dpapi-token-000000001")
+    # and the auth probe carries exactly that token -- never the environment's, even when one is set.
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", "valid-environment-token-0001")
+    store_api_token(monkeypatch, "from-dpapi-token-000000001")
     seen_headers: list[dict] = []
 
     class Recording(FakeSession):
@@ -256,18 +253,12 @@ def test_preflight_main_with_a_dpapi_token_authenticates_with_it_and_says_so(tmp
 
     assert "[PASS] api_token_source: token source: dpapi" in out
     assert seen_headers and seen_headers[0]["Authorization"] == "Bearer from-dpapi-token-000000001"
-    assert "from-dpapi-token" not in out
+    assert "from-dpapi-token" not in out and "valid-environment-token" not in out
 
 
 def test_preflight_main_does_not_fall_back_to_the_environment_when_the_token_file_is_damaged(tmp_path, monkeypatch, capsys):
-    from collector import api_token_store
-
     monkeypatch.setenv("SORTVIEW_API_TOKEN", "valid-environment-token-0001")
-
-    def damaged(self, c, b):
-        raise api_token_store.ApiTokenStoreError("token_unreadable")
-
-    monkeypatch.setattr(api_token_store.DpapiTokenStore, "load", damaged)
+    break_api_token(monkeypatch, "token_unreadable")
     session = FakeSession()
     monkeypatch.setattr("collector.preflight.uploader.build_session", lambda: session)
 
@@ -277,11 +268,22 @@ def test_preflight_main_does_not_fall_back_to_the_environment_when_the_token_fil
     assert session.post_calls == []  # no auth probe was ever sent with the environment token
 
 
+def test_preflight_main_fails_when_there_is_no_token_file_even_with_a_valid_environment_token(tmp_path, monkeypatch, capsys):
+    # The updaters rely on exactly this: a new runtime on a machine with no api_token.dpapi fails verification.
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", "valid-environment-token-0001")
+    session = FakeSession()
+    monkeypatch.setattr("collector.preflight.uploader.build_session", lambda: session)
+
+    assert main(["--config", str(_write_config(tmp_path))]) == 2  # nothing under tmp_path/secrets
+    out = capsys.readouterr().out
+    assert "[FAIL] config_loads" in out and "Missing API token" in out and "api_token.dpapi" in out
+    assert "valid-environment-token" not in out and session.post_calls == []
+
+
 # --- DNS failure ----------------------------------------------------------
 
 
 def test_dns_failure_fails_its_check_only(tmp_path, monkeypatch):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
     cfg = _cfg(tmp_path)
 
@@ -299,7 +301,6 @@ def test_dns_failure_fails_its_check_only(tmp_path, monkeypatch):
 
 
 def test_connection_failure_fails_https_check(tmp_path, monkeypatch):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
     cfg = _cfg(tmp_path)
 
@@ -310,7 +311,6 @@ def test_connection_failure_fails_https_check(tmp_path, monkeypatch):
 
 
 def test_tls_certificate_failure_is_reported_distinctly(tmp_path, monkeypatch):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
     cfg = _cfg(tmp_path)
 
@@ -326,7 +326,6 @@ def test_tls_certificate_failure_is_reported_distinctly(tmp_path, monkeypatch):
 
 
 def test_auth_failure_fails_both_auth_and_scope_checks(tmp_path, monkeypatch):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
     cfg = _cfg(tmp_path)
 
@@ -338,7 +337,6 @@ def test_auth_failure_fails_both_auth_and_scope_checks(tmp_path, monkeypatch):
 
 
 def test_scope_mismatch_distinguishes_valid_token_from_wrong_scope(tmp_path, monkeypatch):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
     cfg = _cfg(tmp_path)
 
@@ -356,7 +354,6 @@ def test_scope_mismatch_distinguishes_valid_token_from_wrong_scope(tmp_path, mon
 
 
 def test_auth_check_probe_payload_is_clearly_labeled(tmp_path, monkeypatch):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
     cfg = _cfg(tmp_path)
 
@@ -371,7 +368,6 @@ def test_auth_check_probe_payload_is_clearly_labeled(tmp_path, monkeypatch):
 
 
 def test_no_database_dependency_check_passes_when_database_url_unset(tmp_path, monkeypatch):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     monkeypatch.delenv("DATABASE_URL", raising=False)
     (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
     cfg = _cfg(tmp_path)
@@ -382,7 +378,6 @@ def test_no_database_dependency_check_passes_when_database_url_unset(tmp_path, m
 
 
 def test_no_database_dependency_check_fails_when_database_url_set(tmp_path, monkeypatch):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@host/db")
     (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
     cfg = _cfg(tmp_path)
@@ -396,7 +391,7 @@ def test_no_database_dependency_check_fails_when_database_url_set(tmp_path, monk
 
 
 def test_runtime_imports_check_passes_in_a_healthy_install(tmp_path, monkeypatch):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
     cfg = _cfg(tmp_path)
 
@@ -425,7 +420,7 @@ def _write_config(tmp_path, **overrides):
 
 
 def test_main_returns_2_on_config_error(tmp_path, monkeypatch):
-    monkeypatch.delenv("SORTVIEW_API_TOKEN", raising=False)
+    monkeypatch.setenv("SORTVIEW_API_TOKEN", "valid-environment-token-0001")  # valid, and irrelevant: no api_token.dpapi
     config_path = _write_config(tmp_path)
 
     exit_code = main(["--config", str(config_path)])
@@ -443,7 +438,7 @@ def test_main_writes_json_output_when_requested(tmp_path, monkeypatch):
     # test_all_checks_pass_report_is_overall_pass for the isolated,
     # fully-controlled version of "does everything pass" via
     # run_preflight() directly.
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     monkeypatch.setattr("collector.preflight.uploader.build_session", lambda: FakeSession())
     config_path = _write_config(tmp_path)
     (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
@@ -465,7 +460,7 @@ def test_main_returns_nonzero_when_a_check_fails(tmp_path, monkeypatch):
     # api_token_source can never actually be what fails via main()'s
     # own CLI path. This test instead exercises a genuine preflight-level
     # failure: source file never created.
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
+    store_api_token(monkeypatch, "test-token")
     monkeypatch.setattr("collector.preflight.uploader.build_session", lambda: FakeSession())
     config_path = _write_config(tmp_path)
     # Checkins.txt deliberately never created.
@@ -480,7 +475,6 @@ def test_main_returns_nonzero_when_a_check_fails(tmp_path, monkeypatch):
 def test_preflight_probe_carries_the_installation_identity_when_configured(tmp_path, monkeypatch):
     from collector import __version__
 
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
     session = FakeSession()
 
@@ -493,7 +487,6 @@ def test_preflight_probe_carries_the_installation_identity_when_configured(tmp_p
 
 
 def test_preflight_probe_for_a_legacy_config_has_no_installation_fields(tmp_path, monkeypatch):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
     session = FakeSession()
 
@@ -507,7 +500,6 @@ def test_preflight_probe_for_a_legacy_config_has_no_installation_fields(tmp_path
 
 
 def test_accepted_installation_id_passes_the_installation_check(tmp_path, monkeypatch):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
 
     report = run_preflight(_cfg(tmp_path, installation_id=41), session=FakeSession())
@@ -518,7 +510,6 @@ def test_accepted_installation_id_passes_the_installation_check(tmp_path, monkey
 
 
 def test_rejected_installation_id_fails_only_the_installation_check(tmp_path, monkeypatch):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
     session = FakeSession(post_response=_FakeResponse(
         403, text='{"detail": "Collector installation is not authorized to report status"}'
@@ -536,7 +527,6 @@ def test_rejected_installation_id_fails_only_the_installation_check(tmp_path, mo
 
 
 def test_scope_mismatch_leaves_the_installation_check_not_evaluated(tmp_path, monkeypatch):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
     session = FakeSession(post_response=_FakeResponse(403, text="Token scope does not match customer_id / branch_id"))
 
@@ -548,7 +538,6 @@ def test_scope_mismatch_leaves_the_installation_check_not_evaluated(tmp_path, mo
 
 
 def test_network_failure_leaves_the_installation_check_not_evaluated(tmp_path, monkeypatch):
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", "test-token")
     (tmp_path / "Checkins.txt").write_text("data", encoding="utf-8")
     session = FakeSession(post_response=_FakeResponse(503, text="down"))
 

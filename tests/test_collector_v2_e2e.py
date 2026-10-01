@@ -14,6 +14,7 @@ import json
 from datetime import timedelta
 
 import pytest
+from collector_token_support import store_api_token
 from collector_v2_support import (
     BARCODE_CI,
     FakeStore,
@@ -78,7 +79,7 @@ def e2e(tmp_path, monkeypatch, server_db):  # noqa: F811 -- a pytest fixture is 
     from collector.config import load_config
 
     env = Env(tmp_path, monkeypatch)
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", SERVER_TOKEN)
+    store_api_token(monkeypatch, SERVER_TOKEN)
     env.cfg = load_config(env.config_path)
     assert env.v2.key_id == KEY                                   # the key the server test harness registered for this tenant
     env.db = server_db
@@ -215,7 +216,7 @@ def test_more_than_fifty_real_conflicts_are_resolved_across_rounds(tmp_path, mon
     from collector.config import load_config
 
     env = Env(tmp_path, monkeypatch, chunk_lines=400)
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", SERVER_TOKEN)
+    store_api_token(monkeypatch, SERVER_TOKEN)
     env.cfg = load_config(env.config_path)
     empty_other_sources(env, checkins=checkin_lines(130, base=BASE))
     env.run(ServerSession())
@@ -346,7 +347,7 @@ def test_events_from_two_runs_with_two_different_secrets_do_not_collide_or_link(
     from collector.v2_config import load_v2_config
 
     env = Env(tmp_path, monkeypatch)
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", SERVER_TOKEN)
+    store_api_token(monkeypatch, SERVER_TOKEN)
     env.cfg = load_config(env.config_path)
     env.put_all(full_corpus(BASE))
     env.run(ServerSession())
@@ -372,7 +373,7 @@ def small_chunk_env(tmp_path, monkeypatch, server_db, **v2_extra):  # noqa: F811
     from collector.config import load_config
 
     env = Env(tmp_path, monkeypatch, chunk_lines=2, **v2_extra)
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", SERVER_TOKEN)
+    store_api_token(monkeypatch, SERVER_TOKEN)
     env.cfg = load_config(env.config_path)
     env.db = server_db
     return env
@@ -470,7 +471,7 @@ def test_the_same_classification_resent_under_a_new_ruleset_id_is_idempotent(
     from collector.config import load_config
 
     env = Env(tmp_path, monkeypatch)
-    monkeypatch.setenv("SORTVIEW_API_TOKEN", SERVER_TOKEN)
+    store_api_token(monkeypatch, SERVER_TOKEN)
     env.cfg = load_config(env.config_path)
     env.db = server_db
 

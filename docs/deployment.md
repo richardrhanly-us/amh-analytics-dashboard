@@ -167,7 +167,7 @@ scheduled task environment for the agent, CI secrets for the pipeline.
 | `SORTVIEW_PIPELINE_ORG_COLUMN` | dashboard | optional | `customer_id` |
 | `SORTVIEW_PIPELINE_BRANCH_COLUMN` | dashboard | optional | `branch_id` |
 | `SORTVIEW_LIVE_TIMEZONE` | dashboard | optional | `America/Chicago` |
-| `SORTVIEW_API_TOKEN` | agent | required | -- |
+| `SORTVIEW_API_TOKEN` | agent (legacy `agent\` runtime only -- **not** the SortView Collector, see below) | required | -- |
 | `SORTVIEW_HTTP_CONNECT_TIMEOUT` | agent | optional | `10` |
 | `SORTVIEW_HTTP_UPLOAD_READ_TIMEOUT` | agent | optional | `300` |
 | `SORTVIEW_HTTP_STATUS_READ_TIMEOUT` | agent | optional | `60` |
@@ -195,6 +195,37 @@ The agent also reads per-site, non-secret config (`customer_id`, `branch_id`,
 `api_url`, local file paths) from `agent/agent_config.json` on the AMH
 machine -- that file is not an environment variable and is not covered by
 `.env.example`.
+
+### SortView Collector API token (not an environment variable)
+
+The SortView Collector (`collector\`, the deployed v1 runtime) does **not**
+take its token from the environment. Its only token source is
+
+    <DataRoot>\secrets\api_token.dpapi
+
+(`C:\ProgramData\SortViewCollector\secrets\api_token.dpapi` by default): a
+DPAPI machine-scope blob, bound to the config's `customer_id`/`branch_id`, in
+a folder restricted to Administrators and SYSTEM. From Collector 1.0.12 the
+one-release migration fallback is gone: `SORTVIEW_API_TOKEN` is never read by
+the Collector runtime or by any of its install/finish/update scripts, and a
+Collector with no usable `api_token.dpapi` fails closed.
+
+- Store or rotate: `tools\set-api-token.ps1` (elevated; SecureString prompt).
+- Verify: `SortViewCollector.exe api-token check --config <ConfigPath>` --
+  exit `0` is the only state in which the Collector runs.
+- Update prerequisite: `api-token check` must exit `0` **before** updating a
+  machine to 1.0.12 or later. The updaters preserve `api_token.dpapi` but
+  never create or migrate one; without it the new runtime's preflight fails
+  and the Scheduled Task is left disabled.
+
+Removing a leftover Machine-scope variable is a separate, explicit operator
+action -- no Collector script does it. Do it only after `api-token check`
+exits `0`, a Collector run has succeeded, and nothing else on the machine
+(for example the legacy `agent\` runtime) still depends on the variable:
+
+    [Environment]::SetEnvironmentVariable("SORTVIEW_API_TOKEN", $null, "Machine")
+
+See `docs/collector-v1-admin-guide.md` (*Token setup*, *Update*).
 
 ## python version
 

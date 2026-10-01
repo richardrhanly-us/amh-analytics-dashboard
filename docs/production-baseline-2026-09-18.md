@@ -106,7 +106,12 @@ logs/status" section for the full record shape and privacy contract):
 C:\ProgramData\SortViewCollector\logs\runs.jsonl
 ```
 
-The production API token is not stored in the configuration file. It is provided through the machine-scope `SORTVIEW_API_TOKEN` environment variable.
+The production API token is not stored in the configuration file. At the time of this baseline (2026-09-18) it was provided through the machine-scope `SORTVIEW_API_TOKEN` environment variable.
+
+> **Superseded -- not the current credential model.** Collector 1.0.11 moved the token into
+> `C:\ProgramData\SortViewCollector\secrets\api_token.dpapi` (DPAPI machine scope, Administrators + SYSTEM only), and
+> from Collector 1.0.12 that file is the **only** token source: `SORTVIEW_API_TOKEN` is ignored and can no longer
+> authenticate the Collector. See `docs/collector-v1-admin-guide.md`, *Token setup*.
 
 ---
 

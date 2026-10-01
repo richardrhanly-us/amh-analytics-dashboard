@@ -54,9 +54,10 @@ in the extracted release folder:
 The technician enters the code (input is hidden) and confirms the Tech Logic
 files. Nothing else is typed: the operational Customer ID, Branch ID,
 Installation ID and the permanent agent token are issued by SortView in
-exchange for the code and used automatically. The token is stored as the
-Machine-scope `SORTVIEW_API_TOKEN` and is never displayed, logged, or written to
-`collector_config.json`.
+exchange for the code and used automatically. The token is stored in
+`<DataRoot>\secrets\api_token.dpapi` (DPAPI-protected, Administrators + SYSTEM
+only -- see *Token setup*) and is never displayed, logged, or written to
+`collector_config.json` or any environment variable.
 
 What it does, in order -- everything up to the code prompt is read-only, so an
 avoidable local problem never uses up the single-use code:
@@ -68,8 +69,8 @@ avoidable local problem never uses up the single-use code:
    file may be present). A modified, incomplete or extra-file bundle stops setup
    here, before any network request. It then requires a frozen bundle and a
    bundled runtime whose `version` matches `MANIFEST.json`;
-2. refuses to touch an existing install, Scheduled Task or `SORTVIEW_API_TOKEN`
-   (see *Re-running* below);
+2. refuses to touch an existing install, Scheduled Task or stored API token
+   (`api_token.dpapi`) (see *Re-running* below);
 3. finds the three Tech Logic files (`C:\TLCFinalDlls\Checkins.txt`,
    `Rejects.txt`, `ACS Log.txt` -- the locations recorded in the bundle's
    `collector_config.example.json`) and requires that each **exists**;
@@ -201,25 +202,58 @@ recognizes the three source names `checkins`/`rejects`/`acs`.
 
 ## Token setup
 
-The collector reads `SORTVIEW_API_TOKEN` from the environment only --
-never from the config file, never from Git, never logged. Set it as a
-Machine-scope Windows environment variable (so the unattended SYSTEM-run
-task can see it) using the existing, reused-as-is script from the
-continuous-agent tooling:
+The Collector reads its API token from exactly one place:
 
-```powershell
-<repo>\agent\deploy\set-sortview-api-token.ps1
+```text
+<DataRoot>\secrets\api_token.dpapi
 ```
 
-Prompts for the token as a SecureString (never displayed). Provision a
-**separate** token for the collector, distinct from any legacy or
+(`C:\ProgramData\SortViewCollector\secrets\api_token.dpapi` on a default
+install.) It is a Windows DPAPI machine-scope blob, bound to the config's
+`customer_id`/`branch_id`, in a folder restricted to Administrators and
+SYSTEM; the folder's ACL is verified before the file is read. The token is
+never in the config file, never in Git, never logged -- and **never read
+from an environment variable**. From Collector 1.0.12 there is no fallback:
+a `SORTVIEW_API_TOKEN` variable, at any scope, is ignored, and a Collector
+with no usable `api_token.dpapi` does not start (`run`, `preflight`,
+`bootstrap` and `support-info` all stop with a configuration error).
+
+Store (or rotate) the token from an elevated PowerShell session:
+
+```powershell
+cd collector\deploy
+.\set-collector-api-token.ps1 -InstallRoot <InstallRoot> -ConfigPath <ConfigPath>
+```
+
+(`tools\set-api-token.ps1` in a release bundle.) It prompts for the token as
+a SecureString (never displayed) and hands it to the Collector's own
+`api-token set` command on STDIN. Storing a token replaces any token already
+stored -- that is how a token is rotated. Guided setup (`setup.ps1`) does this
+step itself.
+
+Check what is stored without revealing it:
+
+```powershell
+<InstallRoot>\SortViewCollector.exe api-token check --config <ConfigPath>
+```
+
+(Source install: `<InstallRoot>\.venv\Scripts\python.exe -m collector.api_token_store check --config <ConfigPath>`.)
+
+Exit code `0` = stored, usable, bound to this customer/branch, ACL verified;
+`3` = no token file at all; `1` = a file is present but cannot be used
+(damaged, exposed ACL, another tenant, or not readable by this process);
+`2` = configuration/usage error. Only `0` lets the Collector run.
+
+Provision a **separate** token for the collector, distinct from any legacy or
 continuous-agent token, via `scripts/create_agent_token.py` (dry-run by
 default -- see that script's own docstring) so it can be revoked
 independently.
 
-Setting it only affects **new** processes -- if the collector or an
-already-open shell is already running, it won't see a just-set value
-until restarted.
+**A leftover Machine-scope `SORTVIEW_API_TOKEN`.** Installs that predate
+1.0.11 kept the token in that variable. The Collector no longer reads it, and
+no install/update/uninstall script removes it automatically. Once
+`api-token check` exits `0` and a run has succeeded, remove it yourself as a
+deliberate step (see `docs/deployment.md`, *SortView Collector API token*).
 
 ## Running preflight
 
@@ -238,8 +272,8 @@ passing preflight can move the installation from `provisioning` to `active`
 and stamp `installed_at` before the Scheduled Task has ever run (see
 **Config**). A
 passing interactive run does **not** prove SYSTEM can do the same things
--- proxy configuration, file permissions, and environment variable
-visibility can all differ by security principal. See the next section.
+-- proxy configuration and file permissions (including access to
+`api_token.dpapi`) can differ by security principal. See the next section.
 
 ## Running preflight as SYSTEM (required, not optional)
 
@@ -419,10 +453,22 @@ Stops the task if running, backs up the current code (and the entire
 prior runtime if `requirements.txt` changed, rather than just the code),
 replaces the runtime, runs preflight against the **new** runtime, and
 only restarts the task if that preflight passes. Config/state/status/logs
-under `<DataRoot>` are never touched. If preflight fails post-update, the
+and the stored token (`secrets\api_token.dpapi`) under `<DataRoot>` are never
+touched. If preflight fails post-update, the
 task is **not** restarted and exact manual rollback commands are printed
 -- nothing is auto-reverted. Re-run `run-preflight-as-system.ps1`
 afterward too, especially if dependencies changed.
+
+**Updating to 1.0.12 or later -- the token must already be in
+`api_token.dpapi`.** The updater never creates, migrates or reads a token,
+and never reads `SORTVIEW_API_TOKEN`. On a machine whose token still lives
+only in the Machine-scope variable, the new runtime's preflight fails
+(`config_loads: Missing API token`) and the task is left **disabled**. Before
+updating such a machine, run `api-token check` (see *Token setup*); if it
+does not exit `0`, store the token with `set-collector-api-token.ps1` /
+`tools\set-api-token.ps1` first. If an update has already failed this way,
+store the token, re-run preflight (interactive and as SYSTEM), then
+re-enable the task.
 
 ## Rollback
 
@@ -442,9 +488,12 @@ cd collector\deploy
 Unregisters the task and removes the application runtime
 (`<InstallRoot>`, including its venv). **Config/state/status/logs under
 `<DataRoot>` are preserved by default** -- pass `-PurgeData` (with
-confirmation) to also delete those. The Machine-scope
-`SORTVIEW_API_TOKEN` environment variable is never removed automatically
--- the script tells you whether it's still set and the exact command to
+confirmation) to also delete those; the stored token
+(`<DataRoot>\secrets\api_token.dpapi`) is kept or purged with the rest of
+`<DataRoot>`, and the script reports whether it is still in place. A
+leftover legacy Machine-scope `SORTVIEW_API_TOKEN` environment variable
+(which the Collector no longer reads) is never removed automatically --
+the script tells you whether it's still set and the exact command to
 remove it yourself.
 
 ## Reboot validation (required onsite, not provable by unit tests)
@@ -508,5 +557,5 @@ manages that software, rather than working around it in the collector.
 | Files written? | Only inside its own install/data directories: `state.json`, `status.json`, its own rotating log file, `logs\runs.jsonl` (local run-history, aggregate metadata only -- see Reading logs/status above), and (once parser wiring is complete) cleaned CSV copies under `data\processed\`. |
 | Run account? | SYSTEM by default -- no password to manage or expire, no dependency on any user staying logged in. |
 | Reboot behavior? | The Scheduled Task is registered to run whether anyone is logged in or not, and resumes automatically after reboot with no login required (`StartWhenAvailable`) -- see Reboot validation above for how to verify this on a specific machine. |
-| Secret storage? | A single Machine-scope Windows environment variable (`SORTVIEW_API_TOKEN`), set once via a provided script. Never in a file, never in Git, never logged. |
+| Secret storage? | One file, `<DataRoot>\secrets\api_token.dpapi`: the API token encrypted with Windows DPAPI (machine scope), bound to this customer/branch, in a folder restricted to Administrators and SYSTEM (ACL verified before every read). Stored via a provided script. Never in the config file, never in an environment variable, never in Git, never logged. |
 | Uninstall footprint? | Unregisters its one Scheduled Task and removes its own install directory (including its self-contained Python virtual environment). Never touches any other software, any other scheduled task, or the base Python installation. Config/state/logs are preserved by default and must be explicitly requested to also remove. |

@@ -2,8 +2,8 @@
 
 One JSON config file (no secret in it) + the API token from
 <root>\\secrets\\api_token.dpapi (collector/api_token_store.py; see
-resolve_api_token for the 1.0.11-only SORTVIEW_API_TOKEN migration
-fallback) -- the same no-secret-in-config split already proven in both the legacy pipeline
+resolve_api_token -- that file is the ONLY token source, no environment
+variable is ever read) -- the same no-secret-in-config split already proven in both the legacy pipeline
 (agent/config.py) and the continuous agent (agent/runtime/config.py),
 reimplemented here as fresh, independent code (see collector/__init__.py).
 
@@ -20,24 +20,16 @@ not be overclaimed.
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import __version__, api_token_store
+from . import api_token_store
 
-# TEMPORARY migration fallback (Block 2A). The API token now lives in <root>\secrets\api_token.dpapi
-# (collector/api_token_store.py). Only while __version__ is BELOW this sunset release may a MISSING token file fall back to
-# the SORTVIEW_API_TOKEN environment variable -- so a machine can be updated first and its token moved afterwards. Reaching
-# the sunset release switches the fallback off by itself, and that release cannot be built until this constant and its
-# branch are deleted: its value then IS the release version, which scripts/check_release_readiness.py (READY002) refuses to
-# see copied anywhere but collector.__version__. tests/test_collector_config.py enforces the behavior too.
-# bandit B105 false-positives on the three names below (they contain "TOKEN"): a release number and two source LABELS,
-# never a credential -- same inline-nosec convention as collector/build_release.py.
-ENV_TOKEN_FALLBACK_REMOVED_IN = "1.0.12"  # nosec B105
+# The API token lives in <root>\secrets\api_token.dpapi (collector/api_token_store.py) and nowhere else: DPAPI is mandatory
+# and no environment variable is read for it. bandit B105 false-positives on the name below (it contains "TOKEN"): a source
+# LABEL, never a credential -- same inline-nosec convention as collector/build_release.py.
 TOKEN_SOURCE_DPAPI = "dpapi"  # nosec B105
-TOKEN_SOURCE_ENVIRONMENT = "environment"  # nosec B105
 
 
 class ConfigError(Exception):
@@ -84,9 +76,9 @@ class CollectorConfig:
     # (e.g. in a test) rather than through load_config.
     run_audit_path: Path | None = None
 
-    # Where api_token came from: "dpapi" (api_token.dpapi) or "environment" (the 1.0.11-only migration fallback). Never
-    # the token itself. The default only applies to a CollectorConfig built directly (e.g. in a test).
-    api_token_source: str = TOKEN_SOURCE_ENVIRONMENT
+    # Where api_token came from: always "dpapi" (api_token.dpapi) -- the only source there is. Never the token itself.
+    # The default only applies to a CollectorConfig built directly (e.g. in a test).
+    api_token_source: str = TOKEN_SOURCE_DPAPI
 
     def source(self, name: str) -> SourceConfig:
         for source_cfg in self.sources:
@@ -170,52 +162,34 @@ def load_token_settings(config_path: str | Path) -> TokenSettings:
     return _token_settings(_read_raw(config_path))
 
 
-def _release_tuple(version: str) -> tuple[int, ...]:
-    """'2.3.4' -> (2, 3, 4). Only the numeric X.Y.Z core is compared; a suffix (-rc1, +build) is ignored."""
-    core = version.split("-", 1)[0].split("+", 1)[0]
-    return tuple(int(part) for part in core.split("."))
-
-
 def resolve_api_token(settings: TokenSettings) -> tuple[str, str]:
-    """The ONE place the Collector's API token is resolved. Returns (token, source).
+    """The ONE place the Collector's API token is resolved. Returns (token, TOKEN_SOURCE_DPAPI).
 
-    * api_token.dpapi present -> it must load (ACL verified, decrypts, well-formed, bound to this customer/branch) or this
-      FAILS CLOSED; a present file NEVER falls back to the environment.
-    * api_token.dpapi absent  -> SORTVIEW_API_TOKEN, but only below the ENV_TOKEN_FALLBACK_REMOVED_IN sunset release.
-      "Absent" means only `token_missing` (nothing at the path at all): a path that cannot even be checked -- e.g. access
-      denied to a non-elevated process -- is an error, never a reason to use the environment.
-    * neither                 -> fails closed.
+    api_token.dpapi must load (ACL verified, decrypts, well-formed, bound to this customer/branch) or this FAILS CLOSED with
+    a fixed ConfigError -- whether the file is absent, damaged, exposed, for another tenant, or cannot even be checked (e.g.
+    access denied to a non-elevated process). There is no other source: no environment variable is read, so one can neither
+    stand in for a missing file nor rescue an unusable one.
     """
     try:
         token = api_token_store.DpapiTokenStore(settings.token_path).load(settings.customer_id, settings.branch_id)
     except api_token_store.ApiTokenStoreError as exc:
-        if exc.code != "token_missing":
+        if exc.code == "token_missing":
             raise ConfigError(
-                f"API token file {settings.token_path} could not be used ({exc.code}); "
-                "the environment variable is NOT used while this file exists"
+                f"Missing API token: no {settings.token_path}. "
+                "Store it with `SortViewCollector.exe api-token set --config <path>`."
             ) from None
-    else:
-        return token, TOKEN_SOURCE_DPAPI
-
-    if _release_tuple(__version__) < _release_tuple(ENV_TOKEN_FALLBACK_REMOVED_IN):
-        env_token = os.environ.get("SORTVIEW_API_TOKEN")
-        if env_token and env_token.strip():
-            return env_token, TOKEN_SOURCE_ENVIRONMENT
         raise ConfigError(
-            f"Missing API token: no {settings.token_path} and no SORTVIEW_API_TOKEN environment variable. "
-            "Store it with `SortViewCollector.exe api-token set --config <path>`."
-        )
-    raise ConfigError(
-        f"Missing API token: no {settings.token_path}. Store it with `SortViewCollector.exe api-token set --config <path>`."
-    )
+            f"API token file {settings.token_path} could not be used ({exc.code}); there is no other token source. "
+            "Store a valid token with `SortViewCollector.exe api-token set --config <path>`."
+        ) from None
+    return token, TOKEN_SOURCE_DPAPI
 
 
 def load_config(config_path: str | Path) -> CollectorConfig:
     """Loads and validates the collector config from a JSON file.
 
-    api_token is NEVER read from the JSON file -- it comes from resolve_api_token (the DPAPI-protected api_token.dpapi, or
-    during the 1.0.11 migration only, the SORTVIEW_API_TOKEN environment variable), so a copy of the config file (support
-    request, backup, version control) never carries a credential.
+    api_token is NEVER read from the JSON file -- it comes from resolve_api_token (the DPAPI-protected api_token.dpapi -- the
+    only source), so a copy of the config file (support request, backup, version control) never carries a credential.
     """
     raw = _read_raw(config_path)
     api_token, api_token_source = resolve_api_token(_token_settings(raw))

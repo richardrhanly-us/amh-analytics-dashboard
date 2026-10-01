@@ -30,9 +30,10 @@
     4. Prints whether the API token file -DataRoot\secrets\api_token.dpapi
        exists (never its contents; it is kept with -DataRoot unless
        -PurgeData), and whether the legacy Machine-scope SORTVIEW_API_TOKEN
-       environment variable still exists and exactly how to remove it --
-       this script never removes that variable automatically, since it may
-       be intentionally left in place (e.g. the 1.0.11 migration fallback).
+       environment variable still exists and exactly how to remove it. The
+       Collector itself never reads that variable (its only token source is
+       api_token.dpapi); this script reports it but never removes it
+       automatically -- cleaning it up is an explicit operator action.
 
 .EXAMPLE
     # Keep config/state/status/logs (the default, recommended way):
@@ -116,8 +117,8 @@ if (Test-Path -LiteralPath $tokenFile) {
 $tokenStillSet = [Environment]::GetEnvironmentVariable("SORTVIEW_API_TOKEN", "Machine")
 if ($tokenStillSet) {
     Write-Host "SORTVIEW_API_TOKEN is STILL SET as a Machine-scope environment variable." -ForegroundColor Yellow
-    Write-Host "This script does not remove it automatically (it may be intentionally shared" -ForegroundColor Yellow
-    Write-Host "or about to be reused for a reinstall). To remove it manually:"
+    Write-Host "The Collector does not read it (its token is api_token.dpapi only). This script does" -ForegroundColor Yellow
+    Write-Host "not remove it automatically (something else on this machine may use it). To remove it manually:"
     Write-Host '  [Environment]::SetEnvironmentVariable("SORTVIEW_API_TOKEN", $null, "Machine")'
 } else {
     Write-Host "SORTVIEW_API_TOKEN is not set (or was already removed)."
