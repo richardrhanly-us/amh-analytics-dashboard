@@ -47,6 +47,40 @@ The release builder produced a frozen bundle containing:
 
 The final ZIP was extracted to an independent validation directory and verified against its manifest after compression.
 
+## Production installation validation
+
+Validation machine:
+
+`NewBraunfelsSorterPC`
+
+Production update results:
+
+- Existing frozen runtime updated in place from the canonical 1.0.13 ZIP
+- Release manifest verification: PASS
+- Prior runtime backup created at `C:\SortView\Collector.backup-20261002-081805`
+- New frozen runtime preflight: PASS
+- SYSTEM-context preflight: PASS
+- DPAPI API token source: PASS
+- Hosted API connectivity and authentication: PASS
+- Tenant scope: `customer_id=1`, `branch_id=1`
+- Installation ID: `2`
+- HTTPS-only / no direct database dependency: PASS
+- Installed manifest verification: `1334` files, no unexpected release-managed files
+- Installed runtime `version` output: `1.0.13`
+- Scheduled Task state after update: `Ready`
+- First normal scheduled run: `10/2/2026 8:27:27 AM`
+- First normal scheduled run result: `0`
+- Next scheduled run: `10/2/2026 8:42:42 AM`
+
+Dashboard validation after the first normal 1.0.13 run:
+
+- Last Collector Run: populated
+- Next Scheduled Run: populated
+- Latest Run Duration: `12.49 seconds`
+- Collector Schedule: `Healthy`
+- Latest Result: `Contract v2 collector reporting healthy`
+- Status Code: `healthy`
+
 ## Release conclusion
 
 SortView Collector 1.0.13 passed:
@@ -57,6 +91,6 @@ SortView Collector 1.0.13 passed:
 - ZIP extraction verification
 - extracted-runtime version verification
 
-Production installation validation is intentionally not recorded yet; it will be completed after deployment to the AMH.
+Production installation validation completed successfully on the production AMH.
 
 The canonical ZIP fingerprint above is the release baseline for Collector 1.0.13.
