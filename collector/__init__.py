@@ -158,4 +158,4 @@ from __future__ import annotations
 # Machine-scope variable is ignored, never removed automatically. The storage
 # model itself (DPAPI scope, entropy, ACL, tenant binding, `api-token
 # set|check` and its exit codes) is unchanged.
-__version__ = "1.0.12"
+__version__ = "1.0.13"
