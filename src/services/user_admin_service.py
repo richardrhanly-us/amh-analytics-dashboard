@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import text
 
 from database import get_engine
-from services import access_service, auth_service
+from services import access_service, auth_service, session_service
 from services.privacy_hardening import log_safe_exception
 
 logger = logging.getLogger("sortview.user_admin")
@@ -66,6 +66,9 @@ def create_or_add_org_user(
     password: str,
     full_name: str,
     role: str,
+    *,
+    actor_user_id: int | None = None,
+    actor_email: str | None = None,
 ) -> dict[str, Any]:
     # Service-level enforcement, independent of the calling page's own
     # gate: a suspended or cancelled organization can never gain a new
@@ -137,6 +140,8 @@ def create_or_add_org_user(
             metadata={
                 "org_slug": org_slug,
                 "role": role,
+                "actor_user_id": actor_user_id,
+                "actor_email": actor_email,
             },
         )
 
@@ -187,6 +192,8 @@ def create_or_add_org_user(
         metadata={
             "org_slug": org_slug,
             "role": role,
+            "actor_user_id": actor_user_id,
+            "actor_email": actor_email,
         },
     )
 
@@ -196,7 +203,14 @@ def create_or_add_org_user(
     }
 
 
-def update_org_user_role(org_slug: str, user_id: int, role: str) -> dict[str, Any]:
+def update_org_user_role(
+    org_slug: str,
+    user_id: int,
+    role: str,
+    *,
+    actor_user_id: int | None = None,
+    actor_email: str | None = None,
+) -> dict[str, Any]:
     # Service-level enforcement, independent of the calling page's own
     # gate: a suspended or cancelled organization's roles can never be
     # changed here, even if this function is ever reached some other way.
@@ -242,6 +256,8 @@ def update_org_user_role(org_slug: str, user_id: int, role: str) -> dict[str, An
         metadata={
             "org_slug": org_slug,
             "role": role,
+            "actor_user_id": actor_user_id,
+            "actor_email": actor_email,
         },
     )
 
@@ -251,7 +267,14 @@ def update_org_user_role(org_slug: str, user_id: int, role: str) -> dict[str, An
     }
 
 
-def set_user_active(org_slug: str, user_id: int, is_active: bool) -> dict[str, Any]:
+def set_user_active(
+    org_slug: str,
+    user_id: int,
+    is_active: bool,
+    *,
+    actor_user_id: int | None = None,
+    actor_email: str | None = None,
+) -> dict[str, Any]:
     """Activates/deactivates a user's account from an organization's admin page.
 
     org_slug scopes WHO may be targeted from this admin surface: the
@@ -277,10 +300,13 @@ def set_user_active(org_slug: str, user_id: int, is_active: bool) -> dict[str, A
         }
 
     membership_check_sql = text("""
-        SELECT 1
+        SELECT
+            u.is_platform_admin
         FROM memberships m
         JOIN organizations o
           ON o.id = m.organization_id
+        JOIN app_users u
+          ON u.id = m.user_id
         WHERE o.slug = :org_slug
           AND m.user_id = :user_id
         LIMIT 1
@@ -288,15 +314,21 @@ def set_user_active(org_slug: str, user_id: int, is_active: bool) -> dict[str, A
 
     engine = get_engine()
     with engine.connect() as conn:
-        is_member = conn.execute(
+        target = conn.execute(
             membership_check_sql,
             {"org_slug": org_slug, "user_id": user_id},
-        ).first()
+        ).mappings().first()
 
-    if is_member is None:
+    if target is None:
         return {
             "ok": False,
             "message": "That user is not a member of this organization.",
+        }
+
+    if target["is_platform_admin"]:
+        return {
+            "ok": False,
+            "message": "Platform administrator accounts cannot be changed here.",
         }
 
     sql = text("""
@@ -314,6 +346,12 @@ def set_user_active(org_slug: str, user_id: int, is_active: bool) -> dict[str, A
             },
         )
 
+        if result.rowcount != 0 and not is_active:
+            session_service.revoke_all_sessions_for_user_with_connection(
+                conn,
+                user_id,
+            )
+
     if result.rowcount == 0:
         return {
             "ok": False,
@@ -330,6 +368,8 @@ def set_user_active(org_slug: str, user_id: int, is_active: bool) -> dict[str, A
         metadata={
             "org_slug": org_slug,
             "is_active": is_active,
+            "actor_user_id": actor_user_id,
+            "actor_email": actor_email,
         },
     )
 

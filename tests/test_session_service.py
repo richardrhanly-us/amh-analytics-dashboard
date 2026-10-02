@@ -219,3 +219,22 @@ def test_revoke_all_sessions_for_user_logs_even_when_nothing_to_revoke(monkeypat
 
     assert revoked_count == 0
     assert logged["metadata"]["revoked_count"] == 0
+
+def test_revoke_all_sessions_for_user_with_connection_returns_count_without_logging(monkeypatch):
+    conn = FakeEngine([_UpdateResult(rowcount=2)]).begin()
+
+    logged_calls = []
+    monkeypatch.setattr(
+        session_service,
+        "_log_auth_event",
+        lambda **kwargs: logged_calls.append(kwargs),
+    )
+
+    revoked_count = session_service.revoke_all_sessions_for_user_with_connection(
+        conn,
+        user_id=7,
+        now=NOW,
+    )
+
+    assert revoked_count == 2
+    assert logged_calls == []

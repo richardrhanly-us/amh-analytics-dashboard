@@ -127,3 +127,19 @@ def clear_all_persistent_auth_for_current_user(user_id: int) -> int:
     cookie_service.clear_session_cookie()
 
     return revoked_count
+
+def current_persistent_auth_is_valid(user_id: int) -> bool:
+    """Return whether the current Streamlit session's persistent token is valid.
+
+    Sessions that do not use persistent browser authentication are allowed.
+    When a persistent token is present, it must still validate server-side and
+    belong to the same authenticated user.
+    """
+    token = st.session_state.get(_PERSISTENT_SESSION_STATE_KEY)
+
+    if not token:
+        return True
+
+    user = session_service.validate_session(token)
+
+    return bool(user is not None and user.get("id") == user_id)

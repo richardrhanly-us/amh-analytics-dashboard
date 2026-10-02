@@ -275,11 +275,11 @@ def revoke_all_sessions_for_user(user_id: int, *, now: datetime | None = None) -
 
     engine = get_engine()
     with engine.begin() as conn:
-        result = conn.execute(
-            text(_REVOKE_ALL_SQL),
-            {"user_id": user_id, "now": checked_at},
+        revoked_count = revoke_all_sessions_for_user_with_connection(
+            conn,
+            user_id,
+            now=checked_at,
         )
-        revoked_count = result.rowcount
 
     _log_auth_event(
         event_type="session_revoked_all",
@@ -289,3 +289,25 @@ def revoke_all_sessions_for_user(user_id: int, *, now: datetime | None = None) -
         metadata={"revoked_count": int(revoked_count)},
     )
     return int(revoked_count)
+
+
+def revoke_all_sessions_for_user_with_connection(
+    conn: Any,
+    user_id: int,
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Revoke all active sessions for user_id using a caller-owned transaction.
+
+    This primitive deliberately does not write its own audit event. The caller
+    owns the surrounding transaction and is responsible for recording evidence
+    only after the complete security mutation succeeds.
+    """
+    checked_at = now or datetime.now(UTC)
+
+    result = conn.execute(
+        text(_REVOKE_ALL_SQL),
+        {"user_id": user_id, "now": checked_at},
+    )
+
+    return int(result.rowcount)

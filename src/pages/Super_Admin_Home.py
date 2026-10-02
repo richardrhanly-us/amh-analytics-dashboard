@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from services import auth_service
 from services.app_ui_service import apply_page_chrome
 from services.platform_admin_service import is_platform_admin
 from services.privacy_hardening import install_streamlit_log_scrubber
@@ -22,6 +23,7 @@ if "auth_user" not in st.session_state or st.session_state["auth_user"] is None:
     st.stop()
 
 auth_user = st.session_state["auth_user"]
+auth_service.enforce_active_session(auth_user)
 
 if not is_platform_admin(auth_user["id"]):
     st.error("You do not have platform admin access.")

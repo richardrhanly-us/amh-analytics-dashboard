@@ -290,3 +290,40 @@ def test_clear_all_for_current_user_revokes_all_and_clears_browser(monkeypatch):
         persistent_auth_service._PERSISTENT_SESSION_STATE_KEY
         not in persistent_auth_service.st.session_state
     )
+def test_current_persistent_auth_is_valid_allows_session_without_persistent_token(monkeypatch):
+    def unexpected_validate(token):
+        raise AssertionError("validate_session should not run without a persistent token")
+
+    monkeypatch.setattr(
+        persistent_auth_service.session_service,
+        "validate_session",
+        unexpected_validate,
+    )
+
+    assert persistent_auth_service.current_persistent_auth_is_valid(7) is True
+
+
+def test_current_persistent_auth_is_valid_requires_token_to_validate_for_same_user(monkeypatch):
+    persistent_auth_service.st.session_state[
+        persistent_auth_service._PERSISTENT_SESSION_STATE_KEY
+    ] = "raw-token"
+
+    monkeypatch.setattr(
+        persistent_auth_service.session_service,
+        "validate_session",
+        lambda token: {
+            "id": 7,
+            "email": "user@example.com",
+            "full_name": "Example User",
+        } if token == "raw-token" else None,
+    )
+
+    assert persistent_auth_service.current_persistent_auth_is_valid(7) is True
+
+    monkeypatch.setattr(
+        persistent_auth_service.session_service,
+        "validate_session",
+        lambda token: None,
+    )
+
+    assert persistent_auth_service.current_persistent_auth_is_valid(7) is False

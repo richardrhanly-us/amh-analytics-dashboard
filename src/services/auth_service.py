@@ -24,7 +24,7 @@ from sqlalchemy import text
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from database import get_engine
-from services import persistent_auth_service
+from services import persistent_auth_service, session_service
 from services.privacy_hardening import log_safe_exception
 
 logger = logging.getLogger("sortview.auth")
@@ -256,31 +256,50 @@ def is_user_active(user_id: int) -> bool:
 #***************************************************************
 
 def enforce_active_session(auth_user: dict) -> None:
-    if is_user_active(auth_user["id"]):
+    user_id = auth_user["id"]
+
+    if not is_user_active(user_id):
+        try:
+            log_auth_event(
+                event_type="session_terminated_inactive",
+                is_success=True,
+                user_id=user_id,
+                email=auth_user.get("email"),
+                message="Session terminated: account is no longer active.",
+            )
+        except Exception as exc:
+            # Best-effort: the audit write must never keep an inactive user
+            # authenticated. Session revocation below still proceeds.
+            log_safe_exception(
+                logger,
+                "Failed to write session_terminated_inactive audit event",
+                exc,
+            )
+
+        persistent_auth_service.clear_all_persistent_auth_for_current_user(
+            user_id
+        )
+
+        st.session_state["auth_user"] = None
+        st.session_state.pop("selected_org_slug", None)
+        st.session_state.pop("selected_branch_slug", None)
+
+        st.error(
+            "Your account has been deactivated. "
+            "Please contact an administrator."
+        )
+        st.stop()
+
+    if persistent_auth_service.current_persistent_auth_is_valid(user_id):
         return
 
-    try:
-        log_auth_event(
-            event_type="session_terminated_inactive",
-            is_success=True,
-            user_id=auth_user["id"],
-            email=auth_user.get("email"),
-            message="Session terminated: account is no longer active.",
-        )
-    except Exception as exc:
-        # Best-effort: the audit write must never keep an inactive user
-        # authenticated. Session revocation below still proceeds.
-        log_safe_exception(logger, "Failed to write session_terminated_inactive audit event", exc)
-
-    persistent_auth_service.clear_all_persistent_auth_for_current_user(
-        auth_user["id"]
-    )
+    persistent_auth_service.clear_persistent_auth()
 
     st.session_state["auth_user"] = None
     st.session_state.pop("selected_org_slug", None)
     st.session_state.pop("selected_branch_slug", None)
 
-    st.error("Your account has been deactivated. Please contact an administrator.")
+    st.error("Your session is no longer valid. Please log in again.")
     st.stop()
 
 
@@ -732,19 +751,27 @@ def reset_password_with_token(
             {"user_id": reset_row["user_id"]},
         )
 
-        log_auth_event(
-            event_type="password_reset_success",
-            is_success=True,
-            user_id=reset_row["user_id"],
-            email=reset_row["email"],
-            message="Password reset completed successfully.",
+        revoked_count = (
+            session_service.revoke_all_sessions_for_user_with_connection(
+                conn,
+                reset_row["user_id"],
+            )
         )
 
-        return {
-            "ok": True,
-            "code": "password_reset",
-            "message": "Your password has been reset successfully.",
-        }
+    log_auth_event(
+        event_type="password_reset_success",
+        is_success=True,
+        user_id=reset_row["user_id"],
+        email=reset_row["email"],
+        message="Password reset completed successfully.",
+        metadata={"revoked_session_count": revoked_count},
+    )
+
+    return {
+        "ok": True,
+        "code": "password_reset",
+        "message": "Your password has been reset successfully.",
+    }
 
 #***************************************************************
 #
@@ -893,12 +920,20 @@ def change_password(
             },
         )
 
+        revoked_count = (
+            session_service.revoke_all_sessions_for_user_with_connection(
+                conn,
+                user_id,
+            )
+        )
+
     log_auth_event(
         event_type="password_change_success",
         is_success=True,
         user_id=user["id"],
         email=user["email"],
         message="Password changed successfully.",
+        metadata={"revoked_session_count": revoked_count},
     )
 
     return {

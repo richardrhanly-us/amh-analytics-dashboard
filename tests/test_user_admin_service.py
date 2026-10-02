@@ -146,15 +146,16 @@ def test_set_user_active_succeeds_and_preserves_global_mutation_when_member(monk
     monkeypatch.setattr(user_admin_service.access_service, "get_org_access_mode", lambda org_slug: "full")
     monkeypatch.setattr(user_admin_service.auth_service, "get_user_by_id", lambda uid: {"email": "u@example.com"})
     engine = FakeEngine([
-        FakeQueryResult(first=(1,)),  # membership check: is a member
+        FakeQueryResult(first={"is_platform_admin": False}),  # membership check: is a member
         _UpdateResult(rowcount=1),    # UPDATE app_users
+        _UpdateResult(rowcount=0),    # revoke active auth_sessions
     ])
     monkeypatch.setattr(user_admin_service, "get_engine", lambda: engine)
 
     result = user_admin_service.set_user_active(org_slug="acme", user_id=42, is_active=False)
 
     assert result == {"ok": True, "message": "User status updated."}
-    assert len(engine.calls) == 2
+    assert len(engine.calls) == 3
 
     update_call = engine.calls[1]
     # The mutation itself stays a GLOBAL flag, unscoped by organization --
@@ -169,7 +170,11 @@ def test_set_user_active_succeeds_and_preserves_global_mutation_when_member(monk
 def test_set_user_active_logs_org_slug_in_audit_metadata(monkeypatch):
     monkeypatch.setattr(user_admin_service.access_service, "get_org_access_mode", lambda org_slug: "full")
     monkeypatch.setattr(user_admin_service.auth_service, "get_user_by_id", lambda uid: {"email": "u@example.com"})
-    engine = FakeEngine([FakeQueryResult(first=(1,)), _UpdateResult(rowcount=1)])
+    engine = FakeEngine([
+        FakeQueryResult(first={"is_platform_admin": False}),
+        _UpdateResult(rowcount=1),
+        _UpdateResult(rowcount=0),
+    ])
     monkeypatch.setattr(user_admin_service, "get_engine", lambda: engine)
 
     log_calls = []
@@ -181,4 +186,289 @@ def test_set_user_active_logs_org_slug_in_audit_metadata(monkeypatch):
     user_admin_service.set_user_active(org_slug="acme", user_id=42, is_active=False)
 
     assert len(log_calls) == 1
-    assert log_calls[0]["metadata"] == {"org_slug": "acme", "is_active": False}
+    assert log_calls[0]["metadata"] == {
+        "org_slug": "acme",
+        "is_active": False,
+        "actor_user_id": None,
+        "actor_email": None,
+    }
+
+
+def test_set_user_active_blocks_platform_admin_account(monkeypatch):
+    monkeypatch.setattr(
+        user_admin_service.access_service,
+        "get_org_access_mode",
+        lambda org_slug: "full",
+    )
+
+    engine = FakeEngine([
+        FakeQueryResult(
+            first={
+                "is_platform_admin": True,
+            }
+        ),
+    ])
+    monkeypatch.setattr(user_admin_service, "get_engine", lambda: engine)
+
+    result = user_admin_service.set_user_active(
+        org_slug="acme",
+        user_id=42,
+        is_active=False,
+    )
+
+    assert result == {
+        "ok": False,
+        "message": "Platform administrator accounts cannot be changed here.",
+    }
+
+    # Only the membership/platform-admin lookup may run. The global
+    # app_users.is_active UPDATE must never execute.
+    assert len(engine.calls) == 1
+    assert "update app_users" not in engine.calls[0]["sql"].lower()
+
+
+def test_update_org_user_role_audit_records_actor(monkeypatch):
+    monkeypatch.setattr(
+        user_admin_service.access_service,
+        "get_org_access_mode",
+        lambda org_slug: "full",
+    )
+    monkeypatch.setattr(
+        user_admin_service.auth_service,
+        "get_user_by_id",
+        lambda uid: {"email": "target@example.com"},
+    )
+
+    engine = FakeEngine([_UpdateResult(rowcount=1)])
+    monkeypatch.setattr(user_admin_service, "get_engine", lambda: engine)
+
+    log_calls = []
+    monkeypatch.setattr(
+        user_admin_service.auth_service,
+        "log_auth_event",
+        lambda **kwargs: log_calls.append(kwargs),
+    )
+
+    result = user_admin_service.update_org_user_role(
+        org_slug="acme",
+        user_id=42,
+        role="admin",
+        actor_user_id=7,
+        actor_email="admin@example.com",
+    )
+
+    assert result["ok"] is True
+    assert len(log_calls) == 1
+    assert log_calls[0]["user_id"] == 42
+    assert log_calls[0]["email"] == "target@example.com"
+    assert log_calls[0]["metadata"] == {
+        "org_slug": "acme",
+        "role": "admin",
+        "actor_user_id": 7,
+        "actor_email": "admin@example.com",
+    }
+
+
+def test_set_user_active_deactivation_revokes_sessions_in_same_transaction(monkeypatch):
+    monkeypatch.setattr(
+        user_admin_service.access_service,
+        "get_org_access_mode",
+        lambda org_slug: "full",
+    )
+    monkeypatch.setattr(
+        user_admin_service.auth_service,
+        "get_user_by_id",
+        lambda uid: {"email": "u@example.com"},
+    )
+
+    engine = FakeEngine([
+        FakeQueryResult(first={"is_platform_admin": False}),
+        _UpdateResult(rowcount=1),
+    ])
+    monkeypatch.setattr(user_admin_service, "get_engine", lambda: engine)
+
+    revoke_calls = []
+
+    class _SessionServiceStub:
+        @staticmethod
+        def revoke_all_sessions_for_user_with_connection(conn, user_id, *, now=None):
+            revoke_calls.append(
+                {
+                    "conn": conn,
+                    "user_id": user_id,
+                    "now": now,
+                }
+            )
+            return 3
+
+    monkeypatch.setattr(
+        user_admin_service,
+        "session_service",
+        _SessionServiceStub,
+        raising=False,
+    )
+
+    result = user_admin_service.set_user_active(
+        org_slug="acme",
+        user_id=42,
+        is_active=False,
+    )
+
+    assert result == {"ok": True, "message": "User status updated."}
+    assert len(revoke_calls) == 1
+    assert revoke_calls[0]["user_id"] == 42
+
+
+def test_set_user_active_audit_records_actor(monkeypatch):
+    monkeypatch.setattr(
+        user_admin_service.access_service,
+        "get_org_access_mode",
+        lambda org_slug: "full",
+    )
+    monkeypatch.setattr(
+        user_admin_service.auth_service,
+        "get_user_by_id",
+        lambda uid: {"email": "target@example.com"},
+    )
+
+    engine = FakeEngine([
+        FakeQueryResult(first={"is_platform_admin": False}),
+        _UpdateResult(rowcount=1),
+    ])
+    monkeypatch.setattr(user_admin_service, "get_engine", lambda: engine)
+
+    log_calls = []
+    monkeypatch.setattr(
+        user_admin_service.auth_service,
+        "log_auth_event",
+        lambda **kwargs: log_calls.append(kwargs),
+    )
+
+    result = user_admin_service.set_user_active(
+        org_slug="acme",
+        user_id=42,
+        is_active=True,
+        actor_user_id=7,
+        actor_email="admin@example.com",
+    )
+
+    assert result == {"ok": True, "message": "User status updated."}
+    assert len(log_calls) == 1
+    assert log_calls[0]["user_id"] == 42
+    assert log_calls[0]["email"] == "target@example.com"
+    assert log_calls[0]["metadata"] == {
+        "org_slug": "acme",
+        "is_active": True,
+        "actor_user_id": 7,
+        "actor_email": "admin@example.com",
+    }
+
+
+def test_create_or_add_org_user_audit_records_actor(monkeypatch):
+    monkeypatch.setattr(
+        user_admin_service.access_service,
+        "get_org_access_mode",
+        lambda org_slug: "full",
+    )
+    monkeypatch.setattr(
+        user_admin_service,
+        "_get_org_row",
+        lambda org_slug: {"id": 1, "slug": "acme", "name": "Acme"},
+    )
+    monkeypatch.setattr(
+        user_admin_service.auth_service,
+        "get_user_by_email",
+        lambda email: {"id": 5, "email": email},
+    )
+
+    engine = FakeEngine([
+        FakeQueryResult(first=None),
+        _UpdateResult(rowcount=1),
+    ])
+    monkeypatch.setattr(user_admin_service, "get_engine", lambda: engine)
+
+    log_calls = []
+    monkeypatch.setattr(
+        user_admin_service.auth_service,
+        "log_auth_event",
+        lambda **kwargs: log_calls.append(kwargs),
+    )
+
+    result = user_admin_service.create_or_add_org_user(
+        org_slug="acme",
+        email="existing@example.com",
+        password="x",
+        full_name="Existing User",
+        role="viewer",
+        actor_user_id=7,
+        actor_email="admin@example.com",
+    )
+
+    assert result["ok"] is True
+    assert len(log_calls) == 1
+    assert log_calls[0]["user_id"] == 5
+    assert log_calls[0]["email"] == "existing@example.com"
+    assert log_calls[0]["metadata"] == {
+        "org_slug": "acme",
+        "role": "viewer",
+        "actor_user_id": 7,
+        "actor_email": "admin@example.com",
+    }
+
+
+def test_create_or_add_new_org_user_audit_records_actor(monkeypatch):
+    monkeypatch.setattr(
+        user_admin_service.access_service,
+        "get_org_access_mode",
+        lambda org_slug: "full",
+    )
+    monkeypatch.setattr(
+        user_admin_service.auth_service,
+        "get_user_by_email",
+        lambda email: None,
+    )
+    monkeypatch.setattr(
+        user_admin_service.auth_service,
+        "create_user",
+        lambda **kwargs: {
+            "id": 9,
+            "email": kwargs["email"],
+        },
+    )
+
+    engine = FakeEngine([
+        FakeQueryResult(first={"id": 1, "slug": "acme", "name": "Acme"}),
+        _UpdateResult(rowcount=1),
+    ])
+    monkeypatch.setattr(user_admin_service, "get_engine", lambda: engine)
+
+    log_calls = []
+    monkeypatch.setattr(
+        user_admin_service.auth_service,
+        "log_auth_event",
+        lambda **kwargs: log_calls.append(kwargs),
+    )
+
+    result = user_admin_service.create_or_add_org_user(
+        org_slug="acme",
+        email="new@example.com",
+        password="TemporaryPassword123",
+        full_name="New User",
+        role="viewer",
+        actor_user_id=7,
+        actor_email="admin@example.com",
+    )
+
+    assert result == {
+        "ok": True,
+        "message": "User created and added to this organization.",
+    }
+    assert len(log_calls) == 1
+    assert log_calls[0]["user_id"] == 9
+    assert log_calls[0]["email"] == "new@example.com"
+    assert log_calls[0]["metadata"] == {
+        "org_slug": "acme",
+        "role": "viewer",
+        "actor_user_id": 7,
+        "actor_email": "admin@example.com",
+    }

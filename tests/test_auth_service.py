@@ -191,9 +191,13 @@ def test_change_password_success_updates_hash(monkeypatch):
 
     captured = {}
 
+    class FakeResult:
+        rowcount = 0
+
     class FakeConn:
         def execute(self, stmt, params):
             captured.update(params)
+            return FakeResult()
 
         def __enter__(self):
             return self
@@ -219,8 +223,9 @@ def test_change_password_success_updates_hash(monkeypatch):
 
 
 class FakeResult:
-    def __init__(self, row=None):
+    def __init__(self, row=None, rowcount=0):
         self.row = row
+        self.rowcount = rowcount
 
     def mappings(self):
         return self
@@ -722,3 +727,131 @@ def test_enforce_active_session_does_nothing_for_active_account(monkeypatch):
     assert clear_all_calls == []
     assert [m.value for m in at.markdown] == ["PROTECTED_CONTENT_RENDERED"]
     assert [e.value for e in at.error] == []
+def test_enforce_active_session_stops_active_user_when_persistent_session_is_revoked(monkeypatch):
+    import services.auth_service as auth_service_flat
+
+    monkeypatch.setattr(auth_service_flat, "is_user_active", lambda user_id: True)
+
+    monkeypatch.setattr(
+        auth_service_flat.persistent_auth_service,
+        "current_persistent_auth_is_valid",
+        lambda user_id: False,
+        raising=False,
+    )
+
+    at = AppTest.from_function(_enforce_active_session_script, default_timeout=60)
+    at.session_state["auth_user"] = dict(ACTIVE_SESSION_USER)
+    at.session_state["selected_org_slug"] = "acme"
+    at.session_state["selected_branch_slug"] = "main"
+
+    at.run()
+
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.session_state["auth_user"] is None
+    assert "selected_org_slug" not in at.session_state.filtered_state
+    assert "selected_branch_slug" not in at.session_state.filtered_state
+
+    rendered_markdown = [m.value for m in at.markdown]
+    assert "PROTECTED_CONTENT_RENDERED" not in rendered_markdown
+
+def test_change_password_success_revokes_all_sessions_in_same_transaction(monkeypatch):
+    user = make_user()
+    monkeypatch.setattr(auth_service, "get_user_by_id", lambda uid: user)
+
+    captured = {}
+
+    class FakeConn:
+        def execute(self, stmt, params):
+            captured["password_update_conn"] = self
+            captured.update(params)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    class FakeEngine:
+        def __init__(self):
+            self.conn = FakeConn()
+
+        def begin(self):
+            return self.conn
+
+    engine = FakeEngine()
+
+    monkeypatch.setattr(auth_service, "get_engine", lambda: engine)
+
+    revoke_calls = []
+
+    monkeypatch.setattr(
+        auth_service.session_service,
+        "revoke_all_sessions_for_user_with_connection",
+        lambda conn, user_id, **kwargs: revoke_calls.append(
+            {
+                "conn": conn,
+                "user_id": user_id,
+            }
+        ) or 2,
+        raising=False,
+    )
+
+    result = auth_service.change_password(
+        user["id"],
+        CORRECT_PASSWORD,
+        "NewPassword123",
+        "NewPassword123",
+    )
+
+    assert result["ok"] is True
+    assert revoke_calls == [
+        {
+            "conn": engine.conn,
+            "user_id": user["id"],
+        }
+    ]
+    assert captured["password_update_conn"] is engine.conn
+
+def test_reset_password_success_revokes_all_sessions_in_same_transaction(monkeypatch):
+    reset_row = {
+        "id": 10,
+        "user_id": 1,
+        "email": "user@example.com",
+        "password_hash": generate_password_hash(CORRECT_PASSWORD),
+        "is_active": True,
+    }
+
+    engine = FakeResetEngine(reset_row=reset_row)
+
+    monkeypatch.setattr(
+        auth_service,
+        "get_engine",
+        lambda: engine,
+    )
+
+    revoke_calls = []
+
+    monkeypatch.setattr(
+        auth_service.session_service,
+        "revoke_all_sessions_for_user_with_connection",
+        lambda conn, user_id, **kwargs: revoke_calls.append(
+            {
+                "conn": conn,
+                "user_id": user_id,
+            }
+        ) or 2,
+    )
+
+    result = auth_service.reset_password_with_token(
+        "valid-token",
+        "NewPassword123",
+        "NewPassword123",
+    )
+
+    assert result["ok"] is True
+    assert revoke_calls == [
+        {
+            "conn": engine.conn,
+            "user_id": reset_row["user_id"],
+        }
+    ]

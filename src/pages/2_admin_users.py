@@ -162,6 +162,8 @@ if add_user_submitted:
         password=password,
         full_name=full_name,
         role=role,
+        actor_user_id=auth_user["id"],
+        actor_email=auth_user.get("email"),
     )
     if result["ok"]:
         st.success(result["message"])
@@ -185,6 +187,8 @@ if users:
             org_slug=selected_org_slug,
             user_id=selected_role_user_id,
             role=new_role,
+            actor_user_id=auth_user["id"],
+            actor_email=auth_user.get("email"),
         )
         if result["ok"]:
             st.success(result["message"])
@@ -208,6 +212,8 @@ if users:
             org_slug=selected_org_slug,
             user_id=selected_status_user_id,
             is_active=desired_status,
+            actor_user_id=auth_user["id"],
+            actor_email=auth_user.get("email"),
         )
         if result["ok"]:
             st.success(result["message"])
