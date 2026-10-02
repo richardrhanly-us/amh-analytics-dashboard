@@ -73,7 +73,13 @@ def render_main_sidebar(
                 )
 
                 if result["ok"]:
-                    st.success(result["message"])
+                    persistent_auth_service.clear_persistent_auth()
+
+                    st.session_state["auth_user"] = None
+                    st.session_state.pop("selected_org_slug", None)
+                    st.session_state.pop("selected_branch_slug", None)
+
+                    st.rerun()
                 else:
                     st.error(result["message"])
 

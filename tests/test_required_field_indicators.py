@@ -217,10 +217,15 @@ sys.path.insert(0, {src!r})
 import streamlit as st
 from services import sidebar_service
 
-calls = []
+if "change_password_calls" not in st.session_state:
+    st.session_state["change_password_calls"] = []
+
 sidebar_service.auth_service.change_password = lambda **kwargs: (
-    calls.append(kwargs) or {{"ok": True, "message": "Password updated."}}
+    st.session_state["change_password_calls"].append(kwargs)
+    or {{"ok": True, "message": "Password updated."}}
 )
+
+sidebar_service.persistent_auth_service.clear_persistent_auth = lambda: True
 
 sidebar_service.render_main_sidebar(
     auth_user={{"id": 1, "email": "someone@example.invalid"}},
@@ -235,7 +240,6 @@ sidebar_service.render_main_sidebar(
     # change-password form under test here anyway.
     show_admin_button=False,
 )
-st.session_state["change_password_calls"] = calls
 """.strip()
 
 
