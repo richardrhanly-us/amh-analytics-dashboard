@@ -1,7 +1,7 @@
 """Contract v2: orchestration (docs/collector-v2.md).
 
     secret + rules + cache + quarantine -> for each source (ACS first): bounded chunk -> transform -> deliver -> commit that chunk's cursor
-    -> heartbeat (/v2/status) -> exit
+    -> Task Scheduler diagnostics -> heartbeat (/v2/status) -> exit
 
 THE PRIVACY BOUNDARY IS THE IMPORT GRAPH. This module never imports the raw layer (reader, normalizer, classifier, parsers, pandas). It calls
 `v2_transform.read_next_chunk`, which returns typed safe events and integers; a raw string has no way in. Every log line and status value here is
@@ -36,13 +36,14 @@ from typing import Any, TextIO
 from . import state, uploader
 from .config import CollectorConfig, ConfigError
 from .v2_config import DryRunSettings, V2Config, load_dry_run_settings, load_v2_config
-from .v2_events import KINDS, Cursor, SafeEvent, format_time
+from .v2_events import KINDS, MAX_RUN_DURATION_MS, Cursor, SafeEvent, format_time
 from .v2_identity import derive_subkeys
 from .v2_keys import DpapiSecretStore, SecretStore, SecretStoreError, require_protected
 from .v2_patrons import PatronCache
 from .v2_quarantine import Quarantine, QuarantineEntry
 from .v2_rules import RulesError, load_rules
 from .v2_safe_errors import CollectorV2Error, TransformError, describe
+from .v2_schedule import ScheduleDiagnostics, query_schedule
 from .v2_status import (
     AUTH,
     CONFIG,
@@ -222,9 +223,25 @@ def _process_sources(*, cfg: CollectorConfig, v2: V2Config, runtime: Runtime, se
     return None
 
 
+def _elapsed_ms(started: float, finished: float) -> int:
+    """Whole milliseconds between two readings of the monotonic clock, kept inside what the heartbeat accepts."""
+    return max(0, min(round((finished - started) * 1000), MAX_RUN_DURATION_MS))
+
+
 def run_once_v2(cfg: CollectorConfig, v2: V2Config, *, session: Any, logger: logging.Logger, store: SecretStore | None = None,
-                sleep: Callable[[float], None] = time.sleep, clock: Callable[[], datetime] = _utc_now) -> int:
-    """One v2 run. Returns the process exit code: 0 completed, 1 failed, 2 a configuration problem."""
+                sleep: Callable[[float], None] = time.sleep, clock: Callable[[], datetime] = _utc_now,
+                started_perf: float | None = None, perf: Callable[[], float] = time.perf_counter,
+                schedule_query: Callable[..., ScheduleDiagnostics] = query_schedule) -> int:
+    """One v2 run. Returns the process exit code: 0 completed, 1 failed, 2 a configuration problem.
+
+    RUN DURATION (`collector_run_duration_ms`). Elapsed time on the MONOTONIC clock (`perf`, time.perf_counter) -- never a
+    difference of wall-clock timestamps, which a clock correction during the run would corrupt. It starts at
+    `started_perf`, the reading collector/run.py's main() took as the process's first act (this function's own entry when
+    called without one), and stops immediately before the heartbeat snapshot is constructed. It therefore INCLUDES config
+    loading and setup, v2 preparation, source processing, delivery, the local status-file write, and the Windows Task
+    Scheduler query. It EXCLUDES exactly one thing: the heartbeat POST itself, because a heartbeat cannot report the
+    finished duration of its own request (and, with it, the final log line and process exit)."""
+    started = perf() if started_perf is None else started_perf
     now = clock()
     store = store or DpapiSecretStore(v2.secret_path)
     prior = state.load_status(v2.status_path)
@@ -256,8 +273,6 @@ def run_once_v2(cfg: CollectorConfig, v2: V2Config, *, session: Any, logger: log
     health, error_class = decide(failure=failure, new_quarantined=new_quarantined, sources_missing=totals.sources_missing,
                                  consecutive_failures=consecutive, error_after=v2.error_after_consecutive_failures)
     last_success = now if failure is None else prior_success
-    snapshot = StatusSnapshot(status=health, last_error_class=error_class, quarantined_count=quarantined_now,
-                              last_success_at=last_success, watcher_last_active_at=now)
     flat = {**counters.flat(), **totals.flat()}
     try:
         state.write_status(v2.status_path, local_status_document(
@@ -265,6 +280,18 @@ def run_once_v2(cfg: CollectorConfig, v2: V2Config, *, session: Any, logger: log
             last_success_at=last_success, counters=flat, quarantined_count=quarantined_now))
     except OSError as exc:
         logger.warning("v2 status file not written | detail=%s", describe(exc))
+
+    # Ask Windows about the task as late as possible, so NextRunTime is as fresh as it can be, and with a fresh reading
+    # of the wall clock (`now` is the run's START and may be minutes old). query_schedule never raises and returns only
+    # a fixed code and validated instants.
+    schedule = schedule_query(now=clock())
+    logger.info("v2 schedule checked | schedule_status=%s", schedule.status)
+    # The last thing measured: everything above is inside the duration, the heartbeat POST below is not.
+    duration_ms = _elapsed_ms(started, perf())
+    snapshot = StatusSnapshot(status=health, last_error_class=error_class, quarantined_count=quarantined_now,
+                              last_success_at=last_success, watcher_last_active_at=now,
+                              collector_last_run_at=schedule.last_run_at, collector_next_run_at=schedule.next_run_at,
+                              collector_run_duration_ms=duration_ms, collector_schedule_status=schedule.status)
 
     heartbeat = post_status(session, cfg, v2, snapshot)
     if not heartbeat.ok:
@@ -334,14 +361,15 @@ def main_v2_dry_run(config_path: str, *, out: TextIO | None = None) -> int:
         return 1
 
 
-def main_v2(cfg: CollectorConfig, config_path: str, *, logger: logging.Logger) -> int:
-    """Called by collector/run.py for `contract_mode: v2`."""
+def main_v2(cfg: CollectorConfig, config_path: str, *, logger: logging.Logger, started_perf: float | None = None) -> int:
+    """Called by collector/run.py for `contract_mode: v2`. `started_perf` is main()'s own time.perf_counter() reading,
+    so the reported run duration covers the config loading and setup that happened before this call."""
     try:
         v2 = load_v2_config(config_path, require=True)
         if v2 is None:  # unreachable with require=True; keeps the type honest without an assert
             return 2
         session = uploader.build_session()
-        return run_once_v2(cfg, v2, session=session, logger=logger)
+        return run_once_v2(cfg, v2, session=session, logger=logger, started_perf=started_perf)
     except ConfigError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2

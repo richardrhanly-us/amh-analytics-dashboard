@@ -55,7 +55,7 @@ import os
 import secrets
 import subprocess
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -504,6 +504,34 @@ def test_v2_status_works_under_rls_as_the_runtime_role(owner_engine, api):
             "SELECT health_status FROM ingest_key_ids WHERE key_id = '8eff6f2e-6d25-4f47-8a2a-f3d8febc8689'"
         )).scalar()
     assert health == "healthy"
+
+
+def test_v2_status_with_collector_diagnostics_works_as_the_runtime_role_with_no_new_grant(owner_engine, api):
+    # The four diagnostic columns (migration c8d5f2a47e91) are written by the same UPDATE, under the same row level
+    # security UPDATE policy and the same table-level grant _create_runtime_role already gives: nothing was added to
+    # the role for them, and tenant B's key is out of tenant A's reach exactly as before.
+    key_a, key_b = "5a1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d", "6b2d3e4f-5061-4b7c-9d8e-0f1a2b3c4d5e"
+    with owner_engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO ingest_key_ids (key_id, customer_id, branch_id, algorithm, status)
+            VALUES (:a, :ca, :ba, 'hmac-sha256-v1', 'active'), (:b, :cb, :bb, 'hmac-sha256-v1', 'active')
+        """), {"a": key_a, "ca": CUSTOMER_A, "ba": BRANCH_A, "b": key_b, "cb": CUSTOMER_B, "bb": BRANCH_B})
+    next_run = (datetime.now(UTC) + timedelta(minutes=14)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    body = {"contract_version": 2, "status": "healthy", "collector_next_run_at": next_run,
+            "collector_run_duration_ms": 3240, "collector_schedule_status": "healthy"}
+
+    accepted = api.post("/v2/status", json={**body, "key_id": key_a}, headers={"Authorization": f"Bearer {TOKEN_A}"})
+    foreign = api.post("/v2/status", json={**body, "key_id": key_b}, headers={"Authorization": f"Bearer {TOKEN_A}"})
+
+    assert accepted.status_code == 200, accepted.text
+    assert foreign.status_code == 403
+    with owner_engine.connect() as conn:
+        stored = dict(conn.execute(text(
+            "SELECT key_id, collector_schedule_status FROM ingest_key_ids WHERE key_id IN (:a, :b)"
+        ), {"a": key_a, "b": key_b}).all())
+        duration = conn.execute(text(
+            "SELECT collector_run_duration_ms FROM ingest_key_ids WHERE key_id = :a"), {"a": key_a}).scalar()
+    assert stored == {key_a: "healthy", key_b: None} and duration == 3240
 
 
 # --- trigger path -------------------------------------------------------------

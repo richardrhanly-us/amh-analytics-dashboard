@@ -242,7 +242,8 @@ def test_the_migration_extends_the_previous_head_and_the_history_stays_linear():
     script = _script_directory()
 
     assert script.get_revision(REVISION).down_revision == PREVIOUS_HEAD
-    assert script.get_heads() == [REVISION]
+    assert len(script.get_heads()) == 1  # later migrations extend the chain; this one just has to stay in it
+    assert REVISION in {r.revision for r in script.walk_revisions()}
 
 
 def test_the_table_stores_historical_scalars_with_no_foreign_key(monkeypatch):

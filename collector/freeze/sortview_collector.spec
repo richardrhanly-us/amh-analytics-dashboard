@@ -97,6 +97,7 @@ a = Analysis(  # noqa: F821 (Analysis/PYZ/EXE/COLLECT are injected by PyInstalle
         "collector.v2_rules",
         "collector.v2_run",
         "collector.v2_safe_errors",
+        "collector.v2_schedule",
         "collector.v2_status",
         "collector.v2_transform",
         "collector.v2_uploader",

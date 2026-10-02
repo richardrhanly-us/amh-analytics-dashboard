@@ -239,6 +239,16 @@ def _offboard(monkeypatch, engine, organization_id=ORG_A, slug="lib-a"):
     return platform_admin_service.offboard_library(organization_id, slug, **ACTOR)
 
 
+def _repository_head() -> str:
+    """The Alembic head of this checkout (the throwaway database is migrated to it), never a pinned revision id."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(ROOT / "alembic"))
+    return ScriptDirectory.from_config(config).get_current_head()
+
+
 def _purge_cli(tool, url, *extra, organization_id=ORG_A, slug="lib-a"):
     out = io.StringIO()
     code = tool.main(["--organization-id", str(organization_id), "--confirm-slug", slug, "--database-url",
@@ -674,7 +684,8 @@ def test_the_purge_refuses_a_schema_that_is_not_at_head(seeded, tool, pg_url, mo
 
     code, out = _purge_cli(tool, pg_url, *_execute_args())
 
-    assert code == 2 and "REFUSED: schema revision is 'a7c4e19d5b02', expected this repository's head 'ffffffffffff'" in out
+    head = _repository_head()
+    assert code == 2 and f"REFUSED: schema revision is '{head}', expected this repository's head 'ffffffffffff'" in out
     assert _counts(seeded) == before
 
 
@@ -706,7 +717,7 @@ def test_the_purge_deletes_the_tenant_keeps_the_evidence_and_does_not_overclaim(
     assert "LIVE DATABASE PURGE COMPLETE" in out and "EVIDENCE SUMMARY" in out
     assert "PROVIDER HISTORY AGED OUT: NOT VERIFIED" in out and "NOT yet physically erased" in out
     assert out.index("LIVE DATABASE PURGE COMPLETE") < out.index("PROVIDER HISTORY AGED OUT")
-    assert "operator=test-operator" in out and "schema_revision=a7c4e19d5b02" in out
+    assert "operator=test-operator" in out and f"schema_revision={_repository_head()}" in out
     assert not any(canary in out for canary in _CANARIES)
     assert pg_url.password not in out and "postgresql://" not in out
 
