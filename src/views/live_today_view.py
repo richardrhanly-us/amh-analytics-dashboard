@@ -95,23 +95,23 @@ def render_live_today(
     collector_diagnostics_lines=None,
 ):
     with st.container(key="sv_live_controls_row"):
-        pause_col, refresh_col, check_col, status_col = st.columns(
-            [1.25, 1.0, 2.1, 1.85]
-        )
+        _, controls_col = st.columns([3.9, 2.1])
 
-        with pause_col:
-            pause_label = "Resume live updates" if live_today_paused else "Pause live updates"
+        with controls_col:
+            refresh_col, pause_col = st.columns([1.0, 1.35])
 
-            if st.button(pause_label):
-                on_toggle_live_updates()
-                st.rerun()
+            with refresh_col:
+                if st.button("Refresh now", use_container_width=True):
+                    on_refresh_now()
+                    st.rerun()
 
-        with refresh_col:
-            if st.button("Refresh now"):
-                on_refresh_now()
-                st.rerun()
+            with pause_col:
+                pause_label = "Resume live updates" if live_today_paused else "Pause live updates"
 
-        with status_col:
+                if st.button(pause_label, use_container_width=True):
+                    on_toggle_live_updates()
+                    st.rerun()
+
             expander_label = f"● {pipeline_status_label}"
 
             st.markdown(
@@ -206,16 +206,6 @@ Problem Items: {_format_count(problem_items)}
 
                     st.markdown("##### Destination Breakdown")
                     st.caption(destination_breakdown_text)
-
-        with check_col:
-            st.markdown(
-                f"""
-                <div class="sv-auto-check-text">
-                    Automatic status check every {refresh_interval_minutes} minutes
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
 
     if can_view_transits:
         live_group1, live_group2, live_group3 = st.columns(3)
