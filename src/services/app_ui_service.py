@@ -73,6 +73,10 @@ def apply_page_chrome():
         margin-bottom: 0 !important;
     }
 
+    .st-key-sv_live_controls_row [data-testid="stExpander"] {
+        margin-top: 0.75rem !important;
+    }
+
     .st-key-sv_live_controls_row .sv-auto-check-text {
         color: #6b7280;
         font-size: 0.95rem;
