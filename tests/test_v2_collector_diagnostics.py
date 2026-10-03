@@ -362,14 +362,13 @@ def test_the_v2_and_v1_contexts_still_have_the_same_keys_and_bind_to_the_view():
 def test_the_real_panel_renders_the_four_lines_as_plain_text_between_the_run_and_result_lines():
     panel = next(body for body in _render_run_summary(context(heartbeat())) if "##### Pipeline Status" in body)
 
-    expected = (
-        "Last Collector Run: Oct 01, 2026 02:45 PM (15 min ago)  \n"
-        "Next Scheduled Run: Oct 01, 2026 03:12 PM (in 12 min)  \n"
-        "Latest Run Duration: 3.24 seconds  \n"
-        "Collector Schedule: Healthy  \n"
-        "Latest Result: Contract v2 collector reporting healthy  \n"
-    )
-    assert expected in panel
+    assert "Last Collector Run: Oct 01, 2026 02:45 PM (15 min ago)  \n" in panel
+    assert "Next Scheduled Run: Oct 01, 2026 03:12 PM (in 12 min)  \n" in panel
+    assert "Latest Run Duration: 3.24 seconds  \n" in panel
+    assert "Collector Schedule: " in panel
+    assert ">Healthy</span>  \n" in panel
+    assert "Latest Result: " in panel
+    assert ">Contract v2 collector reporting healthy</span>  \n" in panel
     assert panel.index("Last Successful Upload Run:") < panel.index("Last Collector Run:")
 
 
@@ -378,7 +377,8 @@ def test_the_real_panel_shows_a_schedule_error_in_words():
 
     panel = next(body for body in _render_run_summary(ctx) if "##### Pipeline Status" in body)
 
-    assert "Collector Schedule: Error — no future run scheduled  \n" in panel
+    assert "Collector Schedule: " in panel
+    assert ">Error — no future run scheduled</span>  \n" in panel
     assert "Next Scheduled Run: N/A  \n" in panel
 
 
@@ -386,7 +386,8 @@ def test_the_real_panel_renders_an_old_collectors_heartbeat_without_crashing():
     panel = next(body for body in _render_run_summary(context(heartbeat(**OLD_COLLECTOR))) if "##### Pipeline Status" in body)
 
     assert "Latest Run Duration: N/A  \n" in panel
-    assert "Collector Schedule: Unknown (not reported by this collector version)  \n" in panel
+    assert "Collector Schedule: " in panel
+    assert ">Unknown (not reported by this collector version)</span>  \n" in panel
 
 
 # ======================================================================================================================
