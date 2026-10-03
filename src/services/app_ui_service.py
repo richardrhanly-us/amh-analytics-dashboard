@@ -65,7 +65,7 @@ def apply_page_chrome():
     }
 
     .st-key-sv_header_right_stack[data-testid="stVerticalBlock"] {
-        gap: 0.35rem !important;
+        gap: 0.75rem !important;
     }
 
     .st-key-sv_live_controls_row[data-testid="stVerticalBlock"] {
