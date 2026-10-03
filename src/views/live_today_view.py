@@ -146,22 +146,38 @@ def render_live_today(
             # f-string below the block sits on its own line ending in a backslash: a line continuation, so an
             # empty block adds nothing at all -- not even a newline -- and the lines around it are untouched.
             collector_diagnostics_block = "".join(
-                f"{line}  \n" for line in (collector_diagnostics_lines or [])
+                (
+                    f'Collector Schedule: <span style="color: {pipeline_status_color}; '
+                    f'font-weight: 600;">{line.removeprefix("Collector Schedule: ")}</span>  \n'
+                    if line.startswith("Collector Schedule: ")
+                    else f"{line}  \n"
+                )
+                for line in (collector_diagnostics_lines or [])
             )
 
             with st.expander(expander_label, expanded=pipeline_expanded):
+                hard_break = "  \n"
+                latest_result_display = (
+                    pipeline_result_text
+                    if collector_diagnostics_lines is None
+                    else f'<span style="color: {pipeline_status_color}; font-weight: 600;">{pipeline_result_text}</span>'
+                )
+
+                pipeline_status_body = (
+                    "##### Pipeline Status\n"
+                    f"App Last Refreshed: {app_refreshed_str}{hard_break}"
+                    f"Latest Checkin in DB: {latest_checkin_str} ({latest_checkin_ago}){hard_break}"
+                    f"Latest Status Row Written: {pipeline_status_written_str} ({pipeline_status_written_ago}){hard_break}"
+                    f"Last Pipeline Attempt: {pipeline_last_attempt_str} ({pipeline_last_attempt_ago}){hard_break}"
+                    f"Last Successful Upload Run: {pipeline_last_run_str} ({pipeline_last_run_ago}){hard_break}"
+                    f"{collector_diagnostics_block}"
+                    f"Latest Result: {latest_result_display}{hard_break}"
+                    f"Status Code: `{status_code_text}`"
+                )
+
                 st.markdown(
-                    "##### Pipeline Status"
-                    f"""
-App Last Refreshed: {app_refreshed_str}  
-Latest Checkin in DB: {latest_checkin_str} ({latest_checkin_ago})  
-Latest Status Row Written: {pipeline_status_written_str} ({pipeline_status_written_ago})  
-Last Pipeline Attempt: {pipeline_last_attempt_str} ({pipeline_last_attempt_ago})  
-Last Successful Upload Run: {pipeline_last_run_str} ({pipeline_last_run_ago})  
-{collector_diagnostics_block}\
-Latest Result: {pipeline_result_text}  
-Status Code: `{status_code_text}`
-                    """
+                    pipeline_status_body,
+                    unsafe_allow_html=collector_diagnostics_lines is not None,
                 )
 
                 if collector_diagnostics_lines is None:
