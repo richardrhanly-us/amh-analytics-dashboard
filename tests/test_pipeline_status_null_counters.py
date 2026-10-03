@@ -126,7 +126,12 @@ def _render_run_summary(context):
     fake_st = MagicMock()
     fake_st.columns.side_effect = lambda spec: [MagicMock() for _ in range(spec if isinstance(spec, int) else len(spec))]
     fake_st.button.return_value = False
-    fake_st.markdown.side_effect = lambda body, **kwargs: markdown_calls.append(body)
+    def _record_markdown(body, **kwargs):
+        markdown_calls.append(body)
+        if context.get("collector_diagnostics_lines") is not None and "##### Pipeline Status" in body:
+            raise _StopAfterRunSummary
+
+    fake_st.markdown.side_effect = _record_markdown
     fake_st.caption.side_effect = _StopAfterRunSummary
 
     kwargs = {name: MagicMock() for name in inspect.signature(live_today_view.render_live_today).parameters}
@@ -299,9 +304,7 @@ def test_live_today_run_summary_is_unchanged_for_a_full_legacy_row(monkeypatch):
     assert "Uploaded Rejects This Run: 1" in rendered
 
 
-def test_live_today_run_summary_renders_na_not_frozen_v1_counters_for_a_v2_branch(monkeypatch):
-    # A v2-active branch passes None counters (no v2 source for them); the real view must render them as N/A
-    # rather than raise on `f"{None:,}"` or fall back to the frozen v1 row's numbers.
+def test_live_today_hides_legacy_run_summary_for_a_v2_branch(monkeypatch):
     status = load(monkeypatch, legacy_agent_row())
     now_ct = datetime(2026, 9, 18, 12, 0, tzinfo=LOCAL_TZ)
     v2_status = {"health_status": "healthy", "last_heartbeat_at": "2026-09-18T16:55:00+00:00"}
@@ -309,10 +312,10 @@ def test_live_today_run_summary_renders_na_not_frozen_v1_counters_for_a_v2_branc
 
     rendered = "\n".join(_render_run_summary(context))
 
-    assert "New Checkins This Run: N/A" in rendered
-    assert "Uploaded Rejects This Run: N/A" in rendered
-    assert "Transit Items: N/A" in rendered
-    assert "Problem Items: N/A" in rendered
+    assert "##### Pipeline Status" in rendered
+    assert "##### Run Summary" not in rendered
+    assert "##### Destination Breakdown" not in rendered
+    assert "Transit Items: N/A" not in rendered
     assert "Transit Items: 7" not in rendered
 
 

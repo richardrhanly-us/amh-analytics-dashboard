@@ -164,31 +164,32 @@ Status Code: `{status_code_text}`
                     """
                 )
 
-                st.markdown("##### Run Summary")
-                s1, s2 = st.columns(2)
+                if collector_diagnostics_lines is None:
+                    st.markdown("##### Run Summary")
+                    s1, s2 = st.columns(2)
 
-                with s1:
-                    st.markdown(
-                        f"""
+                    with s1:
+                        st.markdown(
+                            f"""
 New Checkins This Run: {_format_count(checkins_rows)}
 New Rejects This Run: {_format_count(rejects_rows)}
 Uploaded Checkins This Run: {_format_count(uploaded_checkins_rows)}
 Uploaded Rejects This Run: {_format_count(uploaded_rejects_rows)}
-                        """
-                    )
+                            """
+                        )
 
-                with s2:
-                    st.markdown(
-                        f"""
+                    with s2:
+                        st.markdown(
+                            f"""
 Bad Checkin Datetimes: {_format_count(checkins_bad_datetime_rows)}
 Bad Reject Datetimes: {_format_count(rejects_bad_datetime_rows)}
 Transit Items: {_format_count(transit_items)}
 Problem Items: {_format_count(problem_items)}
-                        """
-                    )
+                            """
+                        )
 
-                st.markdown("##### Destination Breakdown")
-                st.caption(destination_breakdown_text)
+                    st.markdown("##### Destination Breakdown")
+                    st.caption(destination_breakdown_text)
 
         with check_col:
             st.markdown(
