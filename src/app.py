@@ -759,7 +759,7 @@ header_left, header_right = st.columns(
     vertical_alignment="top",
 )
 
-with header_left, st.container(key="sv_header_left_stack"):
+with header_left:
     render_app_header(
         library_name=LIBRARY_NAME,
         branch_name=BRANCH_NAME,
