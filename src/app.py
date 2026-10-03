@@ -751,7 +751,7 @@ max_date = df_history_raw["datetime"].max().date()
 
 header_left, header_right = st.columns(
     [4, 2],
-    vertical_alignment="center",
+    vertical_alignment="top",
 )
 
 with header_left:

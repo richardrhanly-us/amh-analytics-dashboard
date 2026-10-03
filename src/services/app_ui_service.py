@@ -61,11 +61,11 @@ def apply_page_chrome():
     st.markdown("""
     <style>
     .st-key-sv_nav_row {
-        margin-bottom: 0.75rem;
+        margin-bottom: 0.25rem;
     }
 
     .st-key-sv_live_controls_row {
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.15rem;
     }
 
     .st-key-sv_live_controls_row .sv-auto-check-text {
@@ -148,7 +148,7 @@ def render_app_header(library_name, branch_name, system_name, show_admin_button=
         st.caption("Hanly Analytics")
         st.markdown('<div class="sortview-title">SORTVIEW</div>', unsafe_allow_html=True)
         st.markdown(
-            f"<div style='color:#6b7280; font-size:0.95rem; margin-bottom:10px;'>"
+            f"<div style='color:#6b7280; font-size:0.95rem; margin-bottom:2px;'>"
             f"{library_name} • {branch_name} • {system_name}"
             f"</div>",
             unsafe_allow_html=True
