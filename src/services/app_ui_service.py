@@ -64,8 +64,13 @@ def apply_page_chrome():
         margin-bottom: 0.25rem;
     }
 
-    .st-key-sv_live_controls_row {
-        margin-bottom: 0.15rem;
+    .st-key-sv_header_right_stack[data-testid="stVerticalBlock"] {
+        gap: 0.35rem !important;
+    }
+
+    .st-key-sv_live_controls_row[data-testid="stVerticalBlock"] {
+        gap: 0.3rem !important;
+        margin-bottom: 0 !important;
     }
 
     .st-key-sv_live_controls_row .sv-auto-check-text {

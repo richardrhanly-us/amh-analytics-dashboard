@@ -775,7 +775,7 @@ with header_left:
             label_visibility="collapsed",
         )
 
-with header_right:
+with header_right, st.container(key="sv_header_right_stack"):
     st.markdown(
         f"""
         <div style="
