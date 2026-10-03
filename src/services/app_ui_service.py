@@ -64,6 +64,10 @@ def apply_page_chrome():
         margin-bottom: 0;
     }
 
+    .st-key-sv_header_left_stack[data-testid="stVerticalBlock"] {
+        gap: 0.35rem !important;
+    }
+
     .st-key-sv_brand_stack[data-testid="stVerticalBlock"] {
         gap: 0.35rem !important;
     }
