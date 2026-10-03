@@ -93,119 +93,120 @@ def render_live_today(
     can_view_transits=True,
     can_view_internal_workflow=True,
     collector_diagnostics_lines=None,
+    controls_container=None,
 ):
-    with st.container(key="sv_live_controls_row"):
-        _, controls_col = st.columns([3.9, 2.1])
+    if controls_container is None:
+        controls_container = st.container(key="sv_live_controls_row")
 
-        with controls_col:
-            refresh_col, pause_col = st.columns([1.0, 1.35])
+    with controls_container:
+        refresh_col, pause_col = st.columns([1.0, 1.35])
 
-            with refresh_col:
-                if st.button("Refresh now", use_container_width=True):
-                    on_refresh_now()
-                    st.rerun()
+        with refresh_col:
+            if st.button("Refresh now", use_container_width=True):
+                on_refresh_now()
+                st.rerun()
 
-            with pause_col:
-                pause_label = "Resume live updates" if live_today_paused else "Pause live updates"
+        with pause_col:
+            pause_label = "Resume live updates" if live_today_paused else "Pause live updates"
 
-                if st.button(pause_label, use_container_width=True):
-                    on_toggle_live_updates()
-                    st.rerun()
+            if st.button(pause_label, use_container_width=True):
+                on_toggle_live_updates()
+                st.rerun()
 
-            expander_label = f"● {pipeline_status_label}"
+        expander_label = f"● {pipeline_status_label}"
+
+        st.markdown(
+            f"""
+            <style>
+            div[data-testid="stExpander"] details {{
+                border: 1px solid rgba(148, 163, 184, 0.28);
+                border-radius: 10px;
+                overflow: hidden;
+                background-color: var(--secondary-background-color);
+            }}
+
+            div[data-testid="stExpander"] summary {{
+                font-weight: 700;
+                color: {pipeline_status_color};
+                background-color: {pipeline_status_bg};
+                padding-top: 0.2rem;
+                padding-bottom: 0.2rem;
+            }}
+
+            div[data-testid="stExpander"] details[open] > div {{
+                background-color: var(--secondary-background-color);
+                color: var(--text-color);
+            }}
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # Collector run/schedule diagnostics: four plain-text lines, present only for a Contract v2 branch
+        # (None for v1, whose panel is unchanged). Each ends with markdown's two-space hard line break. In the
+        # f-string below the block sits on its own line ending in a backslash: a line continuation, so an
+        # empty block adds nothing at all -- not even a newline -- and the lines around it are untouched.
+        collector_diagnostics_block = "".join(
+            (
+                f'Collector Schedule: <span style="color: {pipeline_status_color}; '
+                f'font-weight: 600;">{line.removeprefix("Collector Schedule: ")}</span>  \n'
+                if line.startswith("Collector Schedule: ")
+                else f"{line}  \n"
+            )
+            for line in (collector_diagnostics_lines or [])
+        )
+
+        with st.expander(expander_label, expanded=pipeline_expanded):
+            hard_break = "  \n"
+            latest_result_display = (
+                pipeline_result_text
+                if collector_diagnostics_lines is None
+                else f'<span style="color: {pipeline_status_color}; font-weight: 600;">{pipeline_result_text}</span>'
+            )
+
+            pipeline_status_body = (
+                "##### Pipeline Status\n"
+                f"App Last Refreshed: {app_refreshed_str}{hard_break}"
+                f"Latest Checkin in DB: {latest_checkin_str} ({latest_checkin_ago}){hard_break}"
+                f"Latest Status Row Written: {pipeline_status_written_str} ({pipeline_status_written_ago}){hard_break}"
+                f"Last Pipeline Attempt: {pipeline_last_attempt_str} ({pipeline_last_attempt_ago}){hard_break}"
+                f"Last Successful Upload Run: {pipeline_last_run_str} ({pipeline_last_run_ago}){hard_break}"
+                f"{collector_diagnostics_block}"
+                f"Latest Result: {latest_result_display}{hard_break}"
+                f"Status Code: `{status_code_text}`"
+            )
 
             st.markdown(
-                f"""
-                <style>
-                div[data-testid="stExpander"] details {{
-                    border: 1px solid rgba(148, 163, 184, 0.28);
-                    border-radius: 10px;
-                    overflow: hidden;
-                    background-color: var(--secondary-background-color);
-                }}
-
-                div[data-testid="stExpander"] summary {{
-                    font-weight: 700;
-                    color: {pipeline_status_color};
-                    background-color: {pipeline_status_bg};
-                    padding-top: 0.2rem;
-                    padding-bottom: 0.2rem;
-                }}
-
-                div[data-testid="stExpander"] details[open] > div {{
-                    background-color: var(--secondary-background-color);
-                    color: var(--text-color);
-                }}
-                </style>
-                """,
-                unsafe_allow_html=True,
+                pipeline_status_body,
+                unsafe_allow_html=collector_diagnostics_lines is not None,
             )
 
-            # Collector run/schedule diagnostics: four plain-text lines, present only for a Contract v2 branch
-            # (None for v1, whose panel is unchanged). Each ends with markdown's two-space hard line break. In the
-            # f-string below the block sits on its own line ending in a backslash: a line continuation, so an
-            # empty block adds nothing at all -- not even a newline -- and the lines around it are untouched.
-            collector_diagnostics_block = "".join(
-                (
-                    f'Collector Schedule: <span style="color: {pipeline_status_color}; '
-                    f'font-weight: 600;">{line.removeprefix("Collector Schedule: ")}</span>  \n'
-                    if line.startswith("Collector Schedule: ")
-                    else f"{line}  \n"
-                )
-                for line in (collector_diagnostics_lines or [])
-            )
+            if collector_diagnostics_lines is None:
+                st.markdown("##### Run Summary")
+                s1, s2 = st.columns(2)
 
-            with st.expander(expander_label, expanded=pipeline_expanded):
-                hard_break = "  \n"
-                latest_result_display = (
-                    pipeline_result_text
-                    if collector_diagnostics_lines is None
-                    else f'<span style="color: {pipeline_status_color}; font-weight: 600;">{pipeline_result_text}</span>'
-                )
-
-                pipeline_status_body = (
-                    "##### Pipeline Status\n"
-                    f"App Last Refreshed: {app_refreshed_str}{hard_break}"
-                    f"Latest Checkin in DB: {latest_checkin_str} ({latest_checkin_ago}){hard_break}"
-                    f"Latest Status Row Written: {pipeline_status_written_str} ({pipeline_status_written_ago}){hard_break}"
-                    f"Last Pipeline Attempt: {pipeline_last_attempt_str} ({pipeline_last_attempt_ago}){hard_break}"
-                    f"Last Successful Upload Run: {pipeline_last_run_str} ({pipeline_last_run_ago}){hard_break}"
-                    f"{collector_diagnostics_block}"
-                    f"Latest Result: {latest_result_display}{hard_break}"
-                    f"Status Code: `{status_code_text}`"
-                )
-
-                st.markdown(
-                    pipeline_status_body,
-                    unsafe_allow_html=collector_diagnostics_lines is not None,
-                )
-
-                if collector_diagnostics_lines is None:
-                    st.markdown("##### Run Summary")
-                    s1, s2 = st.columns(2)
-
-                    with s1:
-                        st.markdown(
-                            f"""
+                with s1:
+                    st.markdown(
+                        f"""
 New Checkins This Run: {_format_count(checkins_rows)}
 New Rejects This Run: {_format_count(rejects_rows)}
 Uploaded Checkins This Run: {_format_count(uploaded_checkins_rows)}
 Uploaded Rejects This Run: {_format_count(uploaded_rejects_rows)}
-                            """
-                        )
+                        """
+                    )
 
-                    with s2:
-                        st.markdown(
-                            f"""
+                with s2:
+                    st.markdown(
+                        f"""
 Bad Checkin Datetimes: {_format_count(checkins_bad_datetime_rows)}
 Bad Reject Datetimes: {_format_count(rejects_bad_datetime_rows)}
 Transit Items: {_format_count(transit_items)}
 Problem Items: {_format_count(problem_items)}
-                            """
-                        )
+                        """
+                    )
 
-                    st.markdown("##### Destination Breakdown")
-                    st.caption(destination_breakdown_text)
+                st.markdown("##### Destination Breakdown")
+                st.caption(destination_breakdown_text)
 
     if can_view_transits:
         live_group1, live_group2, live_group3 = st.columns(3)
@@ -339,12 +340,12 @@ Problem Items: {_format_count(problem_items)}
                 """,
                 unsafe_allow_html=True,
             )
-    
+
             routing_card_count = 1 + len(TRANSIT_LABELS)
             routing_cols = st.columns(routing_card_count if routing_card_count > 0 else 1)
-    
+
             total_transit_pct = (today_total_transit / today_checkins * 100) if today_checkins > 0 else 0
-    
+
             with routing_cols[0]:
                 render_kpi_card(
                     "Total Transit",
@@ -354,7 +355,7 @@ Problem Items: {_format_count(problem_items)}
                     value_font_size="2.2rem",
                     border_color="#34d399",
                 )
-    
+
             for idx, transit_label in enumerate(TRANSIT_LABELS, start=1):
                 with routing_cols[idx]:
                     render_kpi_card(
@@ -422,7 +423,7 @@ Problem Items: {_format_count(problem_items)}
 
     if can_view_internal_workflow:
         st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
-    
+
         st.markdown(
             """
             <div style="
@@ -444,11 +445,11 @@ Problem Items: {_format_count(problem_items)}
             """,
             unsafe_allow_html=True
         )
-    
+
         internal1, internal2, internal3, internal4 = st.columns(4)
-    
+
         internal_pct_base = today_checkins if today_checkins > 0 else 1
-    
+
         with internal1:
             render_kpi_card(
                 "Holds",
@@ -458,7 +459,7 @@ Problem Items: {_format_count(problem_items)}
                 value_font_size="2.0rem",
                 border_color="#34d399"
             )
-    
+
         with internal2:
             render_kpi_card(
                 "ILL",
@@ -473,7 +474,7 @@ Problem Items: {_format_count(problem_items)}
                 value_font_size="1.85rem",
                 border_color="#34d399"
             )
-    
+
         with internal3:
             render_kpi_card(
                 "Branch Services",
@@ -483,7 +484,7 @@ Problem Items: {_format_count(problem_items)}
                 value_font_size="1.85rem",
                 border_color="#34d399"
             )
-    
+
         with internal4:
             render_kpi_card(
                 "Collection Services",
@@ -493,7 +494,7 @@ Problem Items: {_format_count(problem_items)}
                 value_font_size="1.7rem",
                 border_color="#34d399"
             )
-    
+
         with st.expander("Internal workflow audit", expanded=False):
             st.write("Public Holds:", today_holds)
             st.write("ILL:", today_ill)

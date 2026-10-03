@@ -749,6 +749,11 @@ max_date = df_history_raw["datetime"].max().date()
 # permissions allow it.
 #***************************************************************
 
+nav_options = ["Live Today", "Reports", "Overview"]
+
+if show_transits_tab:
+    nav_options.insert(1, "Transits")
+
 header_left, header_right = st.columns(
     [4, 2],
     vertical_alignment="top",
@@ -761,6 +766,14 @@ with header_left:
         system_name=SYSTEM_NAME,
         show_admin_button=show_header_admin_button,
     )
+
+    with st.container(key="sv_nav_row"):
+        selected_view = st.segmented_control(
+            "Section",
+            options=nav_options,
+            default="Live Today",
+            label_visibility="collapsed",
+        )
 
 with header_right:
     st.markdown(
@@ -777,18 +790,12 @@ with header_right:
         """,
         unsafe_allow_html=True,
     )
-nav_options = ["Live Today", "Reports", "Overview"]
 
-if show_transits_tab:
-    nav_options.insert(1, "Transits")
-
-with st.container(key="sv_nav_row"):
-    selected_view = st.segmented_control(
-        "Section",
-        options=nav_options,
-        default="Live Today",
-        label_visibility="collapsed"
-    )
+    # Live Today's fragment will populate this earlier right-side slot.
+    # The initial empty write is required by Streamlit before a fragment
+    # can write into a container created outside that fragment.
+    header_controls_container = st.container(key="sv_live_controls_row")
+    header_controls_container.empty()
 
 
 #***************************************************************
@@ -1018,6 +1025,7 @@ def _render_live_today():
     live_view_context["live_today_args"]["on_refresh_now"] = _handle_refresh_now
     live_view_context["live_today_args"]["live_today_paused"] = live_today_paused
     live_view_context["live_today_args"]["on_toggle_live_updates"] = _handle_toggle_live_updates
+    live_view_context["live_today_args"]["controls_container"] = header_controls_container
     live_view_context["live_today_args"]["refresh_interval_minutes"] = (
         refresh_interval_seconds // 60
     )
