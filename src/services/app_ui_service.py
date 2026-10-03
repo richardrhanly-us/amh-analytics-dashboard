@@ -61,7 +61,7 @@ def apply_page_chrome():
     st.markdown("""
     <style>
     .st-key-sv_nav_row {
-        margin-bottom: 0.25rem;
+        margin-bottom: 0;
     }
 
     .st-key-sv_header_right_stack[data-testid="stVerticalBlock"] {
@@ -71,10 +71,6 @@ def apply_page_chrome():
     .st-key-sv_live_controls_row[data-testid="stVerticalBlock"] {
         gap: 0.3rem !important;
         margin-bottom: 0 !important;
-    }
-
-    .st-key-sv_live_controls_row [data-testid="stExpander"] {
-        margin-top: 0.75rem !important;
     }
 
     .st-key-sv_live_controls_row .sv-auto-check-text {
