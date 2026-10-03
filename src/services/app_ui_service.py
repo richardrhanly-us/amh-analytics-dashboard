@@ -64,6 +64,10 @@ def apply_page_chrome():
         margin-bottom: 0;
     }
 
+    .st-key-sv_brand_stack[data-testid="stVerticalBlock"] {
+        gap: 0.35rem !important;
+    }
+
     .st-key-sv_header_right_stack[data-testid="stVerticalBlock"] {
         gap: 0.75rem !important;
     }
@@ -149,7 +153,7 @@ def render_app_header(library_name, branch_name, system_name, show_admin_button=
     header_left, header_right = st.columns([10, 3])
 
     # Render the main title and selected system information.
-    with header_left:
+    with header_left, st.container(key="sv_brand_stack"):
         st.caption("Hanly Analytics")
         st.markdown('<div class="sortview-title">SORTVIEW</div>', unsafe_allow_html=True)
         st.markdown(
