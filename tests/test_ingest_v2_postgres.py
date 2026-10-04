@@ -762,7 +762,11 @@ def test_state_is_required_and_only_a_hold_has_the_hold_only_columns(engine):
 
 def test_the_acs_item_table_and_its_dependent_objects_carry_the_new_name_and_none_keep_the_old_one(engine):
     names = [r[0] for r in rows(engine, "SELECT indexname FROM pg_indexes WHERE tablename = 'acs_item_events'")]
-    names += [r[0] for r in rows(engine, "SELECT conname FROM pg_constraint WHERE conrelid = 'acs_item_events'::regclass")]
+    # contype <> 'n': PostgreSQL 18 exposes column NOT NULL constraints as pg_constraint rows, with generated
+    # <table>_<column>_not_null names that keep the table's pre-rename name. This test checks the dependent objects the
+    # migration names and renames, not PostgreSQL-generated NOT NULL names (PostgreSQL 17 returns no such rows).
+    names += [r[0] for r in rows(engine, "SELECT conname FROM pg_constraint WHERE conrelid = 'acs_item_events'::regclass "
+                                         "AND contype <> 'n'")]
     names += [r[0] for r in rows(engine, "SELECT relname FROM pg_class WHERE relkind = 'S' AND relname LIKE 'acs_%'")]
 
     assert not [n for n in names if "acs_hold" in n], names
