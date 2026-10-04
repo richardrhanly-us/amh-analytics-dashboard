@@ -51,10 +51,22 @@ poll_tick = st.session_state[tick_key]
 
 pipeline_status = st.session_state["_fake_pipeline_status_db"].get(tenant_key)
 
+pipeline_status_label = (
+    pipeline_status.get("label", "Pipeline Status Unknown")
+    if pipeline_status
+    else "Pipeline Status Unknown"
+)
+
 # --- tenant-scoped manual-refresh counter, exactly as in app.py.
 LIVE_TODAY_REFRESH_STATE_KEY = "_live_today_refresh_state"
 refresh_state_by_tenant = st.session_state.setdefault(LIVE_TODAY_REFRESH_STATE_KEY, {})
-tenant_refresh_state = refresh_state_by_tenant.setdefault(tenant_key, {"manual_refresh_count": 0})
+tenant_refresh_state = refresh_state_by_tenant.setdefault(
+    tenant_key,
+    {
+        "manual_refresh_count": 0,
+        "last_pipeline_status_label": None,
+    },
+)
 
 last_run = pipeline_status.get("last_run") if pipeline_status else None
 
@@ -62,6 +74,25 @@ live_data_key = resolve_live_data_cache_key(
     last_run=last_run,
     manual_refresh_count=tenant_refresh_state["manual_refresh_count"],
 )
+
+previous_pipeline_status_label = tenant_refresh_state.get("last_pipeline_status_label")
+
+pipeline_status_changed = (
+    previous_pipeline_status_label is not None
+    and pipeline_status_label != previous_pipeline_status_label
+)
+
+tenant_refresh_state["last_pipeline_status_label"] = pipeline_status_label
+
+if pipeline_status_changed:
+    st.markdown(
+        (
+            '<div role="status" aria-live="polite" aria-atomic="true">'
+            f"Pipeline status changed to {pipeline_status_label}."
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
 
 def _handle_refresh_now():
     tenant_refresh_state["manual_refresh_count"] += 1
@@ -323,3 +354,113 @@ def test_switching_branch_does_not_reuse_another_branchs_run_key():
     assert branch_2_key == resolve_live_data_cache_key(
         last_run="2026-09-22T09:00:00", manual_refresh_count=0
     )
+
+def _status_messages(at):
+    return [
+        markdown.value
+        for markdown in at.markdown
+        if 'role="status"' in markdown.value
+    ]
+
+
+def test_pipeline_status_first_render_does_not_announce():
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_string(_LIVE_TODAY_REFRESH_SCRIPT)
+    at.session_state["_fake_pipeline_status_db"] = {
+        ("org-a", "branch-1"): {
+            "last_run": "2026-09-22T10:00:00",
+            "label": "Pipeline Healthy",
+        },
+    }
+
+    _run(at)
+
+    assert _status_messages(at) == []
+
+
+def test_pipeline_status_unchanged_poll_does_not_reannounce():
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_string(_LIVE_TODAY_REFRESH_SCRIPT)
+    at.session_state["_fake_pipeline_status_db"] = {
+        ("org-a", "branch-1"): {
+            "last_run": "2026-09-22T10:00:00",
+            "label": "Pipeline Healthy",
+        },
+    }
+
+    _run(at)
+    _run(at)
+
+    assert _status_messages(at) == []
+
+
+def test_pipeline_status_failure_transition_is_announced():
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_string(_LIVE_TODAY_REFRESH_SCRIPT)
+    at.session_state["_fake_pipeline_status_db"] = {
+        ("org-a", "branch-1"): {
+            "last_run": "2026-09-22T10:00:00",
+            "label": "Pipeline Healthy",
+        },
+    }
+
+    _run(at)
+
+    at.session_state["_fake_pipeline_status_db"][("org-a", "branch-1")]["label"] = (
+        "Pipeline Failed"
+    )
+    _run(at)
+
+    messages = _status_messages(at)
+    assert len(messages) == 1
+    assert "Pipeline status changed to Pipeline Failed." in messages[0]
+    assert 'aria-live="polite"' in messages[0]
+    assert 'aria-atomic="true"' in messages[0]
+
+
+def test_pipeline_status_recovery_is_announced():
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_string(_LIVE_TODAY_REFRESH_SCRIPT)
+    at.session_state["_fake_pipeline_status_db"] = {
+        ("org-a", "branch-1"): {
+            "last_run": "2026-09-22T10:00:00",
+            "label": "Pipeline Failed",
+        },
+    }
+
+    _run(at)
+
+    at.session_state["_fake_pipeline_status_db"][("org-a", "branch-1")]["label"] = (
+        "Pipeline Healthy"
+    )
+    _run(at)
+
+    messages = _status_messages(at)
+    assert len(messages) == 1
+    assert "Pipeline status changed to Pipeline Healthy." in messages[0]
+
+def test_pipeline_status_previous_value_is_scoped_per_tenant():
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_string(_LIVE_TODAY_REFRESH_SCRIPT)
+    at.session_state["_fake_pipeline_status_db"] = {
+        ("org-a", "branch-1"): {
+            "last_run": "2026-09-22T10:00:00",
+            "label": "Pipeline Healthy",
+        },
+        ("org-a", "branch-2"): {
+            "last_run": "2026-09-22T10:00:00",
+            "label": "Pipeline Failed",
+        },
+    }
+
+    _run(at)
+
+    at.session_state["_selected_branch"] = "branch-2"
+    _run(at)
+
+    assert _status_messages(at) == []

@@ -919,7 +919,13 @@ def _render_live_today():
     # LIVE_TODAY_REFRESH_STATE_KEY comment above.
     tenant_key = (selected_customer_id, selected_branch_id)
     refresh_state_by_tenant = st.session_state.setdefault(LIVE_TODAY_REFRESH_STATE_KEY, {})
-    tenant_refresh_state = refresh_state_by_tenant.setdefault(tenant_key, {"manual_refresh_count": 0})
+    tenant_refresh_state = refresh_state_by_tenant.setdefault(
+        tenant_key,
+        {
+            "manual_refresh_count": 0,
+            "last_pipeline_status_label": None,
+        },
+    )
 
     # last_run only advances when the scheduled Collector completes a run
     # successfully (collector/run.py's run_once) -- never on a failed
@@ -1019,6 +1025,28 @@ def _render_live_today():
         theme_base=theme_base,
         selected_view="Live Today",
     )
+
+    current_pipeline_status_label = live_view_context["live_today_args"]["pipeline_status_label"]
+    previous_pipeline_status_label = tenant_refresh_state.get("last_pipeline_status_label")
+
+    pipeline_status_changed = (
+        previous_pipeline_status_label is not None
+        and current_pipeline_status_label != previous_pipeline_status_label
+    )
+
+    tenant_refresh_state["last_pipeline_status_label"] = current_pipeline_status_label
+
+    if pipeline_status_changed:
+        st.markdown(
+            (
+                '<div role="status" aria-live="polite" aria-atomic="true" '
+                'style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;'
+                'overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;">'
+                f"Pipeline status changed to {current_pipeline_status_label}."
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
 
     live_view_context["live_today_args"]["can_view_internal_workflow"] = show_internal_workflow
     live_view_context["live_today_args"]["can_view_transits"] = show_transits_tab
