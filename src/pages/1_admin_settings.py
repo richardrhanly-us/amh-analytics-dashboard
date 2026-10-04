@@ -8,11 +8,7 @@ from sqlalchemy import text
 
 from database import get_engine
 from services import auth_service
-from services.access_service import (
-    get_org_access_mode,
-    get_org_branches,
-    get_user_memberships,
-)
+from services.access_service import get_org_access_mode
 from services.admin_lock_service import (
     build_security_settings,
     has_admin_password,
@@ -21,13 +17,17 @@ from services.admin_lock_service import (
     verify_admin_password,
 )
 from services.app_ui_service import apply_page_chrome
-from services.entitlement_service import build_entitlement_context
 from services.permission_service import can_manage_settings
 from services.privacy_hardening import (
     install_streamlit_log_scrubber,
     log_safe_exception,
 )
 from services.sidebar_service import render_main_sidebar
+from services.streamlit_access_adapter import (
+    get_org_branches,
+    get_user_memberships,
+)
+from services.streamlit_entitlement_adapter import build_entitlement_context
 from services.tenant_service import get_effective_settings
 
 logger = logging.getLogger("sortview.admin_settings")

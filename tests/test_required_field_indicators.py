@@ -243,15 +243,29 @@ sidebar_service.render_main_sidebar(
 """.strip()
 
 
-def _run_sidebar() -> AppTest:
+def _restore_after_test(monkeypatch, module, *names):
+    """The script under test assigns its fakes straight onto shared service
+    modules, which every later test in the process would otherwise inherit.
+    Registering each attribute's current value with monkeypatch first makes
+    pytest put the real one back at teardown, whether or not the test passes."""
+    for name in names:
+        monkeypatch.setattr(module, name, getattr(module, name))
+
+
+def _run_sidebar(monkeypatch) -> AppTest:
+    from services import auth_service, persistent_auth_service
+
+    _restore_after_test(monkeypatch, auth_service, "change_password")
+    _restore_after_test(monkeypatch, persistent_auth_service, "clear_persistent_auth")
+
     at = AppTest.from_string(_SIDEBAR_SCRIPT.format(src=str(SRC)))
     at.run()
     assert not at.exception, [e.value for e in at.exception]
     return at
 
 
-def test_change_password_form_marks_all_three_fields_as_required():
-    at = _run_sidebar()
+def test_change_password_form_marks_all_three_fields_as_required(monkeypatch):
+    at = _run_sidebar(monkeypatch)
     labels = _labels(at, "text_input")
     assert "Current password *" in labels
     assert "New password *" in labels
@@ -259,8 +273,8 @@ def test_change_password_form_marks_all_three_fields_as_required():
     assert "* Required" in _captions(at)
 
 
-def test_change_password_submit_still_calls_change_password_with_the_entered_values():
-    at = _run_sidebar()
+def test_change_password_submit_still_calls_change_password_with_the_entered_values(monkeypatch):
+    at = _run_sidebar(monkeypatch)
     _field(at, "Current password *").input("old-password")
     _field(at, "New password *").input("new-password-123")
     _field(at, "Confirm new password *").input("new-password-123")
@@ -359,16 +373,17 @@ def _effective(security=None):
 def _patch_admin_settings_page(monkeypatch, *, security, engine):
     import database
     import services.access_service as access
-    import services.entitlement_service as entitlement
     import services.permission_service as permission
     import services.sidebar_service as sidebar
+    import services.streamlit_access_adapter as access_adapter
+    import services.streamlit_entitlement_adapter as entitlement_adapter
     import services.tenant_service as tenant
     from services import auth_service
 
-    monkeypatch.setattr(access, "get_user_memberships", lambda user_id: [{"organization_slug": "acme", "organization_name": "Acme"}])
-    monkeypatch.setattr(access, "get_org_branches", lambda org_slug: [{"branch_slug": "main", "branch_name": "Main", "is_primary": True}])
+    monkeypatch.setattr(access_adapter, "get_user_memberships", lambda user_id: [{"organization_slug": "acme", "organization_name": "Acme"}])
+    monkeypatch.setattr(access_adapter, "get_org_branches", lambda org_slug: [{"branch_slug": "main", "branch_name": "Main", "is_primary": True}])
     monkeypatch.setattr(access, "get_org_access_mode", lambda org_slug: "full")
-    monkeypatch.setattr(entitlement, "build_entitlement_context", lambda user_id, org_slug: {})
+    monkeypatch.setattr(entitlement_adapter, "build_entitlement_context", lambda user_id, org_slug: {})
     monkeypatch.setattr(permission, "can_manage_settings", lambda context: True)
     monkeypatch.setattr(sidebar, "render_main_sidebar", lambda **_kwargs: None)
     monkeypatch.setattr(tenant, "get_effective_settings", lambda org_slug, branch_slug=None: _effective(security))

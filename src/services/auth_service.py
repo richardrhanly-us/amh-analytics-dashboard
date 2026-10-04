@@ -19,12 +19,11 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import streamlit as st
 from sqlalchemy import text
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from database import get_engine
-from services import persistent_auth_service, session_service
+from services import session_service
 from services.privacy_hardening import log_safe_exception
 
 logger = logging.getLogger("sortview.auth")
@@ -247,15 +246,27 @@ def is_user_active(user_id: int) -> bool:
 #               logging is best-effort and can never leave the inactive
 #               user still authenticated if it raises.
 #
+#               The account check, the audit event, and the order of the
+#               checks live here. Everything Streamlit-specific (session
+#               state, the message, halting the script, the browser's
+#               persistent session) is carried out by
+#               services.streamlit_auth_adapter.
+#
 #  Parameters:  auth_user - The authenticated user dict currently in
 #                           st.session_state["auth_user"].
 #
-#  Returns:     None. Calls st.stop() and halts the script if the
-#               account is no longer active.
+#  Returns:     None. The adapter calls st.stop() and halts the script
+#               if the account is no longer active or the session is
+#               no longer valid.
 #
 #***************************************************************
 
 def enforce_active_session(auth_user: dict) -> None:
+    # Imported here, not at module scope: the adapter (and the
+    # persistent_auth_service it uses) needs Streamlit, and this module
+    # must stay importable without it.
+    from services import streamlit_auth_adapter
+
     user_id = auth_user["id"]
 
     if not is_user_active(user_id):
@@ -276,31 +287,12 @@ def enforce_active_session(auth_user: dict) -> None:
                 exc,
             )
 
-        persistent_auth_service.clear_all_persistent_auth_for_current_user(
-            user_id
-        )
+        streamlit_auth_adapter.terminate_inactive_session(user_id)
 
-        st.session_state["auth_user"] = None
-        st.session_state.pop("selected_org_slug", None)
-        st.session_state.pop("selected_branch_slug", None)
-
-        st.error(
-            "Your account has been deactivated. "
-            "Please contact an administrator."
-        )
-        st.stop()
-
-    if persistent_auth_service.current_persistent_auth_is_valid(user_id):
+    if streamlit_auth_adapter.current_session_is_valid(user_id):
         return
 
-    persistent_auth_service.clear_persistent_auth()
-
-    st.session_state["auth_user"] = None
-    st.session_state.pop("selected_org_slug", None)
-    st.session_state.pop("selected_branch_slug", None)
-
-    st.error("Your session is no longer valid. Please log in again.")
-    st.stop()
+    streamlit_auth_adapter.terminate_invalid_session()
 
 
 #***************************************************************

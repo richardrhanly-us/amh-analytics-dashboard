@@ -16,29 +16,20 @@ from __future__ import annotations
 
 from typing import Any
 
-import streamlit as st
 from sqlalchemy import text
 
 from database import get_engine
 
-# get_org_branches/get_user_memberships previously ran on every single
-# Streamlit rerun -- every auto-refresh tick, every nav click, every
-# filter change -- even though membership/branch data changes on the
-# order of admin actions, not seconds. ttl=120 keeps them feeling live
-# for anyone actually managing memberships/branches while eliminating
-# repeat round trips for the overwhelmingly common case of "nothing
-# changed since the last rerun." Cache keys are the function arguments
-# themselves (user_id/org_slug), so this is naturally tenant-scoped --
-# one user's cached memberships can never be returned for another
-# user_id, and one org's branches can never be returned for another
-# org_slug.
+# Every function in this module is UNCACHED and framework-neutral: each call
+# queries the database, and nothing here imports Streamlit. The dashboard's
+# cached copies of get_org_branches/get_user_memberships live in
+# services.streamlit_access_adapter; any non-Streamlit caller (e.g. an API
+# route) must use this module directly, never that adapter.
 #
-# user_can_access_org is deliberately left UNCACHED: it's the
-# tenant-isolation gate checked before any org-scoped data loads, and an
-# already-cheap single-row lookup -- caching a security gate would mean a
-# just-revoked user could still pass it for up to the cache TTL, which is
-# a worse tradeoff than the (already small) query cost it would save.
-_CHROME_CACHE_TTL_SECONDS = 120
+# user_can_access_org is the tenant-isolation gate checked before any
+# org-scoped data loads, and get_org_access_mode is the organization
+# lifecycle gate. Neither may ever be served from a cache -- a just-revoked
+# user (or a just-cancelled organization) must fail on the very next call.
 
 #***************************************************************
 #
@@ -56,7 +47,6 @@ _CHROME_CACHE_TTL_SECONDS = 120
 #
 #***************************************************************
 
-@st.cache_data(ttl=_CHROME_CACHE_TTL_SECONDS, show_spinner=False)
 def get_org_branches(org_slug: str) -> list[dict]:
     # Build the SQL query used to load active branches for the organization.
     sql = text("""
@@ -98,7 +88,6 @@ def get_org_branches(org_slug: str) -> list[dict]:
 #
 #***************************************************************
 
-@st.cache_data(ttl=_CHROME_CACHE_TTL_SECONDS, show_spinner=False)
 def get_user_memberships(user_id: int) -> list[dict[str, Any]]:
     # Build the SQL query used to load the user's organization memberships.
     # A cancelled organization is excluded here so it simply disappears from
