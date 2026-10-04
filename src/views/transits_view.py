@@ -270,7 +270,7 @@ def render_transits(
 
             daily_transfer_summary["Date"] = daily_transfer_summary["Date"].dt.strftime("%Y-%m-%d")
 
-            st.table(daily_transfer_summary)
+            st.dataframe(daily_transfer_summary, width="stretch")
             download_button(
                 daily_transfer_summary,
                 "daily_transfer_summary_report.csv",
