@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import os
 
-import streamlit as st
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
@@ -44,8 +43,12 @@ def get_database_url() -> str:
     database_url = os.getenv("DATABASE_URL")
 
     # If the environment variable is not available, try Streamlit secrets.
+    # Streamlit is imported only here, so importing this module (and the
+    # services that use get_engine) does not pull Streamlit in.
     if not database_url:
         try:
+            import streamlit as st
+
             database_url = st.secrets.get("DATABASE_URL")
         except Exception:
             database_url = None

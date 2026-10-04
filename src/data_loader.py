@@ -23,6 +23,7 @@ from sqlalchemy import text
 
 from database import get_engine
 from services.privacy_hardening import log_safe_exception
+from tenant_db import tenant_connection
 
 #***************************************************************
 # File Paths and Logger Setup
@@ -272,19 +273,15 @@ def _read_table(query, params=None, *, customer_id=None, branch_id=None):
         # Tenant context (RLS) must be set on the SAME connection/transaction
         # as the read that follows -- passing a bare Engine to pd.read_sql
         # lets pandas check out its own connection internally, with no hook
-        # to set anything on it first. customer_id/branch_id are optional:
+        # to set anything on it first. tenant_connection applies the context
+        # on the connection it yields. customer_id/branch_id are optional:
         # information_schema callers (validate_tenant_schema) pass neither,
         # and simply skip context-setting.
-        with engine.connect() as conn:
-            if customer_id is not None and branch_id is not None:
-                conn.execute(
-                    text("SELECT set_config('app.operational_customer_id', :v, true)"),
-                    {"v": str(customer_id)},
-                )
-                conn.execute(
-                    text("SELECT set_config('app.operational_branch_id', :v, true)"),
-                    {"v": str(branch_id)},
-                )
+        if customer_id is not None and branch_id is not None:
+            connection = tenant_connection(engine, customer_id, branch_id)
+        else:
+            connection = engine.connect()
+        with connection as conn:
             return pd.read_sql(text(query), conn, params=params or {})
     except Exception as exc:
         # The query text is our own statement (placeholders, no values); only the

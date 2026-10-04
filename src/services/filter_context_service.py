@@ -15,8 +15,8 @@
 
 import pandas as pd
 
+from formatting import format_hour
 from metrics import get_date_filtered_df, get_overall_metrics
-from ui_components import format_hour
 
 #***************************************************************
 #
