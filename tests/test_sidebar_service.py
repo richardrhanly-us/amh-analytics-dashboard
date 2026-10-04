@@ -3,7 +3,21 @@ from __future__ import annotations
 from streamlit.testing.v1 import AppTest
 
 
-def test_sidebar_logout_clears_persistent_auth_and_session_state():
+def _restore_after_test(monkeypatch, module, *names):
+    """The script under test assigns its fakes straight onto shared service
+    modules, which every later test in the process would otherwise inherit.
+    Registering each attribute's current value with monkeypatch first makes
+    pytest put the real one back at teardown, whether or not the test passes."""
+    for name in names:
+        monkeypatch.setattr(module, name, getattr(module, name))
+
+
+def test_sidebar_logout_clears_persistent_auth_and_session_state(monkeypatch):
+    from services import auth_service, persistent_auth_service
+
+    _restore_after_test(monkeypatch, auth_service, "log_auth_event")
+    _restore_after_test(monkeypatch, persistent_auth_service, "clear_persistent_auth")
+
     script = """
 import sys
 sys.path.insert(0, "src")
@@ -61,7 +75,12 @@ if auth_user is not None:
     assert "selected_org_slug" not in at.session_state
     assert "selected_branch_slug" not in at.session_state
 
-def test_successful_password_change_immediately_clears_current_session():
+def test_successful_password_change_immediately_clears_current_session(monkeypatch):
+    from services import auth_service, persistent_auth_service
+
+    _restore_after_test(monkeypatch, auth_service, "change_password")
+    _restore_after_test(monkeypatch, persistent_auth_service, "clear_persistent_auth")
+
     script = """
 import sys
 sys.path.insert(0, "src")

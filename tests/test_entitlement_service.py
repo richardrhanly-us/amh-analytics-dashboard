@@ -1,27 +1,6 @@
-import pytest
 from db_fakes import FakeEngine, FakeQueryResult
 
 from src.services import entitlement_service
-
-
-@pytest.fixture(autouse=True)
-def _clear_entitlement_caches():
-    # get_org_subscription/get_plan_entitlements are st.cache_data-wrapped
-    # (module-level cache, shared across tests in this process). Several
-    # tests below call them with identical args against different
-    # monkeypatched fakes, so this must be cleared before/after every test
-    # or a later test would silently see an earlier test's cached result.
-    #
-    # build_entitlement_context itself is deliberately NOT cached anymore
-    # (PRE-PILOT fix: role must always be fetched fresh so a role change or
-    # deactivation-driven demotion takes effect on the very next call, not
-    # after a TTL) -- so there is no cache to clear for it.
-    entitlement_service.get_org_subscription.clear()
-    entitlement_service.get_plan_entitlements.clear()
-    yield
-    entitlement_service.get_org_subscription.clear()
-    entitlement_service.get_plan_entitlements.clear()
-
 
 # --- get_org_role_for_user ---------------------------------------------------
 
@@ -77,20 +56,21 @@ def test_get_org_subscription_returns_none_when_no_subscription(monkeypatch):
     assert entitlement_service.get_org_subscription(org_slug="acme") is None
 
 
-def test_get_org_subscription_is_cached_across_repeated_calls(monkeypatch):
-    # This is the piece that's still safe/useful to cache: subscription
-    # data only changes on a rare admin action. Proves the @st.cache_data
-    # decorator that moved onto this function (off of
-    # build_entitlement_context) actually caches repeated calls.
+def test_get_org_subscription_queries_the_database_on_every_call(monkeypatch):
+    # The core is uncached (Block 2d): the dashboard's st.cache_data layer
+    # lives in services.streamlit_entitlement_adapter and is tested in
+    # tests/test_streamlit_entitlement_adapter.py.
     row = {"id": 10, "status": "active", "started_at": None, "ends_at": None,
            "plan_id": 2, "plan_code": "pro", "plan_name": "Pro"}
-    engine = FakeEngine([FakeQueryResult(first=row)])
+    engine = FakeEngine([FakeQueryResult(first=row), FakeQueryResult(first=None)])
     monkeypatch.setattr(entitlement_service, "get_engine", lambda: engine)
 
-    for _ in range(5):
-        assert entitlement_service.get_org_subscription(org_slug="acme") == row
+    first = entitlement_service.get_org_subscription(org_slug="acme")
+    second = entitlement_service.get_org_subscription(org_slug="acme")
 
-    assert len(engine.calls) == 1
+    assert first == row
+    assert second is None
+    assert len(engine.calls) == 2
 
 
 # --- get_plan_entitlements ----------------------------------------------------
@@ -121,18 +101,23 @@ def test_get_plan_entitlements_coerces_enabled_to_bool(monkeypatch):
     assert entitlements["alerts"]["enabled"] is True
 
 
-def test_get_plan_entitlements_is_cached_across_repeated_calls(monkeypatch):
-    # Same reasoning as get_org_subscription: plan entitlements are safe
-    # and useful to keep cached, moved here off build_entitlement_context.
+def test_get_plan_entitlements_queries_the_database_on_every_call(monkeypatch):
     rows = [{"feature_key": "exports", "enabled": True, "limit_value": None}]
-    engine = FakeEngine([FakeQueryResult(all_rows=rows)])
+    engine = FakeEngine([FakeQueryResult(all_rows=rows), FakeQueryResult(all_rows=[])])
     monkeypatch.setattr(entitlement_service, "get_engine", lambda: engine)
 
-    expected = {"exports": {"enabled": True, "limit_value": None}}
-    for _ in range(5):
-        assert entitlement_service.get_plan_entitlements(plan_id=2) == expected
+    first = entitlement_service.get_plan_entitlements(plan_id=2)
+    second = entitlement_service.get_plan_entitlements(plan_id=2)
 
-    assert len(engine.calls) == 1
+    assert first == {"exports": {"enabled": True, "limit_value": None}}
+    assert second == {}
+    assert len(engine.calls) == 2
+
+
+def test_the_core_lookups_carry_no_streamlit_cache():
+    for name in ("get_org_role_for_user", "get_org_subscription", "get_plan_entitlements",
+                 "build_entitlement_context", "build_entitlement_context_with"):
+        assert not hasattr(getattr(entitlement_service, name), "clear"), name
 
 
 # --- build_entitlement_context -----------------------------------------------
@@ -231,21 +216,75 @@ def test_build_entitlement_context_reflects_role_change_on_next_call_with_no_cle
     assert second["role"] == "viewer"
 
 
-def test_build_entitlement_context_shares_subscription_cache_across_users_same_org(monkeypatch):
-    # Subscription/entitlements caching (still on, and still useful) never
-    # depended on user_id -- two different users in the same org correctly
-    # share one cached lookup via the real get_org_subscription cache
-    # rather than each re-querying.
+def test_build_entitlement_context_queries_the_subscription_on_every_call(monkeypatch):
+    # The core never caches: two context builds for the same org are two
+    # subscription queries. (Sharing one cached lookup across users of the
+    # same org is the Streamlit adapter's job.)
     row = {"id": 1, "status": "active", "started_at": None, "ends_at": None,
            "plan_id": None, "plan_code": None, "plan_name": None}
-    engine = FakeEngine([FakeQueryResult(first=row)])
+    engine = FakeEngine([FakeQueryResult(first=row), FakeQueryResult(first=row)])
     monkeypatch.setattr(entitlement_service, "get_engine", lambda: engine)
     monkeypatch.setattr(entitlement_service, "get_org_role_for_user", lambda user_id, org_slug: "viewer")
 
     entitlement_service.build_entitlement_context(user_id=1, org_slug="acme")
     entitlement_service.build_entitlement_context(user_id=2, org_slug="acme")
 
-    assert len(engine.calls) == 1
+    assert len(engine.calls) == 2
+
+
+# --- build_entitlement_context_with (the one assembly point) ------------------
+
+def test_build_entitlement_context_with_uses_the_supplied_lookups_and_the_cores_own_role(monkeypatch):
+    calls = []
+
+    def role(user_id, org_slug):
+        calls.append(("role", user_id, org_slug))
+        return "manager"
+
+    def subscription(org_slug):
+        calls.append(("subscription", org_slug))
+        return {"id": 1, "plan_id": 5, "status": "active"}
+
+    def plan(plan_id):
+        calls.append(("plan", plan_id))
+        return {"exports": {"enabled": True, "limit_value": None}}
+
+    monkeypatch.setattr(entitlement_service, "get_org_role_for_user", role)
+
+    context = entitlement_service.build_entitlement_context_with(
+        1, "acme", load_subscription=subscription, load_plan_entitlements=plan,
+    )
+
+    assert calls == [("role", 1, "acme"), ("subscription", "acme"), ("plan", 5)]
+    assert context == {
+        "role": "manager",
+        "subscription": {"id": 1, "plan_id": 5, "status": "active"},
+        "entitlements": {"exports": {"enabled": True, "limit_value": None}},
+    }
+
+
+def test_build_entitlement_context_with_skips_the_plan_lookup_without_a_plan(monkeypatch):
+    monkeypatch.setattr(entitlement_service, "get_org_role_for_user", lambda user_id, org_slug: None)
+    plan_calls = []
+
+    for subscription in (None, {"id": 1, "plan_id": None}):
+        context = entitlement_service.build_entitlement_context_with(
+            1, "acme",
+            load_subscription=lambda org_slug, subscription=subscription: subscription,
+            load_plan_entitlements=lambda plan_id: plan_calls.append(plan_id) or {},
+        )
+        assert context == {"role": None, "subscription": subscription, "entitlements": {}}
+
+    assert plan_calls == []
+
+
+def test_build_entitlement_context_with_does_not_accept_a_role_lookup():
+    # The role lookup is not injectable: a caller (the Streamlit adapter)
+    # can supply cached subscription/plan lookups, but never a cached role.
+    import inspect
+
+    parameters = inspect.signature(entitlement_service.build_entitlement_context_with).parameters
+    assert list(parameters) == ["user_id", "org_slug", "load_subscription", "load_plan_entitlements"]
 
 
 # --- feature_enabled / feature_limit (module-local copies) --------------------

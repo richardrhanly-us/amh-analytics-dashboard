@@ -4,16 +4,16 @@ import pandas as pd
 import streamlit as st
 
 from services import auth_service
-from services.access_service import (
-    get_org_access_mode,
-    get_org_branches,
-    get_user_memberships,
-)
+from services.access_service import get_org_access_mode
 from services.app_ui_service import apply_page_chrome
-from services.entitlement_service import build_entitlement_context
 from services.permission_service import can_manage_settings
 from services.privacy_hardening import install_streamlit_log_scrubber
 from services.sidebar_service import render_main_sidebar
+from services.streamlit_access_adapter import (
+    get_org_branches,
+    get_user_memberships,
+)
+from services.streamlit_entitlement_adapter import build_entitlement_context
 from services.user_admin_service import (
     ALLOWED_MEMBERSHIP_ROLES,
     create_or_add_org_user,

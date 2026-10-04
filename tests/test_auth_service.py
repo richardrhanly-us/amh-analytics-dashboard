@@ -619,6 +619,11 @@ def _run_enforce_active_session(
 ) -> AppTest:
     import services.auth_service as auth_service_flat
 
+    # Reached by its own import, not as an attribute of auth_service:
+    # auth_service no longer imports persistent_auth_service (which needs
+    # Streamlit) at module scope.
+    import services.persistent_auth_service as persistent_auth_service_flat
+
     monkeypatch.setattr(auth_service_flat, "is_user_active", lambda user_id: active)
 
     def fake_log_auth_event(**kwargs):
@@ -635,7 +640,7 @@ def _run_enforce_active_session(
         return 1
 
     monkeypatch.setattr(
-        auth_service_flat.persistent_auth_service,
+        persistent_auth_service_flat,
         "clear_all_persistent_auth_for_current_user",
         fake_clear_all_persistent_auth_for_current_user,
     )
@@ -729,11 +734,12 @@ def test_enforce_active_session_does_nothing_for_active_account(monkeypatch):
     assert [e.value for e in at.error] == []
 def test_enforce_active_session_stops_active_user_when_persistent_session_is_revoked(monkeypatch):
     import services.auth_service as auth_service_flat
+    import services.persistent_auth_service as persistent_auth_service_flat
 
     monkeypatch.setattr(auth_service_flat, "is_user_active", lambda user_id: True)
 
     monkeypatch.setattr(
-        auth_service_flat.persistent_auth_service,
+        persistent_auth_service_flat,
         "current_persistent_auth_is_valid",
         lambda user_id: False,
         raising=False,

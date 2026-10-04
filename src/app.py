@@ -36,8 +36,6 @@ from services import (
 )
 from services.access_service import (
     get_org_access_mode,
-    get_org_branches,
-    get_user_memberships,
     user_can_access_org,
 )
 from services.app_ui_service import apply_page_chrome, render_app_header
@@ -48,7 +46,6 @@ from services.dashboard_refresh_service import (
     resolve_run_every_seconds,
 )
 from services.email_service import send_password_reset_email
-from services.entitlement_service import build_entitlement_context
 from services.filters_service import resolve_date_filters
 from services.permission_service import (
     can_export,
@@ -61,6 +58,11 @@ from services.privacy_hardening import install_streamlit_log_scrubber
 from services.readiness_service import get_branch_readiness
 from services.settings_service import load_runtime_settings
 from services.sidebar_service import render_main_sidebar
+from services.streamlit_access_adapter import (
+    get_org_branches,
+    get_user_memberships,
+)
+from services.streamlit_entitlement_adapter import build_entitlement_context
 from views.live_today_view import render_live_today
 from views.overview_view import render_overview
 from views.reports_view import render_reports

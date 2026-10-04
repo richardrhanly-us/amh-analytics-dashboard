@@ -26,6 +26,10 @@ STREAMLIT_FREE_MODULES = [
     "services.filter_context_service",
     "services.pipeline_context_service",
     "tenant_db",
+    "services.auth_service",
+    "services.access_service",
+    "services.user_admin_service",
+    "services.entitlement_service",
 ]
 
 

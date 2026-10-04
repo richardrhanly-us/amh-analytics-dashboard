@@ -124,9 +124,7 @@ def db(monkeypatch):
     monkeypatch.setattr(
         main, "_AGENT_TOKEN_LOOKUP_SQL", main._AGENT_TOKEN_LOOKUP_SQL.replace(_HASH_EXPR, "sha256hex(:token)")
     )
-    access_service.get_user_memberships.clear()
     yield engine
-    access_service.get_user_memberships.clear()
     engine.dispose()
 
 
@@ -376,7 +374,6 @@ def test_a_multi_organization_user_keeps_the_other_organization_but_cannot_reach
     _offboard()
 
     assert session_service.validate_session(token) is not None
-    access_service.get_user_memberships.clear()
     assert [m["organization_slug"] for m in access_service.get_user_memberships(2)] == ["lib-b"]
     assert access_service.get_org_access_mode("lib-a") == "blocked"
     assert access_service.get_org_access_mode("lib-b") == "full"
