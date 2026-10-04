@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from ui_components import format_relative_time
+from formatting import format_relative_time
 
 # WCAG 2.1 AA (>=4.5:1, normal-size text) foreground/background pairs for
 # each pipeline-status family, one pair per Streamlit theme. The prior

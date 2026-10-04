@@ -64,6 +64,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
 import main
+from tenant_db import apply_tenant_context, tenant_connection
 
 ROOT = Path(__file__).resolve().parent.parent
 ADMIN_URL = os.environ.get("SORTVIEW_TEST_POSTGRES_URL")
@@ -584,3 +585,63 @@ def test_validate_tenant_schema_is_unaffected_by_the_context_change(owner_engine
     errors = dl.validate_tenant_schema()
 
     assert errors == []
+
+
+# --- tenant_db seam (src/tenant_db.py), as the runtime role ------------------
+
+def test_tenant_connection_isolates_an_unscoped_select(owner_engine, runtime_engine):
+    with owner_engine.begin() as conn:
+        _insert_checkin(conn, CUSTOMER_A, BRANCH_A, "CANARY-SEAM-A")
+        _insert_checkin(conn, CUSTOMER_B, BRANCH_B, "CANARY-SEAM-B")
+
+    # deliberately unscoped -- only the context tenant_connection applied
+    # on this same connection can be what restricts the rows
+    with tenant_connection(runtime_engine, CUSTOMER_A, BRANCH_A) as conn:
+        rows_a = conn.execute(text("SELECT barcode FROM checkins")).fetchall()
+    with tenant_connection(runtime_engine, CUSTOMER_B, BRANCH_B) as conn:
+        rows_b = conn.execute(text("SELECT barcode FROM checkins")).fetchall()
+
+    assert [r[0] for r in rows_a] == ["CANARY-SEAM-A"]
+    assert [r[0] for r in rows_b] == ["CANARY-SEAM-B"]
+
+
+def test_apply_tenant_context_sets_both_settings_and_enforces_insert_check(owner_engine, runtime_engine):
+    # conn.begin() before any execute() -- see test_cross_tenant_insert_is_denied_on_every_table
+    with runtime_engine.connect() as conn, conn.begin() as trans:
+        apply_tenant_context(conn, CUSTOMER_A, BRANCH_A)
+        settings = conn.execute(text(
+            "SELECT current_setting('app.operational_customer_id', true), "
+            "current_setting('app.operational_branch_id', true)"
+        )).one()
+        assert tuple(settings) == (str(CUSTOMER_A), str(BRANCH_A))
+
+        _insert_checkin(conn, CUSTOMER_A, BRANCH_A, "CANARY-SEAM-OWN")  # own tenant: WITH CHECK passes
+        with pytest.raises(Exception, match="row-level security"):
+            _insert_checkin(conn, CUSTOMER_B, BRANCH_B, "CANARY-SEAM-OTHER")
+        # the failed INSERT aborted the transaction; roll it back explicitly
+        trans.rollback()
+
+
+def test_tenant_connection_context_ends_with_the_block(owner_engine, runtime_engine):
+    with owner_engine.begin() as conn:
+        _insert_checkin(conn, CUSTOMER_A, BRANCH_A, "CANARY-SEAM-POOL")
+
+    # A one-connection pool on the same runtime role makes the reuse
+    # deterministic: the second checkout must be the same server backend.
+    single = create_engine(runtime_engine.url, pool_size=1, max_overflow=0, hide_parameters=True)
+    try:
+        with tenant_connection(single, CUSTOMER_A, BRANCH_A) as conn:
+            pid_inside = conn.execute(text("SELECT pg_backend_pid()")).scalar()
+            assert conn.execute(text("SELECT COUNT(*) FROM checkins")).scalar() == 1
+
+        with single.connect() as conn:
+            assert conn.execute(text("SELECT pg_backend_pid()")).scalar() == pid_inside
+            settings = conn.execute(text(
+                "SELECT current_setting('app.operational_customer_id', true), "
+                "current_setting('app.operational_branch_id', true)"
+            )).one()
+            # never set in this session -> NULL; set then ended -> '' (both fail closed)
+            assert all(value in (None, "") for value in settings)
+            assert conn.execute(text("SELECT COUNT(*) FROM checkins")).scalar() == 0
+    finally:
+        single.dispose()
