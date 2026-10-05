@@ -35,6 +35,7 @@ STREAMLIT_FREE_MODULES = [
     "services.operational_read_service",
     "customer_api.tenant_scope",
     "customer_api.operational_routes",
+    "services.operational_metrics_service",
 ]
 
 

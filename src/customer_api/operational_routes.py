@@ -11,29 +11,54 @@ slug, and follows the same three steps:
 
 A route never touches an engine, never resolves a tenant itself and never
 sets tenant context: those belong to the two modules above. It also never
-takes an operational identifier from the request -- its only inputs are the
-two slugs in its path.
+takes an operational identifier from the request: the tenant comes only from
+the two slugs in its path, and any query parameter describes WHAT is asked
+(a date), never whose data it is.
 
 The scoped connection is closed before the response is built.
 """
 
 from __future__ import annotations
 
+import re
+from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
+from pydantic import BeforeValidator
 from starlette.responses import JSONResponse, Response
 
+from customer_api import settings
 from customer_api.errors import NO_STORE_HEADERS, CustomerApiRoute
-from customer_api.operational_schemas import IngestStatusFields, IngestStatusResponse
+from customer_api.operational_schemas import (
+    CheckinCountResponse,
+    IngestStatusFields,
+    IngestStatusResponse,
+)
 from customer_api.tenant_scope import (
     ResolvedOperationalTenant,
     open_customer_tenant_connection,
     require_resolved_tenant,
 )
+from services.operational_metrics_service import get_checkin_count
 from services.operational_read_service import get_latest_ingest_status
 
 ResolvedTenant = Annotated[ResolvedOperationalTenant, Depends(require_resolved_tenant)]
+
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _calendar_date(value: object) -> date:
+    """Accepts exactly YYYY-MM-DD and nothing else. The default date parsing
+    would also take a timestamp whose time part is midnight; a route that
+    asks for a calendar day must not accept a timestamp in any form."""
+    if not isinstance(value, str) or not _ISO_DATE.fullmatch(value):
+        raise ValueError("must be a calendar date in the form YYYY-MM-DD")
+    return date.fromisoformat(value)
+
+
+# Required: a route never decides for the caller which day "today" is.
+LocalDate = Annotated[date, BeforeValidator(_calendar_date), Query(alias="date")]
 
 
 def create_operational_router() -> APIRouter:
@@ -65,6 +90,20 @@ def create_operational_router() -> APIRouter:
                 collector_schedule_status=status.collector_schedule_status,
             )
         )
+        return JSONResponse(content=body.model_dump(mode="json"), headers=NO_STORE_HEADERS)
+
+    @router.get("/checkins/count")
+    def get_checkins_count(tenant: ResolvedTenant, local_date: LocalDate) -> Response:
+        # A calendar day in the product's configured zone. A zone that is set
+        # but invalid raises here, before any connection is opened.
+        zone = settings.product_timezone()
+
+        with open_customer_tenant_connection(tenant) as conn:
+            count = get_checkin_count(conn, tenant, local_date=local_date, zone=zone)
+
+        # The connection is closed. Only the total is returned: which of the
+        # branch's two data eras each check-in came from is not the caller's concern.
+        body = CheckinCountResponse(date=local_date, timezone=zone.key, checkin_count=count.total)
         return JSONResponse(content=body.model_dump(mode="json"), headers=NO_STORE_HEADERS)
 
     return router

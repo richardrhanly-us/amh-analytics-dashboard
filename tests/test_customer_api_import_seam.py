@@ -71,6 +71,7 @@ CUSTOMER_ROUTES = {
     ("GET", "/api/organizations"),
     ("GET", "/api/organizations/{org_slug}"),
     ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/ingest-status"),
+    ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/checkins/count"),
 }
 
 _PROBE = """

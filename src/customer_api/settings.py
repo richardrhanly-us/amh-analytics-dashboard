@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
 from limits import parse_many
 
@@ -101,3 +102,19 @@ def login_rate_limit() -> str:
     except ValueError:
         return DEFAULT_LOGIN_RATE_LIMIT
     return value
+
+
+# --- product time zone ---------------------------------------------------------------
+
+# The one time zone in which "a day" is understood. It is the dashboard's
+# existing setting, SORTVIEW_LIVE_TIMEZONE, read here directly so nothing
+# Streamlit-coupled is imported; there is no per-organization zone.
+DEFAULT_PRODUCT_TIMEZONE = "America/Chicago"
+
+
+def product_timezone() -> ZoneInfo:
+    """The configured zone. Only an UNSET variable means the default: a value
+    that is set but is not a known IANA zone raises (ZoneInfoNotFoundError or
+    ValueError) and is answered as a server error. A wrong zone would move
+    every day boundary silently, so it is never guessed at or substituted."""
+    return ZoneInfo(os.getenv("SORTVIEW_LIVE_TIMEZONE", DEFAULT_PRODUCT_TIMEZONE).strip())
