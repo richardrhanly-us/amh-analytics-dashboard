@@ -665,4 +665,3 @@ def test_the_module_holds_only_the_approved_public_names():
     assert public == {"PIPELINE_STATES", "PipelineState", "state_for_run_status", "state_for_legacy_health",
                       "state_for_current_health", "schedule_problem", "state_for_current_report", "worse_state",
                       "annotations", "Literal"}
-
