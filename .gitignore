@@ -48,3 +48,8 @@ dist/
 # collector/build_release.py writes wherever --output points (releases are kept
 # outside the repository), and no test, script or doc reads a top-level release/.
 /release/
+
+# Node / frontend (frontend/): installed packages and local environment overrides.
+# frontend/dist is already covered by dist/ above.
+node_modules/
+.env*.local
