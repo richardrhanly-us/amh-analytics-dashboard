@@ -1,6 +1,8 @@
 import { Link, useOutletContext } from 'react-router'
 
 import type { OrganizationDetail } from '../api/organizations.ts'
+import { Breadcrumb } from '../components/Breadcrumb.tsx'
+import { PageHeading } from '../components/PageHeading.tsx'
 import { branchPath, ORGANIZATIONS_PATH } from '../router/paths.ts'
 
 /** /organizations/:orgSlug -- the organization and its branches to choose from. */
@@ -8,12 +10,10 @@ export function OrganizationPage() {
   const organization = useOutletContext<OrganizationDetail>()
 
   return (
-    <section aria-labelledby="organization-heading">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link to={ORGANIZATIONS_PATH}>Organizations</Link>
-      </nav>
+    <>
+      <Breadcrumb trail={[{ to: ORGANIZATIONS_PATH, label: 'Organizations' }]} current={organization.name} />
 
-      <h2 id="organization-heading">{organization.name}</h2>
+      <PageHeading>{organization.name}</PageHeading>
 
       <h3 id="branches-heading">Branches</h3>
       {organization.branches.length === 0 ? (
@@ -30,6 +30,6 @@ export function OrganizationPage() {
           ))}
         </ul>
       )}
-    </section>
+    </>
   )
 }

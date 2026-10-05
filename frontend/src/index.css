@@ -3,24 +3,41 @@
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   line-height: 1.5;
 
-  --border: light-dark(#6b7280, #9ca3af);
+  --page: light-dark(#f8fafc, #111827);
   --surface: light-dark(#ffffff, #1f2937);
+  --text: light-dark(#111827, #f3f4f6);
+  --muted: light-dark(#4b5563, #d1d5db);
+  /* --border outlines controls and must be seen; --line only separates and may be quiet. */
+  --border: light-dark(#6b7280, #9ca3af);
+  --line: light-dark(#d1d5db, #4b5563);
   --accent: light-dark(#1d4ed8, #93c5fd);
   --accent-text: light-dark(#ffffff, #111827);
   --danger: light-dark(#991b1b, #fecaca);
   --danger-surface: light-dark(#fef2f2, #450a0a);
+
+  /* Pipeline states. Each is also a different icon and a word: colour is never the only sign. */
+  --state-ok: light-dark(#166534, #86efac);
+  --state-degraded: light-dark(#92400e, #fcd34d);
+  --state-failed: light-dark(#991b1b, #fecaca);
+  --state-unknown: light-dark(#4b5563, #d1d5db);
+
+  --chart-bar: light-dark(#1d4ed8, #93c5fd);
+  --chart-band: light-dark(#e5e7eb, #374151);
+  --placeholder: light-dark(#e5e7eb, #374151);
 }
 
 body {
   margin: 0;
+  background: var(--page);
+  color: var(--text);
 }
 
 .app {
   box-sizing: border-box;
-  max-width: 40rem;
+  max-width: 64rem;
   min-height: 100vh;
   margin: 0 auto;
-  padding: 3rem 1.5rem;
+  padding: 2rem 1.5rem 3rem;
 }
 
 .app-header {
@@ -30,33 +47,77 @@ body {
   justify-content: space-between;
   gap: 1rem;
   margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
 }
 
-.app h1 {
+h1 {
   margin: 0;
-  font-size: 2rem;
+  font-size: 1.75rem;
   line-height: 1.2;
 }
 
-.app h3 {
+h2 {
+  margin: 0 0 1rem;
+  font-size: 1.5rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+h3 {
   margin: 1.5rem 0 0.5rem;
   font-size: 1rem;
 }
 
-.app h2 {
-  margin: 0 0 1rem;
-  font-size: 1.25rem;
-  line-height: 1.3;
-}
-
-.app p {
+p {
   margin: 0 0 1rem;
 }
 
+a {
+  color: var(--accent);
+}
+
+/* One visible focus ring for everything that can take focus, including a heading focused after navigation. */
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The page and its heading take focus only from code, after navigation or sign-in: a lighter ring, set clear of the text. */
+main:focus-visible,
+h2:focus-visible {
+  outline-width: 2px;
+  outline-offset: 0.5rem;
+  border-radius: 0.25rem;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.quiet {
+  color: var(--muted);
+}
+
+.inline-icon {
+  flex: none;
+  width: 1em;
+  height: 1em;
+}
+
+/* Sign-in */
 .auth-form {
   max-width: 21rem;
   padding: 1.5rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
   border-radius: 0.5rem;
   background: var(--surface);
 }
@@ -91,31 +152,34 @@ button {
   cursor: pointer;
 }
 
-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+.button-secondary {
+  background: var(--surface);
+  color: var(--accent);
 }
 
-/* A visible focus ring on every control, for keyboard users. */
-button:focus-visible,
-input:focus-visible {
-  outline: 3px solid var(--accent);
-  outline-offset: 2px;
+/* A busy button is marked aria-disabled, not disabled, so it keeps keyboard focus while it waits. */
+button:disabled,
+button[aria-disabled='true'] {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .error-message {
   padding: 0.625rem 0.75rem;
   border: 1px solid var(--danger);
+  border-left-width: 0.375rem;
   border-radius: 0.375rem;
   background: var(--danger-surface);
   color: var(--danger);
 }
 
 .user-menu {
+  max-width: 100%;
   text-align: right;
+  overflow-wrap: anywhere;
 }
 
-.app .identity {
+.identity {
   margin-bottom: 0.5rem;
 }
 
@@ -131,8 +195,27 @@ input:focus-visible {
   margin-bottom: 1rem;
 }
 
+.breadcrumb ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+/* The separator is decoration: the second `content` gives it empty alternative text where that is supported. */
+.breadcrumb li + li::before {
+  margin-right: 0.5rem;
+  color: var(--muted);
+  content: '/';
+  content: '/' / '';
+}
+
 /* Organizations and branches to choose from: one row each, the name a link. */
 .nav-list {
+  max-width: 40rem;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -146,9 +229,10 @@ input:focus-visible {
   gap: 0.25rem 1rem;
   margin-bottom: 0.5rem;
   padding: 0.75rem 1rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
   border-radius: 0.5rem;
   background: var(--surface);
+  overflow-wrap: anywhere;
 }
 
 .nav-list-link {
@@ -156,17 +240,8 @@ input:focus-visible {
 }
 
 .nav-list-meta {
+  color: var(--muted);
   font-size: 0.875rem;
-  opacity: 0.8;
-}
-
-a {
-  color: var(--accent);
-}
-
-a:focus-visible {
-  outline: 3px solid var(--accent);
-  outline-offset: 2px;
 }
 
 .notice {
@@ -174,57 +249,323 @@ a:focus-visible {
   border: 1px solid var(--border);
   border-left-width: 0.375rem;
   border-radius: 0.375rem;
+  background: var(--surface);
 }
 
-/* Live Today: controls, summary figures and plain tables. */
+/* Live Today */
 .live-controls {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  gap: 0.5rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.live-buttons {
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
 }
 
-.app .live-status {
-  flex-basis: 100%;
+.live-status {
   margin: 0;
+  color: var(--muted);
   font-size: 0.875rem;
-  opacity: 0.8;
 }
 
-.app .live-date {
+.refresh-mode {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.refresh-mode .inline-icon {
+  margin-right: 0.375rem;
+  vertical-align: -0.125em;
+}
+
+.live-date {
   margin-bottom: 0.5rem;
+  color: var(--muted);
   font-size: 0.875rem;
-  opacity: 0.8;
 }
 
+.panel {
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--surface);
+}
+
+.panel > h3 {
+  margin-top: 0;
+}
+
+.panel > :last-child {
+  margin-bottom: 0;
+}
+
+.pipeline-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 3rem;
+  margin: 0;
+}
+
+.pipeline-facts dt,
+.metric dt {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.pipeline-facts dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.pipeline-state {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 1.125rem;
+}
+
+.pipeline-state .inline-icon {
+  width: 1.25em;
+  height: 1.25em;
+}
+
+.pipeline-state-ok .inline-icon {
+  color: var(--state-ok);
+}
+
+.pipeline-state-degraded .inline-icon {
+  color: var(--state-degraded);
+}
+
+.pipeline-state-failed .inline-icon {
+  color: var(--state-failed);
+}
+
+.pipeline-state-unknown .inline-icon {
+  color: var(--state-unknown);
+}
+
+/* As many cards to a row as fit: five across on a desktop, two on a phone. */
 .metrics {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  gap: 0.75rem;
   margin: 0;
 }
 
 .metric {
   padding: 0.75rem 1rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
   border-radius: 0.5rem;
   background: var(--surface);
 }
 
-.metric dt {
-  font-size: 0.875rem;
-  opacity: 0.8;
-}
-
 .metric dd {
   margin: 0;
-  font-size: 1.25rem;
+}
+
+.metric-value {
+  font-size: 1.75rem;
+  font-weight: 600;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.metric-note {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+/* Words where a figure would be are set as words, not at a figure's size. */
+.metric-empty .metric-value,
+.metric-pending .metric-value,
+.metric-failed .metric-value {
+  padding: 0.375rem 0;
+  font-size: 1rem;
+  font-weight: 400;
+}
+
+.metric-pending .metric-value {
+  color: var(--muted);
+}
+
+/* A card or section that could not load says so in words; the dashed edge sets it apart from those that did. */
+.metric-failed {
+  border-style: dashed;
+  border-color: var(--danger);
+}
+
+.metric-failed .metric-value {
+  color: var(--danger);
   font-weight: 600;
 }
 
-.metric-empty {
+.section-pending {
+  color: var(--muted);
+}
+
+.section-failed {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px dashed var(--danger);
+  border-radius: 0.375rem;
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.live-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.live-today > .panel {
+  margin-bottom: 0.5rem;
+}
+
+@media (min-width: 60rem) {
+  .live-detail {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
+/*
+ * Hourly chart. A gutter for the scale, then the plot; above the plot a row for the "Now" marker and below it
+ * a row for the hour labels, each divided into the same 24 columns as the bars.
+ */
+.chart {
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: 2.75rem minmax(0, 1fr);
+  grid-template-rows: auto 12rem auto;
+  margin: 0.75rem 0 1rem;
+  padding-right: 0.75rem;
+  font-size: 0.8125rem;
+}
+
+.chart-now,
+.chart-x {
+  grid-column: 2;
+  display: grid;
+  grid-template-columns: repeat(24, minmax(0, 1fr));
+}
+
+.chart-now {
+  min-height: 1.75rem;
+  font-weight: 600;
+}
+
+.chart-now span {
+  grid-row: 1;
+  justify-self: center;
+  white-space: nowrap;
+}
+
+/* A small pointer from the word down to its column. */
+.chart-now span::after {
+  display: block;
+  width: 0;
+  margin: 0 auto;
+  border: 0.25rem solid transparent;
+  border-top-color: currentColor;
+  border-bottom: 0;
+  content: '';
+}
+
+.chart-y {
+  position: relative;
+  grid-row: 2;
+  grid-column: 1;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-y span {
+  position: absolute;
+  right: 0.5rem;
+  line-height: 1;
+  transform: translateY(50%);
+}
+
+.chart-plot {
+  position: relative;
+  grid-row: 2;
+  grid-column: 2;
+  min-width: 0;
+}
+
+.chart-plot svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.chart-bar {
+  fill: var(--chart-bar);
+}
+
+.chart-band {
+  fill: var(--chart-band);
+}
+
+.chart-grid,
+.chart-baseline {
+  stroke: var(--line);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.chart-baseline {
+  stroke: var(--border);
+}
+
+.chart-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  color: var(--muted);
   font-size: 0.875rem;
-  font-weight: 400;
+  text-align: center;
+}
+
+.chart-x {
+  grid-row: 3;
+  padding-top: 0.375rem;
+  color: var(--muted);
+}
+
+.chart-x span {
+  grid-row: 1;
+  white-space: nowrap;
+}
+
+/* A narrow chart labels every sixth hour rather than every third. Every hour is in the table either way. */
+@container (max-width: 30rem) {
+  .chart-x-minor {
+    display: none;
+  }
+}
+
+.chart-summary {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+#hourly-table {
+  margin-top: 0.75rem;
 }
 
 .data-table {
@@ -234,22 +575,72 @@ a:focus-visible {
 
 .data-table th,
 .data-table td {
-  padding: 0.25rem 0.5rem;
-  border-bottom: 1px solid var(--border);
+  padding: 0.375rem 0.5rem;
+  border-bottom: 1px solid var(--line);
   text-align: left;
+  vertical-align: baseline;
+}
+
+.data-table thead th {
+  border-bottom-color: var(--border);
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.data-table tbody tr:last-child > * {
+  border-bottom: 0;
 }
 
 .data-table tbody th {
   font-weight: 400;
+  overflow-wrap: anywhere;
 }
 
 .data-table td,
 .data-table thead th:last-child {
   text-align: right;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* The current hour is also labelled in words. */
 .data-table tr[aria-current] > * {
   font-weight: 600;
+}
+
+/* The outline shown while the dashboard first loads: empty blocks, still, and hidden from assistive technology. */
+.skeleton {
+  display: grid;
+  gap: 1rem;
+}
+
+.skeleton-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  gap: 0.75rem;
+}
+
+.skeleton-block {
+  height: 5rem;
+  border-radius: 0.5rem;
+  background: var(--placeholder);
+}
+
+.skeleton-chart {
+  height: 16rem;
+}
+
+@media (max-width: 30rem) {
+  .app {
+    padding: 1.25rem 1rem 2rem;
+  }
+
+  .live-buttons,
+  .live-buttons button {
+    flex: 1 1 auto;
+  }
+
+  .pipeline-facts {
+    gap: 0.75rem 1.5rem;
+  }
 }

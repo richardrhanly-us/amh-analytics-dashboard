@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatCalendarDate, formatHour, formatInstant, isValidTimeZone, productDate, productHour } from './productTime.ts'
+import { formatCalendarDate, formatHour, formatHourRange, formatInstant, isValidTimeZone, productDate, productHour } from './productTime.ts'
 
 const CHICAGO = 'America/Chicago'
 const at = (iso: string) => new Date(iso)
@@ -157,5 +157,26 @@ describe('formatHour', () => {
     [23, '11 PM'],
   ])('labels hour %i as %s', (hour, label) => {
     expect(formatHour(hour)).toBe(label)
+  })
+})
+
+describe('formatHourRange', () => {
+  it.each([
+    [0, '12–1 AM'],
+    [1, '1–2 AM'],
+    [10, '10–11 AM'],
+    [11, '11 AM–12 PM'],
+    [12, '12–1 PM'],
+    [13, '1–2 PM'],
+    [22, '10–11 PM'],
+    [23, '11 PM–12 AM'],
+  ])('writes the hour starting at %i as %s', (hour, label) => {
+    expect(formatHourRange(hour)).toBe(label)
+  })
+
+  it('starts every range with the label of its hour', () => {
+    for (let hour = 0; hour < 24; hour++) {
+      expect(formatHourRange(hour).startsWith(formatHour(hour).split(' ')[0])).toBe(true)
+    }
   })
 })

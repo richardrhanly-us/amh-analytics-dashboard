@@ -1,5 +1,5 @@
 import { QueryClientProvider, type QueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { useAuth } from './auth/useAuth.ts'
 import { ErrorMessage } from './components/ErrorMessage.tsx'
@@ -54,6 +54,21 @@ function AuthView({ createClient }: { createClient: QueryClientFactory }) {
 /** `createClient` exists for tests, which need a query client that does not wait between retries. */
 function App({ createClient = createQueryClient }: { createClient?: QueryClientFactory }) {
   const { state } = useAuth()
+  const main = useRef<HTMLElement>(null)
+  const previousStatus = useRef(state.status)
+
+  // Signing in, signing out and an expired session each replace everything in <main>, including whatever had
+  // focus. Focus moves to <main> so the next Tab reaches what replaced it -- the sign-in form, or the page.
+  // Checking the session on first load is not one of these, and moves nothing.
+  useEffect(() => {
+    const before = previousStatus.current
+    previousStatus.current = state.status
+    const signedIn = before === 'unauthenticated' && state.status === 'authenticated'
+    const signedOut = before === 'authenticated' && state.status === 'unauthenticated'
+    if (signedIn || signedOut) {
+      main.current?.focus()
+    }
+  }, [state.status])
 
   return (
     <div className="app">
@@ -61,7 +76,7 @@ function App({ createClient = createQueryClient }: { createClient?: QueryClientF
         <h1>SortView</h1>
         {state.status === 'authenticated' && <UserMenu user={state.user} />}
       </header>
-      <main>
+      <main ref={main} tabIndex={-1}>
         <AuthView createClient={createClient} />
       </main>
     </div>

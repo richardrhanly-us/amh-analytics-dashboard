@@ -142,12 +142,12 @@ describe('the sign-in form', () => {
     await user.click(screen.getByRole('button', { name: 'Sign in' }))
 
     const busy = screen.getByRole('button', { name: 'Signing in…' })
-    expect(busy).toBeDisabled()
+    expect(busy).toHaveAttribute('aria-disabled', 'true')
     await user.type(passwordInput(), '{Enter}')
     expect(fetchMock).toHaveBeenCalledTimes(2)
 
     pending.resolve(jsonResponse(401, INVALID_CREDENTIALS))
-    expect(await screen.findByRole('button', { name: 'Sign in' })).toBeEnabled()
+    expect(await screen.findByRole('button', { name: 'Sign in' })).not.toHaveAttribute('aria-disabled', 'true')
   })
 
   it('shows the signed-in shell after a successful login, with no second session request', async () => {
@@ -193,7 +193,7 @@ describe('the sign-in form', () => {
     await user.click(screen.getByRole('button', { name: 'Sign in' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/^Invalid email or password\.$/)
-    expect(screen.getByRole('button', { name: 'Sign in' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Sign in' })).not.toHaveAttribute('aria-disabled', 'true')
     expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument()
   })
 
@@ -318,7 +318,7 @@ describe('the signed-in header', () => {
 
     await user.click(screen.getByRole('button', { name: 'Sign out' }))
 
-    expect(screen.getByRole('button', { name: 'Signing out…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Signing out…' })).toHaveAttribute('aria-disabled', 'true')
     expect(screen.getByText('alice@example.test')).toBeInTheDocument()
 
     pending.resolve(noContent())
@@ -338,7 +338,7 @@ describe('the signed-in header', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(message)
     expect(screen.getByText('alice@example.test')).toBeInTheDocument()
     const retry = screen.getByRole('button', { name: 'Sign out' })
-    expect(retry).toBeEnabled()
+    expect(retry).not.toHaveAttribute('aria-disabled', 'true')
 
     await user.click(retry)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument())

@@ -1,81 +1,112 @@
-import type { ReactNode } from 'react'
+import { useState } from 'react'
 
-import type { PipelineState } from '../api/liveToday.ts'
 import { ErrorMessage } from '../components/ErrorMessage.tsx'
-import { formatCalendarDate, formatHour, formatInstant } from '../time/productTime.ts'
-import { busiestHour, checkinsInHour, formatRate, reasonLabel, rejectRate, topRejectReasons } from './metrics.ts'
+import { formatCalendarDate, formatHourRange, formatInstant } from '../time/productTime.ts'
+import { HourlyCheckins } from './HourlyCheckins.tsx'
+import { MetricCard, type Figure } from './MetricCard.tsx'
+import { busiestHour, checkinsInHour, formatRate, rejectRate } from './metrics.ts'
+import { PipelinePanel } from './PipelinePanel.tsx'
+import { RejectReasons } from './RejectReasons.tsx'
 import { REFRESH_INTERVAL_MS, useLiveToday, type LiveToday as LiveTodayData, type Section } from './useLiveToday.ts'
 
 const UNAVAILABLE = 'Live dashboard data is not available for this branch yet.'
-const NOT_LOADED = 'Could not load'
 
-const STATE_LABELS: Record<PipelineState, string> = {
-  ok: 'OK',
-  degraded: 'Degraded',
-  failed: 'Failed',
-  unknown: 'Unknown',
-}
-
-/** One figure in a summary. `children` is the value, or the reason there is none. */
-function Metric({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="metric">
-      <dt>{label}</dt>
-      <dd>{children}</dd>
-    </div>
-  )
-}
-
-/** A section's value once loaded; until then, words saying why there is none -- never a placeholder number. */
-function value<T>(section: Section<T>, render: (data: T) => ReactNode): ReactNode {
+/** A section's figure once loaded; until then, words saying why there is none -- never a placeholder number. */
+function figure<T>(section: Section<T>, read: (data: T) => Figure): Figure {
   switch (section.status) {
     case 'loading':
-      return <span className="metric-empty">Loading…</span>
+      return { tone: 'pending', text: 'Loading…' }
     case 'error':
-      return <span className="metric-empty">{NOT_LOADED}</span>
+      return { tone: 'failed', text: 'Could not load' }
     case 'ready':
-      return render(section.data)
+      return read(section.data)
+  }
+}
+
+const count = (value: number): Figure => ({ tone: 'value', text: value.toLocaleString('en-US') })
+
+/**
+ * What the person just asked for, to be confirmed aloud. Only their own
+ * actions are announced: a timed refresh changes the page without saying so.
+ */
+type Announcement = { kind: 'paused' } | { kind: 'resumed' } | { kind: 'refresh'; asOfBefore: number | null } | null
+
+function announcementText(announcement: Announcement, live: LiveTodayData): string {
+  switch (announcement?.kind) {
+    case 'paused':
+      return 'Automatic refresh paused.'
+    case 'resumed':
+      return 'Automatic refresh resumed.'
+    case 'refresh':
+      // Said once new data has arrived and all of it loaded. A refresh that failed is announced by the alert.
+      return live.asOf !== announcement.asOfBefore && problem(live) === null ? 'Live data refreshed.' : ''
+    default:
+      return ''
   }
 }
 
 function Controls({ live }: { live: LiveTodayData }) {
+  const [announcement, setAnnouncement] = useState<Announcement>(null)
   const minutes = REFRESH_INTERVAL_MS / 60_000
   const updated = live.asOf === null || live.timeZone === null ? null : formatInstant(live.asOf, live.timeZone)
 
   return (
     <div className="live-controls">
-      <button type="button" onClick={live.refresh} disabled={live.refreshing}>
-        {live.refreshing ? 'Refreshing…' : 'Refresh'}
-      </button>
-      <button type="button" onClick={() => live.setPaused(!live.paused)}>
-        {live.paused ? 'Resume automatic refresh' : 'Pause automatic refresh'}
-      </button>
-      <p className="live-status" role="status">
-        {live.paused ? 'Automatic refresh is paused.' : `Refreshes automatically every ${minutes} minutes.`}
-        {updated !== null && ` Last updated ${updated}.`}
+      <div className="live-buttons">
+        <button
+          type="button"
+          // Unavailable while a refresh runs, but not `disabled`: a disabled button drops keyboard focus.
+          aria-disabled={live.refreshing}
+          onClick={() => {
+            if (!live.refreshing) {
+              setAnnouncement({ kind: 'refresh', asOfBefore: live.asOf })
+              live.refresh()
+            }
+          }}
+        >
+          {live.refreshing ? 'Refreshing…' : 'Refresh'}
+        </button>
+        <button
+          type="button"
+          className="button-secondary"
+          onClick={() => {
+            setAnnouncement({ kind: live.paused ? 'resumed' : 'paused' })
+            live.setPaused(!live.paused)
+          }}
+        >
+          {live.paused ? 'Resume automatic refresh' : 'Pause automatic refresh'}
+        </button>
+      </div>
+      {/* Read when reached, not announced: it changes with every timed refresh. */}
+      <p className="live-status">
+        <span className="refresh-mode">
+          <svg className="inline-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            {live.paused ? (
+              <path d="M5.5 3.5v9M10.5 3.5v9" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            ) : (
+              <path
+                d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2v3h-3"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            )}
+          </svg>
+          {live.paused ? 'Automatic refresh is paused.' : `Refreshes automatically every ${minutes} minutes.`}
+        </span>
+        {updated !== null && live.asOf !== null && (
+          <span>
+            {' '}
+            Last updated <time dateTime={new Date(live.asOf).toISOString()}>{updated}</time>.
+          </span>
+        )}
+      </p>
+      <p className="visually-hidden" role="status">
+        {announcementText(announcement, live)}
       </p>
     </div>
-  )
-}
-
-function Pipeline({ live }: { live: LiveTodayData }) {
-  return (
-    <section aria-labelledby="pipeline-heading">
-      <h3 id="pipeline-heading">Pipeline</h3>
-      <dl className="metrics">
-        <Metric label="Status">{value(live.pipeline, (pipeline) => STATE_LABELS[pipeline.state])}</Metric>
-        <Metric label="Last reported">
-          {value(live.pipeline, (pipeline) => {
-            const reported = formatInstant(pipeline.last_reported_at, pipeline.timezone)
-            return reported === null || pipeline.last_reported_at === null ? (
-              <span className="metric-empty">Nothing reported yet</span>
-            ) : (
-              <time dateTime={pipeline.last_reported_at}>{reported}</time>
-            )
-          })}
-        </Metric>
-      </dl>
-    </section>
   )
 }
 
@@ -92,99 +123,37 @@ function Today({ live }: { live: LiveTodayData }) {
         </p>
       )}
       <dl className="metrics">
-        <Metric label="Check-ins">{value(checkinCount, (data) => data.checkin_count.toLocaleString('en-US'))}</Metric>
-        <Metric label={currentHour === null ? 'Current hour' : `Current hour (${formatHour(currentHour)})`}>
-          {value(checkinsByHour, (data) =>
-            currentHour === null ? null : checkinsInHour(data.hours, currentHour).toLocaleString('en-US'),
+        <MetricCard label="Check-ins today" {...figure(checkinCount, (data) => count(data.checkin_count))} />
+        <MetricCard
+          label="Current hour"
+          {...figure(checkinsByHour, (data) =>
+            currentHour === null
+              ? { tone: 'empty', text: 'Not available' }
+              : { ...count(checkinsInHour(data.hours, currentHour)), note: formatHourRange(currentHour) },
           )}
-        </Metric>
-        <Metric label="Busiest hour">
-          {value(checkinsByHour, (data) => {
+        />
+        <MetricCard
+          label="Busiest hour"
+          {...figure(checkinsByHour, (data) => {
             const busiest = busiestHour(data.hours)
-            return busiest === null ? (
-              <span className="metric-empty">No check-ins yet</span>
-            ) : (
-              `${formatHour(busiest.hour)} (${busiest.checkin_count.toLocaleString('en-US')})`
-            )
+            return busiest === null
+              ? { tone: 'empty', text: 'No check-ins yet' }
+              : { ...count(busiest.checkin_count), note: formatHourRange(busiest.hour) }
           })}
-        </Metric>
-        <Metric label="Rejects">{value(rejectCount, (data) => data.reject_count.toLocaleString('en-US'))}</Metric>
-        <Metric label="Reject rate">
-          {value(rejectCount, (rejects) =>
-            value(checkinCount, (checkins) => {
+        />
+        <MetricCard label="Rejects today" {...figure(rejectCount, (data) => count(data.reject_count))} />
+        <MetricCard
+          label="Reject rate"
+          {...figure(rejectCount, (rejects) =>
+            figure(checkinCount, (checkins) => {
               const rate = rejectRate(rejects.reject_count, checkins.checkin_count)
-              return rate === null ? <span className="metric-empty">Not available (no check-ins)</span> : formatRate(rate)
+              return rate === null
+                ? { tone: 'empty', text: 'Not available', note: 'No check-ins yet' }
+                : { tone: 'value', text: formatRate(rate) }
             }),
           )}
-        </Metric>
+        />
       </dl>
-    </section>
-  )
-}
-
-function HourlyCheckins({ live }: { live: LiveTodayData }) {
-  const { checkinsByHour, currentHour } = live
-
-  return (
-    <section aria-labelledby="hourly-heading">
-      <h3 id="hourly-heading">Hourly check-ins</h3>
-      {checkinsByHour.status === 'loading' && <p>Loading…</p>}
-      {checkinsByHour.status === 'error' && <p>{NOT_LOADED}.</p>}
-      {checkinsByHour.status === 'ready' && (
-        <table className="data-table" aria-labelledby="hourly-heading">
-          <thead>
-            <tr>
-              <th scope="col">Hour</th>
-              <th scope="col">Check-ins</th>
-            </tr>
-          </thead>
-          <tbody>
-            {checkinsByHour.data.hours.map((entry) => (
-              <tr key={entry.hour} aria-current={entry.hour === currentHour ? 'true' : undefined}>
-                <th scope="row">
-                  {formatHour(entry.hour)}
-                  {entry.hour === currentHour && ' (current hour)'}
-                </th>
-                <td>{entry.checkin_count.toLocaleString('en-US')}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </section>
-  )
-}
-
-function RejectReasons({ live }: { live: LiveTodayData }) {
-  const { rejectsByReason } = live
-  const reasons = rejectsByReason.status === 'ready' ? topRejectReasons(rejectsByReason.data.reasons) : []
-
-  return (
-    <section aria-labelledby="reasons-heading">
-      <h3 id="reasons-heading">Top reject reasons</h3>
-      {rejectsByReason.status === 'loading' && <p>Loading…</p>}
-      {rejectsByReason.status === 'error' && <p>{NOT_LOADED}.</p>}
-      {rejectsByReason.status === 'ready' &&
-        (reasons.length === 0 ? (
-          <p>No rejects today.</p>
-        ) : (
-          <table className="data-table" aria-labelledby="reasons-heading">
-            <thead>
-              <tr>
-                <th scope="col">Reason</th>
-                <th scope="col">Rejects</th>
-              </tr>
-            </thead>
-            <tbody>
-              {reasons.map((entry) => (
-                <tr key={entry.reason}>
-                  <th scope="row">{reasonLabel(entry.reason)}</th>
-                  <td>{entry.reject_count.toLocaleString('en-US')}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ))}
     </section>
   )
 }
@@ -223,7 +192,22 @@ export function LiveToday({ orgSlug, branchSlug }: { orgSlug: string; branchSlug
   }
 
   if (live.pipeline.status === 'loading') {
-    return <p role="status">Loading live data…</p>
+    // The outline of what is coming holds the page's shape. It is empty boxes: no label, no figure, and
+    // nothing for assistive technology, which is told in words that the data is loading.
+    return (
+      <div className="live-today">
+        <p role="status">Loading live data…</p>
+        <div className="skeleton" aria-hidden="true">
+          <div className="skeleton-block skeleton-panel" />
+          <div className="skeleton-cards">
+            {[0, 1, 2, 3, 4].map((card) => (
+              <div key={card} className="skeleton-block" />
+            ))}
+          </div>
+          <div className="skeleton-block skeleton-chart" />
+        </div>
+      </div>
+    )
   }
 
   if (live.pipeline.status === 'error') {
@@ -231,7 +215,16 @@ export function LiveToday({ orgSlug, branchSlug }: { orgSlug: string; branchSlug
     return (
       <div className="load-failure">
         <ErrorMessage message={live.pipeline.message} />
-        <button type="button" onClick={live.refresh} disabled={live.refreshing}>
+        <button
+          type="button"
+          // Unavailable while trying again, but not `disabled`: a disabled button drops keyboard focus.
+          aria-disabled={live.refreshing}
+          onClick={() => {
+            if (!live.refreshing) {
+              live.refresh()
+            }
+          }}
+        >
           {live.refreshing ? 'Trying again…' : 'Try again'}
         </button>
       </div>
@@ -242,10 +235,12 @@ export function LiveToday({ orgSlug, branchSlug }: { orgSlug: string; branchSlug
     <div className="live-today">
       <Controls live={live} />
       <ErrorMessage message={problem(live)} />
-      <Pipeline live={live} />
+      <PipelinePanel pipeline={live.pipeline.data} />
       <Today live={live} />
-      <HourlyCheckins live={live} />
-      <RejectReasons live={live} />
+      <div className="live-detail">
+        <HourlyCheckins checkinsByHour={live.checkinsByHour} currentHour={live.currentHour} timeZone={live.timeZone} />
+        <RejectReasons rejectsByReason={live.rejectsByReason} />
+      </div>
     </div>
   )
 }

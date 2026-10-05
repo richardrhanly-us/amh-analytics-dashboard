@@ -1,6 +1,8 @@
-import { Link, useOutletContext, useParams } from 'react-router'
+import { useOutletContext, useParams } from 'react-router'
 
 import type { OrganizationDetail } from '../api/organizations.ts'
+import { Breadcrumb } from '../components/Breadcrumb.tsx'
+import { PageHeading } from '../components/PageHeading.tsx'
 import { LiveToday } from '../liveToday/LiveToday.tsx'
 import { ORGANIZATIONS_PATH, organizationPath } from '../router/paths.ts'
 import { NotFoundPage } from './NotFoundPage.tsx'
@@ -22,16 +24,18 @@ export function BranchPage() {
   }
 
   return (
-    <section aria-labelledby="branch-heading">
-      <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link to={ORGANIZATIONS_PATH}>Organizations</Link>
-        <span aria-hidden="true"> / </span>
-        <Link to={organizationPath(organization.slug)}>{organization.name}</Link>
-      </nav>
+    <>
+      <Breadcrumb
+        trail={[
+          { to: ORGANIZATIONS_PATH, label: 'Organizations' },
+          { to: organizationPath(organization.slug), label: organization.name },
+        ]}
+        current={branch.name}
+      />
 
-      <h2 id="branch-heading">{branch.name}</h2>
+      <PageHeading>{branch.name}</PageHeading>
       {/* Keyed by branch, so another branch starts as a new dashboard: running, and with nothing carried over. */}
       <LiveToday key={`${organization.slug}/${branch.slug}`} orgSlug={organization.slug} branchSlug={branch.slug} />
-    </section>
+    </>
   )
 }
