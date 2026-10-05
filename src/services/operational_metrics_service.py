@@ -105,6 +105,78 @@ def local_day_bounds(local_date: date, zone: ZoneInfo) -> LocalDayBounds:
 
 
 # =====================================================================================================================
+# The wall-clock hours of one local day, in both time domains
+# =====================================================================================================================
+
+WALL_CLOCK_HOURS_PER_DAY = 24
+
+
+@dataclass(frozen=True, slots=True)
+class LocalHourBoundaries:
+    """The 25 boundaries that cut one local calendar day into its 24
+    WALL-CLOCK hours, expressed once for each table. Hour H -- the hour the
+    local clock reads H:xx -- is the half-open interval [boundary H,
+    boundary H + 1), so boundary 0 is the start of the day and boundary 24
+    its end, the same values local_day_bounds gives.
+
+    v1_boundaries_local are NAIVE local wall-clock datetimes, for comparing
+    with checkins.event_time: H:00 on the date, then 00:00 on the next. They
+    are the same 25 values on every date and in every zone.
+
+    v2_boundaries_utc are AWARE UTC instants, for comparing with
+    checkin_events.event_time: the instant the local clock first reads each
+    of those values. They never decrease, but they are not always an hour
+    apart, because an hour of the local clock is not always an hour long:
+
+        clocks go forward   the skipped hour is zero wide (its two boundaries
+                            are the same instant), so no instant falls in it
+        clocks go back      the repeated hour is two hours wide and holds
+                            BOTH passes through it
+
+    That is the same answer the v1 side gives by construction. A legacy row
+    carries only its wall-clock reading: one stamped in a repeated hour does
+    not say which pass it belongs to, so both passes share the one hour that
+    reading names; and one stamped in a skipped hour -- a reading that should
+    not exist -- still falls in the hour it names. The two passes of a
+    repeated hour are never told apart, for either table.
+    """
+
+    local_date: date
+    timezone_name: str
+    v1_boundaries_local: tuple[datetime, ...]
+    v2_boundaries_utc: tuple[datetime, ...]
+
+
+def local_hour_boundaries(local_date: date, zone: ZoneInfo) -> LocalHourBoundaries:
+    """The wall-clock hour boundaries of `local_date` in `zone`, for both tables."""
+    day = local_day_bounds(local_date, zone)
+
+    v1_boundaries_local = tuple(
+        day.v1_start_local + timedelta(hours=hour) for hour in range(WALL_CLOCK_HOURS_PER_DAY + 1)
+    )
+
+    # fold=0, as for midnight: a reading that happens twice is its FIRST
+    # occurrence, so the repeated hour runs from there to the next reading
+    # and takes in both passes; a reading that is skipped is the instant the
+    # clocks jump, so the skipped hour is empty. Each instant is then held
+    # inside the day and never allowed to precede the one before it, so the
+    # 24 intervals always tile the day exactly -- no gap, no overlap -- even
+    # in a zone whose clocks jump by more than a day's worth of hours.
+    v2_boundaries_utc = [day.v2_start_utc]
+    for hour in range(1, WALL_CLOCK_HOURS_PER_DAY):
+        instant = datetime.combine(local_date, time(hour), tzinfo=zone).astimezone(UTC)
+        v2_boundaries_utc.append(min(max(instant, v2_boundaries_utc[-1]), day.v2_end_utc))
+    v2_boundaries_utc.append(day.v2_end_utc)
+
+    return LocalHourBoundaries(
+        local_date=local_date,
+        timezone_name=zone.key,
+        v1_boundaries_local=v1_boundaries_local,
+        v2_boundaries_utc=tuple(v2_boundaries_utc),
+    )
+
+
+# =====================================================================================================================
 # A branch's cutover, in both time domains
 # =====================================================================================================================
 
@@ -289,3 +361,152 @@ def get_checkin_count(
         ).scalar_one())
 
     return CheckinCount(total=v1_count + v2_count, v1_count=v1_count, v2_count=v2_count)
+
+
+# =====================================================================================================================
+# Check-in counts for each wall-clock hour of one local day
+# =====================================================================================================================
+
+@dataclass(frozen=True, slots=True)
+class CheckinHourlyCounts:
+    """Check-ins on one local calendar day, by wall-clock hour. Each tuple has
+    exactly 24 entries: index H is the hour the local clock reads H:xx.
+
+    `counts` is the answer; entry by entry it is always v1_counts + v2_counts,
+    and its sum is the day's CheckinCount.total. The per-era tuples are for
+    this service's own tests and diagnostics, as in CheckinCount.
+    """
+
+    counts: tuple[int, ...]
+    v1_counts: tuple[int, ...]
+    v2_counts: tuple[int, ...]
+
+
+# One statement per era returns all 24 counts as one row: a conditional count
+# for each hour, [boundary H, boundary H + 1). The WHERE clause is the same as
+# the day count's -- the tenant, then the part of the day the era owns -- so a
+# row is counted here exactly when it is counted there, and the hour it lands
+# in is decided only by which pair of boundaries it falls between. Every
+# boundary is computed in Python and bound with its type stated, as above;
+# nothing is grouped, extracted or converted by the database.
+#
+# The text is assembled from constants in this module only -- the hour
+# numbers 0-24 and fixed SQL. Nothing from a caller is ever part of it.
+_HOURLY_COUNT_COLUMNS = ",\n".join(
+    f"        COUNT(*) FILTER (WHERE event_time >= :boundary_{hour} AND event_time < :boundary_{hour + 1})"
+    for hour in range(WALL_CLOCK_HOURS_PER_DAY)
+)
+_HOUR_BOUNDARY_BINDS = tuple(f"boundary_{index}" for index in range(WALL_CLOCK_HOURS_PER_DAY + 1))
+
+_V1_CHECKIN_HOURLY_COUNT_SQL = text(
+    "    SELECT\n"  # nosec B608 - constants only
+    + _HOURLY_COUNT_COLUMNS
+    + """
+    FROM checkins
+    WHERE customer_id = :customer_id
+      AND branch_id = :branch_id
+      AND event_time >= :start_local
+      AND event_time < :end_local
+"""
+).bindparams(
+    bindparam("start_local", type_=DateTime(timezone=False)),
+    bindparam("end_local", type_=DateTime(timezone=False)),
+    *(bindparam(name, type_=DateTime(timezone=False)) for name in _HOUR_BOUNDARY_BINDS),
+)
+
+_V2_CHECKIN_HOURLY_COUNT_SQL = text(
+    "    SELECT\n"  # nosec B608 - constants only
+    + _HOURLY_COUNT_COLUMNS
+    + """
+    FROM checkin_events
+    WHERE customer_id = :customer_id
+      AND branch_id = :branch_id
+      AND event_time >= :start_utc
+      AND event_time < :end_utc
+"""
+).bindparams(
+    bindparam("start_utc", type_=DateTime(timezone=True)),
+    bindparam("end_utc", type_=DateTime(timezone=True)),
+    *(bindparam(name, type_=DateTime(timezone=True)) for name in _HOUR_BOUNDARY_BINDS),
+)
+
+_NO_HOURLY_COUNTS = (0,) * WALL_CLOCK_HOURS_PER_DAY
+
+
+def _hourly_counts(row: object) -> tuple[int, ...]:
+    counts = tuple(int(value) for value in row)  # type: ignore[attr-defined]
+    if len(counts) != WALL_CLOCK_HOURS_PER_DAY:
+        raise ValueError("an hourly count statement must return exactly 24 counts")
+    return counts
+
+
+def get_checkin_counts_by_hour(
+    conn: Connection,
+    tenant: ResolvedOperationalTenant,
+    *,
+    local_date: date,
+    zone: ZoneInfo,
+) -> CheckinHourlyCounts:
+    """How many check-ins the tenant's branch had in each wall-clock hour of
+    `local_date`, a calendar day in `zone`. Always 24 counts, zero where
+    nothing happened.
+
+    The eras share the day exactly as in get_checkin_count: with no effective
+    cutover the branch is v1 only and `checkin_events` is not read; with one,
+    v1 owns the part of the day strictly before it and v2 the part at or
+    after it, and a part that is empty is not queried. A cutover inside an
+    hour therefore splits that hour too: its count is the v1 rows before the
+    cutover plus the v2 rows from it on, with nothing counted twice.
+
+    The hours are local_hour_boundaries': a skipped hour holds no v2 rows
+    (but still holds any legacy row stamped in it), and a repeated hour holds
+    both of its passes.
+
+    `conn` must already carry the tenant's RLS context. At most three
+    statements run -- the cutover lookup, then one per era that owns part of
+    the day. If any of them fails the error propagates: the counts of one era
+    are never returned as if they were the whole.
+    """
+    hours = local_hour_boundaries(local_date, zone)
+    cutover_at = get_effective_cutover(conn, tenant)
+
+    # Boundaries 0 and 24 are the day's own bounds, so the clamping below is
+    # get_checkin_count's, applied to the same interval.
+    v1_start_local, v1_end_local = hours.v1_boundaries_local[0], hours.v1_boundaries_local[-1]
+    v2_start_utc, v2_end_utc = None, hours.v2_boundaries_utc[-1]
+    if cutover_at is not None:
+        boundary = cutover_boundary(cutover_at, zone)
+        v1_end_local = min(v1_end_local, boundary.cutover_local_naive)
+        v2_start_utc = max(hours.v2_boundaries_utc[0], boundary.cutover_utc)
+
+    tenant_ids = {"customer_id": tenant.operational_customer_id, "branch_id": tenant.operational_branch_id}
+
+    v1_counts = _NO_HOURLY_COUNTS
+    if v1_start_local < v1_end_local:
+        v1_counts = _hourly_counts(conn.execute(
+            _V1_CHECKIN_HOURLY_COUNT_SQL,
+            {
+                **tenant_ids,
+                "start_local": v1_start_local,
+                "end_local": v1_end_local,
+                **dict(zip(_HOUR_BOUNDARY_BINDS, hours.v1_boundaries_local, strict=True)),
+            },
+        ).one())
+
+    v2_counts = _NO_HOURLY_COUNTS
+    if v2_start_utc is not None and v2_start_utc < v2_end_utc:
+        v2_counts = _hourly_counts(conn.execute(
+            _V2_CHECKIN_HOURLY_COUNT_SQL,
+            {
+                **tenant_ids,
+                "start_utc": v2_start_utc,
+                "end_utc": v2_end_utc,
+                **dict(zip(_HOUR_BOUNDARY_BINDS, hours.v2_boundaries_utc, strict=True)),
+            },
+        ).one())
+
+    return CheckinHourlyCounts(
+        counts=tuple(v1 + v2 for v1, v2 in zip(v1_counts, v2_counts, strict=True)),
+        v1_counts=v1_counts,
+        v2_counts=v2_counts,
+    )

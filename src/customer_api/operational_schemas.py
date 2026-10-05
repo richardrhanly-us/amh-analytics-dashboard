@@ -52,3 +52,23 @@ class CheckinCountResponse(_ResponseModel):
     date: dt.date
     timezone: str
     checkin_count: int
+
+
+class CheckinHourCount(_ResponseModel):
+    """Check-ins in one wall-clock hour: `hour` is what the local clock read,
+    0 to 23."""
+
+    hour: int
+    checkin_count: int
+
+
+class CheckinsByHourResponse(_ResponseModel):
+    """Check-ins on one local calendar day, by wall-clock hour. `date` and
+    `timezone` are as in CheckinCountResponse. `hours` always has 24 entries,
+    for hours 0 to 23 in order, zero where nothing happened -- on every date,
+    including the two a year whose local day is not 24 hours long. The counts
+    add up to that day's CheckinCountResponse.checkin_count."""
+
+    date: dt.date
+    timezone: str
+    hours: list[CheckinHourCount]

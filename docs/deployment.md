@@ -21,12 +21,16 @@ The backend API is responsible for:
 - authenticating the AMH agent
 - writing data into Neon
 - serving the customer (browser) API under `/api`: session login and logout, the
-  signed-in user's organization context, and two read-only operational endpoints:
+  signed-in user's organization context, and three read-only operational endpoints:
   - `GET /api/organizations/{org_slug}/branches/{branch_slug}/ingest-status`
     (a branch's latest Contract v2 collector status, or `status: null` if it has none)
   - `GET /api/organizations/{org_slug}/branches/{branch_slug}/checkins/count?date=YYYY-MM-DD`
     (check-ins on one calendar day; `date` is required and is interpreted in
     `SORTVIEW_LIVE_TIMEZONE`, which the response echoes)
+  - `GET /api/organizations/{org_slug}/branches/{branch_slug}/checkins/by-hour?date=YYYY-MM-DD`
+    (the same day's check-ins by hour; `date` is required and is interpreted in
+    `SORTVIEW_LIVE_TIMEZONE`, and the response always contains 24 local wall-clock
+    buckets, hours 0 to 23, whose counts add up to the `checkins/count` result)
 
 Typical backend deployment flow:
 
