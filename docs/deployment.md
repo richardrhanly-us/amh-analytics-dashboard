@@ -21,7 +21,7 @@ The backend API is responsible for:
 - authenticating the AMH agent
 - writing data into Neon
 - serving the customer (browser) API under `/api`: session login and logout, the
-  signed-in user's organization context, and three read-only operational endpoints:
+  signed-in user's organization context, and four read-only operational endpoints:
   - `GET /api/organizations/{org_slug}/branches/{branch_slug}/ingest-status`
     (a branch's latest Contract v2 collector status, or `status: null` if it has none)
   - `GET /api/organizations/{org_slug}/branches/{branch_slug}/checkins/count?date=YYYY-MM-DD`
@@ -31,6 +31,10 @@ The backend API is responsible for:
     (the same day's check-ins by hour; `date` is required and is interpreted in
     `SORTVIEW_LIVE_TIMEZONE`, and the response always contains 24 local wall-clock
     buckets, hours 0 to 23, whose counts add up to the `checkins/count` result)
+  - `GET /api/organizations/{org_slug}/branches/{branch_slug}/rejects/count?date=YYYY-MM-DD`
+    (rejects on one calendar day; `date` is required and is interpreted in
+    `SORTVIEW_LIVE_TIMEZONE`, and the response returns the raw count of reject rows
+    stored for that local date, whatever their reason)
 
 Typical backend deployment flow:
 
@@ -180,7 +184,7 @@ scheduled task environment for the agent, CI secrets for the pipeline.
 | `SORTVIEW_ACS_BRANCH_COLUMN` | dashboard | optional | `branch_id` |
 | `SORTVIEW_PIPELINE_ORG_COLUMN` | dashboard | optional | `customer_id` |
 | `SORTVIEW_PIPELINE_BRANCH_COLUMN` | dashboard | optional | `branch_id` |
-| `SORTVIEW_LIVE_TIMEZONE` | backend, dashboard | optional | `America/Chicago` (must be a valid IANA zone; the customer check-in count API answers 500 if it is set to an invalid one) |
+| `SORTVIEW_LIVE_TIMEZONE` | backend, dashboard | optional | `America/Chicago` (must be a valid IANA zone; the customer operational metrics API answers 500 if it is set to an invalid one) |
 | `SORTVIEW_API_TOKEN` | agent (legacy `agent\` runtime only -- **not** the SortView Collector, see below) | required | -- |
 | `SORTVIEW_HTTP_CONNECT_TIMEOUT` | agent | optional | `10` |
 | `SORTVIEW_HTTP_UPLOAD_READ_TIMEOUT` | agent | optional | `300` |

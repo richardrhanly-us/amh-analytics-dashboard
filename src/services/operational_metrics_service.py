@@ -510,3 +510,105 @@ def get_checkin_counts_by_hour(
         v1_counts=v1_counts,
         v2_counts=v2_counts,
     )
+
+
+# =====================================================================================================================
+# Reject count for one local day
+# =====================================================================================================================
+#
+# Rejects are kept in two tables that hold time exactly as the check-in
+# tables do, and a branch's one cutover divides them at the same instant:
+#
+#     rejects.event_time          TIMESTAMP    (legacy "v1")   naive local wall clock
+#     reject_events.event_time    TIMESTAMPTZ  (Contract "v2") a true instant
+#
+# So everything above about local days and the cutover applies unchanged.
+
+@dataclass(frozen=True, slots=True)
+class RejectCount:
+    """Rejects on one local calendar day. `total` is the answer; it is always
+    v1_count + v2_count. The per-era split is for this service's own tests
+    and diagnostics, as in CheckinCount."""
+
+    total: int
+    v1_count: int
+    v2_count: int
+
+
+# Plain row counts, one table each: no join, no DISTINCT, and no filter on
+# what kind of reject a row is -- every stored reject counts, whatever its
+# reason, as on the dashboard. Each filters the tenant explicitly as well as
+# relying on row level security, and binds its time bounds with their types
+# stated, as the check-in counts do.
+_V1_REJECT_COUNT_SQL = text("""
+    SELECT COUNT(*)
+    FROM rejects
+    WHERE customer_id = :customer_id
+      AND branch_id = :branch_id
+      AND event_time >= :start_local
+      AND event_time < :end_local
+""").bindparams(
+    bindparam("start_local", type_=DateTime(timezone=False)),
+    bindparam("end_local", type_=DateTime(timezone=False)),
+)
+
+_V2_REJECT_COUNT_SQL = text("""
+    SELECT COUNT(*)
+    FROM reject_events
+    WHERE customer_id = :customer_id
+      AND branch_id = :branch_id
+      AND event_time >= :start_utc
+      AND event_time < :end_utc
+""").bindparams(
+    bindparam("start_utc", type_=DateTime(timezone=True)),
+    bindparam("end_utc", type_=DateTime(timezone=True)),
+)
+
+
+def get_reject_count(
+    conn: Connection,
+    tenant: ResolvedOperationalTenant,
+    *,
+    local_date: date,
+    zone: ZoneInfo,
+) -> RejectCount:
+    """How many rejects the tenant's branch had on `local_date`, a calendar
+    day in `zone`.
+
+    The eras share the day exactly as in get_checkin_count: with no effective
+    cutover the branch is v1 only and `reject_events` is not read at all;
+    with one, v1 owns the part of the day strictly before it and v2 the part
+    at or after it, and a part that is empty is not queried.
+
+    `conn` must already carry the tenant's RLS context. At most three
+    statements run -- the cutover lookup, then one count per era that owns
+    part of the day. If any of them fails the error propagates: a count from
+    one era is never returned as if it were the total.
+    """
+    day = local_day_bounds(local_date, zone)
+    cutover_at = get_effective_cutover(conn, tenant)
+
+    v1_end_local = day.v1_end_local
+    v2_start_utc = None
+    if cutover_at is not None:
+        boundary = cutover_boundary(cutover_at, zone)
+        v1_end_local = min(day.v1_end_local, boundary.cutover_local_naive)
+        v2_start_utc = max(day.v2_start_utc, boundary.cutover_utc)
+
+    tenant_ids = {"customer_id": tenant.operational_customer_id, "branch_id": tenant.operational_branch_id}
+
+    v1_count = 0
+    if day.v1_start_local < v1_end_local:
+        v1_count = int(conn.execute(
+            _V1_REJECT_COUNT_SQL,
+            {**tenant_ids, "start_local": day.v1_start_local, "end_local": v1_end_local},
+        ).scalar_one())
+
+    v2_count = 0
+    if v2_start_utc is not None and v2_start_utc < day.v2_end_utc:
+        v2_count = int(conn.execute(
+            _V2_REJECT_COUNT_SQL,
+            {**tenant_ids, "start_utc": v2_start_utc, "end_utc": day.v2_end_utc},
+        ).scalar_one())
+
+    return RejectCount(total=v1_count + v2_count, v1_count=v1_count, v2_count=v2_count)

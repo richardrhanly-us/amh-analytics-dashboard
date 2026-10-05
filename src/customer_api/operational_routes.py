@@ -36,6 +36,7 @@ from customer_api.operational_schemas import (
     CheckinsByHourResponse,
     IngestStatusFields,
     IngestStatusResponse,
+    RejectCountResponse,
 )
 from customer_api.tenant_scope import (
     ResolvedOperationalTenant,
@@ -45,6 +46,7 @@ from customer_api.tenant_scope import (
 from services.operational_metrics_service import (
     get_checkin_count,
     get_checkin_counts_by_hour,
+    get_reject_count,
 )
 from services.operational_read_service import get_latest_ingest_status
 
@@ -127,6 +129,19 @@ def create_operational_router() -> APIRouter:
             timezone=zone.key,
             hours=[CheckinHourCount(hour=hour, checkin_count=count) for hour, count in enumerate(hourly.counts)],
         )
+        return JSONResponse(content=body.model_dump(mode="json"), headers=NO_STORE_HEADERS)
+
+    @router.get("/rejects/count")
+    def get_rejects_count(tenant: ResolvedTenant, local_date: LocalDate) -> Response:
+        # A calendar day in the product's configured zone, exactly as for /checkins/count.
+        zone = settings.product_timezone()
+
+        with open_customer_tenant_connection(tenant) as conn:
+            count = get_reject_count(conn, tenant, local_date=local_date, zone=zone)
+
+        # The connection is closed. Only the total is returned: not which era
+        # a reject came from, and nothing about why an item was rejected.
+        body = RejectCountResponse(date=local_date, timezone=zone.key, reject_count=count.total)
         return JSONResponse(content=body.model_dump(mode="json"), headers=NO_STORE_HEADERS)
 
     return router

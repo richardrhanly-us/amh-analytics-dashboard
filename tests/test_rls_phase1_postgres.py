@@ -1468,3 +1468,341 @@ def test_checkins_by_hour_on_one_pooled_connection_never_see_each_others_tenant(
             assert conn.execute(text("SELECT COUNT(*) FROM checkin_events")).scalar() == 0
     finally:
         single.dispose()
+
+
+# --- GET .../rejects/count?date=YYYY-MM-DD, end to end, as the runtime role ---
+#
+# The reject tables keep time as the check-in tables do -- rejects.event_time
+# is a real TIMESTAMP (naive local wall clock), reject_events.event_time a real
+# TIMESTAMPTZ -- and the branch's one cutover divides them. As above, only the
+# authenticated user is stubbed: the tenant-scope dependency, the resolver,
+# tenant_connection, the context read-back, the cutover lookup, both COUNT
+# statements, RLS on both reject tables and the response are all real.
+
+REJECT_COUNT_PATH = "/api/organizations/{org}/branches/{branch}/rejects/count"
+
+
+def _v1_reject(conn, customer_id, branch_id, local_wall_clock: str, barcode, error_message="Item not found") -> None:
+    """A legacy reject row. `local_wall_clock` has no offset: it is stored as given."""
+    conn.execute(text("""
+        INSERT INTO rejects (customer_id, branch_id, event_time, barcode, error_message, source_file)
+        VALUES (:c, :b, CAST(:t AS timestamp), :barcode, :e, 'rls_test.csv')
+    """), {"c": customer_id, "b": branch_id, "t": local_wall_clock, "barcode": barcode, "e": error_message})
+
+
+def _v2_reject(conn, customer_id, branch_id, instant: str, error_class="item_not_found", item_key=None) -> None:
+    """A Contract v2 reject row. `instant` carries an explicit offset."""
+    event_key = hashlib.sha256(f"{customer_id}:{branch_id}:{instant}:{secrets.token_hex(8)}".encode()).hexdigest()
+    conn.execute(text("""
+        INSERT INTO reject_events (customer_id, branch_id, key_id, event_key, event_time, error_class, item_key)
+        VALUES (:c, :b, :k, :ek, CAST(:t AS timestamptz), :e, :ik)
+    """), {"c": customer_id, "b": branch_id, "k": KEY_A, "ek": event_key, "t": instant, "e": error_class,
+           "ik": item_key})
+
+
+def _reject_count(client, session, org, branch, day: str):
+    return client.get(
+        REJECT_COUNT_PATH.format(org=org, branch=branch),
+        params={"date": day},
+        headers={"Cookie": f"__Host-sortview_api_session={session}"},
+    )
+
+
+def _rejects_of(client, session, org, branch, day: str) -> int:
+    response = _reject_count(client, session, org, branch, day)
+    assert response.status_code == 200, response.text
+    assert list(response.json()) == ["date", "timezone", "reject_count"]
+    assert response.json()["date"] == day
+    assert response.json()["timezone"] == "America/Chicago"
+    return response.json()["reject_count"]
+
+
+ONE_ITEM = "c" * 64   # one item's v2 key, rejected more than once
+
+
+def _seed_mixed_era_reject_days(owner_engine) -> None:
+    """Tenant A is cut over at 12:00 local on 10 June 2026 (17:00Z).
+        9 June:   2 legacy rejects, at 00:30 and 23:30 local                          -> 2
+        10 June:  2 legacy rejects before noon; 4 v2 rejects from the cutover on      -> 6
+        11 June:  1 v2 reject, at local midnight                                      -> 1
+    Tenant A also has check-ins on 10 June, in both tables, which are not rejects.
+    Tenant B -- both of its branches -- was cut over on 1 June and has its own rejects in BOTH tables on 10 June."""
+    with owner_engine.begin() as conn:
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-09 00:30:00", "a-0609-early")
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-09 23:30:00", "a-0609-late")
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 09:00:00", "a-0610-morning")                      # counts
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 11:59:59", "a-0610-one-second-before", "ACS timeout")  # counts
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 12:00:00", "a-0610-at-cutover")       # v1 is strictly before
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 15:00:00", "a-0610-after-cutover")    # does not count
+        _set_cutover(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 17:00:00+00")
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 16:59:59+00")                         # before the cutover: no
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 17:00:00+00")                         # exactly at it: counts
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 22:00:00+00", "rfid_collision", ONE_ITEM)   # counts
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 22:00:30+00", "other", ONE_ITEM)      # the same item again: counts
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-11 04:59:59+00", "unknown")              # 23:59:59 local: counts
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-11 05:00:00+00")                         # local midnight: the 11th
+
+        _v1_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 08:00:00", "a-checkin-v1")
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 18:00:00+00")
+
+        _set_cutover(conn, CUSTOMER_B, BRANCH_B, "2026-06-01 05:00:00+00")
+        _set_cutover(conn, CUSTOMER_B, BRANCH_B_NORTH, "2026-06-01 05:00:00+00")   # a cutover is per branch
+        for hour in (8, 9, 10):
+            _v1_reject(conn, CUSTOMER_B, BRANCH_B, f"2026-06-10 {hour:02d}:00:00", f"b-0610-{hour}")
+        for hour in (6, 9, 12, 15, 18):
+            _v2_reject(conn, CUSTOMER_B, BRANCH_B, f"2026-06-10 {hour:02d}:00:00+00")
+        for hour in (14, 20):
+            _v2_reject(conn, CUSTOMER_B, BRANCH_B_NORTH, f"2026-06-10 {hour:02d}:30:00+00")
+
+
+def test_the_two_reject_time_columns_have_the_types_the_count_relies_on(owner_engine):
+    with owner_engine.connect() as conn:
+        types = dict(conn.execute(text("""
+            SELECT table_name || '.' || column_name, data_type
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND (table_name, column_name) IN (('rejects', 'event_time'), ('reject_events', 'event_time'))
+        """)).fetchall())
+
+    assert types == {
+        "rejects.event_time": "timestamp without time zone",
+        "reject_events.event_time": "timestamp with time zone",
+    }
+
+
+def test_reject_count_for_a_v1_only_branch_counts_every_stored_row_of_its_local_day(owner_engine, checkin_api):
+    with owner_engine.begin() as conn:
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-09 23:59:59", "a1")
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 00:00:00", "a2")
+        # One item, rejected three times that day -- twice in the same second, for two different reasons.
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 09:00:00", "a3", "Item not found")
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 09:00:00", "a3", "Multiple RFID tags detected")
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 14:00:00", "a3", "Something uncategorized")
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 15:00:00", None, "ACS timeout")   # no barcode at all
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 23:59:59", "a4", None)            # no message at all
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-11 00:00:00", "a5")
+        # v2 rejects for tenant A on that day, but NO cutover: they are not part of its history.
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 15:00:00+00")
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 18:00:00+00")
+        # Check-ins for tenant A on that day: not rejects.
+        for hour in range(8, 18):
+            _v1_checkin(conn, CUSTOMER_A, BRANCH_A, f"2026-06-10 {hour:02d}:00:00", f"checkin-{hour}")
+        for hour in range(8, 13):
+            _v1_reject(conn, CUSTOMER_B, BRANCH_B, f"2026-06-10 {hour:02d}:00:00", f"b{hour}")
+
+    response = _reject_count(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10")
+
+    assert response.status_code == 200
+    assert response.json() == {"date": "2026-06-10", "timezone": "America/Chicago", "reject_count": 6}
+    assert response.headers["cache-control"] == "no-store"
+    for leaked in ("total", "v1_count", "v2_count", "customer_id", "branch_id", "cutover", "era", "reason",
+                   "error_message", "error_class", "barcode", "item_key", "reject_rate", str(CUSTOMER_A),
+                   "RFID", "ACS", "a3"):
+        assert leaked not in response.text, leaked
+
+    assert _rejects_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-09") == 1
+    assert _rejects_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-11") == 1
+    assert _rejects_of(checkin_api, SESSION_B, "tenant-b", "main", "2026-06-10") == 5
+    # The check-in count for the same day is its own number, untouched by any reject row.
+    assert _count_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == 10
+
+
+def test_reject_count_across_a_real_cutover_inside_the_day(owner_engine, checkin_api):
+    _seed_mixed_era_reject_days(owner_engine)
+
+    response = _reject_count(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10")
+
+    # 2 legacy rows before 12:00 (one of them at 11:59:59) + 4 v2 rows from 17:00:00Z on (one of them exactly
+    # at it). The legacy row AT 12:00 and the v2 row one second BEFORE 17:00Z are on the other era's side.
+    assert response.status_code == 200
+    assert response.json() == {"date": "2026-06-10", "timezone": "America/Chicago", "reject_count": 6}
+    for leaked in ("total", "v1", "v2", "cutover", "era", "17:00", "error", "rfid", "item_key", str(CUSTOMER_A)):
+        assert leaked not in response.text, leaked
+
+    assert _rejects_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-09") == 2
+    assert _rejects_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-11") == 1
+    # Every one of tenant A's countable rejects lands on exactly one day: 2 + 6 + 1, of the 12 rows stored
+    # (the other three are the legacy rows at/after the cutover and the v2 row before it).
+    with owner_engine.connect() as conn:
+        stored = conn.execute(text(
+            "SELECT (SELECT COUNT(*) FROM rejects WHERE customer_id = :c) + "
+            "(SELECT COUNT(*) FROM reject_events WHERE customer_id = :c)"
+        ), {"c": CUSTOMER_A}).scalar()
+    assert stored == 12
+
+    # Tenant A's check-ins that day (one per era) are counted by their own endpoint, and only there.
+    assert _count_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == 2
+
+
+def test_reject_count_is_isolated_from_another_tenant_in_both_tables(owner_engine, checkin_api):
+    _seed_mixed_era_reject_days(owner_engine)
+
+    # Tenant B has 3 legacy and 5 + 2 v2 rejects on 10 June. None reaches tenant A's 6...
+    assert _rejects_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == 6
+    # ...and B's own counts are its own: its legacy rows fall after ITS cutover, so only v2 counts,
+    # and each of its two branches sees only its own rows.
+    assert _rejects_of(checkin_api, SESSION_B, "tenant-b", "main", "2026-06-10") == 5
+    assert _rejects_of(checkin_api, SESSION_B, "tenant-b", "north", "2026-06-10") == 2
+
+    for session, org, branch in ((SESSION_A, "tenant-b", "main"), (SESSION_A, "tenant-a", "north"),
+                                 (SESSION_B, "tenant-a", "main")):
+        refused = _reject_count(checkin_api, session, org, branch, "2026-06-10")
+        assert refused.status_code == 404 and refused.json() == TENANT_NOT_FOUND
+
+
+def test_row_level_security_alone_hides_another_tenants_rejects(owner_engine, runtime_engine):
+    """The count statements also filter the tenant themselves. This shows the
+    second line of defence on its own: a deliberately unscoped count on a
+    tenant-scoped connection sees only that tenant's reject rows."""
+    _seed_members(owner_engine, runtime_engine)
+    _seed_mixed_era_reject_days(owner_engine)
+
+    seen = {}
+    for name, customer_id, branch_id in (("a", CUSTOMER_A, BRANCH_A), ("b-main", CUSTOMER_B, BRANCH_B),
+                                         ("b-north", CUSTOMER_B, BRANCH_B_NORTH)):
+        with tenant_connection(runtime_engine, customer_id, branch_id) as conn:
+            seen[name] = (
+                conn.execute(text("SELECT COUNT(*) FROM rejects")).scalar(),
+                conn.execute(text("SELECT COUNT(*) FROM reject_events")).scalar(),
+            )
+
+    assert seen == {"a": (6, 6), "b-main": (3, 5), "b-north": (0, 2)}
+
+
+def test_reject_count_request_validation_through_the_real_app(checkin_api):
+    path = REJECT_COUNT_PATH.format(org="tenant-a", branch="main")
+
+    assert checkin_api.get(path, params={"date": "2026-06-10"}).status_code == 401
+    assert checkin_api.get(path, headers={"Cookie": f"__Host-sortview_api_session={SESSION_A}"}).status_code == 422
+    assert _reject_count(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10T00:00:00").status_code == 422
+    assert _reject_count(checkin_api, SESSION_A, "tenant-a", "main", "2026-02-30").status_code == 422
+    assert _rejects_of(checkin_api, SESSION_A, "tenant-a", "main", "2099-01-01") == 0
+
+
+@pytest.mark.parametrize("session_time_zone", ["UTC", "America/Chicago", "America/New_York", "Asia/Tokyo"])
+def test_reject_count_does_not_depend_on_the_database_session_time_zone(
+    owner_engine, checkin_api, runtime_engine, monkeypatch, session_time_zone
+):
+    _seed_mixed_era_reject_days(owner_engine)
+    engine = create_engine(
+        runtime_engine.url, connect_args={"options": f"-c timezone={session_time_zone}"}, hide_parameters=True
+    )
+    monkeypatch.setattr(database, "_engine", engine)
+    try:
+        with engine.connect() as conn:
+            assert conn.execute(text("SHOW timezone")).scalar() == session_time_zone
+
+        # 9 June is all legacy rows, at 00:30 and 23:30 local -- the two a session-dependent date cast misplaces.
+        assert _rejects_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-09") == 2
+        # 10 June mixes both tables around the cutover, with a v2 row at 23:59:59 local.
+        assert _rejects_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == 6
+        assert _rejects_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-11") == 1
+        assert _rejects_of(checkin_api, SESSION_B, "tenant-b", "north", "2026-06-10") == 2
+    finally:
+        engine.dispose()
+
+
+def test_reject_count_on_the_spring_forward_date(owner_engine, checkin_api):
+    with owner_engine.begin() as conn:
+        # Tenant A, cut over well before: 8 March 2026 is [06:00Z, 05:00Z next day) -- 23 hours.
+        _set_cutover(conn, CUSTOMER_A, BRANCH_A, "2026-03-01 06:00:00+00")
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-03-08 05:59:59+00")   # 23:59:59 CST on the 7th
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-03-08 06:00:00+00")   # 00:00 CST on the 8th
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-03-08 07:59:59+00")   # 01:59:59 CST, the last second before the jump
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-03-08 08:00:00+00")   # the next second: 03:00 CDT
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-03-09 04:59:59+00")   # 23:59:59 CDT on the 8th
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-03-09 05:00:00+00")   # 00:00 CDT on the 9th
+        # Tenant B, never cut over: naive wall-clock rows, one stamped in the hour that did not exist.
+        for stamped, barcode in (("2026-03-07 23:59:59", "b1"), ("2026-03-08 00:00:00", "b2"),
+                                 ("2026-03-08 02:30:00", "b3"), ("2026-03-08 03:00:00", "b4"),
+                                 ("2026-03-08 23:59:59", "b5"), ("2026-03-09 00:00:00", "b6")):
+            _v1_reject(conn, CUSTOMER_B, BRANCH_B, stamped, barcode)
+
+    assert [_rejects_of(checkin_api, SESSION_A, "tenant-a", "main", day)
+            for day in ("2026-03-07", "2026-03-08", "2026-03-09")] == [1, 4, 1]
+    # The legacy row stamped 02:30 is a stored row of 8 March and counts there.
+    assert [_rejects_of(checkin_api, SESSION_B, "tenant-b", "main", day)
+            for day in ("2026-03-07", "2026-03-08", "2026-03-09")] == [1, 4, 1]
+
+
+def test_reject_count_on_the_fall_back_date(owner_engine, checkin_api):
+    with owner_engine.begin() as conn:
+        # Tenant A, cut over well before: 1 November 2026 is [05:00Z, 06:00Z next day) -- 25 hours.
+        _set_cutover(conn, CUSTOMER_A, BRANCH_A, "2026-10-01 05:00:00+00")
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-11-01 04:59:59+00")   # 23:59:59 CDT on 31 October
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-11-01 06:30:00+00")   # 01:30 CDT -- the first 01:30
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-11-01 07:30:00+00")   # 01:30 CST -- the second, an hour later
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-11-02 05:59:59+00")   # 23:59:59 CST on the 1st
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-11-02 06:00:00+00")   # 00:00 CST on the 2nd
+        # Tenant B, never cut over: two legacy rows both stamped 01:30 are simply two stored rows on 1 November.
+        _v1_reject(conn, CUSTOMER_B, BRANCH_B, "2026-11-01 01:30:00", "b-first-pass")
+        _v1_reject(conn, CUSTOMER_B, BRANCH_B, "2026-11-01 01:30:00", "b-second-pass")
+        _v1_reject(conn, CUSTOMER_B, BRANCH_B, "2026-11-01 23:59:59", "b-late")
+
+    # Both real 01:30 instants belong to 1 November and are counted once each.
+    assert [_rejects_of(checkin_api, SESSION_A, "tenant-a", "main", day)
+            for day in ("2026-10-31", "2026-11-01", "2026-11-02")] == [1, 3, 1]
+    assert _rejects_of(checkin_api, SESSION_B, "tenant-b", "main", "2026-11-01") == 3
+
+
+def test_reject_count_after_a_rollback_is_v1_only_again(owner_engine, checkin_api):
+    _seed_mixed_era_reject_days(owner_engine)
+    assert _rejects_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == 6
+
+    # A later v2_cutovers row with no cutover_at is a recorded rollback for that branch.
+    with owner_engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO v2_cutovers (customer_id, branch_id, cutover_at, set_at, set_by)
+            VALUES (:c, :b, NULL, now() + interval '1 minute', 'rls-test')
+        """), {"c": CUSTOMER_A, "b": BRANCH_A})
+
+    # All four legacy rows of 10 June now count -- including those at and after the old cutover -- and no v2 row.
+    assert _rejects_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == 4
+    assert _rejects_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-11") == 0
+    # Tenant B's branches have their own cutovers and are unaffected.
+    assert _rejects_of(checkin_api, SESSION_B, "tenant-b", "main", "2026-06-10") == 5
+
+
+def test_reject_counts_on_one_pooled_connection_never_see_each_others_tenant(
+    owner_engine, checkin_api, runtime_engine, monkeypatch
+):
+    _seed_mixed_era_reject_days(owner_engine)
+    # One connection: every statement of every request below runs on the same server backend.
+    single = create_engine(runtime_engine.url, pool_size=1, max_overflow=0, hide_parameters=True)
+    monkeypatch.setattr(database, "_engine", single)
+    requests = (
+        (SESSION_A, "tenant-a", "main", 6),
+        (SESSION_B, "tenant-b", "main", 5),
+        (SESSION_A, "tenant-a", "main", 6),
+        (SESSION_B, "tenant-b", "north", 2),
+        (SESSION_A, "tenant-a", "main", 6),
+    )
+    try:
+        for session, org, branch, expected in requests:
+            assert _rejects_of(checkin_api, session, org, branch, "2026-06-10") == expected
+        # A check-in request for another tenant in between, on the same connection, changes nothing.
+        assert _count_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == 2
+        assert _rejects_of(checkin_api, SESSION_B, "tenant-b", "main", "2026-06-10") == 5
+
+        # Change the pooled connection's SESSION time zone for good, then ask again.
+        with single.connect() as conn:
+            conn.execute(text("SET TIME ZONE 'Asia/Tokyo'"))
+            conn.commit()
+        with single.connect() as conn:
+            assert conn.execute(text("SHOW timezone")).scalar() == "Asia/Tokyo"
+
+        for session, org, branch, expected in requests:
+            assert _rejects_of(checkin_api, session, org, branch, "2026-06-10") == expected
+        assert _reject_count(checkin_api, SESSION_A, "tenant-b", "main", "2026-06-10").status_code == 404
+
+        # Nothing of any request's tenant context is left on the pooled connection.
+        with single.connect() as conn:
+            settings = conn.execute(text(
+                "SELECT current_setting('app.operational_customer_id', true), "
+                "current_setting('app.operational_branch_id', true)"
+            )).one()
+            assert all(value in (None, "") for value in settings)
+            assert conn.execute(text("SELECT COUNT(*) FROM rejects")).scalar() == 0
+            assert conn.execute(text("SELECT COUNT(*) FROM reject_events")).scalar() == 0
+    finally:
+        single.dispose()
