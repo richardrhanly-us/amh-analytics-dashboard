@@ -72,3 +72,14 @@ class CheckinsByHourResponse(_ResponseModel):
     date: dt.date
     timezone: str
     hours: list[CheckinHourCount]
+
+
+class RejectCountResponse(_ResponseModel):
+    """Rejects on one local calendar day. `date` and `timezone` are as in
+    CheckinCountResponse. Every stored reject of the day is counted, whatever
+    its reason; neither the reasons nor how the count was assembled from the
+    branch's legacy and current data is part of the answer."""
+
+    date: dt.date
+    timezone: str
+    reject_count: int

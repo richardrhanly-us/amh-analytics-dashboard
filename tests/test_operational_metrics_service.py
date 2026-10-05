@@ -7,6 +7,7 @@ metrics, and the check-in count built on them.
     get_effective_cutover(conn, tenant)      the tenant's current cutover, from v2_cutovers
     get_checkin_count(conn, tenant, ...)     check-ins on one local day, across both eras
     get_checkin_counts_by_hour(conn, ...)    the same check-ins, by wall-clock hour (Block 6b)
+    get_reject_count(conn, tenant, ...)      rejects on one local day, across both eras (Block 7a)
 
 The two helpers are pure. The lookup runs its REAL SQL against an in-memory
 SQLite table; v2_cutovers has no row level security in production either, so
@@ -2331,6 +2332,728 @@ def test_for_a_cut_over_branch_the_hours_intentionally_differ_from_the_dashboard
 
 
 # =====================================================================================================================
+# Block 7a: get_reject_count
+# =====================================================================================================================
+#
+# The real SQL, against in-memory SQLite, as for the check-in count. This
+# database holds the two reject tables and v2_cutovers -- and the two check-in
+# tables as well, so it can be shown that neither count ever reads the other's
+# rows. It holds no ACS table: a statement reaching for one would fail outright.
+#
+# The reject tables carry the columns that describe WHAT a reject was
+# (error_message on the legacy table, error_class on the v2 one) so the tests
+# can show that none of them changes the count.
+
+RejectCount = operational_metrics_service.RejectCount
+
+_REJECT_DDL = (
+    (
+        "CREATE TABLE rejects (id INTEGER PRIMARY KEY, customer_id INTEGER, branch_id INTEGER, event_time TEXT, "
+        "barcode TEXT, error_message TEXT)"
+    ),
+    (
+        "CREATE TABLE reject_events (id INTEGER PRIMARY KEY, customer_id INTEGER, branch_id INTEGER, key_id TEXT, "
+        "event_key TEXT, event_time TEXT, error_class TEXT, item_key TEXT)"
+    ),
+    *_COUNT_DDL,   # checkins, checkin_events, v2_cutovers
+)
+
+
+@pytest.fixture
+def reject_db():
+    engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+    with engine.begin() as conn:
+        for statement in _REJECT_DDL:
+            conn.execute(text(statement))
+    yield engine
+    engine.dispose()
+
+
+def _v1_reject(
+    db, *stamped: datetime, customer_id=CUSTOMER_A, branch_id=BRANCH_A, barcode="synthetic",
+    error_message="Item not found",
+) -> None:
+    """Legacy reject rows: each `stamped` is a NAIVE local wall-clock time."""
+    with db.begin() as conn:
+        for local_naive in stamped:
+            assert local_naive.tzinfo is None
+            conn.execute(
+                text("INSERT INTO rejects (customer_id, branch_id, event_time, barcode, error_message) "
+                     "VALUES (:c, :b, :t, :bc, :e)"),
+                {"c": customer_id, "b": branch_id, "t": local_naive.strftime(_STORED), "bc": barcode,
+                 "e": error_message},
+            )
+
+
+def _v2_reject(
+    db, *instants: datetime, customer_id=CUSTOMER_A, branch_id=BRANCH_A, error_class="item_not_found", item_key=None,
+) -> None:
+    """Contract v2 reject rows: each instant is aware; it is stored as UTC."""
+    with db.begin() as conn:
+        for instant in instants:
+            assert instant.tzinfo is not None
+            conn.execute(
+                text("INSERT INTO reject_events (customer_id, branch_id, event_time, error_class, item_key) "
+                     "VALUES (:c, :b, :t, :e, :k)"),
+                {"c": customer_id, "b": branch_id, "t": instant.astimezone(UTC).strftime(_STORED), "e": error_class,
+                 "k": item_key},
+            )
+
+
+def _reject_count(db, local_date=JUNE_10, *, tenant=TENANT_A, zone=CHICAGO, fail_on=None):
+    with db.connect() as conn:
+        recorder = Recorder(conn, fail_on=fail_on)
+        result = operational_metrics_service.get_reject_count(recorder, tenant, local_date=local_date, zone=zone)
+    return result, recorder
+
+
+def _reject_counts(db, local_date=JUNE_10, **kwargs) -> tuple[int, int, int]:
+    result, _ = _reject_count(db, local_date, **kwargs)
+    return result.total, result.v1_count, result.v2_count
+
+
+# --- no cutover: the branch is v1 only --------------------------------------------------------------------------------
+
+def test_a_v1_only_branch_counts_the_rejects_of_the_local_day(reject_db):
+    _v1_reject(reject_db, _local(2026, 6, 9, 23, 59, 59), _local(2026, 6, 10, 0, 0), _local(2026, 6, 10, 9, 30),
+               _local(2026, 6, 10, 23, 59, 59), _local(2026, 6, 11, 0, 0))
+
+    result, recorder = _reject_count(reject_db)
+
+    assert result == RejectCount(total=3, v1_count=3, v2_count=0)
+    assert recorder.tables() == ["v2_cutovers", "rejects"]   # the v2 table is never read
+
+
+def test_with_no_cutover_v2_rejects_are_ignored_even_if_they_exist(reject_db):
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0))
+    _v2_reject(reject_db, _utc(2026, 6, 10, 15, 0), _utc(2026, 6, 10, 16, 0))
+
+    result, recorder = _reject_count(reject_db)
+
+    assert (result.total, result.v1_count, result.v2_count) == (1, 1, 0)
+    assert "reject_events" not in recorder.tables()
+
+
+def test_a_tenant_with_no_rejects_has_a_count_of_zero(reject_db):
+    result, recorder = _reject_count(reject_db)
+
+    assert result == RejectCount(total=0, v1_count=0, v2_count=0)
+    assert recorder.tables() == ["v2_cutovers", "rejects"]
+
+
+def test_a_rollback_makes_the_branch_v1_only_again_for_rejects(reject_db):
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), _local(2026, 6, 10, 15, 0))
+    _v2_reject(reject_db, _utc(2026, 6, 10, 20, 0))
+    _cutover(reject_db, NOON_CUTOVER, set_at="2026-06-01 00:00:00+00:00")
+    _cutover(reject_db, None, set_at="2026-06-12 00:00:00+00:00")   # the latest record: a rollback
+
+    result, recorder = _reject_count(reject_db)
+
+    assert (result.total, result.v1_count, result.v2_count) == (2, 2, 0)   # 15:00 is v1's again; v2 is not read
+    assert recorder.tables() == ["v2_cutovers", "rejects"]
+
+
+# --- what is counted ----------------------------------------------------------------------------------------------------
+
+def test_every_reject_row_is_counted_with_no_deduplication(reject_db):
+    # The same item, the same second, the same message, three times over: three rows, three rejects.
+    _v1_reject(reject_db, *[_local(2026, 6, 10, 9, 0)] * 3, barcode="same-barcode")
+    _cutover(reject_db, NOON_CUTOVER)
+    _v2_reject(reject_db, *[_utc(2026, 6, 10, 18, 0)] * 2, item_key="a" * 64)
+
+    assert _reject_counts(reject_db) == (5, 3, 2)
+
+
+def test_an_item_rejected_several_times_in_a_day_counts_each_time(reject_db):
+    _v1_reject(reject_db, _local(2026, 6, 10, 8, 0), _local(2026, 6, 10, 8, 5), _local(2026, 6, 10, 11, 30),
+               barcode="one-item")
+    _cutover(reject_db, NOON_CUTOVER)
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), _utc(2026, 6, 10, 18, 1), _utc(2026, 6, 10, 21, 0),
+               _utc(2026, 6, 10, 23, 0), item_key="b" * 64)
+
+    assert _reject_counts(reject_db) == (7, 3, 4)
+
+
+def test_rejects_with_no_item_identifier_are_counted(reject_db):
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), _local(2026, 6, 10, 9, 1), barcode=None)
+    _cutover(reject_db, NOON_CUTOVER)
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), item_key=None)
+
+    assert _reject_counts(reject_db) == (3, 2, 1)
+
+
+V1_REASONS = ["Item not found", "ACS timeout", "Multiple RFID tags detected", "Collection code missing",
+              "Library not found", "Something the dashboard calls Other", "", None]
+V2_REASONS = ["item_not_found", "ils_acs_failure", "rfid_collision", "configuration_error", "routing_error",
+              "communication_error", "other", "unknown"]
+
+
+def test_every_kind_of_reject_counts_whatever_its_reason(reject_db):
+    for minute, message in enumerate(V1_REASONS):
+        _v1_reject(reject_db, _local(2026, 6, 10, 9, minute), error_message=message)
+    _cutover(reject_db, NOON_CUTOVER)
+    for minute, error_class in enumerate(V2_REASONS):
+        _v2_reject(reject_db, _utc(2026, 6, 10, 18, minute), error_class=error_class)
+
+    # Nothing is excluded: not "other", not "unknown", not a missing message.
+    assert _reject_counts(reject_db) == (16, 8, 8)
+
+
+def test_the_reason_columns_are_never_read(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+
+    _, recorder = _reject_count(reject_db)
+
+    for sql, _ in recorder.statements:
+        for column in ("error_message", "error_class", "barcode", "item_key", "event_key", "key_id"):
+            assert column not in sql, column
+
+
+# --- rejects and check-ins are separate counts ------------------------------------------------------------------------
+
+def test_check_in_rows_do_not_affect_the_reject_count(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0))
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0))
+    before = _reject_counts(reject_db)
+
+    _v1(reject_db, *[_local(2026, 6, 10, 9, minute) for minute in range(10)])
+    _v2(reject_db, *[_utc(2026, 6, 10, 18, minute) for minute in range(20)])
+
+    result, recorder = _reject_count(reject_db)
+    assert (result.total, result.v1_count, result.v2_count) == before == (2, 1, 1)
+    assert recorder.tables() == ["v2_cutovers", "rejects", "reject_events"]   # neither check-in table is read
+
+
+def test_reject_rows_do_not_affect_the_check_in_count(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1(reject_db, _local(2026, 6, 10, 9, 0), _local(2026, 6, 10, 10, 0))
+    _v2(reject_db, _utc(2026, 6, 10, 18, 0))
+    before = _counts(reject_db)
+    hours_before = _by_hour(reject_db)
+
+    _v1_reject(reject_db, *[_local(2026, 6, 10, 9, minute) for minute in range(10)])
+    _v2_reject(reject_db, *[_utc(2026, 6, 10, 18, minute) for minute in range(20)])
+
+    result, recorder = _count(reject_db)
+    assert (result.total, result.v1_count, result.v2_count) == before == (3, 2, 1)
+    assert recorder.tables() == ["v2_cutovers", "checkins", "checkin_events"]   # neither reject table is read
+    assert _by_hour(reject_db) == hours_before == {9: 1, 10: 1, 13: 1}
+
+
+# --- the cutover's position relative to the requested day -------------------------------------------------------------
+
+def test_a_cutover_inside_the_day_splits_its_rejects_between_the_eras(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    # v1, local wall clock: two before noon count; one at noon and one after do not (v1 is strictly before).
+    _v1_reject(reject_db, _local(2026, 6, 10, 8, 0), _local(2026, 6, 10, 11, 59, 59), _local(2026, 6, 10, 12, 0),
+               _local(2026, 6, 10, 15, 0))
+    # v2, instants: one before the cutover does not count; at it and after it do; the next local midnight does not.
+    _v2_reject(reject_db, _utc(2026, 6, 10, 16, 59, 59), _utc(2026, 6, 10, 17, 0), _utc(2026, 6, 10, 22, 0),
+               _utc(2026, 6, 11, 4, 59, 59), _utc(2026, 6, 11, 5, 0))
+
+    result, recorder = _reject_count(reject_db)
+
+    assert (result.total, result.v1_count, result.v2_count) == (5, 2, 3)
+    assert recorder.tables() == ["v2_cutovers", "rejects", "reject_events"]
+
+
+def test_a_reject_exactly_at_the_cutover_belongs_to_v2_and_one_second_before_to_v1(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 10, 11, 59, 59))          # one second before, as v1 holds it
+    _v1_reject(reject_db, _local(2026, 6, 10, 12, 0, 0))            # the cutover moment as a v1 row: not v1's
+    _v2_reject(reject_db, _utc(2026, 6, 10, 16, 59, 59))            # one second before, as v2 holds it: not v2's
+    _v2_reject(reject_db, _utc(2026, 6, 10, 17, 0, 0))              # the cutover moment as a v2 row
+
+    assert _reject_counts(reject_db) == (2, 1, 1)
+
+
+def test_a_cutover_in_the_middle_of_an_hour_splits_rejects_at_that_instant(reject_db):
+    _cutover(reject_db, _utc(2026, 6, 10, 19, 30))                  # 14:30 local
+    _v1_reject(reject_db, _local(2026, 6, 10, 14, 29, 59), _local(2026, 6, 10, 14, 30), _local(2026, 6, 10, 14, 45))
+    _v2_reject(reject_db, _utc(2026, 6, 10, 19, 29, 59), _utc(2026, 6, 10, 19, 30), _utc(2026, 6, 10, 19, 45))
+
+    assert _reject_counts(reject_db) == (3, 1, 2)
+
+
+def test_a_cutover_before_the_day_makes_it_a_v2_day_for_rejects(reject_db):
+    _cutover(reject_db, _utc(2026, 6, 1, 17, 0))
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0))                # a legacy row after the cutover: not counted
+    _v2_reject(reject_db, _utc(2026, 6, 10, 5, 0), _utc(2026, 6, 10, 15, 0), _utc(2026, 6, 11, 4, 59, 59))
+    _v2_reject(reject_db, _utc(2026, 6, 10, 4, 59, 59), _utc(2026, 6, 11, 5, 0))   # just outside the local day
+
+    result, recorder = _reject_count(reject_db)
+
+    assert (result.total, result.v1_count, result.v2_count) == (3, 0, 3)
+    assert recorder.tables() == ["v2_cutovers", "reject_events"]    # no v1 query at all
+
+
+def test_a_cutover_after_the_day_leaves_it_a_v1_day_for_rejects(reject_db):
+    _cutover(reject_db, _utc(2026, 6, 20, 17, 0))
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), _local(2026, 6, 10, 21, 0))
+    _v2_reject(reject_db, _utc(2026, 6, 10, 15, 0))                 # a v2 row before the cutover: not counted
+
+    result, recorder = _reject_count(reject_db)
+
+    assert (result.total, result.v1_count, result.v2_count) == (2, 2, 0)
+    assert recorder.tables() == ["v2_cutovers", "rejects"]          # no v2 query at all
+
+
+def test_a_cutover_at_the_local_midnight_that_starts_the_day_gives_the_days_rejects_to_v2(reject_db):
+    _cutover(reject_db, _utc(2026, 6, 10, 5, 0))                    # 00:00 local on 10 June
+    _v1_reject(reject_db, _local(2026, 6, 10, 0, 0), _local(2026, 6, 10, 9, 0))
+    _v2_reject(reject_db, _utc(2026, 6, 10, 5, 0), _utc(2026, 6, 10, 15, 0))
+
+    result, recorder = _reject_count(reject_db)
+
+    assert (result.total, result.v1_count, result.v2_count) == (2, 0, 2)
+    assert recorder.tables() == ["v2_cutovers", "reject_events"]
+
+    # ...and the day before is entirely v1's.
+    _v1_reject(reject_db, _local(2026, 6, 9, 23, 59, 59))
+    assert _reject_counts(reject_db, date(2026, 6, 9)) == (1, 1, 0)
+
+
+def test_a_cutover_at_the_next_local_midnight_gives_the_days_rejects_to_v1(reject_db):
+    _cutover(reject_db, _utc(2026, 6, 11, 5, 0))                    # 00:00 local on 11 June
+    _v1_reject(reject_db, _local(2026, 6, 10, 0, 0), _local(2026, 6, 10, 23, 59, 59))
+    _v2_reject(reject_db, _utc(2026, 6, 10, 15, 0), _utc(2026, 6, 11, 5, 0))
+
+    result, recorder = _reject_count(reject_db)
+
+    assert (result.total, result.v1_count, result.v2_count) == (2, 2, 0)
+    assert recorder.tables() == ["v2_cutovers", "rejects"]
+
+    # ...and the day after is entirely v2's.
+    assert _reject_counts(reject_db, date(2026, 6, 11)) == (1, 0, 1)
+
+
+def test_the_days_around_a_cutover_add_up_with_no_reject_lost_and_none_counted_twice(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    v1_rows = [_local(2026, 6, 9, 10, 0), _local(2026, 6, 9, 23, 30), _local(2026, 6, 10, 0, 30),
+               _local(2026, 6, 10, 11, 0)]
+    v2_rows = [_utc(2026, 6, 10, 17, 0), _utc(2026, 6, 10, 23, 0), _utc(2026, 6, 11, 4, 0), _utc(2026, 6, 11, 5, 0),
+               _utc(2026, 6, 11, 20, 0)]
+    _v1_reject(reject_db, *v1_rows)
+    _v2_reject(reject_db, *v2_rows)
+
+    per_day = [_reject_counts(reject_db, day) for day in (date(2026, 6, 9), date(2026, 6, 10), date(2026, 6, 11))]
+
+    assert per_day == [(2, 2, 0), (5, 2, 3), (2, 0, 2)]
+    assert sum(total for total, _, _ in per_day) == len(v1_rows) + len(v2_rows)
+
+
+# --- time zones and DST -----------------------------------------------------------------------------------------------
+
+def test_an_evening_v2_reject_counts_on_its_local_day_not_its_utc_day(reject_db):
+    _cutover(reject_db, _utc(2026, 6, 1, 5, 0))
+    _v2_reject(reject_db, _utc(2026, 6, 11, 1, 30))                 # 20:30 on 10 June in Chicago; 11 June in UTC
+
+    assert _reject_counts(reject_db, date(2026, 6, 10)) == (1, 0, 1)
+    assert _reject_counts(reject_db, date(2026, 6, 11)) == (0, 0, 0)
+
+
+def test_rejects_on_the_spring_forward_date(reject_db):
+    # v1-only: every wall-clock time on 8 March -- one stamped in the hour that did not exist -- none on either side.
+    _v1_reject(reject_db, _local(2026, 3, 7, 23, 59, 59), _local(2026, 3, 8, 0, 0), _local(2026, 3, 8, 2, 30),
+               _local(2026, 3, 8, 3, 0), _local(2026, 3, 8, 23, 59, 59), _local(2026, 3, 9, 0, 0))
+    assert _reject_counts(reject_db, SPRING_FORWARD) == (4, 4, 0)
+
+    # Once cut over before that date: the day is [06:00Z, 05:00Z next day) -- 23 hours.
+    _cutover(reject_db, _utc(2026, 3, 1, 6, 0))
+    _v2_reject(reject_db, _utc(2026, 3, 8, 5, 59, 59), _utc(2026, 3, 8, 6, 0), _utc(2026, 3, 9, 4, 59, 59),
+               _utc(2026, 3, 9, 5, 0))
+
+    result, recorder = _reject_count(reject_db, SPRING_FORWARD)
+
+    assert (result.total, result.v1_count, result.v2_count) == (2, 0, 2)
+    parameters = recorder.parameters_for("reject_events")
+    assert parameters["end_utc"] - parameters["start_utc"] == timedelta(hours=23)
+
+
+def test_rejects_on_the_fall_back_date(reject_db):
+    # v1-only: both passes through 01:30 are just rows stamped 01:30 on 1 November.
+    _v1_reject(reject_db, _local(2026, 10, 31, 23, 59, 59), _local(2026, 11, 1, 0, 0), _local(2026, 11, 1, 1, 30),
+               _local(2026, 11, 1, 1, 30), _local(2026, 11, 1, 23, 59, 59), _local(2026, 11, 2, 0, 0))
+    assert _reject_counts(reject_db, FALL_BACK) == (4, 4, 0)
+
+    # Once cut over before that date: the day is [05:00Z, 06:00Z next day) -- 25 hours.
+    _cutover(reject_db, _utc(2026, 10, 1, 5, 0))
+    _v2_reject(reject_db, _utc(2026, 11, 1, 4, 59, 59), _utc(2026, 11, 1, 5, 0), FIRST_0130, SECOND_0130,
+               _utc(2026, 11, 2, 5, 59, 59), _utc(2026, 11, 2, 6, 0))
+
+    result, recorder = _reject_count(reject_db, FALL_BACK)
+
+    assert (result.total, result.v1_count, result.v2_count) == (4, 0, 4)   # both real 01:30s are counted, once each
+    parameters = recorder.parameters_for("reject_events")
+    assert parameters["end_utc"] - parameters["start_utc"] == timedelta(hours=25)
+
+
+def test_a_cutover_inside_a_dst_date_partitions_its_rejects_correctly(reject_db):
+    _cutover(reject_db, _utc(2026, 3, 8, 15, 0))                    # 10:00 CDT, after the clocks went forward
+    _v1_reject(reject_db, _local(2026, 3, 8, 1, 30), _local(2026, 3, 8, 9, 59, 59), _local(2026, 3, 8, 10, 0))
+    _v2_reject(reject_db, _utc(2026, 3, 8, 14, 59, 59), _utc(2026, 3, 8, 15, 0), _utc(2026, 3, 9, 4, 0))
+
+    result, recorder = _reject_count(reject_db, SPRING_FORWARD)
+
+    assert (result.total, result.v1_count, result.v2_count) == (4, 2, 2)
+    assert recorder.parameters_for("rejects")["end_local"] == _local(2026, 3, 8, 10, 0)
+
+
+def test_the_reject_count_is_made_in_the_zone_it_is_given(reject_db):
+    _v1_reject(reject_db, _local(2026, 6, 10, 0, 30), _local(2026, 6, 10, 23, 30))
+    _cutover(reject_db, _utc(2026, 6, 10, 12, 0))                   # 07:00 in Chicago, 17:30 in Kolkata
+    _v2_reject(reject_db, _utc(2026, 6, 10, 12, 0), _utc(2026, 6, 10, 20, 0))
+
+    # Chicago: v1 before 07:00 local -> 1; v2 from 12:00Z to 05:00Z next day -> 2.
+    assert _reject_counts(reject_db, zone=CHICAGO) == (3, 1, 2)
+    # Kolkata: v1 before 17:30 local -> 1; the local day ends at 18:30Z, so only the 12:00Z row is v2's.
+    assert _reject_counts(reject_db, zone=KOLKATA) == (2, 1, 1)
+
+
+def test_a_half_hour_zone_bounds_the_v2_day_on_the_utc_half_hour(reject_db):
+    _cutover(reject_db, _utc(2026, 6, 1, 0, 0))
+    # The Kolkata day of 10 June is [18:30Z on the 9th, 18:30Z on the 10th).
+    _v2_reject(reject_db, _utc(2026, 6, 9, 18, 29, 59), _utc(2026, 6, 9, 18, 30), _utc(2026, 6, 10, 18, 29, 59),
+               _utc(2026, 6, 10, 18, 30))
+
+    result, recorder = _reject_count(reject_db, zone=KOLKATA)
+
+    assert (result.total, result.v1_count, result.v2_count) == (2, 0, 2)
+    parameters = recorder.parameters_for("reject_events")
+    assert (parameters["start_utc"], parameters["end_utc"]) == (_utc(2026, 6, 9, 18, 30), _utc(2026, 6, 10, 18, 30))
+
+
+# --- the tenant filter (SQLite has no RLS: only the statements' own WHERE separates these rows) -----------------------
+
+def test_another_customers_rejects_are_never_counted(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0))
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0))
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), _local(2026, 6, 10, 10, 0), customer_id=CUSTOMER_B)
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), _utc(2026, 6, 10, 19, 0), customer_id=CUSTOMER_B)
+
+    assert _reject_counts(reject_db) == (2, 1, 1)
+
+
+def test_another_branchs_rejects_are_never_counted(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0))
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0))
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), _local(2026, 6, 10, 10, 0), branch_id=BRANCH_B)
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), _utc(2026, 6, 10, 19, 0), branch_id=BRANCH_B)
+
+    assert _reject_counts(reject_db) == (2, 1, 1)
+
+
+def test_another_tenants_cutover_does_not_change_this_tenants_reject_count(reject_db):
+    _cutover(reject_db, _utc(2026, 6, 1, 5, 0), customer_id=CUSTOMER_B, branch_id=BRANCH_B)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0))
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0))
+
+    assert _reject_counts(reject_db) == (1, 1, 0)   # this tenant has no cutover: v1 only
+
+
+def test_each_tenant_gets_its_own_reject_count_from_the_same_tables(reject_db):
+    tenant_b = ResolvedOperationalTenant(
+        org_slug="beta", branch_slug="main", access_mode="read_only",
+        operational_customer_id=CUSTOMER_B, operational_branch_id=BRANCH_B,
+    )
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0))
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), _local(2026, 6, 10, 10, 0), _local(2026, 6, 10, 11, 0),
+               customer_id=CUSTOMER_B, branch_id=BRANCH_B)
+
+    assert _reject_counts(reject_db, tenant=TENANT_A) == (1, 1, 0)
+    assert _reject_counts(reject_db, tenant=tenant_b) == (3, 3, 0)   # a read_only tenant counts like any other
+
+
+def test_every_reject_statement_is_bound_to_the_resolved_tenants_ids(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+
+    _, recorder = _reject_count(reject_db)
+
+    assert len(recorder.statements) == 3
+    for sql, parameters in recorder.statements:
+        assert "customer_id = :customer_id AND branch_id = :branch_id" in sql
+        assert parameters["customer_id"] == CUSTOMER_A
+        assert parameters["branch_id"] == BRANCH_A
+
+
+# --- the statements and their parameters ------------------------------------------------------------------------------
+
+def test_the_v1_reject_statement_has_the_approved_shape():
+    assert _statement("_V1_REJECT_COUNT_SQL") == (
+        "SELECT COUNT(*) FROM rejects "
+        "WHERE customer_id = :customer_id AND branch_id = :branch_id "
+        "AND event_time >= :start_local AND event_time < :end_local"   # strictly before its upper bound
+    )
+
+
+def test_the_v2_reject_statement_has_the_approved_shape():
+    assert _statement("_V2_REJECT_COUNT_SQL") == (
+        "SELECT COUNT(*) FROM reject_events "
+        "WHERE customer_id = :customer_id AND branch_id = :branch_id "
+        "AND event_time >= :start_utc AND event_time < :end_utc"      # from its lower bound, inclusive
+    )
+
+
+def test_the_reject_statements_only_count_rows_of_one_table_each():
+    for name in ("_V1_REJECT_COUNT_SQL", "_V2_REJECT_COUNT_SQL"):
+        sql = _statement(name).upper()
+
+        assert sql.startswith("SELECT COUNT(*) FROM REJECT")
+        assert sql.count(" FROM ") == 1
+        for forbidden in ("JOIN", "DISTINCT", "GROUP BY", "SELECT *", "CHECKIN", "ACS", "REJECTS_CLEAN",
+                          "AT TIME ZONE", "NOW()", "::DATE", "CURRENT_", "TIMEZONE", "ERROR_", "BARCODE", "ITEM_KEY"):
+            assert forbidden not in sql, (name, forbidden)
+
+
+def test_the_reject_count_binds_naive_v1_bounds_and_aware_utc_v2_bounds(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+
+    _, recorder = _reject_count(reject_db)
+
+    v1, v2 = recorder.parameters_for("rejects"), recorder.parameters_for("reject_events")
+    assert (v1["start_local"], v1["end_local"]) == (_local(2026, 6, 10, 0, 0), _local(2026, 6, 10, 12, 0))
+    assert v1["start_local"].tzinfo is None and v1["end_local"].tzinfo is None
+    assert (v2["start_utc"], v2["end_utc"]) == (_utc(2026, 6, 10, 17, 0), _utc(2026, 6, 11, 5, 0))
+    assert v2["start_utc"].utcoffset() == timedelta(0) and v2["end_utc"].utcoffset() == timedelta(0)
+
+
+def test_the_reject_bound_parameters_declare_their_time_zone_handling():
+    v1 = operational_metrics_service._V1_REJECT_COUNT_SQL._bindparams
+    v2 = operational_metrics_service._V2_REJECT_COUNT_SQL._bindparams
+    assert set(v1) == {"customer_id", "branch_id", "start_local", "end_local"}
+    assert set(v2) == {"customer_id", "branch_id", "start_utc", "end_utc"}
+
+    assert v1["start_local"].type.timezone is False and v1["end_local"].type.timezone is False
+    assert v2["start_utc"].type.timezone is True and v2["end_utc"].type.timezone is True
+
+
+def test_the_reject_count_binds_exactly_what_the_check_in_count_binds(reject_db):
+    # The same day and the same cutover give both metrics the same bounds: one time model, two pairs of tables.
+    for cutover_at in (None, _utc(2026, 6, 1, 17, 0), NOON_CUTOVER, _utc(2026, 6, 10, 19, 30), _utc(2026, 6, 20, 17, 0)):
+        if cutover_at is not None:
+            _cutover(reject_db, cutover_at, set_at=cutover_at.isoformat(sep=" "))
+
+        _, rejects = _reject_count(reject_db)
+        _, checkins = _count(reject_db)
+
+        renamed = [table.replace("checkin_events", "reject_events").replace("checkins", "rejects")
+                   for table in checkins.tables()]
+        assert rejects.tables() == renamed
+        assert [parameters for _, parameters in rejects.statements] == [
+            parameters for _, parameters in checkins.statements
+        ]
+
+
+def test_without_a_cutover_v1_gets_the_whole_local_day_of_rejects(reject_db):
+    _, recorder = _reject_count(reject_db)
+
+    parameters = recorder.parameters_for("rejects")
+    assert (parameters["start_local"], parameters["end_local"]) == (_local(2026, 6, 10), _local(2026, 6, 11))
+
+
+# --- how many statements run -------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    ("cutover_at", "expected_tables"),
+    [
+        (None, ["v2_cutovers", "rejects"]),
+        (_utc(2026, 6, 1, 17, 0), ["v2_cutovers", "reject_events"]),
+        (_utc(2026, 6, 10, 5, 0), ["v2_cutovers", "reject_events"]),
+        (NOON_CUTOVER, ["v2_cutovers", "rejects", "reject_events"]),
+        (_utc(2026, 6, 11, 5, 0), ["v2_cutovers", "rejects"]),
+        (_utc(2026, 6, 20, 17, 0), ["v2_cutovers", "rejects"]),
+    ],
+    ids=["no cutover", "cutover before the day", "cutover at the day's start", "cutover inside the day",
+         "cutover at the day's end", "cutover after the day"],
+)
+def test_the_cutover_is_looked_up_once_and_only_the_eras_that_own_part_of_the_day_count_rejects(
+    reject_db, cutover_at, expected_tables
+):
+    if cutover_at is not None:
+        _cutover(reject_db, cutover_at)
+
+    result, recorder = _reject_count(reject_db)
+
+    assert recorder.tables() == expected_tables
+    assert recorder.tables().count("v2_cutovers") == 1
+    assert len(recorder.statements) <= 3
+    assert result.total == result.v1_count + result.v2_count == 0
+
+
+# --- failures -----------------------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("failing", ["v2_cutovers", "rejects", "reject_events"])
+def test_a_failure_in_any_reject_statement_propagates_and_no_partial_count_is_returned(reject_db, failing):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0))
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0))
+
+    with pytest.raises(RuntimeError, match=f"synthetic failure reading {failing}"):
+        _reject_count(reject_db, fail_on=failing)
+
+
+def test_a_failing_v2_reject_count_does_not_come_back_as_a_v1_only_total(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0))
+    with reject_db.begin() as conn:
+        conn.execute(text("DROP TABLE reject_events"))
+
+    with pytest.raises(Exception, match="reject_events"):
+        _reject_count(reject_db)
+
+
+def test_a_failing_v1_reject_count_does_not_come_back_as_a_v2_only_total(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0))
+    with reject_db.begin() as conn:
+        conn.execute(text("DROP TABLE rejects"))
+
+    with pytest.raises(Exception, match="rejects"):
+        _reject_count(reject_db)
+
+
+def test_the_reject_count_needs_neither_check_in_table(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0))
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0))
+    with reject_db.begin() as conn:
+        conn.execute(text("DROP TABLE checkins"))
+        conn.execute(text("DROP TABLE checkin_events"))
+
+    assert _reject_counts(reject_db) == (2, 1, 1)
+
+
+# --- the result -----------------------------------------------------------------------------------------------------------
+
+def test_the_reject_result_is_an_immutable_value_whose_total_is_the_sum_of_the_eras(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), _local(2026, 6, 10, 10, 0))
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0))
+
+    result, _ = _reject_count(reject_db)
+
+    assert [f.name for f in dataclasses.fields(RejectCount)] == ["total", "v1_count", "v2_count"]
+    assert result == RejectCount(total=3, v1_count=2, v2_count=1)
+    assert all(type(value) is int for value in dataclasses.astuple(result))
+    assert result.total == result.v1_count + result.v2_count
+    assert RejectCount is not operational_metrics_service.CheckinCount   # never mistaken for a check-in count
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        result.total = 99
+
+
+def test_the_reject_function_takes_a_connection_a_tenant_a_date_and_a_zone():
+    parameters = inspect.signature(operational_metrics_service.get_reject_count).parameters
+
+    assert list(parameters) == ["conn", "tenant", "local_date", "zone"]
+    assert parameters["local_date"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameters["zone"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert all(p.default is inspect.Parameter.empty for p in parameters.values())   # nothing defaults, least of all the date
+
+
+def test_nothing_is_cached_between_reject_counts(reject_db):
+    assert _reject_counts(reject_db) == (0, 0, 0)
+
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0))
+    assert _reject_counts(reject_db) == (1, 1, 0)
+
+    _cutover(reject_db, _utc(2026, 6, 1, 5, 0))
+    assert _reject_counts(reject_db) == (0, 0, 0)
+
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0))
+    assert _reject_counts(reject_db) == (1, 0, 1)
+
+
+def test_the_reject_service_knows_nothing_of_reasons_rates_or_the_dashboard():
+    source = inspect.getsource(operational_metrics_service.get_reject_count)
+
+    for forbidden in ("error_", "simplify", "reason", "rate", "checkin_events", "get_checkin", "mixed_era", "pandas",
+                      "streamlit", "fetchall", "now("):
+        assert forbidden not in source.replace("get_checkin_count:", ""), forbidden
+
+
+def test_adding_the_reject_count_left_the_check_in_functions_as_they_were():
+    # The reject count repeats the check-in count's few lines of era clamping rather than sharing them, so that
+    # nothing about the check-in functions had to change. Their statements are still their own.
+    checkin_source = inspect.getsource(operational_metrics_service.get_checkin_count)
+    hourly_source = inspect.getsource(operational_metrics_service.get_checkin_counts_by_hour)
+
+    assert "_V1_CHECKIN_COUNT_SQL" in checkin_source and "_V2_CHECKIN_COUNT_SQL" in checkin_source
+    assert "_V1_CHECKIN_HOURLY_COUNT_SQL" in hourly_source and "_V2_CHECKIN_HOURLY_COUNT_SQL" in hourly_source
+    assert "REJECT" not in checkin_source.upper() and "REJECT" not in hourly_source.upper()
+
+
+# --- against the Streamlit dashboard (characterization only; the dashboard is not changed) ---------------------------
+
+def _dashboard_reject_count(v1_rows, v2_rows, cutover_at, local_date) -> int:
+    """What Live Today's "Rejects" card shows for `local_date`:
+    mixed_era_service's reject frame, then metrics.get_today_metrics, which
+    filters it to the day and takes len()."""
+    import pandas as pd
+
+    import metrics
+    from services import mixed_era_service
+
+    v1 = pd.DataFrame({"datetime": [pd.Timestamp(row) for row in v1_rows], "barcode": ["synthetic"] * len(v1_rows),
+                       "error_message": ["Item not found"] * len(v1_rows)})
+    v2 = pd.DataFrame({"datetime": [pd.Timestamp(row) for row in v2_rows], "item_key": ["k"] * len(v2_rows),
+                       "error_class": ["item_not_found"] * len(v2_rows)})
+    if not v1_rows:
+        v1 = pd.DataFrame(columns=["datetime", "barcode", "error_message"])
+    if not v2_rows:
+        v2 = pd.DataFrame(columns=["datetime", "item_key", "error_class"])
+
+    cutover = None if cutover_at is None else pd.Timestamp(cutover_at)
+    mixed = mixed_era_service._build_mixed_rejects(v1, v2, cutover)
+    no_checkins = pd.DataFrame(columns=["datetime", "barcode"])
+    return metrics.get_today_metrics(no_checkins, mixed, local_date)["today_rejects"]
+
+
+@pytest.mark.parametrize("local_date", [date(2026, 5, 30), date(2026, 5, 31), date(2026, 6, 1), date(2026, 6, 2)])
+def test_for_a_v1_only_branch_the_sql_reject_count_equals_the_dashboards(reject_db, local_date):
+    _v1_reject(reject_db, *V1_ROWS)
+
+    total, v1_count, v2_count = _reject_counts(reject_db, local_date)
+
+    assert total == _dashboard_reject_count(V1_ROWS, [], None, local_date)
+    assert (v1_count, v2_count) == (total, 0)
+
+
+def test_for_a_cut_over_branch_v2_rejects_are_counted_as_the_dashboard_counts_them(reject_db):
+    # The dashboard's handling of v2 instants is correct; only its legacy rows are shifted. With v2 rows alone on
+    # each side of a local midnight, the two agree.
+    cutover_at = _utc(2026, 6, 1, 5, 0)
+    v2_rows = [_utc(2026, 6, 10, 5, 0), _utc(2026, 6, 10, 18, 0), _utc(2026, 6, 11, 4, 59, 59), _utc(2026, 6, 11, 5, 0)]
+    _cutover(reject_db, cutover_at)
+    _v2_reject(reject_db, *v2_rows)
+
+    for day, expected in ((date(2026, 6, 10), 3), (date(2026, 6, 11), 1)):
+        assert _reject_counts(reject_db, day)[0] == _dashboard_reject_count([], v2_rows, cutover_at, day) == expected
+
+
+def test_for_a_cut_over_branch_the_reject_count_intentionally_differs_from_the_dashboard_on_legacy_days(reject_db):
+    """Known and deliberate, exactly as for check-ins. Once a branch has a
+    cutover, the dashboard labels legacy naive local reject times as UTC and
+    converts them to Central, moving each 5-6 hours earlier; rejects from the
+    first hours of a local day land on the day before. This service counts
+    each reject on the local day it was stamped. The dashboard is not changed
+    by Block 7."""
+    cutover_at = _utc(2026, 6, 10, 5, 0)
+    _v1_reject(reject_db, *V1_ROWS)
+    _cutover(reject_db, cutover_at)
+
+    intended = {day: _reject_counts(reject_db, day)[0]
+                for day in (date(2026, 5, 31), date(2026, 6, 1), date(2026, 6, 2))}
+    dashboard = {day: _dashboard_reject_count(V1_ROWS, [], cutover_at, day) for day in intended}
+
+    assert intended == {date(2026, 5, 31): 1, date(2026, 6, 1): 6, date(2026, 6, 2): 2}
+    assert dashboard == {date(2026, 5, 31): 3, date(2026, 6, 1): 5, date(2026, 6, 2): 1}
+    assert sum(intended.values()) == sum(dashboard.values()) == len(V1_ROWS)   # same rows, different days
+
+
+# =====================================================================================================================
 # Module boundaries
 # =====================================================================================================================
 
@@ -2362,8 +3085,8 @@ def test_the_module_reads_no_clock_no_environment_and_creates_no_engine():
 def test_no_sql_in_the_module_depends_on_the_database_session_time_zone():
     statements = [name for name in vars(operational_metrics_service) if name.endswith("_SQL")]
     assert sorted(statements) == [
-        "_EFFECTIVE_CUTOVER_SQL", "_V1_CHECKIN_COUNT_SQL", "_V1_CHECKIN_HOURLY_COUNT_SQL", "_V2_CHECKIN_COUNT_SQL",
-        "_V2_CHECKIN_HOURLY_COUNT_SQL",
+        "_EFFECTIVE_CUTOVER_SQL", "_V1_CHECKIN_COUNT_SQL", "_V1_CHECKIN_HOURLY_COUNT_SQL", "_V1_REJECT_COUNT_SQL",
+        "_V2_CHECKIN_COUNT_SQL", "_V2_CHECKIN_HOURLY_COUNT_SQL", "_V2_REJECT_COUNT_SQL",
     ]
 
     for name in statements:
