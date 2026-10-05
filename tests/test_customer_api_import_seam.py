@@ -70,6 +70,7 @@ CUSTOMER_ROUTES = {
     ("GET", "/api/auth/session"),
     ("GET", "/api/organizations"),
     ("GET", "/api/organizations/{org_slug}"),
+    ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/ingest-status"),
 }
 
 _PROBE = """
@@ -193,15 +194,17 @@ def _imports(path: Path) -> list[tuple[str, int]]:
     return found
 
 
-def test_no_customer_api_module_uses_the_operational_tenant_resolver_yet():
-    # Block 3 ends with the resolver built and tested but with no HTTP caller:
-    # no customer route resolves, holds or returns operational ids until the
-    # first operational-data block.
+def test_only_the_tenant_scope_module_calls_the_operational_tenant_resolver():
+    # Block 3 ended with the resolver built but with no customer caller. Block
+    # 4b gives it exactly one: customer_api/tenant_scope.py. Every other
+    # customer module that needs a tenant goes through that module, so there
+    # is one place where a request becomes an operational tenant.
     for path in sorted(CUSTOMER_API.rglob("*.py")):
+        if path.name == "tenant_scope.py":
+            continue
         source = path.read_text(encoding="utf-8")
         assert "tenant_resolution_service" not in source, path.name
         assert "resolve_operational_tenant" not in source, path.name
-        assert "ResolvedOperationalTenant" not in source, path.name
 
 
 def test_customer_api_code_never_imports_a_second_module_identity_or_main():
