@@ -8,6 +8,7 @@ import {
   deferred,
   type FetchMock,
   jsonResponse,
+  liveRoutes,
   networkFailure,
   noContent,
   NORTHBRIDGE,
@@ -31,13 +32,16 @@ const RIVERSIDE_URL = 'GET /api/organizations/riverside'
 
 const NOT_FOUND_TEXT = 'This page does not exist, or you do not have access to it.'
 
-/** A signed-in user with two organizations, unless a test replaces a route. */
+/** A signed-in user with two organizations whose branches all have live data, unless a test replaces a route. */
 function serve(overrides: Routes = {}): FetchMock {
   return serveApi({
     [SESSION]: () => jsonResponse(200, ALICE),
     [LIST]: () => jsonResponse(200, [NORTHBRIDGE, RIVERSIDE]),
     [NORTHBRIDGE_URL]: () => jsonResponse(200, NORTHBRIDGE_DETAIL),
     [RIVERSIDE_URL]: () => jsonResponse(200, RIVERSIDE_DETAIL),
+    ...liveRoutes('northbridge', 'central'),
+    ...liveRoutes('northbridge', 'east-side'),
+    ...liveRoutes('riverside', 'main'),
     ...overrides,
   })
 }
@@ -50,8 +54,10 @@ const linkNames = () =>
   within(main())
     .queryAllByRole('link')
     .map((element) => element.textContent)
+/** Requests for the organization list or an organization -- not for a branch's live data. */
 const organizationRequests = (fetchMock: FetchMock) =>
-  requestedUrls(fetchMock).filter((url) => url.startsWith('/api/organizations'))
+  requestedUrls(fetchMock).filter((url) => url.startsWith('/api/organizations') && !url.includes('/branches/'))
+const liveRequests = (fetchMock: FetchMock) => requestedUrls(fetchMock).filter((url) => url.includes('/branches/'))
 
 /** Answers a request first with each of `replies` in turn, then keeps giving the last one. */
 function inTurn(...replies: Array<() => Response | Promise<Response>>) {
@@ -588,23 +594,36 @@ describe('a branch page', () => {
 
     await heading('East Side Branch')
     expect(link('Northbridge Library')).toBeInTheDocument()
-    expect(main()).toHaveTextContent('Dashboard migration in progress.')
+    expect(await screen.findByRole('heading', { level: 3, name: 'Today' })).toBeInTheDocument()
     expect(address()).toBe('/organizations/northbridge/branches/east-side')
-    expect(requestedUrls(fetchMock)).toEqual(['/api/auth/session', '/api/organizations/northbridge'])
+    expect(requestedUrls(fetchMock).slice(0, 3)).toEqual([
+      '/api/auth/session',
+      '/api/organizations/northbridge',
+      '/api/organizations/northbridge/branches/east-side/pipeline-status',
+    ])
   })
 
-  it('asks the API for nothing but the organization: no operational data yet', async () => {
+  it('asks for live data only for the branch in the address', async () => {
     const fetchMock = serve()
 
     renderApp('/organizations/northbridge/branches/central')
     await heading('Central Branch')
+    await screen.findByRole('heading', { level: 3, name: 'Top reject reasons' })
 
-    expect(requestedUrls(fetchMock)).toEqual(['/api/auth/session', '/api/organizations/northbridge'])
-    expect(requestedUrls(fetchMock).join(' ')).not.toMatch(/branches|checkins|rejects|pipeline/)
-    for (const role of ['table', 'img', 'combobox', 'tab', 'progressbar', 'meter']) {
+    expect(liveRequests(fetchMock)).toHaveLength(5)
+    expect(liveRequests(fetchMock).every((url) => url.startsWith('/api/organizations/northbridge/branches/central/'))).toBe(true)
+    for (const role of ['img', 'combobox', 'tab', 'progressbar', 'meter']) {
       expect(screen.queryByRole(role)).not.toBeInTheDocument()
     }
-    expect(main().textContent).not.toMatch(/\d/)
+  })
+
+  it('asks for no live data for a branch the organization did not return', async () => {
+    const fetchMock = serve()
+
+    renderApp('/organizations/northbridge/branches/west')
+    await heading('Page not found')
+
+    expect(liveRequests(fetchMock)).toEqual([])
   })
 
   it('links back to the organization and to the organization list', async () => {

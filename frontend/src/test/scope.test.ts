@@ -35,16 +35,22 @@ describe('scope of this block', () => {
 
   it.each([
     ['axios', /^axios$/],
-    ['TanStack Query', /^@tanstack\//],
     ['a state library', /^(redux|@reduxjs\/.*|react-redux|zustand|jotai|mobx.*|recoil)$/],
-    ['a UI or chart framework', /tailwind|^@mui\/|bootstrap|chart|recharts|^d3/],
+    ['a UI or chart framework', /tailwind|^@mui\/|bootstrap|chart|recharts|^d3|visx|nivo|victory|plotly/],
+    ['a date library', /^(moment.*|dayjs|date-fns.*|luxon|@js-joda\/.*|spacetime|temporal-polyfill|@date-io\/.*)$/],
     ['a browser test runner', /playwright|cypress/],
   ])('does not depend on %s', (_label, pattern) => {
     expect(installed.filter((name) => pattern.test(name))).toEqual([])
   })
 
   it('imports none of those libraries either', () => {
-    expect(offenders(/from\s+['"](axios|@tanstack\/|redux|zustand)/)).toEqual([])
+    expect(offenders(/from\s+['"](axios|redux|zustand|moment|dayjs|date-fns|luxon|chart|recharts|d3)/)).toEqual([])
+  })
+
+  it('uses TanStack Query for data, and keeps its cache in memory only', () => {
+    expect(installed.filter((name) => name.startsWith('@tanstack/'))).toEqual(['@tanstack/react-query'])
+    expect(offenders(/from\s+['"]@tanstack\/react-query['"]/)).toContain('../liveToday/useLiveToday.ts')
+    expect(offenders(/persistQueryClient|Persister|dehydrate|hydrate\(/i)).toEqual([])
   })
 
   it('routes with react-router, and with nothing hand-rolled', () => {
@@ -81,7 +87,7 @@ describe('scope of this block', () => {
     expect(offenders(/console\./)).toEqual([])
   })
 
-  it('calls no API beyond auth and the two organization endpoints', () => {
+  it('calls no API beyond auth, the two organization endpoints and the five Live Today reads', () => {
     const paths = shipped.flatMap(([, text]) => text.match(/['"`]\/api\/[^'"`]*['"`]/g) ?? [])
 
     expect([...new Set(paths.map((path) => path.slice(1, -1)))].sort()).toEqual([
@@ -91,13 +97,30 @@ describe('scope of this block', () => {
       '/api/auth/session',
       '/api/organizations',
       '/api/organizations/${encodeURIComponent(orgSlug)}',
+      '/api/organizations/${segment(orgSlug)}/branches/${segment(branchSlug)}',
     ])
+
+    // Under a branch: exactly the five Live Today reads, each named once, in the one module that makes them.
+    const endpoints = shipped.flatMap(([path, text]) =>
+      (text.match(/['"`](pipeline-status|checkins\/[a-z-]+|rejects\/[a-z-]+)['"`]/g) ?? []).map(
+        (found) => `${path} ${found.slice(1, -1)}`,
+      ),
+    )
+    expect(endpoints.filter((found) => found.startsWith('../api/liveToday.ts ')).sort()).toEqual([
+      '../api/liveToday.ts checkins/by-hour',
+      '../api/liveToday.ts checkins/count',
+      '../api/liveToday.ts rejects/by-reason',
+      '../api/liveToday.ts rejects/count',
+    ])
+    expect(offenders(/\/pipeline-status/)).toEqual(['../api/liveToday.ts'])
   })
 
-  it('references no operational data endpoint', () => {
-    expect(offenders(/\/(checkins|rejects|pipeline-status|transits|ingest)\b|by-reason|pipeline/i)).toEqual([])
-    // The only "/branches/" in the app is in a page address, never in an API path.
-    expect(offenders(/\/api\/[^'"`\s]*branches/)).toEqual([])
+  it('never uses the older ingest-status endpoint, or any other operational one', () => {
+    expect(offenders(/ingest[-_]?status|\/ingest\b|transits|heartbeat/i)).toEqual([])
+  })
+
+  it('judges nothing by age: there is no staleness threshold', () => {
+    expect(offenders(/STALE_|stale_?after|stale_?threshold|max_?age|isStale|staleTime/i)).toEqual([])
   })
 
   it('builds addresses from slugs, never from database ids', () => {

@@ -162,6 +162,7 @@ describe('the sign-in form', () => {
     expect(await screen.findByText('Alice Example')).toBeInTheDocument()
     expect(screen.getByText('alice@example.test')).toBeInTheDocument()
     expect(screen.queryByLabelText('Password')).not.toBeInTheDocument()
+    await landed()
     expect(requestedUrls(fetchMock)).toEqual(['/api/auth/session', '/api/auth/login', '/api/organizations'])
   })
 
