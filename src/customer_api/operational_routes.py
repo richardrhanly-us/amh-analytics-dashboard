@@ -21,7 +21,7 @@ The scoped connection is closed before the response is built.
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -36,6 +36,7 @@ from customer_api.operational_schemas import (
     CheckinsByHourResponse,
     IngestStatusFields,
     IngestStatusResponse,
+    PipelineStatusResponse,
     RejectCountResponse,
     RejectReasonCount,
     RejectsByReasonResponse,
@@ -52,6 +53,7 @@ from services.operational_metrics_service import (
     get_reject_counts_by_reason,
 )
 from services.operational_read_service import get_latest_ingest_status
+from services.pipeline_status_service import get_pipeline_status
 from services.reject_reason import REJECT_REASONS
 
 ResolvedTenant = Annotated[ResolvedOperationalTenant, Depends(require_resolved_tenant)]
@@ -100,6 +102,28 @@ def create_operational_router() -> APIRouter:
                 collector_run_duration_ms=status.collector_run_duration_ms,
                 collector_schedule_status=status.collector_schedule_status,
             )
+        )
+        return JSONResponse(content=body.model_dump(mode="json"), headers=NO_STORE_HEADERS)
+
+    @router.get("/pipeline-status")
+    def get_branch_pipeline_status(tenant: ResolvedTenant) -> Response:
+        # The product's configured zone. A zone that is set but invalid raises
+        # here, before any connection is opened.
+        zone = settings.product_timezone()
+        # The current instant, read once and here: the service is told what
+        # time it is and never reads a clock of its own.
+        now = datetime.now(UTC)
+
+        with open_customer_tenant_connection(tenant) as conn:
+            pipeline = get_pipeline_status(conn, tenant, now=now)
+
+        # The connection is closed. Only what was last reported and when it
+        # was received are returned: not where that was read from, and no
+        # judgement of how recent it is.
+        body = PipelineStatusResponse(
+            timezone=zone.key,
+            state=pipeline.state,
+            last_reported_at=pipeline.last_reported_at,
         )
         return JSONResponse(content=body.model_dump(mode="json"), headers=NO_STORE_HEADERS)
 

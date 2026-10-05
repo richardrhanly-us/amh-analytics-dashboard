@@ -2281,3 +2281,455 @@ def test_the_reasons_always_add_up_to_the_reject_count_for_the_same_day_and_data
     assert totals[("tenant-b", "main", "2026-06-10")] == 5       # two of them stored as 'jam', counted as `other`
     assert totals[("tenant-b", "north", "2026-06-10")] == 2
     assert totals[("tenant-a", "main", "2026-06-08")] == totals[("tenant-a", "main", "2026-06-12")] == 0
+
+
+# --- GET .../pipeline-status, end to end, as the runtime role ---
+#
+# What a branch's collection pipeline last reported, and when the server received it. As above, only the
+# authenticated user is stubbed: the tenant-scope dependency, the resolver, tenant_connection, the context read-back,
+# the cutover lookup, the one status read, the state mapping and the response are all real.
+#
+# This is the one customer route that reads a table with NO row level security: pipeline_status. So besides the
+# route's own behaviour, these prove where its isolation actually comes from -- the service statement's explicit
+# customer_id AND branch_id filter -- and that it holds on a real server, as the runtime role.
+
+PIPELINE_STATUS_PATH = "/api/organizations/{org}/branches/{branch}/pipeline-status"
+A, B_MAIN_SCOPE, B_NORTH_SCOPE = (CUSTOMER_A, BRANCH_A), (CUSTOMER_B, BRANCH_B), (CUSTOMER_B, BRANCH_B_NORTH)
+# Operational pairs no organization maps to: reachable through no route, but storable in pipeline_status (which has
+# no foreign key). The same branch id as tenant A's under tenant B's customer, and the reverse.
+B_WITH_AS_BRANCH_ID, A_WITH_BS_BRANCH_ID = (CUSTOMER_B, BRANCH_A), (CUSTOMER_A, BRANCH_B)
+LONG_PAST_CUTOVER, FAR_FUTURE_CUTOVER = "2026-01-01 06:00:00+00", "2099-01-01 06:00:00+00"
+
+
+@pytest.fixture
+def pipeline_api(customer_api, owner_engine):
+    """The customer API, with pipeline_status and v2_cutovers emptied first and pipeline_status emptied again after:
+    it has no foreign key, so the per-test TRUNCATE ... CASCADE of the tenant tables never reaches it."""
+    with owner_engine.begin() as conn:
+        conn.execute(text("TRUNCATE pipeline_status, v2_cutovers"))
+    yield customer_api
+    with owner_engine.begin() as conn:
+        conn.execute(text("TRUNCATE pipeline_status"))
+
+
+def _legacy_status(conn, scope, *, status=None, health_status=None, status_mins=None, health_mins=None) -> None:
+    """A pipeline_status row whose two server stamps are that many minutes before the server's clock (None = NULL).
+    One statement, so two equal minute values give two IDENTICAL instants."""
+    conn.execute(text("""
+        INSERT INTO pipeline_status (customer_id, branch_id, status, health_status, last_error, checkins_rows,
+                                     last_run, last_attempt, status_reported_at, health_status_reported_at)
+        VALUES (:c, :b, :s, :h, 'CANARY-raw-error-text', 4001, '1988-01-01 00:00:00', '1988-01-01 00:00:00',
+                now() - make_interval(mins => :sm), now() - make_interval(mins => :hm))
+    """), {"c": scope[0], "b": scope[1], "s": status, "h": health_status, "sm": status_mins, "hm": health_mins})
+
+
+def _pipeline_status(client, session, org, branch):
+    return client.get(PIPELINE_STATUS_PATH.format(org=org, branch=branch),
+                      headers={"Cookie": f"__Host-sortview_api_session={session}"})
+
+
+def _server_now(engine) -> datetime:
+    with engine.connect() as conn:
+        return conn.execute(text("SELECT clock_timestamp()")).scalar().astimezone(UTC)
+
+
+def _status_of(client, session, org, branch) -> tuple[str, datetime | None]:
+    """(state, last_reported_at as an aware UTC datetime or None) -- after checking the whole public contract."""
+    response = _pipeline_status(client, session, org, branch)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert list(body) == ["timezone", "state", "last_reported_at"]
+    assert body["timezone"] == "America/Chicago"
+    assert body["state"] in ("ok", "degraded", "failed", "unknown")
+    assert response.headers["cache-control"] == "no-store"
+    # Exactly three keys, a known zone and one of four states: with the time set aside, nothing else is in the body.
+    stamp = body["last_reported_at"]
+    rest = response.text.replace(stamp, "") if stamp else response.text
+    for leaked in ("customer_id", "branch_id", "cutover", "v1", "v2", "era", "source", "health", "schedule", "error",
+                   "CANARY", "1988", "4001", "key_id", str(CUSTOMER_A), str(CUSTOMER_B)):
+        assert leaked not in rest, leaked
+    if stamp is None:
+        assert body["state"] == "unknown"            # a state is never returned without a time
+        return body["state"], None
+    assert stamp.endswith("Z") and "+" not in stamp  # UTC, whatever the session's zone
+    return body["state"], datetime.fromisoformat(stamp)
+
+
+def _minutes_ago(engine, moment: datetime) -> float:
+    return (_server_now(engine) - moment).total_seconds() / 60
+
+
+def _about(minutes: float, expected: float) -> bool:
+    return abs(minutes - expected) < 0.25           # within fifteen seconds of the seeded age
+
+
+# --- a legacy branch: the later of the two stamps is the last report ---------------------------------------------------
+
+def test_pipeline_status_of_a_legacy_branch_with_only_a_run_report(owner_engine, pipeline_api):
+    with owner_engine.begin() as conn:
+        _legacy_status(conn, A, status="completed", health_status="degraded", status_mins=7)   # health has no stamp
+
+    state, reported = _status_of(pipeline_api, SESSION_A, "tenant-a", "main")
+
+    assert state == "ok" and _about(_minutes_ago(owner_engine, reported), 7)
+
+
+def test_pipeline_status_of_a_legacy_branch_with_only_a_heartbeat(owner_engine, pipeline_api):
+    with owner_engine.begin() as conn:
+        _legacy_status(conn, A, status="failed_upload", health_status="degraded", health_mins=3)   # status has no stamp
+
+    state, reported = _status_of(pipeline_api, SESSION_A, "tenant-a", "main")
+
+    assert state == "degraded" and _about(_minutes_ago(owner_engine, reported), 3)
+
+
+def test_pipeline_status_of_a_legacy_branch_is_whichever_signal_was_reported_last(owner_engine, pipeline_api):
+    with owner_engine.begin() as conn:
+        _legacy_status(conn, A, status="failed_upload", health_status="healthy", status_mins=2, health_mins=9)
+        _legacy_status(conn, B_MAIN_SCOPE, status="failed_upload", health_status="healthy", status_mins=9, health_mins=2)
+
+    a_state, a_reported = _status_of(pipeline_api, SESSION_A, "tenant-a", "main")
+    b_state, b_reported = _status_of(pipeline_api, SESSION_B, "tenant-b", "main")
+
+    assert a_state == "failed" and _about(_minutes_ago(owner_engine, a_reported), 2)    # the run report was last
+    assert b_state == "ok" and _about(_minutes_ago(owner_engine, b_reported), 2)        # the heartbeat was last
+
+
+def test_pipeline_status_on_an_exact_tie_takes_the_heartbeat(owner_engine, pipeline_api):
+    with owner_engine.begin() as conn:
+        _legacy_status(conn, A, status="failed_upload", health_status="degraded", status_mins=4, health_mins=4)
+        equal = conn.execute(text("SELECT status_reported_at = health_status_reported_at FROM pipeline_status "
+                                  "WHERE customer_id = :c"), {"c": CUSTOMER_A}).scalar()
+    assert equal is True                             # really the same instant, to the microsecond
+
+    state, reported = _status_of(pipeline_api, SESSION_A, "tenant-a", "main")
+
+    assert state == "degraded" and _about(_minutes_ago(owner_engine, reported), 4)
+
+
+def test_pipeline_status_of_an_install_probe_is_unknown_with_the_time_it_was_received(owner_engine, pipeline_api):
+    with owner_engine.begin() as conn:
+        _legacy_status(conn, A, status="preflight_check", health_status="healthy", status_mins=1, health_mins=30)
+
+    state, reported = _status_of(pipeline_api, SESSION_A, "tenant-a", "main")
+
+    assert state == "unknown" and _about(_minutes_ago(owner_engine, reported), 1)
+
+
+# --- nothing reported ----------------------------------------------------------------------------------------------------
+
+def test_pipeline_status_of_a_branch_that_never_reported_is_unknown_and_null_and_still_200(pipeline_api):
+    response = _pipeline_status(pipeline_api, SESSION_A, "tenant-a", "main")
+
+    assert response.status_code == 200
+    assert response.json() == {"timezone": "America/Chicago", "state": "unknown", "last_reported_at": None}
+
+
+def test_pipeline_status_of_a_row_written_before_the_server_stamped_reports_is_unknown_and_null(owner_engine, pipeline_api):
+    # As every row is straight after migration 16b41d730e15: a status, three naive timestamps, and no stamp.
+    with owner_engine.begin() as conn:
+        conn.execute(text("INSERT INTO pipeline_status (customer_id, branch_id, status, health_status, last_run, "
+                          "last_attempt, updated_at) VALUES (:c, :b, 'completed', 'healthy', now(), now(), now())"),
+                     {"c": CUSTOMER_A, "b": BRANCH_A})
+
+    assert _status_of(pipeline_api, SESSION_A, "tenant-a", "main") == ("unknown", None)
+
+
+# --- which source: the effective cutover -----------------------------------------------------------------------------------
+
+def test_pipeline_status_with_an_active_key_but_no_cutover_is_still_the_legacy_report(owner_engine, pipeline_api):
+    # The customer_api fixture gives every branch an active ingest key. Without a cutover that changes nothing.
+    with owner_engine.begin() as conn:
+        _legacy_status(conn, A, status="failed_upload", status_mins=6)
+        assert conn.execute(text("SELECT COUNT(*) FROM ingest_key_ids WHERE customer_id = :c AND status = 'active'"),
+                            {"c": CUSTOMER_A}).scalar() == 1
+
+    state, reported = _status_of(pipeline_api, SESSION_A, "tenant-a", "main")
+
+    assert state == "failed" and _about(_minutes_ago(owner_engine, reported), 6)
+
+
+def test_pipeline_status_with_a_future_cutover_is_still_the_legacy_report(owner_engine, pipeline_api):
+    with owner_engine.begin() as conn:
+        _legacy_status(conn, A, status="failed_upload", status_mins=6)
+        _set_cutover(conn, CUSTOMER_A, BRANCH_A, FAR_FUTURE_CUTOVER)
+
+    assert _status_of(pipeline_api, SESSION_A, "tenant-a", "main")[0] == "failed"
+
+
+def test_pipeline_status_after_the_cutover_is_the_current_report(owner_engine, pipeline_api):
+    with owner_engine.begin() as conn:
+        _legacy_status(conn, A, status="failed_upload", status_mins=6)
+        _set_cutover(conn, CUSTOMER_A, BRANCH_A, LONG_PAST_CUTOVER)
+
+    state, reported = _status_of(pipeline_api, SESSION_A, "tenant-a", "main")
+
+    # Tenant A's key: healthy, heartbeat thirty minutes ago (the customer_api fixture). The legacy row is not read.
+    assert state == "ok" and _about(_minutes_ago(owner_engine, reported), 30)
+
+
+def test_pipeline_status_after_the_cutover_shows_a_reported_schedule_fault(owner_engine, pipeline_api):
+    with owner_engine.begin() as conn:
+        _set_cutover(conn, CUSTOMER_A, BRANCH_A, LONG_PAST_CUTOVER)
+        _set_cutover(conn, CUSTOMER_B, BRANCH_B_NORTH, LONG_PAST_CUTOVER)
+        conn.execute(text("UPDATE ingest_key_ids SET collector_schedule_status = 'task_disabled' WHERE key_id = :k"),
+                     {"k": KEY_A})                                   # healthy heartbeat, disabled task
+        conn.execute(text("UPDATE ingest_key_ids SET collector_schedule_status = 'query_failed' WHERE key_id = :k"),
+                     {"k": KEY_B_NORTH})                             # degraded heartbeat, unchecked schedule
+
+    assert _status_of(pipeline_api, SESSION_A, "tenant-a", "main")[0] == "failed"
+    assert _status_of(pipeline_api, SESSION_B, "tenant-b", "north")[0] == "degraded"
+    for session, org, branch in ((SESSION_A, "tenant-a", "main"), (SESSION_B, "tenant-b", "north")):
+        assert "task_disabled" not in _pipeline_status(pipeline_api, session, org, branch).text
+        assert "query_failed" not in _pipeline_status(pipeline_api, session, org, branch).text
+
+
+def test_pipeline_status_after_a_rollback_is_the_legacy_report_again(owner_engine, pipeline_api):
+    with owner_engine.begin() as conn:
+        _legacy_status(conn, A, status="failed_upload", status_mins=6)
+        _set_cutover(conn, CUSTOMER_A, BRANCH_A, LONG_PAST_CUTOVER)
+    assert _status_of(pipeline_api, SESSION_A, "tenant-a", "main")[0] == "ok"
+
+    # A later v2_cutovers row with no cutover_at is a recorded rollback for that branch.
+    with owner_engine.begin() as conn:
+        conn.execute(text("INSERT INTO v2_cutovers (customer_id, branch_id, cutover_at, set_at, set_by) "
+                          "VALUES (:c, :b, NULL, now() + interval '1 minute', 'rls-test')"), {"c": CUSTOMER_A, "b": BRANCH_A})
+
+    assert _status_of(pipeline_api, SESSION_A, "tenant-a", "main")[0] == "failed"
+
+
+def test_pipeline_status_source_is_decided_per_branch(owner_engine, pipeline_api):
+    with owner_engine.begin() as conn:
+        _legacy_status(conn, A, status="completed", status_mins=6)
+        _legacy_status(conn, B_MAIN_SCOPE, status="completed", status_mins=6)
+        _legacy_status(conn, B_NORTH_SCOPE, status="completed", status_mins=6)
+        _set_cutover(conn, CUSTOMER_B, BRANCH_B, LONG_PAST_CUTOVER)          # only tenant B's main branch is current
+
+    assert _status_of(pipeline_api, SESSION_A, "tenant-a", "main")[0] == "ok"        # legacy: completed
+    assert _status_of(pipeline_api, SESSION_B, "tenant-b", "main")[0] == "failed"    # current: its key reports error
+    assert _status_of(pipeline_api, SESSION_B, "tenant-b", "north")[0] == "ok"       # legacy: completed
+
+
+# --- tenant isolation on a table with no row level security ----------------------------------------------------------------
+
+def _seed_isolation_rows(owner_engine) -> None:
+    with owner_engine.begin() as conn:
+        _legacy_status(conn, A, status="completed", status_mins=5)
+        _legacy_status(conn, B_MAIN_SCOPE, status="failed_upload", status_mins=10)
+        _legacy_status(conn, B_NORTH_SCOPE, health_status="degraded", health_mins=15)
+        _legacy_status(conn, B_WITH_AS_BRANCH_ID, status="failed_upload", health_status="auth_failure",
+                       status_mins=1, health_mins=1)                 # tenant A's branch id, under tenant B's customer
+        _legacy_status(conn, A_WITH_BS_BRANCH_ID, status="failed_upload", health_status="auth_failure",
+                       status_mins=1, health_mins=1)                 # tenant B's branch id, under tenant A's customer
+
+
+def test_pipeline_status_is_not_protected_by_row_level_security(owner_engine, runtime_engine):
+    """The premise of everything below. If this fails because pipeline_status has gained row level security, that
+    is welcome -- and the explicit filter is then no longer the only protection. Until then, it is."""
+    _seed_members(owner_engine, runtime_engine)
+    with owner_engine.begin() as conn:
+        conn.execute(text("TRUNCATE pipeline_status"))
+        assert conn.execute(text("SELECT relrowsecurity FROM pg_class WHERE relname = 'pipeline_status'")).scalar() is False
+    _seed_isolation_rows(owner_engine)
+    try:
+        with tenant_connection(runtime_engine, CUSTOMER_A, BRANCH_A) as conn:
+            # Deliberately unscoped, as the runtime role, on tenant A's connection: every tenant's row comes back.
+            seen = {tuple(r) for r in conn.execute(text("SELECT customer_id, branch_id FROM pipeline_status"))}
+            raw_errors = conn.execute(text("SELECT COUNT(*) FROM pipeline_status WHERE last_error IS NOT NULL")).scalar()
+
+        assert seen == {A, B_MAIN_SCOPE, B_NORTH_SCOPE, B_WITH_AS_BRANCH_ID, A_WITH_BS_BRANCH_ID}
+        assert raw_errors == 5
+    finally:
+        with owner_engine.begin() as conn:
+            conn.execute(text("TRUNCATE pipeline_status"))
+
+
+def test_pipeline_status_gives_each_user_only_their_own_branchs_report(owner_engine, pipeline_api):
+    _seed_isolation_rows(owner_engine)
+
+    a = _status_of(pipeline_api, SESSION_A, "tenant-a", "main")
+    b_main = _status_of(pipeline_api, SESSION_B, "tenant-b", "main")
+    b_north = _status_of(pipeline_api, SESSION_B, "tenant-b", "north")
+
+    # Each answer is its own row's state AND its own row's age: three different rows were read.
+    assert a[0] == "ok" and _about(_minutes_ago(owner_engine, a[1]), 5)
+    assert b_main[0] == "failed" and _about(_minutes_ago(owner_engine, b_main[1]), 10)
+    assert b_north[0] == "degraded" and _about(_minutes_ago(owner_engine, b_north[1]), 15)
+
+
+def test_pipeline_status_never_leaks_the_same_branch_id_under_another_customer(owner_engine, pipeline_api):
+    with owner_engine.begin() as conn:      # ONLY the look-alike rows exist: a one-minute-old auth failure each
+        _legacy_status(conn, B_WITH_AS_BRANCH_ID, health_status="auth_failure", health_mins=1)
+        _legacy_status(conn, A_WITH_BS_BRANCH_ID, health_status="auth_failure", health_mins=1)
+
+    # Tenant A (101, 11) has no row. Neither (202, 11) nor (101, 22) is borrowed for it -- nor for tenant B (202, 22).
+    assert _status_of(pipeline_api, SESSION_A, "tenant-a", "main") == ("unknown", None)
+    assert _status_of(pipeline_api, SESSION_B, "tenant-b", "main") == ("unknown", None)
+
+
+def test_pipeline_status_never_leaks_another_branch_of_the_same_customer(owner_engine, pipeline_api):
+    with owner_engine.begin() as conn:
+        _legacy_status(conn, B_NORTH_SCOPE, status="failed_upload", status_mins=1)
+
+    assert _status_of(pipeline_api, SESSION_B, "tenant-b", "main") == ("unknown", None)
+    assert _status_of(pipeline_api, SESSION_B, "tenant-b", "north")[0] == "failed"
+
+
+def test_pipeline_status_refuses_a_cross_tenant_request_exactly_as_the_sibling_routes_do(owner_engine, pipeline_api):
+    _seed_isolation_rows(owner_engine)
+
+    for session, org, branch in ((SESSION_A, "tenant-b", "main"), (SESSION_A, "tenant-b", "north"),
+                                 (SESSION_A, "tenant-a", "north"), (SESSION_B, "tenant-a", "main")):
+        refused = _pipeline_status(pipeline_api, session, org, branch)
+        sibling = _ingest_status(pipeline_api, session, org, branch)
+
+        assert refused.status_code == 404 and refused.json() == TENANT_NOT_FOUND
+        assert (refused.status_code, refused.content) == (sibling.status_code, sibling.content)
+
+
+def test_pipeline_status_of_an_active_branch_with_no_operational_mapping_is_the_existing_404(owner_engine, pipeline_api):
+    with owner_engine.begin() as conn:
+        conn.execute(text("INSERT INTO branches (id, organization_id, slug, name, status, operational_branch_id) "
+                          "VALUES (31, 1, 'unmapped', 'Unmapped', 'active', NULL)"))
+        _legacy_status(conn, (CUSTOMER_A, 31), status="completed", status_mins=1)   # a row its id WOULD match, if mapped
+
+    refused = _pipeline_status(pipeline_api, SESSION_A, "tenant-a", "unmapped")
+    sibling = _ingest_status(pipeline_api, SESSION_A, "tenant-a", "unmapped")
+
+    assert refused.status_code == 404 and refused.json() == TENANT_NOT_FOUND
+    assert refused.content == sibling.content
+
+
+def test_pipeline_status_request_handling_through_the_real_app(pipeline_api):
+    path = PIPELINE_STATUS_PATH.format(org="tenant-a", branch="main")
+    cookie = {"Cookie": f"__Host-sortview_api_session={SESSION_A}"}
+
+    assert pipeline_api.get(path).status_code == 401                                   # no session
+    assert pipeline_api.post(path, headers=cookie).status_code == 405                  # read-only
+    ignored = pipeline_api.get(path, headers=cookie, params={"customer_id": CUSTOMER_B, "branch_id": BRANCH_B,
+                                                             "now": "2099-01-01T00:00:00Z", "source": "current"})
+    assert ignored.status_code == 200 and ignored.json()["state"] == "unknown"         # hints change nothing
+
+
+# --- one pooled connection, alternating tenants and sources ----------------------------------------------------------------
+
+def test_pipeline_status_on_one_pooled_connection_never_sees_another_tenant(
+    owner_engine, pipeline_api, runtime_engine, monkeypatch
+):
+    _seed_isolation_rows(owner_engine)
+    with owner_engine.begin() as conn:
+        _set_cutover(conn, CUSTOMER_B, BRANCH_B, LONG_PAST_CUTOVER)      # tenant B main answers from its key: error
+    # One connection: every statement of every request below runs on the same server backend.
+    single = create_engine(runtime_engine.url, pool_size=1, max_overflow=0, hide_parameters=True)
+    monkeypatch.setattr(database, "_engine", single)
+    requests = (
+        (SESSION_A, "tenant-a", "main", "ok"),             # legacy
+        (SESSION_B, "tenant-b", "main", "failed"),         # current
+        (SESSION_A, "tenant-a", "main", "ok"),
+        (SESSION_B, "tenant-b", "north", "degraded"),      # legacy
+        (SESSION_B, "tenant-b", "main", "failed"),
+        (SESSION_A, "tenant-a", "main", "ok"),
+    )
+    try:
+        first = {(org, branch): _status_of(pipeline_api, session, org, branch) for session, org, branch, _ in requests}
+        for session, org, branch, expected in requests:
+            answer = _status_of(pipeline_api, session, org, branch)
+            assert answer[0] == expected and answer == first[(org, branch)], (org, branch)
+        # Another operational route for another tenant in between, on the same connection, changes nothing.
+        assert _ingest_status(pipeline_api, SESSION_B, "tenant-b", "north").json()["status"]["health_status"] == "degraded"
+        assert _status_of(pipeline_api, SESSION_A, "tenant-a", "main") == first[("tenant-a", "main")]
+
+        # Change the pooled connection's SESSION time zone for good, then ask again: the same UTC answers.
+        with single.connect() as conn:
+            conn.execute(text("SET TIME ZONE 'Asia/Tokyo'"))
+            conn.commit()
+        with single.connect() as conn:
+            assert conn.execute(text("SHOW timezone")).scalar() == "Asia/Tokyo"
+        for session, org, branch, _expected in requests:
+            assert _status_of(pipeline_api, session, org, branch) == first[(org, branch)], (org, branch)
+        assert _pipeline_status(pipeline_api, SESSION_A, "tenant-b", "main").status_code == 404
+
+        # Nothing of any request's tenant context is left on the pooled connection.
+        with single.connect() as conn:
+            settings = conn.execute(text(
+                "SELECT current_setting('app.operational_customer_id', true), "
+                "current_setting('app.operational_branch_id', true)"
+            )).one()
+            assert all(value in (None, "") for value in settings)
+    finally:
+        single.dispose()
+
+
+# --- the database session's time zone ----------------------------------------------------------------------------------------
+
+def test_pipeline_status_is_the_same_utc_instant_whatever_the_database_session_time_zone(
+    owner_engine, pipeline_api, runtime_engine, monkeypatch
+):
+    _seed_isolation_rows(owner_engine)
+    with owner_engine.begin() as conn:
+        _set_cutover(conn, CUSTOMER_B, BRANCH_B, LONG_PAST_CUTOVER)
+    bodies, raw_offsets = {}, {}
+    for zone in ("UTC", "America/Chicago", "America/New_York", "Asia/Tokyo", "Asia/Kolkata"):
+        engine = create_engine(runtime_engine.url, connect_args={"options": f"-c timezone={zone}"}, hide_parameters=True)
+        monkeypatch.setattr(database, "_engine", engine)
+        try:
+            with engine.connect() as conn:
+                assert conn.execute(text("SHOW timezone")).scalar() == zone
+                raw_offsets[zone] = conn.execute(text(
+                    "SELECT status_reported_at FROM pipeline_status WHERE customer_id = :c AND branch_id = :b"
+                ), {"c": CUSTOMER_A, "b": BRANCH_A}).scalar().utcoffset()
+            bodies[zone] = (
+                _pipeline_status(pipeline_api, SESSION_A, "tenant-a", "main").content,       # legacy
+                _pipeline_status(pipeline_api, SESSION_B, "tenant-b", "main").content,       # current
+                _pipeline_status(pipeline_api, SESSION_B, "tenant-b", "north").content,      # legacy, heartbeat
+            )
+        finally:
+            engine.dispose()
+
+    # The driver handed the stored instant back in five different offsets...
+    assert len(set(raw_offsets.values())) == 5 and raw_offsets["UTC"] == timedelta(0)
+    # ...and the three responses are byte-for-byte the same in every one of them.
+    assert len(set(bodies.values())) == 1
+    for body in next(iter(bodies.values())):
+        assert body.endswith(b'Z"}') and b"+" not in body
+
+
+# --- end to end: a report posted by a collector is what the customer route then answers with ----------------------------
+
+def test_pipeline_status_answers_with_what_the_real_report_endpoint_just_stored(owner_engine, pipeline_api, runtime_engine, monkeypatch):
+    monkeypatch.setattr(main, "engine", runtime_engine)               # the collector API writes as the runtime role too
+    assert _HASH_EXPR in main._AGENT_TOKEN_LOOKUP_SQL
+    monkeypatch.setattr(main, "_AGENT_TOKEN_LOOKUP_SQL", main._AGENT_TOKEN_LOOKUP_SQL.replace(_HASH_EXPR, _BUILTIN_SHA256_EXPR))
+
+    def report(body: dict) -> None:
+        response = pipeline_api.post("/upload-pipeline-status", headers={"Authorization": f"Bearer {TOKEN_A}"},
+                                     json={"customer_id": CUSTOMER_A, "branch_id": BRANCH_A, **body})
+        assert response.status_code == 200, response.text
+
+    def pause() -> None:
+        with owner_engine.connect() as conn:
+            conn.execute(text("SELECT pg_sleep(0.05)"))
+
+    assert _status_of(pipeline_api, SESSION_A, "tenant-a", "main") == ("unknown", None)
+
+    before = _server_now(owner_engine)
+    report({"status": "completed", "checkins_rows": 3})
+    first = _status_of(pipeline_api, SESSION_A, "tenant-a", "main")
+    assert first[0] == "ok" and before - timedelta(seconds=1) <= first[1] <= _server_now(owner_engine) + timedelta(seconds=1)
+
+    pause()
+    report({"health_status": "degraded", "pending_outbox_count": 2})
+    second = _status_of(pipeline_api, SESSION_A, "tenant-a", "main")
+    assert second[0] == "degraded" and second[1] > first[1]           # the heartbeat is now the last report
+
+    pause()
+    report({"status": "failed_upload", "last_error": "CANARY-raw-error-text"})
+    third = _status_of(pipeline_api, SESSION_A, "tenant-a", "main")
+    assert third[0] == "failed" and third[1] > second[1]              # then the failed run is
+
+    pause()
+    report({"checkins_rows": 9})                                      # carries neither signal: the answer does not move
+    assert _status_of(pipeline_api, SESSION_A, "tenant-a", "main") == third
+
+    # Tenant B posted nothing and sees nothing of it.
+    assert _status_of(pipeline_api, SESSION_B, "tenant-b", "main") == ("unknown", None)

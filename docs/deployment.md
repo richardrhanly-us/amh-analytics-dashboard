@@ -21,9 +21,16 @@ The backend API is responsible for:
 - authenticating the AMH agent
 - writing data into Neon
 - serving the customer (browser) API under `/api`: session login and logout, the
-  signed-in user's organization context, and five read-only operational endpoints:
+  signed-in user's organization context, and six read-only operational endpoints:
   - `GET /api/organizations/{org_slug}/branches/{branch_slug}/ingest-status`
     (a branch's latest Contract v2 collector status, or `status: null` if it has none)
+  - `GET /api/organizations/{org_slug}/branches/{branch_slug}/pipeline-status`
+    (what the branch's collection pipeline last reported: `state` is one of `ok`,
+    `degraded`, `failed` or `unknown`; `last_reported_at` is the UTC instant that report
+    was received, or `null` if nothing has been reported; `timezone` is
+    `SORTVIEW_LIVE_TIMEZONE`. The state describes the last report only -- the endpoint
+    makes no judgement of how old that report is, so a reader must compare
+    `last_reported_at` with the current time)
   - `GET /api/organizations/{org_slug}/branches/{branch_slug}/checkins/count?date=YYYY-MM-DD`
     (check-ins on one calendar day; `date` is required and is interpreted in
     `SORTVIEW_LIVE_TIMEZONE`, which the response echoes)
