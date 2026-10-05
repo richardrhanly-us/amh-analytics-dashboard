@@ -35,7 +35,6 @@ describe('scope of this block', () => {
 
   it.each([
     ['axios', /^axios$/],
-    ['a router', /router/],
     ['TanStack Query', /^@tanstack\//],
     ['a state library', /^(redux|@reduxjs\/.*|react-redux|zustand|jotai|mobx.*|recoil)$/],
     ['a UI or chart framework', /tailwind|^@mui\/|bootstrap|chart|recharts|^d3/],
@@ -45,7 +44,14 @@ describe('scope of this block', () => {
   })
 
   it('imports none of those libraries either', () => {
-    expect(offenders(/from\s+['"](axios|react-router|@tanstack\/|redux|zustand)/)).toEqual([])
+    expect(offenders(/from\s+['"](axios|@tanstack\/|redux|zustand)/)).toEqual([])
+  })
+
+  it('routes with react-router, and with nothing hand-rolled', () => {
+    expect(installed).toContain('react-router')
+    expect(installed.filter((name) => /router/.test(name))).toEqual(['react-router'])
+    expect(offenders(/from\s+['"]react-router['"]/)).toContain('../router/AppRouter.tsx')
+    expect(offenders(/\bhistory\.|pushState|replaceState|window\.location|location\.href/)).toEqual([])
   })
 
   it('calls fetch only from the API client', () => {
@@ -75,7 +81,7 @@ describe('scope of this block', () => {
     expect(offenders(/console\./)).toEqual([])
   })
 
-  it('calls no API beyond the three auth endpoints', () => {
+  it('calls no API beyond auth and the two organization endpoints', () => {
     const paths = shipped.flatMap(([, text]) => text.match(/['"`]\/api\/[^'"`]*['"`]/g) ?? [])
 
     expect([...new Set(paths.map((path) => path.slice(1, -1)))].sort()).toEqual([
@@ -83,6 +89,22 @@ describe('scope of this block', () => {
       '/api/auth/login',
       '/api/auth/logout',
       '/api/auth/session',
+      '/api/organizations',
+      '/api/organizations/${encodeURIComponent(orgSlug)}',
     ])
+  })
+
+  it('references no operational data endpoint', () => {
+    expect(offenders(/\/(checkins|rejects|pipeline-status|transits|ingest)\b|by-reason|pipeline/i)).toEqual([])
+    // The only "/branches/" in the app is in a page address, never in an API path.
+    expect(offenders(/\/api\/[^'"`\s]*branches/)).toEqual([])
+  })
+
+  it('builds addresses from slugs, never from database ids', () => {
+    expect(offenders(/customer_id|branch_id|organization_id|tenant_id|org_id|\.id\b/)).toEqual([])
+    const paths = shipped.find(([path]) => path === '../router/paths.ts')?.[1] ?? ''
+    expect(paths).toMatch(/encodeURIComponent\(orgSlug\)/)
+    expect(paths).toMatch(/encodeURIComponent\(branchSlug\)/)
+    expect(paths).not.toMatch(/\d/)
   })
 })

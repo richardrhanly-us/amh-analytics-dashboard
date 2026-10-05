@@ -54,9 +54,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setState({ status: 'unauthenticated' })
   }, [])
 
+  const sessionExpired = useCallback(() => {
+    setState({ status: 'unauthenticated' })
+  }, [])
+
   const value = useMemo<AuthContextValue>(
-    () => ({ state, login, logout, retryRestore: restore }),
-    [state, login, logout, restore],
+    () => ({ state, login, logout, retryRestore: restore, sessionExpired }),
+    [state, login, logout, restore, sessionExpired],
   )
 
   return <AuthContext value={value}>{children}</AuthContext>

@@ -62,3 +62,41 @@ export const ALICE = { id: 7, email: 'alice@example.test', full_name: 'Alice Exa
 export const NOT_AUTHENTICATED = { code: 'not_authenticated', message: 'Authentication is required.' }
 export const INVALID_CREDENTIALS = { code: 'invalid_credentials', message: 'Invalid email or password.' }
 export const ORIGIN_NOT_ALLOWED = { code: 'origin_not_allowed', message: 'Request origin is not allowed.' }
+export const ORGANIZATION_NOT_FOUND = { code: 'organization_not_found', message: 'Organization not found.' }
+
+/**
+ * A fetch mock that answers by request, e.g. `{ 'GET /api/organizations': () => jsonResponse(200, []) }`.
+ * A handler runs once per matching request, so it can return a fresh Response (a Response body can be read
+ * only once) or a promise the test settles later. A request with no handler fails like a dead network.
+ */
+export function serveApi(routes: Record<string, () => Response | Promise<Response>>): FetchMock {
+  const mock = stubFetch()
+  mock.mockImplementation((url, init) => {
+    const handler = routes[`${init?.method ?? 'GET'} ${String(url)}`]
+    return handler === undefined ? Promise.reject(networkFailure()) : Promise.resolve(handler())
+  })
+  return mock
+}
+
+export const NORTHBRIDGE = { slug: 'northbridge', name: 'Northbridge Library', role: 'admin', access_mode: 'full' }
+export const RIVERSIDE = { slug: 'riverside', name: 'Riverside Library', role: 'viewer', access_mode: 'read_only' }
+
+export const NORTHBRIDGE_DETAIL = {
+  ...NORTHBRIDGE,
+  branches: [
+    { slug: 'central', name: 'Central Branch', is_primary: true },
+    { slug: 'east-side', name: 'East Side Branch', is_primary: false },
+  ],
+  subscription: { plan_code: 'standard', plan_name: 'Standard', status: 'active' },
+  entitlements: {
+    transits_tab: { enabled: true, limit_value: null },
+    branch_count: { enabled: true, limit_value: 5 },
+  },
+}
+
+export const RIVERSIDE_DETAIL = {
+  ...RIVERSIDE,
+  branches: [{ slug: 'main', name: 'Riverside Main', is_primary: true }],
+  subscription: null,
+  entitlements: {},
+}

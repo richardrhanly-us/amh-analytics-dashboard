@@ -53,6 +53,8 @@ export interface ApiRequestOptions {
   method?: ApiMethod
   /** Sent as a JSON body. Omit for a request with no body. */
   body?: unknown
+  /** Cancels the request. A cancelled request rejects like any other that got no response. */
+  signal?: AbortSignal
 }
 
 /**
@@ -126,13 +128,16 @@ function errorFor(status: number, body: unknown): ApiError {
  * purpose -- the caller checks the shape it expects.
  */
 export async function apiRequest(path: string, options: ApiRequestOptions = {}): Promise<unknown> {
-  const { method = 'GET', body } = options
+  const { method = 'GET', body, signal } = options
   const headers: Record<string, string> = { Accept: 'application/json' }
   const init: RequestInit = {
     method,
     headers,
     // The page and the API share an origin, so the browser sends the session cookie itself.
     credentials: 'same-origin',
+  }
+  if (signal !== undefined) {
+    init.signal = signal
   }
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json'

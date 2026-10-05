@@ -24,6 +24,11 @@ export interface AuthContextValue {
   logout: () => Promise<void>
   /** Asks the API again after a failed restore. */
   retryRestore: () => void
+  /**
+   * For when the API answers 401 to a signed-in user: the session is gone. Drops the user and returns to
+   * unauthenticated, with no request -- there is no session left to end and none to refresh.
+   */
+  sessionExpired: () => void
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null)
