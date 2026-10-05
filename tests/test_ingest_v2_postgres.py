@@ -55,6 +55,12 @@ LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 PREVIOUS_HEAD = "b4e91d7a3c58"      # the head before Contract v2 existed
 STEP3_HEAD = "d3f1a8c95b27"         # Step 3 as merged: acs_hold_events
 RLS_HEAD = "0acba192bf69"           # RLS phase 1: RLS enabled on the seven operational-domain tables
+# The LAST revision of the range the "leaves every v1 object alone" tests in section 6 cover. Every migration from
+# Contract v2's first (d3f1a8c95b27) through this one leaves the pre-existing v1 tables exactly as they were, and those
+# tests prove it over that whole range. It is a named revision and NOT the moving head, on purpose: a later migration
+# may change a v1 table intentionally (16b41d730e15 adds two columns to pipeline_status), and such a migration is
+# proven by its own migration tests -- it is not something these historical invariants are about.
+V1_UNCHANGED_THROUGH = "c8d5f2a47e91"
 
 
 def _script_directory() -> ScriptDirectory:
@@ -654,10 +660,18 @@ def test_a_v1_upload_still_works_on_postgres_writes_no_v2_table_and_still_fires_
 
 # =====================================================================================================================
 # 6. The migration over existing v1 data, and its downgrade
+#
+# HISTORICAL INVARIANTS OF A FIXED MIGRATION RANGE. The three snapshot tests below prove that the Contract v2 migrations
+# -- Step 3, its ACS amendment and everything after them up to and including V1_UNCHANGED_THROUGH -- do not alter one
+# column, index, constraint, trigger or row of a pre-existing v1 table. They therefore migrate to V1_UNCHANGED_THROUGH,
+# never to "head": the snapshot covers EVERY v1 table in full (pipeline_status included, every column of it), so it
+# stays exactly as strict as it was, over exactly the migrations it was written for. A later migration that changes
+# a v1 table on purpose has its own tests (for pipeline_status: tests/test_pipeline_status_report_stamps_migration*.py).
 # =====================================================================================================================
 
 def _v1_snapshot(engine) -> dict:
-    """Columns, indexes, constraints and triggers of every v1 table -- everything the migration must leave alone."""
+    """Columns, indexes, constraints and triggers of every v1 table -- everything the Contract v2 migration range
+    (through V1_UNCHANGED_THROUGH) must leave alone. Whole tables, every column: nothing is left out."""
     snapshot: dict = {}
     for table in V1_TABLES:
         snapshot[table] = {
@@ -692,8 +706,9 @@ def test_the_migration_is_additive_over_existing_v1_data_and_leaves_every_v1_obj
         data_before = {t: rows(engine, f"SELECT * FROM {t} ORDER BY 1") for t in ("checkins", "rejects", "acs_events", "checkins_clean",  # nosec B608
                                                                                     "rejects_clean", "pipeline_status")}
 
-        upgraded = _alembic(db.url, "upgrade", "head")
+        upgraded = _alembic(db.url, "upgrade", V1_UNCHANGED_THROUGH)  # the whole range, to its last revision
         assert upgraded.returncode == 0, upgraded.stderr[-2000:]
+        assert scalar(engine, "SELECT version_num FROM alembic_version") == V1_UNCHANGED_THROUGH
 
         assert _v1_snapshot(engine) == before  # not one column, index, constraint or trigger of a v1 object changed
         assert {t: rows(engine, f"SELECT * FROM {t} ORDER BY 1") for t in data_before} == data_before  # nor one row  # nosec B608
@@ -702,18 +717,20 @@ def test_the_migration_is_additive_over_existing_v1_data_and_leaves_every_v1_obj
 
 
 def test_upgrade_downgrade_upgrade_is_clean_and_the_downgrade_leaves_v1_alone():
-    with Throwaway("head") as db:
+    with Throwaway(V1_UNCHANGED_THROUGH) as db:
         engine = create_engine(db.url)
         v1_before = _v1_snapshot(engine)
 
-        down = _alembic(db.url, "downgrade", PREVIOUS_HEAD)  # both v2 revisions: the amendment, then Step 3
+        # Every revision of the range, newest first, ending with the two v2 revisions: the amendment, then Step 3.
+        down = _alembic(db.url, "downgrade", PREVIOUS_HEAD)
         assert down.returncode == 0, down.stderr[-2000:]
         assert rows(engine, "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = ANY(:n)", n=list(V2_TABLES)) == []
         assert _v1_snapshot(engine) == v1_before
         assert scalar(engine, "SELECT version_num FROM alembic_version") == PREVIOUS_HEAD
 
-        up = _alembic(db.url, "upgrade", "head")
+        up = _alembic(db.url, "upgrade", V1_UNCHANGED_THROUGH)
         assert up.returncode == 0, up.stderr[-2000:]
+        assert scalar(engine, "SELECT version_num FROM alembic_version") == V1_UNCHANGED_THROUGH
         assert sorted(r[0] for r in rows(engine, "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = ANY(:n)",
                                          n=list(V2_TABLES))) == sorted(V2_TABLES)
         assert _v1_snapshot(engine) == v1_before
@@ -968,8 +985,10 @@ def test_the_amendment_converts_existing_step_3_holds_in_place_and_touches_nothi
                     "ORDER BY ordinal_position", t=t)) for t in ("checkin_events", "reject_events", "ingest_key_ids")}
         other_v2_before = {t: rows(engine, f"SELECT {c} FROM {t} ORDER BY id") for t, c in original_columns.items()}  # nosec B608
 
-        up = _alembic(db.url, "upgrade", "head")
+        # To the last revision of the range (see V1_UNCHANGED_THROUGH), which includes c8d5f2a47e91 itself.
+        up = _alembic(db.url, "upgrade", V1_UNCHANGED_THROUGH)
         assert up.returncode == 0, up.stderr[-2000:]
+        assert scalar(engine, "SELECT version_num FROM alembic_version") == V1_UNCHANGED_THROUGH
 
         after = rows(engine, "SELECT id, customer_id, branch_id, key_id, event_key, event_time, item_key, destination, is_ill, "
                              "is_branch_services, is_collection_services, ruleset_id, received_at FROM acs_item_events ORDER BY id")

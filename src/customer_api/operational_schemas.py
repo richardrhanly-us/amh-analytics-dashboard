@@ -13,6 +13,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
+from services.pipeline_state import PipelineState
 from services.reject_reason import RejectReason
 
 
@@ -106,3 +107,18 @@ class RejectsByReasonResponse(_ResponseModel):
     date: dt.date
     timezone: str
     reasons: list[RejectReasonCount]
+
+
+class PipelineStatusResponse(_ResponseModel):
+    """What a branch's collection pipeline last reported. `state` is one of
+    the four public pipeline states (services.pipeline_state) and describes
+    that report only: it is NOT a judgement of how recent the report is.
+    `last_reported_at` is the instant the report was received, in UTC, or
+    null when nothing has been reported -- how long ago that was is for the
+    reader to work out. `timezone` is the IANA zone the product presents
+    times in. Where the status was read from, and everything else a
+    collector reports, is not part of the answer."""
+
+    timezone: str
+    state: PipelineState
+    last_reported_at: datetime | None

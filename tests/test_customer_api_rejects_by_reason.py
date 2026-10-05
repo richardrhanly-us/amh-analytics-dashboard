@@ -1226,8 +1226,10 @@ def test_the_reasons_route_never_reads_a_check_in_table(api, saas_db, operationa
     assert "90001" not in response.text and "80002" not in response.text
 
 
-def test_the_branch_routes_are_exactly_the_five_operational_endpoints():
+def test_the_branch_routes_are_exactly_the_six_operational_endpoints():
     paths = sorted(r.path.split("/branches/{branch_slug}/")[1] for r in main.app.routes
                    if "/branches/{branch_slug}/" in getattr(r, "path", ""))
 
-    assert paths == ["checkins/by-hour", "checkins/count", "ingest-status", "rejects/by-reason", "rejects/count"]
+    # Block 9e added pipeline-status; the five that were here before are exactly as they were.
+    assert paths == ["checkins/by-hour", "checkins/count", "ingest-status", "pipeline-status", "rejects/by-reason",
+                     "rejects/count"]

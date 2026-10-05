@@ -538,7 +538,8 @@ def test_a_legacy_heartbeat_without_installation_fields_is_still_accepted(api_db
     columns = ", ".join(f"{name} TEXT" for name in main._PIPELINE_STATUS_UPDATABLE_FIELDS)
     with api_db_with_facts.begin() as conn:
         conn.execute(text(f"CREATE TABLE pipeline_status (customer_id INTEGER, branch_id INTEGER, {columns},"
-                          " updated_at TEXT, UNIQUE (customer_id, branch_id))"))
+                          " updated_at TEXT, status_reported_at TEXT, health_status_reported_at TEXT,"
+                          " UNIQUE (customer_id, branch_id))"))
     # SQLite has no JSONB cast; nothing else about the request path is altered.
     monkeypatch.setattr(main, "_pipeline_status_column_sql", lambda field: f":{field}")
 
@@ -554,7 +555,8 @@ def test_after_the_v2_cutover_v1_upload_is_closed_but_the_status_heartbeat_stays
     columns = ", ".join(f"{name} TEXT" for name in main._PIPELINE_STATUS_UPDATABLE_FIELDS)
     with api_db_with_facts.begin() as conn:
         conn.execute(text(f"CREATE TABLE pipeline_status (customer_id INTEGER, branch_id INTEGER, {columns},"
-                          " updated_at TEXT, UNIQUE (customer_id, branch_id))"))
+                          " updated_at TEXT, status_reported_at TEXT, health_status_reported_at TEXT,"
+                          " UNIQUE (customer_id, branch_id))"))
         conn.execute(text("INSERT INTO v2_cutovers VALUES (:c, :b, '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')"),
                      {"c": CUSTOMER, "b": BRANCH})
     monkeypatch.setattr(main, "_pipeline_status_column_sql", lambda field: f":{field}")
