@@ -13,6 +13,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
+from services.reject_reason import RejectReason
+
 
 class _ResponseModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -83,3 +85,24 @@ class RejectCountResponse(_ResponseModel):
     date: dt.date
     timezone: str
     reject_count: int
+
+
+class RejectReasonCount(_ResponseModel):
+    """Rejects with one reason. `reason` is one of the eight public reason
+    codes (services.reject_reason): a code, never display text, and never a
+    stored message or a stored class that is not one of the eight."""
+
+    reason: RejectReason
+    reject_count: int
+
+
+class RejectsByReasonResponse(_ResponseModel):
+    """Rejects on one local calendar day, by reason. `date` and `timezone` are
+    as in CheckinCountResponse. `reasons` always has eight entries, one for
+    each reason code in its fixed order, zero where there were none. The
+    counts add up to that day's RejectCountResponse.reject_count, which is
+    why no total is repeated here."""
+
+    date: dt.date
+    timezone: str
+    reasons: list[RejectReasonCount]

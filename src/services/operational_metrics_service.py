@@ -37,6 +37,7 @@ to the tenant by row level security -- and database errors propagate.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
@@ -44,7 +45,14 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import DateTime, bindparam, text
 from sqlalchemy.engine import Connection
 
+from services.reject_reason import (
+    REJECT_REASONS,
+    classify_legacy_reject_message,
+    reason_for_error_class,
+)
 from services.tenant_resolution_service import ResolvedOperationalTenant
+
+logger = logging.getLogger("sortview.operational_metrics")
 
 
 def _require_aware(value: datetime, what: str) -> None:
@@ -612,3 +620,152 @@ def get_reject_count(
         ).scalar_one())
 
     return RejectCount(total=v1_count + v2_count, v1_count=v1_count, v2_count=v2_count)
+
+
+# =====================================================================================================================
+# Reject counts by reason for one local day
+# =====================================================================================================================
+#
+# The same rows as get_reject_count, sorted by WHY the item was rejected. The
+# two tables say that differently (services.reject_reason):
+#
+#     rejects.error_message        the sorter's own free text -- classified here, in Python
+#     reject_events.error_class    already one of the reason codes -- only recognised
+#
+# The legacy text is raw. It is read only as the key of a group, used to pick
+# a reason, and dropped: it is never returned, logged or put in an error.
+
+@dataclass(frozen=True, slots=True)
+class RejectReasonCounts:
+    """Rejects on one local calendar day, by reason. Each tuple has exactly
+    one entry per reason, in the order of services.reject_reason.REJECT_REASONS:
+    index N is the count for REJECT_REASONS[N], zero where there were none.
+
+    `counts` is the answer; entry by entry it is always v1_counts + v2_counts,
+    and its sum is the day's RejectCount.total. The per-era tuples are for
+    this service's own tests and diagnostics, as in RejectCount.
+
+    `unexpected_class_rows` is how many v2 rows carried a stored class that
+    is not one of the reason codes. They are counted under `other` -- so they
+    are in `counts` and `v2_counts` already -- and never under a name of
+    their own.
+    """
+
+    counts: tuple[int, ...]
+    v1_counts: tuple[int, ...]
+    v2_counts: tuple[int, ...]
+    unexpected_class_rows: int
+
+
+# One statement per era: the WHERE clause is the day count's, unchanged -- the
+# tenant, then the part of the day the era owns, bound with the same stated
+# types -- so a row is counted here exactly when it is counted there. The only
+# thing added is the grouping, by the one column that says why. Nothing is
+# joined, de-duplicated, ordered, cast or converted by the database, and no
+# column that identifies an item or an event is read.
+_V1_REJECT_REASON_COUNT_SQL = text("""
+    SELECT error_message, COUNT(*)
+    FROM rejects
+    WHERE customer_id = :customer_id
+      AND branch_id = :branch_id
+      AND event_time >= :start_local
+      AND event_time < :end_local
+    GROUP BY error_message
+""").bindparams(
+    bindparam("start_local", type_=DateTime(timezone=False)),
+    bindparam("end_local", type_=DateTime(timezone=False)),
+)
+
+_V2_REJECT_REASON_COUNT_SQL = text("""
+    SELECT error_class, COUNT(*)
+    FROM reject_events
+    WHERE customer_id = :customer_id
+      AND branch_id = :branch_id
+      AND event_time >= :start_utc
+      AND event_time < :end_utc
+    GROUP BY error_class
+""").bindparams(
+    bindparam("start_utc", type_=DateTime(timezone=True)),
+    bindparam("end_utc", type_=DateTime(timezone=True)),
+)
+
+_REASON_SLOT = {reason: slot for slot, reason in enumerate(REJECT_REASONS)}
+
+
+def get_reject_counts_by_reason(
+    conn: Connection,
+    tenant: ResolvedOperationalTenant,
+    *,
+    local_date: date,
+    zone: ZoneInfo,
+) -> RejectReasonCounts:
+    """How many rejects the tenant's branch had on `local_date`, a calendar
+    day in `zone`, for each reason. Always one count per reason, zero where
+    there were none.
+
+    The eras share the day exactly as in get_reject_count: with no effective
+    cutover the branch is v1 only and `reject_events` is not read at all;
+    with one, v1 owns the part of the day strictly before it and v2 the part
+    at or after it, and a part that is empty is not queried. Every stored row
+    is counted once, under exactly one reason, so the counts add up to
+    get_reject_count's total.
+
+    A legacy row's reason is classified from its message. A v2 row's stored
+    class is its reason; one that is not a reason code is counted as `other`,
+    and a warning carrying only the number of such rows is logged.
+
+    `conn` must already carry the tenant's RLS context. At most three
+    statements run -- the cutover lookup, then one per era that owns part of
+    the day. If any of them fails the error propagates: the counts of one era
+    are never returned as if they were the whole.
+    """
+    day = local_day_bounds(local_date, zone)
+    cutover_at = get_effective_cutover(conn, tenant)
+
+    v1_end_local = day.v1_end_local
+    v2_start_utc = None
+    if cutover_at is not None:
+        boundary = cutover_boundary(cutover_at, zone)
+        v1_end_local = min(day.v1_end_local, boundary.cutover_local_naive)
+        v2_start_utc = max(day.v2_start_utc, boundary.cutover_utc)
+
+    tenant_ids = {"customer_id": tenant.operational_customer_id, "branch_id": tenant.operational_branch_id}
+
+    v1_counts = [0] * len(REJECT_REASONS)
+    if day.v1_start_local < v1_end_local:
+        grouped = conn.execute(
+            _V1_REJECT_REASON_COUNT_SQL,
+            {**tenant_ids, "start_local": day.v1_start_local, "end_local": v1_end_local},
+        )
+        # One row per distinct message, a NULL message included.
+        for error_message, row_count in grouped:
+            v1_counts[_REASON_SLOT[classify_legacy_reject_message(error_message)]] += int(row_count)
+
+    v2_counts = [0] * len(REJECT_REASONS)
+    unexpected_class_rows = 0
+    if v2_start_utc is not None and v2_start_utc < day.v2_end_utc:
+        grouped = conn.execute(
+            _V2_REJECT_REASON_COUNT_SQL,
+            {**tenant_ids, "start_utc": v2_start_utc, "end_utc": day.v2_end_utc},
+        )
+        for error_class, row_count in grouped:
+            reason = reason_for_error_class(error_class)
+            if reason is None:
+                # The database only holds a stored class to a pattern, so one
+                # outside the reason codes can exist. Its rows are still
+                # rejects: they stay in the total, as `other`.
+                reason = "other"
+                unexpected_class_rows += int(row_count)
+            v2_counts[_REASON_SLOT[reason]] += int(row_count)
+
+    if unexpected_class_rows:
+        # The number only: not the stored value, and nothing that says whose rows they are.
+        logger.warning("Reject rows with an unrecognised stored class were counted as other: rows=%d",
+                       unexpected_class_rows)
+
+    return RejectReasonCounts(
+        counts=tuple(v1 + v2 for v1, v2 in zip(v1_counts, v2_counts, strict=True)),
+        v1_counts=tuple(v1_counts),
+        v2_counts=tuple(v2_counts),
+        unexpected_class_rows=unexpected_class_rows,
+    )

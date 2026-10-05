@@ -37,6 +37,8 @@ from customer_api.operational_schemas import (
     IngestStatusFields,
     IngestStatusResponse,
     RejectCountResponse,
+    RejectReasonCount,
+    RejectsByReasonResponse,
 )
 from customer_api.tenant_scope import (
     ResolvedOperationalTenant,
@@ -47,8 +49,10 @@ from services.operational_metrics_service import (
     get_checkin_count,
     get_checkin_counts_by_hour,
     get_reject_count,
+    get_reject_counts_by_reason,
 )
 from services.operational_read_service import get_latest_ingest_status
+from services.reject_reason import REJECT_REASONS
 
 ResolvedTenant = Annotated[ResolvedOperationalTenant, Depends(require_resolved_tenant)]
 
@@ -142,6 +146,27 @@ def create_operational_router() -> APIRouter:
         # The connection is closed. Only the total is returned: not which era
         # a reject came from, and nothing about why an item was rejected.
         body = RejectCountResponse(date=local_date, timezone=zone.key, reject_count=count.total)
+        return JSONResponse(content=body.model_dump(mode="json"), headers=NO_STORE_HEADERS)
+
+    @router.get("/rejects/by-reason")
+    def get_rejects_by_reason(tenant: ResolvedTenant, local_date: LocalDate) -> Response:
+        # The same day, in the same zone, as /rejects/count.
+        zone = settings.product_timezone()
+
+        with open_customer_tenant_connection(tenant) as conn:
+            by_reason = get_reject_counts_by_reason(conn, tenant, local_date=local_date, zone=zone)
+
+        # The connection is closed. Every reason code is returned, in its fixed
+        # order, with its count only: which era a reject came from, and anything
+        # a stored row said beyond its reason code, are not disclosed here.
+        body = RejectsByReasonResponse(
+            date=local_date,
+            timezone=zone.key,
+            reasons=[
+                RejectReasonCount(reason=reason, reject_count=reject_count)
+                for reason, reject_count in zip(REJECT_REASONS, by_reason.counts, strict=True)
+            ],
+        )
         return JSONResponse(content=body.model_dump(mode="json"), headers=NO_STORE_HEADERS)
 
     return router
