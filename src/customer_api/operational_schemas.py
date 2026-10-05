@@ -8,6 +8,7 @@ and branch_id -- and none of them has a field here.
 
 from __future__ import annotations
 
+import datetime as dt
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
@@ -40,3 +41,14 @@ class IngestStatusResponse(_ResponseModel):
     a valid answer ("nothing to report"), not an error."""
 
     status: IngestStatusFields | None
+
+
+class CheckinCountResponse(_ResponseModel):
+    """Check-ins on one local calendar day. `date` is the day that was asked
+    for and `timezone` the IANA zone it was interpreted in. How the count was
+    assembled from the branch's legacy and current data is not part of the
+    answer."""
+
+    date: dt.date
+    timezone: str
+    checkin_count: int

@@ -21,9 +21,12 @@ The backend API is responsible for:
 - authenticating the AMH agent
 - writing data into Neon
 - serving the customer (browser) API under `/api`: session login and logout, the
-  signed-in user's organization context, and one read-only operational endpoint,
-  `GET /api/organizations/{org_slug}/branches/{branch_slug}/ingest-status`
-  (a branch's latest Contract v2 collector status, or `status: null` if it has none)
+  signed-in user's organization context, and two read-only operational endpoints:
+  - `GET /api/organizations/{org_slug}/branches/{branch_slug}/ingest-status`
+    (a branch's latest Contract v2 collector status, or `status: null` if it has none)
+  - `GET /api/organizations/{org_slug}/branches/{branch_slug}/checkins/count?date=YYYY-MM-DD`
+    (check-ins on one calendar day; `date` is required and is interpreted in
+    `SORTVIEW_LIVE_TIMEZONE`, which the response echoes)
 
 Typical backend deployment flow:
 
@@ -173,7 +176,7 @@ scheduled task environment for the agent, CI secrets for the pipeline.
 | `SORTVIEW_ACS_BRANCH_COLUMN` | dashboard | optional | `branch_id` |
 | `SORTVIEW_PIPELINE_ORG_COLUMN` | dashboard | optional | `customer_id` |
 | `SORTVIEW_PIPELINE_BRANCH_COLUMN` | dashboard | optional | `branch_id` |
-| `SORTVIEW_LIVE_TIMEZONE` | dashboard | optional | `America/Chicago` |
+| `SORTVIEW_LIVE_TIMEZONE` | backend, dashboard | optional | `America/Chicago` (must be a valid IANA zone; the customer check-in count API answers 500 if it is set to an invalid one) |
 | `SORTVIEW_API_TOKEN` | agent (legacy `agent\` runtime only -- **not** the SortView Collector, see below) | required | -- |
 | `SORTVIEW_HTTP_CONNECT_TIMEOUT` | agent | optional | `10` |
 | `SORTVIEW_HTTP_UPLOAD_READ_TIMEOUT` | agent | optional | `300` |

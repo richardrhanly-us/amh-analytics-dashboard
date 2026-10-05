@@ -937,3 +937,292 @@ def test_sequential_requests_on_one_pooled_connection_never_see_each_others_tena
             assert conn.execute(text("SELECT COUNT(*) FROM ingest_key_ids")).scalar() == 0
     finally:
         single.dispose()
+
+
+# --- GET .../checkins/count?date=YYYY-MM-DD, end to end, as the runtime role ---
+#
+# The first real-server proof of the two time domains behind the check-in
+# count: checkins.event_time is a real TIMESTAMP (naive local wall clock),
+# checkin_events.event_time and v2_cutovers.cutover_at are real TIMESTAMPTZ.
+# As above, only the authenticated user is stubbed. The tenant-scope
+# dependency, the resolver, tenant_connection, the context read-back, the
+# cutover lookup, both COUNT statements, RLS on both tables and the response
+# are all real. The product zone is the default, America/Chicago.
+
+CHECKIN_COUNT_PATH = "/api/organizations/{org}/branches/{branch}/checkins/count"
+
+
+def _v1_checkin(conn, customer_id, branch_id, local_wall_clock: str, barcode: str) -> None:
+    """A legacy row. `local_wall_clock` has no offset: it is stored as given."""
+    conn.execute(text("""
+        INSERT INTO checkins (customer_id, branch_id, event_time, title, barcode, destination, bin, source_file)
+        VALUES (:c, :b, CAST(:t AS timestamp), 'title', :barcode, 'Main', 'bin1', 'rls_test.csv')
+    """), {"c": customer_id, "b": branch_id, "t": local_wall_clock, "barcode": barcode})
+
+
+def _v2_checkin(conn, customer_id, branch_id, instant: str) -> None:
+    """A Contract v2 row. `instant` carries an explicit offset."""
+    event_key = hashlib.sha256(f"{customer_id}:{branch_id}:{instant}:{secrets.token_hex(8)}".encode()).hexdigest()
+    conn.execute(text("""
+        INSERT INTO checkin_events (customer_id, branch_id, key_id, event_key, event_time, destination, bin)
+        VALUES (:c, :b, :k, :ek, CAST(:t AS timestamptz), 'unknown', 'unknown')
+    """), {"c": customer_id, "b": branch_id, "k": KEY_A, "ek": event_key, "t": instant})
+
+
+def _set_cutover(conn, customer_id, branch_id, instant: str) -> None:
+    conn.execute(text("""
+        INSERT INTO v2_cutovers (customer_id, branch_id, cutover_at, set_by)
+        VALUES (:c, :b, CAST(:t AS timestamptz), 'rls-test')
+    """), {"c": customer_id, "b": branch_id, "t": instant})
+
+
+@pytest.fixture
+def checkin_api(customer_api, monkeypatch):
+    monkeypatch.delenv("SORTVIEW_LIVE_TIMEZONE", raising=False)
+    return customer_api
+
+
+def _checkin_count(client, session, org, branch, day: str):
+    return client.get(
+        CHECKIN_COUNT_PATH.format(org=org, branch=branch),
+        params={"date": day},
+        headers={"Cookie": f"__Host-sortview_api_session={session}"},
+    )
+
+
+def _count_of(client, session, org, branch, day: str) -> int:
+    response = _checkin_count(client, session, org, branch, day)
+    assert response.status_code == 200, response.text
+    assert response.json()["date"] == day
+    assert response.json()["timezone"] == "America/Chicago"
+    return response.json()["checkin_count"]
+
+
+def _seed_mixed_era_days(owner_engine) -> None:
+    """Tenant A is cut over at 12:00 local on 10 June 2026 (17:00Z).
+        9 June:   2 legacy rows, at 00:30 and 23:30 local                      -> 2
+        10 June:  1 legacy row before noon; 3 v2 rows from the cutover on      -> 4
+        11 June:  1 v2 row, at local midnight                                  -> 1
+    Tenant B -- both of its branches -- was cut over on 1 June and is busier in BOTH tables on 10 June."""
+    with owner_engine.begin() as conn:
+        _v1_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-09 00:30:00", "a-0609-early")
+        _v1_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-09 23:30:00", "a-0609-late")
+        _v1_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 09:00:00", "a-0610-before-cutover")   # counts
+        _v1_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 12:00:00", "a-0610-at-cutover")       # v1 is strictly before
+        _v1_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 15:00:00", "a-0610-after-cutover")    # does not count
+        _set_cutover(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 17:00:00+00")
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 16:59:59+00")   # before the cutover: does not count
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 17:00:00+00")   # exactly at it: counts
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 22:00:00+00")   # counts
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-11 04:59:59+00")   # 23:59:59 local on the 10th: counts
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-11 05:00:00+00")   # local midnight: the 11th
+
+        _set_cutover(conn, CUSTOMER_B, BRANCH_B, "2026-06-01 05:00:00+00")
+        _set_cutover(conn, CUSTOMER_B, BRANCH_B_NORTH, "2026-06-01 05:00:00+00")   # a cutover is per branch
+        for hour in (8, 9, 10):
+            _v1_checkin(conn, CUSTOMER_B, BRANCH_B, f"2026-06-10 {hour:02d}:00:00", f"b-0610-{hour}")
+        for hour in (6, 9, 12, 15, 18, 23):
+            _v2_checkin(conn, CUSTOMER_B, BRANCH_B, f"2026-06-10 {hour:02d}:00:00+00")
+        for hour in (14, 20):
+            _v2_checkin(conn, CUSTOMER_B, BRANCH_B_NORTH, f"2026-06-10 {hour:02d}:30:00+00")
+
+
+def test_the_three_time_columns_have_the_types_the_count_relies_on(owner_engine):
+    with owner_engine.connect() as conn:
+        types = dict(conn.execute(text("""
+            SELECT table_name || '.' || column_name, data_type
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND (table_name, column_name) IN (
+                  ('checkins', 'event_time'), ('checkin_events', 'event_time'), ('v2_cutovers', 'cutover_at'))
+        """)).fetchall())
+
+    assert types == {
+        "checkins.event_time": "timestamp without time zone",
+        "checkin_events.event_time": "timestamp with time zone",
+        "v2_cutovers.cutover_at": "timestamp with time zone",
+    }
+
+
+def test_checkin_count_for_a_v1_only_branch_counts_its_own_local_day(owner_engine, checkin_api):
+    with owner_engine.begin() as conn:
+        for stamped, barcode in (("2026-06-09 23:59:59", "a1"), ("2026-06-10 00:00:00", "a2"),
+                                 ("2026-06-10 12:00:00", "a3"), ("2026-06-10 23:59:59", "a4"),
+                                 ("2026-06-11 00:00:00", "a5")):
+            _v1_checkin(conn, CUSTOMER_A, BRANCH_A, stamped, barcode)
+        # v2 rows for tenant A on that day, but NO cutover: they are not part of its history.
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 15:00:00+00")
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 18:00:00+00")
+        for hour in range(8, 13):
+            _v1_checkin(conn, CUSTOMER_B, BRANCH_B, f"2026-06-10 {hour:02d}:00:00", f"b{hour}")
+
+    assert _count_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == 3
+    assert _count_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-09") == 1
+    assert _count_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-11") == 1
+    assert _count_of(checkin_api, SESSION_B, "tenant-b", "main", "2026-06-10") == 5
+
+
+def test_checkin_count_across_a_real_cutover_inside_the_day(owner_engine, checkin_api):
+    _seed_mixed_era_days(owner_engine)
+
+    response = _checkin_count(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10")
+
+    assert response.status_code == 200
+    assert response.json() == {"date": "2026-06-10", "timezone": "America/Chicago", "checkin_count": 4}
+    assert _count_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-09") == 2
+    assert _count_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-11") == 1
+    # Every one of tenant A's countable rows lands on exactly one day: 2 + 4 + 1.
+
+
+def test_checkin_count_is_isolated_from_another_tenant_in_both_tables(owner_engine, checkin_api):
+    _seed_mixed_era_days(owner_engine)
+
+    # Tenant B has 3 legacy rows and 6 + 2 v2 rows on 10 June. None reaches tenant A's 4...
+    assert _count_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == 4
+    # ...and B's own counts are its own: its legacy rows fall after ITS cutover, so only v2 counts.
+    assert _count_of(checkin_api, SESSION_B, "tenant-b", "main", "2026-06-10") == 6
+    assert _count_of(checkin_api, SESSION_B, "tenant-b", "north", "2026-06-10") == 2
+
+    for session, org, branch in ((SESSION_A, "tenant-b", "main"), (SESSION_A, "tenant-a", "north"),
+                                 (SESSION_B, "tenant-a", "main")):
+        refused = _checkin_count(checkin_api, session, org, branch, "2026-06-10")
+        assert refused.status_code == 404 and refused.json() == TENANT_NOT_FOUND
+
+
+def test_checkin_count_request_validation_through_the_real_app(checkin_api):
+    assert checkin_api.get(CHECKIN_COUNT_PATH.format(org="tenant-a", branch="main"), params={"date": "2026-06-10"}).status_code == 401
+    assert _checkin_count(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10T00:00:00").status_code == 422
+    assert _checkin_count(checkin_api, SESSION_A, "tenant-a", "main", "2026-02-30").status_code == 422
+    assert _count_of(checkin_api, SESSION_A, "tenant-a", "main", "2099-01-01") == 0
+
+
+@pytest.mark.parametrize("session_time_zone", ["UTC", "America/Chicago", "America/New_York", "Asia/Tokyo"])
+def test_checkin_count_does_not_depend_on_the_database_session_time_zone(
+    owner_engine, checkin_api, runtime_engine, monkeypatch, session_time_zone
+):
+    _seed_mixed_era_days(owner_engine)
+    engine = create_engine(
+        runtime_engine.url, connect_args={"options": f"-c timezone={session_time_zone}"}, hide_parameters=True
+    )
+    monkeypatch.setattr(database, "_engine", engine)
+    try:
+        with engine.connect() as conn:
+            assert conn.execute(text("SHOW timezone")).scalar() == session_time_zone
+
+        # 9 June is all legacy rows, at 00:30 and 23:30 local -- the two a session-dependent date cast misplaces.
+        assert _count_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-09") == 2
+        # 10 June mixes both tables around the cutover, with a v2 row at 23:59:59 local.
+        assert _count_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == 4
+        assert _count_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-11") == 1
+    finally:
+        engine.dispose()
+
+
+def test_control_a_date_cast_on_the_legacy_column_does_depend_on_the_session_time_zone(owner_engine, runtime_engine):
+    """Control for the test above, so it is known to be testing something.
+    This is the SHAPE of expression the customer API deliberately does not
+    use: converting the naive column and casting to a date. Its answer for
+    the same rows changes with the session time zone."""
+    # This test goes straight to the database, without the customer_api
+    # fixture every other test here uses -- so it must create tenant B's
+    # second branch itself (_seed_members) before _seed_mixed_era_days
+    # records a cutover and v2 rows for it.
+    _seed_members(owner_engine, runtime_engine)
+    _seed_mixed_era_days(owner_engine)
+    answers = {}
+    for session_time_zone in ("UTC", "America/Chicago"):
+        engine = create_engine(
+            runtime_engine.url, connect_args={"options": f"-c timezone={session_time_zone}"}, hide_parameters=True
+        )
+        try:
+            with tenant_connection(engine, CUSTOMER_A, BRANCH_A) as conn:
+                answers[session_time_zone] = conn.execute(text(
+                    "SELECT COUNT(*) FROM checkins "
+                    "WHERE (event_time AT TIME ZONE 'America/Chicago')::date = DATE '2026-06-09'"
+                )).scalar()
+        finally:
+            engine.dispose()
+
+    assert answers == {"America/Chicago": 2, "UTC": 1}   # under UTC the 23:30 row is cast onto 10 June
+
+
+def test_checkin_count_on_the_spring_forward_date(owner_engine, checkin_api):
+    with owner_engine.begin() as conn:
+        # Tenant A, cut over well before: 8 March 2026 is [06:00Z, 05:00Z next day) -- 23 hours.
+        _set_cutover(conn, CUSTOMER_A, BRANCH_A, "2026-03-01 06:00:00+00")
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-03-08 05:59:59+00")   # 23:59:59 CST on the 7th
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-03-08 06:00:00+00")   # 00:00 CST on the 8th
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-03-09 04:59:59+00")   # 23:59:59 CDT on the 8th
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-03-09 05:00:00+00")   # 00:00 CDT on the 9th
+        # Tenant B, never cut over: the same date as naive local wall-clock rows.
+        for stamped, barcode in (("2026-03-07 23:59:59", "b1"), ("2026-03-08 00:00:00", "b2"),
+                                 ("2026-03-08 01:59:00", "b3"), ("2026-03-08 03:00:00", "b4"),
+                                 ("2026-03-08 23:59:59", "b5"), ("2026-03-09 00:00:00", "b6")):
+            _v1_checkin(conn, CUSTOMER_B, BRANCH_B, stamped, barcode)
+
+    assert [_count_of(checkin_api, SESSION_A, "tenant-a", "main", day)
+            for day in ("2026-03-07", "2026-03-08", "2026-03-09")] == [1, 2, 1]
+    assert [_count_of(checkin_api, SESSION_B, "tenant-b", "main", day)
+            for day in ("2026-03-07", "2026-03-08", "2026-03-09")] == [1, 4, 1]
+
+
+def test_checkin_count_on_the_fall_back_date(owner_engine, checkin_api):
+    with owner_engine.begin() as conn:
+        # Tenant A, cut over well before: 1 November 2026 is [05:00Z, 06:00Z next day) -- 25 hours.
+        _set_cutover(conn, CUSTOMER_A, BRANCH_A, "2026-10-01 05:00:00+00")
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-11-01 04:59:59+00")   # 23:59:59 CDT on 31 October
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-11-01 06:30:00+00")   # 01:30 CDT -- the first 01:30
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-11-01 07:30:00+00")   # 01:30 CST -- the second, an hour later
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-11-02 05:59:59+00")   # 23:59:59 CST on the 1st
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-11-02 06:00:00+00")   # 00:00 CST on the 2nd
+        # Tenant B, never cut over: two legacy rows both stamped 01:30 are simply two rows on 1 November.
+        _v1_checkin(conn, CUSTOMER_B, BRANCH_B, "2026-11-01 01:30:00", "b-first-pass")
+        _v1_checkin(conn, CUSTOMER_B, BRANCH_B, "2026-11-01 01:30:00", "b-second-pass")
+        _v1_checkin(conn, CUSTOMER_B, BRANCH_B, "2026-11-01 23:59:59", "b-late")
+
+    # Both real 01:30 instants belong to 1 November and are counted once each.
+    assert [_count_of(checkin_api, SESSION_A, "tenant-a", "main", day)
+            for day in ("2026-10-31", "2026-11-01", "2026-11-02")] == [1, 3, 1]
+    assert _count_of(checkin_api, SESSION_B, "tenant-b", "main", "2026-11-01") == 3
+
+
+def test_checkin_counts_on_one_pooled_connection_never_see_each_others_tenant(
+    owner_engine, checkin_api, runtime_engine, monkeypatch
+):
+    _seed_mixed_era_days(owner_engine)
+    # One connection: every statement of every request below runs on the same server backend.
+    single = create_engine(runtime_engine.url, pool_size=1, max_overflow=0, hide_parameters=True)
+    monkeypatch.setattr(database, "_engine", single)
+    requests = (
+        (SESSION_A, "tenant-a", "main", 4),
+        (SESSION_B, "tenant-b", "main", 6),
+        (SESSION_A, "tenant-a", "main", 4),
+        (SESSION_B, "tenant-b", "north", 2),
+        (SESSION_A, "tenant-a", "main", 4),
+    )
+    try:
+        for session, org, branch, expected in requests:
+            assert _count_of(checkin_api, session, org, branch, "2026-06-10") == expected
+
+        # Change the pooled connection's SESSION time zone for good, then ask again.
+        with single.connect() as conn:
+            conn.execute(text("SET TIME ZONE 'Asia/Tokyo'"))
+            conn.commit()
+        with single.connect() as conn:
+            assert conn.execute(text("SHOW timezone")).scalar() == "Asia/Tokyo"
+
+        for session, org, branch, expected in requests:
+            assert _count_of(checkin_api, session, org, branch, "2026-06-10") == expected
+        assert _checkin_count(checkin_api, SESSION_A, "tenant-b", "main", "2026-06-10").status_code == 404
+
+        # Nothing of any request's tenant context is left on the pooled connection.
+        with single.connect() as conn:
+            settings = conn.execute(text(
+                "SELECT current_setting('app.operational_customer_id', true), "
+                "current_setting('app.operational_branch_id', true)"
+            )).one()
+            assert all(value in (None, "") for value in settings)
+            assert conn.execute(text("SELECT COUNT(*) FROM checkins")).scalar() == 0
+            assert conn.execute(text("SELECT COUNT(*) FROM checkin_events")).scalar() == 0
+    finally:
+        single.dispose()
