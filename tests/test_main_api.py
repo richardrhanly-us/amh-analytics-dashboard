@@ -511,8 +511,161 @@ def test_upsert_only_uses_fixed_allowlist_column_names():
         part.split(" = ")[0].strip()
         for part in sql.split("SET", 1)[1].split("WHERE", 1)[0].split(",")
     }
-    referenced.discard("updated_at")
-    assert referenced <= set(main._PIPELINE_STATUS_UPDATABLE_FIELDS)
+    # Server-owned columns: named by fixed constants, assigned CURRENT_TIMESTAMP, never driven by a request value.
+    server_stamped = {"updated_at", *main._PIPELINE_STATUS_REPORT_STAMPS.values()}
+    assert server_stamped == {"updated_at", "status_reported_at", "health_status_reported_at"}
+    assert server_stamped <= referenced          # this request carries both signals, so both are stamped
+    assert referenced - server_stamped <= set(main._PIPELINE_STATUS_UPDATABLE_FIELDS)
+    assert (referenced - server_stamped) == {"status", "health_status"}   # and nothing the request did not send
+
+
+# --- pipeline_status server-stamped report instants (Block 9b) ---------------
+#
+# status_reported_at / health_status_reported_at (migration 16b41d730e15) are
+# stamped by the SERVER, each only when the request carries the field it
+# belongs to. These read the generated SQL; what the statements actually do to
+# a row is tested through the endpoint in
+# tests/test_pipeline_status_report_stamps.py (SQLite) and
+# tests/test_pipeline_status_report_stamps_postgres.py (a real server).
+
+def _upsert_parts(**fields):
+    """(insert columns, VALUES list, UPDATE SET assignments, bound parameters, whole statement) for a request
+    carrying `fields`."""
+    data = main.PipelineStatusRequest(customer_id=1, branch_id=1, **fields)
+    sql, params = main._build_pipeline_status_upsert(data)
+    flat = " ".join(sql.split())
+    columns = flat.split("INSERT INTO pipeline_status (", 1)[1].split(")", 1)[0].split(", ")
+    values = flat.split("VALUES (", 1)[1].split(") ON CONFLICT", 1)[0]
+    assignments = flat.split("DO UPDATE SET ", 1)[1].split(", ")
+    return columns, values, assignments, params, flat
+
+
+STATUS_STAMP = "status_reported_at = CURRENT_TIMESTAMP"
+HEALTH_STAMP = "health_status_reported_at = CURRENT_TIMESTAMP"
+
+
+def test_the_report_stamps_map_each_signal_to_its_own_column_and_nothing_else():
+    assert main._PIPELINE_STATUS_REPORT_STAMPS == {
+        "status": "status_reported_at",
+        "health_status": "health_status_reported_at",
+    }
+
+
+def test_a_status_only_request_stamps_only_status_reported_at():
+    columns, _values, assignments, _params, _sql = _upsert_parts(status="completed", checkins_rows=5)
+
+    assert STATUS_STAMP in assignments and HEALTH_STAMP not in assignments
+    assert "status_reported_at" in columns and "health_status_reported_at" not in columns
+
+
+def test_a_health_status_only_request_stamps_only_health_status_reported_at():
+    columns, _values, assignments, _params, _sql = _upsert_parts(health_status="healthy", pending_outbox_count=0)
+
+    assert HEALTH_STAMP in assignments and STATUS_STAMP not in assignments
+    assert "health_status_reported_at" in columns and "status_reported_at" not in columns
+
+
+def test_a_request_carrying_both_signals_stamps_both():
+    columns, _values, assignments, _params, _sql = _upsert_parts(status="completed", health_status="degraded")
+
+    assert STATUS_STAMP in assignments and HEALTH_STAMP in assignments
+    assert {"status_reported_at", "health_status_reported_at"} <= set(columns)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {},
+        {"checkins_rows": 5, "last_attempt": "2026-10-05T18:45:00Z", "last_run": "2026-10-05T18:45:03Z"},
+        {"pending_outbox_count": 0, "quarantined_count": 0, "watcher_last_active_at": "2026-10-05T18:45:00Z"},
+        {"last_error": None, "last_failure_category": "retryable_infra"},
+        {"installation_id": 7, "collector_version": "0.0.1-synthetic"},
+    ],
+    ids=["nothing", "run fields without status", "heartbeat fields without health_status", "error fields",
+         "installation linkage only"],
+)
+def test_a_request_carrying_neither_signal_stamps_neither(fields):
+    columns, _values, assignments, _params, sql = _upsert_parts(**fields)
+
+    # Updating some other column is not a report of either signal...
+    assert "reported_at" not in sql
+    assert "status_reported_at" not in columns and "health_status_reported_at" not in columns
+    # ...while updated_at still moves, exactly as before.
+    assert "updated_at = CURRENT_TIMESTAMP" in assignments and "updated_at" in columns
+
+
+def test_presence_decides_not_the_value_an_explicit_null_was_still_reported():
+    status_null = main.PipelineStatusRequest(customer_id=1, branch_id=1, status=None)
+    health_null = main.PipelineStatusRequest(customer_id=1, branch_id=1, health_status=None)
+    omitted = main.PipelineStatusRequest(customer_id=1, branch_id=1)
+
+    assert "status" in status_null.model_fields_set and "health_status" in health_null.model_fields_set
+    assert omitted.status is None and omitted.health_status is None      # the same VALUES as above...
+    assert not {"status", "health_status"} & omitted.model_fields_set    # ...but nothing was carried
+
+    assert STATUS_STAMP in main._build_pipeline_status_upsert(status_null)[0]
+    assert HEALTH_STAMP in main._build_pipeline_status_upsert(health_null)[0]
+    assert "reported_at" not in main._build_pipeline_status_upsert(omitted)[0]
+
+
+def test_the_stamps_are_the_databases_clock_and_never_a_request_parameter():
+    columns, values, assignments, params, sql = _upsert_parts(
+        status="completed", health_status="healthy", last_attempt="1999-01-01T00:00:00Z",
+        last_run="1999-01-01T00:00:01Z", last_success_at="1999-01-01T00:00:02Z",
+        watcher_last_active_at="1999-01-01T00:00:03Z", oldest_pending_event_at="1999-01-01T00:00:04Z",
+    )
+
+    # No bind parameter exists for either column, in the INSERT or in the UPDATE.
+    assert ":status_reported_at" not in sql and ":health_status_reported_at" not in sql
+    assert not [name for name in params if "reported_at" in name]
+    # Each stamped column lines up with a literal CURRENT_TIMESTAMP in the VALUES list...
+    value_list = values.replace("CAST(:destination_breakdown AS JSONB)", ":destination_breakdown").split(", ")
+    placed = dict(zip(columns, value_list, strict=True))
+    assert placed["status_reported_at"] == placed["health_status_reported_at"] == "CURRENT_TIMESTAMP"
+    assert placed["updated_at"] == "CURRENT_TIMESTAMP"
+    # ...and is assigned nothing else in the UPDATE: not EXCLUDED, not a client timestamp, not another column.
+    assert [a for a in assignments if "reported_at" in a] == [STATUS_STAMP, HEALTH_STAMP]
+    assert "1999" not in sql and "EXCLUDED" not in sql.upper()
+
+
+def test_the_insert_branch_stamps_exactly_what_the_update_branch_stamps():
+    for fields in ({"status": "completed"}, {"health_status": "healthy"}, {"status": "started", "health_status": "degraded"},
+                   {"checkins_rows": 1}):
+        columns, _values, assignments, _params, _sql = _upsert_parts(**fields)
+
+        inserted = {c for c in columns if c.endswith("reported_at")}
+        updated = {a.split(" = ")[0] for a in assignments if "reported_at" in a}
+        assert inserted == updated, fields
+
+
+def test_the_report_stamp_columns_are_not_request_fields_and_not_in_any_allowlist():
+    for column in main._PIPELINE_STATUS_REPORT_STAMPS.values():
+        assert column not in main.PipelineStatusRequest.model_fields
+        assert column not in main._PIPELINE_STATUS_UPDATABLE_FIELDS
+    assert set(main._PIPELINE_STATUS_REPORT_STAMPS) <= set(main._PIPELINE_STATUS_UPDATABLE_FIELDS)   # the SIGNALS are
+
+
+def test_a_client_supplied_report_stamp_is_dropped_by_the_request_model():
+    # The model's policy for a field it does not declare is unchanged: the key is ignored, never an error, never stored.
+    assert main.PipelineStatusRequest.model_config.get("extra") in (None, "ignore")
+
+    data = main.PipelineStatusRequest.model_validate({
+        "customer_id": 1, "branch_id": 1, "checkins_rows": 3,
+        "status_reported_at": "1999-01-01T00:00:00Z", "health_status_reported_at": "1999-01-01T00:00:00Z",
+    })
+
+    assert not hasattr(data, "status_reported_at") and not hasattr(data, "health_status_reported_at")
+    assert data.model_fields_set == {"customer_id", "branch_id", "checkins_rows"}
+    sql, params = main._build_pipeline_status_upsert(data)
+    assert "reported_at" not in sql and "1999" not in str(params)   # supplying them stamps nothing either
+
+
+def test_the_upsert_still_always_touches_updated_at_exactly_once():
+    for fields in ({}, {"status": "completed"}, {"health_status": "healthy"}, {"status": "x", "health_status": "healthy"}):
+        columns, _values, assignments, _params, _sql = _upsert_parts(**fields)
+
+        assert assignments[0] == "updated_at = CURRENT_TIMESTAMP"     # still first, still unconditional
+        assert assignments.count("updated_at = CURRENT_TIMESTAMP") == 1 and columns.count("updated_at") == 1
 
 
 # --- rate limiting and request hardening ------------------------------------

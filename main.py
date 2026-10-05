@@ -382,6 +382,19 @@ _PIPELINE_STATUS_HEARTBEAT_FIELDS = [
 ]
 _PIPELINE_STATUS_UPDATABLE_FIELDS = _PIPELINE_STATUS_LEGACY_FIELDS + _PIPELINE_STATUS_HEARTBEAT_FIELDS
 
+# Server-stamped report instants (migration 16b41d730e15): request field -> the
+# TIMESTAMPTZ column that records when the server last accepted a report
+# CARRYING that field. One entry per signal family -- the per-run `status`
+# and the heartbeat's `health_status` -- because the two are written by
+# different programs and only a stamp of its own says which was reported
+# last. These columns are deliberately NOT request fields and NOT in the
+# allowlists above: no request can supply, set or clear them. Their value
+# is always the database's own CURRENT_TIMESTAMP, never a bound parameter.
+_PIPELINE_STATUS_REPORT_STAMPS = {
+    "status": "status_reported_at",
+    "health_status": "health_status_reported_at",
+}
+
 
 def _pipeline_status_column_sql(field: str) -> str:
     if field == "destination_breakdown":
@@ -418,28 +431,48 @@ def _build_pipeline_status_upsert(data: PipelineStatusRequest) -> tuple[str, dic
     branch (first-ever row for a branch) always writes every updatable
     field from the request, defaulting absent ones to NULL, since there's
     no prior value to preserve there.
+
+    The same presence test decides the two server-stamped report
+    instants (_PIPELINE_STATUS_REPORT_STAMPS): a request that carries
+    `status` stamps status_reported_at, one that carries `health_status`
+    stamps health_status_reported_at, in the INSERT and the UPDATE branch
+    alike. A request that carries neither stamps neither -- updating some
+    other column is not a report of either signal -- and a stamp is never
+    touched on behalf of the field the request did not carry. "Carries"
+    is presence in the body: a field sent as an explicit null was still
+    reported.
     """
     provided = data.model_fields_set
     update_fields = [f for f in _PIPELINE_STATUS_UPDATABLE_FIELDS if f in provided]
+    stamp_columns = [
+        column for field, column in _PIPELINE_STATUS_REPORT_STAMPS.items() if field in provided
+    ]
 
-    insert_columns = ["customer_id", "branch_id", *_PIPELINE_STATUS_UPDATABLE_FIELDS, "updated_at"]
+    insert_columns = [
+        "customer_id", "branch_id", *_PIPELINE_STATUS_UPDATABLE_FIELDS, "updated_at", *stamp_columns,
+    ]
     insert_values_sql = ", ".join(
         [":customer_id", ":branch_id"]
         + [_pipeline_status_column_sql(f) for f in _PIPELINE_STATUS_UPDATABLE_FIELDS]
         + ["CURRENT_TIMESTAMP"]
+        + ["CURRENT_TIMESTAMP"] * len(stamp_columns)
     )
 
-    update_set_parts = ["updated_at = CURRENT_TIMESTAMP"] + [
-        f"{f} = {_pipeline_status_column_sql(f)}" for f in update_fields
-    ]
+    update_set_parts = (
+        ["updated_at = CURRENT_TIMESTAMP"]
+        + [f"{f} = {_pipeline_status_column_sql(f)}" for f in update_fields]
+        + [f"{column} = CURRENT_TIMESTAMP" for column in stamp_columns]
+    )
 
     # nosec B608 -- every column name interpolated above comes from
     # _PIPELINE_STATUS_UPDATABLE_FIELDS / update_fields, both filtered from
     # the fixed _PIPELINE_STATUS_LEGACY_FIELDS + _PIPELINE_STATUS_HEARTBEAT_FIELDS
-    # allowlists defined next to PipelineStatusRequest, never from caller-
+    # allowlists defined next to PipelineStatusRequest, or from the fixed
+    # _PIPELINE_STATUS_REPORT_STAMPS column names, never from caller-
     # controlled field names; every actual value is a bound :name parameter
-    # in `params` below, nothing here is string-interpolated from request
-    # data.
+    # in `params` below (the report stamps are the literal CURRENT_TIMESTAMP
+    # and have no parameter at all), nothing here is string-interpolated
+    # from request data.
     sql = f"""
         INSERT INTO pipeline_status ({", ".join(insert_columns)})
         VALUES ({insert_values_sql})

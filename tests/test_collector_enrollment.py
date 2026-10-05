@@ -97,7 +97,9 @@ def db(monkeypatch):
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, created_by_user_id INTEGER)""",
         "CREATE TABLE pipeline_status (customer_id INTEGER, branch_id INTEGER, "
         + ", ".join(f"{c} TEXT" for c in _PIPELINE_STATUS_COLUMNS)
-        + ", updated_at TEXT, UNIQUE (customer_id, branch_id))",
+        # the two server-stamped report instants (migration 16b41d730e15)
+        + ", updated_at TEXT, status_reported_at TEXT, health_status_reported_at TEXT, "
+        + "UNIQUE (customer_id, branch_id))",
     ]
     with engine.begin() as conn:
         for statement in ddl:
