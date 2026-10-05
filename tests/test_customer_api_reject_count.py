@@ -636,10 +636,15 @@ def test_the_route_is_read_only(api):
         assert getattr(api, method)(ACME_MAIN, headers=COOKIE, params=JUNE_10).status_code == 405
 
 
-def test_there_is_exactly_one_reject_route():
+def test_there_are_exactly_two_reject_routes():
     paths = [r.path for r in main.app.routes if "reject" in getattr(r, "path", "")]
 
-    assert paths == ["/api/organizations/{org_slug}/branches/{branch_slug}/rejects/count"]   # no by-hour, reasons, rate
+    assert paths == [
+        "/api/organizations/{org_slug}/branches/{branch_slug}/rejects/count",
+        "/api/organizations/{org_slug}/branches/{branch_slug}/rejects/by-reason",   # Block 8c
+    ]
+    # Still no rejects by hour and no reject rate.
+    assert not any("hour" in path or "rate" in path for path in paths)
 
 
 # =====================================================================================================================

@@ -1806,3 +1806,478 @@ def test_reject_counts_on_one_pooled_connection_never_see_each_others_tenant(
             assert conn.execute(text("SELECT COUNT(*) FROM reject_events")).scalar() == 0
     finally:
         single.dispose()
+
+
+# --- GET .../rejects/by-reason?date=YYYY-MM-DD, end to end, as the runtime role ---
+#
+# The same rows as the reject count above, sorted by reason. As there, only the
+# authenticated user is stubbed: the tenant-scope dependency, the resolver,
+# tenant_connection, the context read-back, the cutover lookup, both GROUP BY
+# statements, RLS on both reject tables, the reason classifier and the
+# response are all real.
+#
+# What only a real server can show here: a real NULL in rejects.error_message
+# forms its own group; reject_events.error_class is held to a PATTERN by the
+# database, not to the eight reason codes, so a class such as 'jam' really can
+# be stored; and neither grouped statement depends on the session time zone.
+
+REJECTS_BY_REASON_PATH = "/api/organizations/{org}/branches/{branch}/rejects/by-reason"
+REASON_CODES = ["item_not_found", "ils_acs_failure", "rfid_collision", "configuration_error", "routing_error",
+                "communication_error", "other", "unknown"]
+REASON_CANARY = "CANARY-31234000123456 Smith, Pat"
+
+
+def _rejects_by_reason(client, session, org, branch, day: str):
+    return client.get(
+        REJECTS_BY_REASON_PATH.format(org=org, branch=branch),
+        params={"date": day},
+        headers={"Cookie": f"__Host-sortview_api_session={session}"},
+    )
+
+
+def _reasons_of(client, session, org, branch, day: str) -> dict[str, int]:
+    """The reasons that have a count, by code -- after checking the whole
+    contract: the three keys, all eight codes in their fixed order, and that
+    the counts add up to /rejects/count for the same day and data state."""
+    response = _rejects_by_reason(client, session, org, branch, day)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert list(body) == ["date", "timezone", "reasons"]
+    assert body["date"] == day
+    assert body["timezone"] == "America/Chicago"
+    assert [entry["reason"] for entry in body["reasons"]] == REASON_CODES
+    assert all(list(entry) == ["reason", "reject_count"] for entry in body["reasons"])
+    assert response.headers["cache-control"] == "no-store"
+    assert sum(entry["reject_count"] for entry in body["reasons"]) == _rejects_of(client, session, org, branch, day)
+    return {entry["reason"]: entry["reject_count"] for entry in body["reasons"] if entry["reject_count"]}
+
+
+def _seed_mixed_era_reject_reasons(owner_engine) -> None:
+    """Tenant A is cut over at 12:00 local on 10 June 2026 (17:00Z).
+        9 June:   2 legacy rejects, at 00:30 and 23:30 local       -> rfid_collision 1, configuration_error 1
+        10 June:  2 legacy rejects before noon                     -> item_not_found 1, ils_acs_failure 1
+                  4 v2 rejects from the cutover on                 -> rfid_collision 2, communication_error 1, unknown 1
+        11 June:  1 v2 reject, at local midnight                   -> other 1
+    Tenant B -- both of its branches -- was cut over on 1 June and has its own rejects in BOTH tables on 10 June,
+    two of them with a stored class that is not a reason code."""
+    with owner_engine.begin() as conn:
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-09 00:30:00", "a-0609-early", "Multiple tags in the field")
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-09 23:30:00", "a-0609-late", "Collection code missing")
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 09:00:00", "a-0610-morning", "Item not found")       # counts
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 11:59:59", "a-0610-one-second-before", "ACS timeout")  # counts
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 12:00:00", "a-0610-at-cutover", "Library not found")   # v1 is strictly before
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 15:00:00", "a-0610-after-cutover", "Library not found")  # does not count
+        _set_cutover(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 17:00:00+00")
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 16:59:59+00", "configuration_error")   # before the cutover: no
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 17:00:00+00", "rfid_collision")        # exactly at it: counts
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 22:00:00+00", "rfid_collision", ONE_ITEM)       # counts
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 22:00:30+00", "communication_error", ONE_ITEM)  # the same item again
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-11 04:59:59+00", "unknown")               # 23:59:59 local: counts
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-11 05:00:00+00", "other")                 # local midnight: the 11th
+
+        _set_cutover(conn, CUSTOMER_B, BRANCH_B, "2026-06-01 05:00:00+00")
+        _set_cutover(conn, CUSTOMER_B, BRANCH_B_NORTH, "2026-06-01 05:00:00+00")   # a cutover is per branch
+        for hour in (8, 9, 10):
+            _v1_reject(conn, CUSTOMER_B, BRANCH_B, f"2026-06-10 {hour:02d}:00:00", f"b-0610-{hour}", "Library not found")
+        for hour in (6, 9, 12):
+            _v2_reject(conn, CUSTOMER_B, BRANCH_B, f"2026-06-10 {hour:02d}:00:00+00", "configuration_error")
+        for hour in (15, 18):
+            _v2_reject(conn, CUSTOMER_B, BRANCH_B, f"2026-06-10 {hour:02d}:00:00+00", "jam")
+        for hour in (14, 20):
+            _v2_reject(conn, CUSTOMER_B, BRANCH_B_NORTH, f"2026-06-10 {hour:02d}:30:00+00", "unknown")
+
+
+A_0610 = {"item_not_found": 1, "ils_acs_failure": 1, "rfid_collision": 2, "communication_error": 1, "unknown": 1}
+B_MAIN_0610 = {"configuration_error": 3, "other": 2}
+B_NORTH_0610 = {"unknown": 2}
+
+
+def test_the_reason_columns_are_what_the_grouping_relies_on(owner_engine):
+    with owner_engine.connect() as conn:
+        columns = {row[0]: (row[1], row[2]) for row in conn.execute(text("""
+            SELECT table_name || '.' || column_name, data_type, is_nullable
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND (table_name, column_name) IN (('rejects', 'error_message'), ('reject_events', 'error_class'))
+        """)).fetchall()}
+        class_check = conn.execute(text("""
+            SELECT pg_get_constraintdef(oid) FROM pg_constraint
+            WHERE conname = 'reject_events_error_class_format_chk'
+        """)).scalar()
+
+    # A legacy message is free text and may be missing altogether; a v2 class is always present...
+    assert columns == {"rejects.error_message": ("text", "YES"), "reject_events.error_class": ("text", "NO")}
+    # ...and is held to a slug pattern only -- the database does not know the eight reason codes.
+    assert "~" in class_check
+    for reason in REASON_CODES:
+        assert reason not in class_check, reason
+
+
+def test_rejects_by_reason_for_a_v1_only_branch_classifies_every_stored_row_of_its_local_day(owner_engine, checkin_api):
+    with owner_engine.begin() as conn:
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-09 23:59:59", "a1", "Library not found")
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 00:00:00", "a2", "Item not found in database")
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 08:00:00", "a3", "No item found for this tag")
+        # One item, rejected twice in the same second, for two different reasons.
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 09:00:00", "a4", "ITEM NOT FOUND")
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 09:00:00", "a4", "Multiple RFID tags detected")
+        # The same message on two different items: two rows, one group, a count of two.
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 10:00:00", "a5", "ACS timeout")
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 10:00:00", "a6", "ACS timeout")
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 11:00:00", "a7", "Collection code mismatch")
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 12:00:00", "a8", "Library not found")
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 13:00:00", "a9", "Something uncategorized")
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 14:00:00", "a10", REASON_CANARY)
+        # No text to classify, four ways: a real NULL, an empty string, a blank one and the literal "nan".
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 15:00:00", None, None)
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 16:00:00", "a12", "")
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 17:00:00", "a13", "   ")
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 23:59:59", "a14", "nan")
+        _v1_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-11 00:00:00", "a15", "Library not found")
+        # v2 rejects for tenant A on that day, but NO cutover: they are not part of its history.
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 15:00:00+00", "communication_error")
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 18:00:00+00", "jam")
+        # Check-ins for tenant A on that day: not rejects.
+        for hour in range(8, 18):
+            _v1_checkin(conn, CUSTOMER_A, BRANCH_A, f"2026-06-10 {hour:02d}:00:00", f"checkin-{hour}")
+        for hour in range(8, 13):
+            _v1_reject(conn, CUSTOMER_B, BRANCH_B, f"2026-06-10 {hour:02d}:00:00", f"b{hour}", "Library not found")
+
+    response = _rejects_by_reason(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "date": "2026-06-10",
+        "timezone": "America/Chicago",
+        "reasons": [
+            {"reason": "item_not_found", "reject_count": 3},
+            {"reason": "ils_acs_failure", "reject_count": 2},
+            {"reason": "rfid_collision", "reject_count": 1},
+            {"reason": "configuration_error", "reject_count": 1},
+            {"reason": "routing_error", "reject_count": 1},
+            {"reason": "communication_error", "reject_count": 0},
+            {"reason": "other", "reject_count": 2},
+            {"reason": "unknown", "reject_count": 4},
+        ],
+    }
+    assert response.headers["cache-control"] == "no-store"
+    for leaked in ("total", "v1", "v2", "unexpected", "customer_id", "branch_id", "cutover", "era", "error_message",
+                   "error_class", "barcode", "item_key", "event_key", "key_id", "reject_rate", str(CUSTOMER_A),
+                   "CANARY", "Smith", "31234000123456", "RFID", "ACS", "timeout", "uncategorized", "a4", "jam",
+                   "Item Not Found", "label"):
+        assert leaked not in response.text, leaked
+
+    # The fourteen stored rows of the day, each under exactly one reason: the same number /rejects/count gives.
+    assert _rejects_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == 14
+    assert _reasons_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == {
+        "item_not_found": 3, "ils_acs_failure": 2, "rfid_collision": 1, "configuration_error": 1, "routing_error": 1,
+        "other": 2, "unknown": 4,
+    }
+    assert _reasons_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-09") == {"routing_error": 1}
+    assert _reasons_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-11") == {"routing_error": 1}
+    assert _reasons_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-12") == {}
+    assert _reasons_of(checkin_api, SESSION_B, "tenant-b", "main", "2026-06-10") == {"routing_error": 5}
+    # The check-in count for the same day is its own number, untouched by any reject row.
+    assert _count_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == 10
+
+
+def test_rejects_by_reason_across_a_real_cutover_inside_the_day(owner_engine, checkin_api):
+    _seed_mixed_era_reject_reasons(owner_engine)
+
+    response = _rejects_by_reason(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10")
+
+    # 2 legacy rows before 12:00 (one of them at 11:59:59), each classified from its message, + 4 v2 rows from
+    # 17:00:00Z on (one of them exactly at it), each under its stored class. The legacy rows AT and after 12:00
+    # ("Library not found") and the v2 row one second BEFORE 17:00Z (configuration_error) are on the other
+    # era's side: neither routing_error nor configuration_error has a count.
+    assert response.status_code == 200
+    assert response.json()["reasons"] == [
+        {"reason": "item_not_found", "reject_count": 1},
+        {"reason": "ils_acs_failure", "reject_count": 1},
+        {"reason": "rfid_collision", "reject_count": 2},
+        {"reason": "configuration_error", "reject_count": 0},
+        {"reason": "routing_error", "reject_count": 0},
+        {"reason": "communication_error", "reject_count": 1},
+        {"reason": "other", "reject_count": 0},
+        {"reason": "unknown", "reject_count": 1},
+    ]
+    for leaked in ("total", "v1", "v2", "cutover", "era", "17:00", "error_", "item_key", ONE_ITEM, str(CUSTOMER_A)):
+        assert leaked not in response.text, leaked
+
+    assert _reasons_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-09") == {
+        "rfid_collision": 1, "configuration_error": 1,
+    }
+    assert _reasons_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == A_0610
+    assert _reasons_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-11") == {"other": 1}
+
+
+def test_rejects_by_reason_after_a_rollback_is_v1_only_again(owner_engine, checkin_api):
+    _seed_mixed_era_reject_reasons(owner_engine)
+    assert _reasons_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == A_0610
+
+    # A later v2_cutovers row with no cutover_at is a recorded rollback for that branch.
+    with owner_engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO v2_cutovers (customer_id, branch_id, cutover_at, set_at, set_by)
+            VALUES (:c, :b, NULL, now() + interval '1 minute', 'rls-test')
+        """), {"c": CUSTOMER_A, "b": BRANCH_A})
+
+    # All four legacy rows of 10 June now count -- including the two at and after the old cutover -- and no v2 row.
+    assert _reasons_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == {
+        "item_not_found": 1, "ils_acs_failure": 1, "routing_error": 2,
+    }
+    assert _reasons_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-11") == {}
+    # Tenant B's branches have their own cutovers and are unaffected.
+    assert _reasons_of(checkin_api, SESSION_B, "tenant-b", "main", "2026-06-10") == B_MAIN_0610
+
+
+def test_an_unexpected_stored_class_is_folded_into_other_and_never_returned(owner_engine, checkin_api, caplog):
+    with owner_engine.begin() as conn:
+        _set_cutover(conn, CUSTOMER_A, BRANCH_A, "2026-06-01 05:00:00+00")
+        # 'jam' and 'sensor_fault' satisfy the database's pattern check: the INSERT itself proves they can be stored.
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 15:00:00+00", "jam")
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 15:00:01+00", "jam")
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 16:00:00+00", "sensor_fault")
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 17:00:00+00", "other")            # a real `other`
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 18:00:00+00", "item_not_found")
+        stored = conn.execute(text(
+            "SELECT COUNT(*) FROM reject_events WHERE customer_id = :c AND error_class IN ('jam', 'sensor_fault')"
+        ), {"c": CUSTOMER_A}).scalar()
+    assert stored == 3
+
+    with caplog.at_level("DEBUG"):
+        response = _rejects_by_reason(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10")
+
+    assert response.status_code == 200          # a stray class does not take the endpoint down
+    assert response.json()["reasons"] == [
+        {"reason": "item_not_found", "reject_count": 1},
+        {"reason": "ils_acs_failure", "reject_count": 0},
+        {"reason": "rfid_collision", "reject_count": 0},
+        {"reason": "configuration_error", "reject_count": 0},
+        {"reason": "routing_error", "reject_count": 0},
+        {"reason": "communication_error", "reject_count": 0},
+        {"reason": "other", "reject_count": 4},
+        {"reason": "unknown", "reject_count": 0},
+    ]
+    for leaked in ("jam", "sensor_fault", "unexpected"):
+        assert leaked not in response.text, leaked
+    # Nothing is dropped from the day: the five stored rows are the five /rejects/count reports.
+    assert _rejects_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == 5
+    # The warning carries the number of rows and nothing else.
+    warnings = [record for record in caplog.records if record.name == "sortview.operational_metrics"]
+    assert warnings and all(record.args == (3,) for record in warnings)
+    assert "jam" not in caplog.text and "sensor_fault" not in caplog.text
+
+
+def test_rejects_by_reason_is_isolated_from_another_tenant_in_both_tables(owner_engine, checkin_api):
+    _seed_mixed_era_reject_reasons(owner_engine)
+
+    # Tenant B has 3 legacy ("Library not found") and 5 + 2 v2 rejects on 10 June. None reaches tenant A:
+    # A has no routing_error, no configuration_error and no `other` that day...
+    assert _reasons_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == A_0610
+    # ...and B's own reasons are its own: its legacy rows fall after ITS cutover, so only v2 counts,
+    # and each of its two branches sees only its own rows.
+    assert _reasons_of(checkin_api, SESSION_B, "tenant-b", "main", "2026-06-10") == B_MAIN_0610
+    assert _reasons_of(checkin_api, SESSION_B, "tenant-b", "north", "2026-06-10") == B_NORTH_0610
+
+    for session, org, branch in ((SESSION_A, "tenant-b", "main"), (SESSION_A, "tenant-a", "north"),
+                                 (SESSION_B, "tenant-a", "main")):
+        refused = _rejects_by_reason(checkin_api, session, org, branch, "2026-06-10")
+        assert refused.status_code == 404 and refused.json() == TENANT_NOT_FOUND
+        same = _reject_count(checkin_api, session, org, branch, "2026-06-10")
+        assert (refused.status_code, refused.content) == (same.status_code, same.content)
+
+
+def test_row_level_security_alone_hides_another_tenants_reject_reasons(owner_engine, runtime_engine):
+    """The grouped statements also filter the tenant themselves. This shows
+    the second line of defence on its own: the same two groupings, deliberately
+    WITHOUT their tenant filter, on a tenant-scoped connection, return only
+    that tenant's groups -- no other tenant's message or class, and no count
+    that includes another tenant's rows."""
+    _seed_members(owner_engine, runtime_engine)
+    _seed_mixed_era_reject_reasons(owner_engine)
+
+    seen = {}
+    for name, customer_id, branch_id in (("a", CUSTOMER_A, BRANCH_A), ("b-main", CUSTOMER_B, BRANCH_B),
+                                         ("b-north", CUSTOMER_B, BRANCH_B_NORTH)):
+        with tenant_connection(runtime_engine, customer_id, branch_id) as conn:
+            seen[name] = (
+                dict(conn.execute(text("SELECT error_message, COUNT(*) FROM rejects GROUP BY error_message")).fetchall()),
+                dict(conn.execute(text("SELECT error_class, COUNT(*) FROM reject_events GROUP BY error_class")).fetchall()),
+            )
+
+    assert seen == {
+        "a": (
+            {"Multiple tags in the field": 1, "Collection code missing": 1, "Item not found": 1, "ACS timeout": 1,
+             "Library not found": 2},
+            {"configuration_error": 1, "rfid_collision": 2, "communication_error": 1, "unknown": 1, "other": 1},
+        ),
+        "b-main": ({"Library not found": 3}, {"configuration_error": 3, "jam": 2}),
+        "b-north": ({}, {"unknown": 2}),
+    }
+
+    # With no tenant context at all, the same groupings see nothing.
+    with runtime_engine.connect() as conn:
+        assert conn.execute(text("SELECT error_message, COUNT(*) FROM rejects GROUP BY error_message")).fetchall() == []
+        assert conn.execute(text("SELECT error_class, COUNT(*) FROM reject_events GROUP BY error_class")).fetchall() == []
+
+
+def test_rejects_by_reason_request_validation_through_the_real_app(checkin_api):
+    path = REJECTS_BY_REASON_PATH.format(org="tenant-a", branch="main")
+
+    assert checkin_api.get(path, params={"date": "2026-06-10"}).status_code == 401
+    assert checkin_api.get(path, headers={"Cookie": f"__Host-sortview_api_session={SESSION_A}"}).status_code == 422
+    assert _rejects_by_reason(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10T00:00:00").status_code == 422
+    assert _rejects_by_reason(checkin_api, SESSION_A, "tenant-a", "main", "2026-02-30").status_code == 422
+    assert checkin_api.post(path, params={"date": "2026-06-10"},
+                            headers={"Cookie": f"__Host-sortview_api_session={SESSION_A}"}).status_code == 405
+    assert _reasons_of(checkin_api, SESSION_A, "tenant-a", "main", "2099-01-01") == {}   # eight zeros, still 200
+
+
+@pytest.mark.parametrize("session_time_zone", ["UTC", "America/Chicago", "America/New_York", "Asia/Tokyo"])
+def test_rejects_by_reason_does_not_depend_on_the_database_session_time_zone(
+    owner_engine, checkin_api, runtime_engine, monkeypatch, session_time_zone
+):
+    _seed_mixed_era_reject_reasons(owner_engine)
+    engine = create_engine(
+        runtime_engine.url, connect_args={"options": f"-c timezone={session_time_zone}"}, hide_parameters=True
+    )
+    monkeypatch.setattr(database, "_engine", engine)
+    try:
+        with engine.connect() as conn:
+            assert conn.execute(text("SHOW timezone")).scalar() == session_time_zone
+
+        # 9 June is all legacy rows, at 00:30 and 23:30 local -- the two a session-dependent date cast misplaces.
+        assert _reasons_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-09") == {
+            "rfid_collision": 1, "configuration_error": 1,
+        }
+        # 10 June mixes both tables around the cutover, with a v2 row at 23:59:59 local.
+        assert _reasons_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == A_0610
+        assert _reasons_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-11") == {"other": 1}
+        assert _reasons_of(checkin_api, SESSION_B, "tenant-b", "main", "2026-06-10") == B_MAIN_0610
+        assert _reasons_of(checkin_api, SESSION_B, "tenant-b", "north", "2026-06-10") == B_NORTH_0610
+        # The whole response, byte for byte, is one fixed answer whatever the session's zone.
+        assert _rejects_by_reason(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10").json() == {
+            "date": "2026-06-10",
+            "timezone": "America/Chicago",
+            "reasons": [{"reason": reason, "reject_count": A_0610.get(reason, 0)} for reason in REASON_CODES],
+        }
+    finally:
+        engine.dispose()
+
+
+def test_rejects_by_reason_on_the_spring_forward_date(owner_engine, checkin_api):
+    with owner_engine.begin() as conn:
+        # Tenant A, cut over well before: 8 March 2026 is [06:00Z, 05:00Z next day) -- 23 hours.
+        _set_cutover(conn, CUSTOMER_A, BRANCH_A, "2026-03-01 06:00:00+00")
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-03-08 05:59:59+00", "other")            # 23:59:59 CST on the 7th
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-03-08 06:00:00+00", "item_not_found")   # 00:00 CST on the 8th
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-03-08 07:59:59+00", "ils_acs_failure")  # 01:59:59 CST, before the jump
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-03-08 08:00:00+00", "ils_acs_failure")  # the next second: 03:00 CDT
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-03-09 04:59:59+00", "unknown")          # 23:59:59 CDT on the 8th
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-03-09 05:00:00+00", "other")            # 00:00 CDT on the 9th
+        # Tenant B, never cut over: naive wall-clock rows, one stamped in the hour that did not exist.
+        for stamped, barcode, message in (
+            ("2026-03-07 23:59:59", "b1", "Library not found"), ("2026-03-08 00:00:00", "b2", "Item not found"),
+            ("2026-03-08 02:30:00", "b3", "ACS timeout"), ("2026-03-08 03:00:00", "b4", "Multiple tags"),
+            ("2026-03-08 23:59:59", "b5", ""), ("2026-03-09 00:00:00", "b6", "Library not found"),
+        ):
+            _v1_reject(conn, CUSTOMER_B, BRANCH_B, stamped, barcode, message)
+
+    assert [_reasons_of(checkin_api, SESSION_A, "tenant-a", "main", day)
+            for day in ("2026-03-07", "2026-03-08", "2026-03-09")] == [
+        {"other": 1}, {"item_not_found": 1, "ils_acs_failure": 2, "unknown": 1}, {"other": 1},
+    ]
+    # The legacy row stamped 02:30 is a stored row of 8 March and has its reason there.
+    assert [_reasons_of(checkin_api, SESSION_B, "tenant-b", "main", day)
+            for day in ("2026-03-07", "2026-03-08", "2026-03-09")] == [
+        {"routing_error": 1}, {"item_not_found": 1, "ils_acs_failure": 1, "rfid_collision": 1, "unknown": 1},
+        {"routing_error": 1},
+    ]
+
+
+def test_rejects_by_reason_on_the_fall_back_date(owner_engine, checkin_api):
+    with owner_engine.begin() as conn:
+        # Tenant A, cut over well before: 1 November 2026 is [05:00Z, 06:00Z next day) -- 25 hours.
+        _set_cutover(conn, CUSTOMER_A, BRANCH_A, "2026-10-01 05:00:00+00")
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-11-01 04:59:59+00", "other")            # 23:59:59 CDT on 31 October
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-11-01 06:30:00+00", "rfid_collision")   # 01:30 CDT -- the first 01:30
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-11-01 07:30:00+00", "routing_error")    # 01:30 CST -- the second
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-11-02 05:59:59+00", "rfid_collision")   # 23:59:59 CST on the 1st
+        _v2_reject(conn, CUSTOMER_A, BRANCH_A, "2026-11-02 06:00:00+00", "other")            # 00:00 CST on the 2nd
+        # Tenant B, never cut over: two legacy rows both stamped 01:30 are simply two stored rows on 1 November.
+        _v1_reject(conn, CUSTOMER_B, BRANCH_B, "2026-11-01 01:30:00", "b-first-pass", "ACS timeout")
+        _v1_reject(conn, CUSTOMER_B, BRANCH_B, "2026-11-01 01:30:00", "b-second-pass", "ACS timeout")
+        _v1_reject(conn, CUSTOMER_B, BRANCH_B, "2026-11-01 23:59:59", "b-late", None)
+
+    # Both real 01:30 instants belong to 1 November and are counted once each, each under its own reason.
+    assert [_reasons_of(checkin_api, SESSION_A, "tenant-a", "main", day)
+            for day in ("2026-10-31", "2026-11-01", "2026-11-02")] == [
+        {"other": 1}, {"rfid_collision": 2, "routing_error": 1}, {"other": 1},
+    ]
+    assert _reasons_of(checkin_api, SESSION_B, "tenant-b", "main", "2026-11-01") == {"ils_acs_failure": 2, "unknown": 1}
+
+
+def test_rejects_by_reason_on_one_pooled_connection_never_sees_another_tenant(
+    owner_engine, checkin_api, runtime_engine, monkeypatch
+):
+    _seed_mixed_era_reject_reasons(owner_engine)
+    # One connection: every statement of every request below runs on the same server backend.
+    single = create_engine(runtime_engine.url, pool_size=1, max_overflow=0, hide_parameters=True)
+    monkeypatch.setattr(database, "_engine", single)
+    requests = (
+        (SESSION_A, "tenant-a", "main", A_0610),
+        (SESSION_B, "tenant-b", "main", B_MAIN_0610),
+        (SESSION_A, "tenant-a", "main", A_0610),
+        (SESSION_B, "tenant-b", "north", B_NORTH_0610),
+        (SESSION_A, "tenant-a", "main", A_0610),
+    )
+    try:
+        # _reasons_of also asks /rejects/count each time, so the two reject routes alternate on the connection.
+        for session, org, branch, expected in requests:
+            assert _reasons_of(checkin_api, session, org, branch, "2026-06-10") == expected
+        # A check-in request for another tenant in between, on the same connection, changes nothing.
+        assert _count_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == 0
+        assert _reasons_of(checkin_api, SESSION_B, "tenant-b", "main", "2026-06-10") == B_MAIN_0610
+
+        # Change the pooled connection's SESSION time zone for good, then ask again.
+        with single.connect() as conn:
+            conn.execute(text("SET TIME ZONE 'Asia/Tokyo'"))
+            conn.commit()
+        with single.connect() as conn:
+            assert conn.execute(text("SHOW timezone")).scalar() == "Asia/Tokyo"
+
+        for session, org, branch, expected in requests:
+            assert _reasons_of(checkin_api, session, org, branch, "2026-06-10") == expected
+        assert _rejects_by_reason(checkin_api, SESSION_A, "tenant-b", "main", "2026-06-10").status_code == 404
+
+        # Nothing of any request's tenant context is left on the pooled connection.
+        with single.connect() as conn:
+            settings = conn.execute(text(
+                "SELECT current_setting('app.operational_customer_id', true), "
+                "current_setting('app.operational_branch_id', true)"
+            )).one()
+            assert all(value in (None, "") for value in settings)
+            assert conn.execute(text("SELECT COUNT(*) FROM rejects")).scalar() == 0
+            assert conn.execute(text("SELECT COUNT(*) FROM reject_events")).scalar() == 0
+    finally:
+        single.dispose()
+
+
+def test_the_reasons_always_add_up_to_the_reject_count_for_the_same_day_and_data(owner_engine, checkin_api):
+    _seed_mixed_era_reject_reasons(owner_engine)
+
+    totals = {}
+    for session, org, branch in ((SESSION_A, "tenant-a", "main"), (SESSION_B, "tenant-b", "main"),
+                                 (SESSION_B, "tenant-b", "north")):
+        for day in ("2026-06-08", "2026-06-09", "2026-06-10", "2026-06-11", "2026-06-12"):
+            reasons = _reasons_of(checkin_api, session, org, branch, day)       # asserts the sum itself
+            totals[(org, branch, day)] = sum(reasons.values())
+            assert totals[(org, branch, day)] == _rejects_of(checkin_api, session, org, branch, day)
+
+    assert totals[("tenant-a", "main", "2026-06-09")] == 2
+    assert totals[("tenant-a", "main", "2026-06-10")] == 6
+    assert totals[("tenant-a", "main", "2026-06-11")] == 1
+    assert totals[("tenant-b", "main", "2026-06-10")] == 5       # two of them stored as 'jam', counted as `other`
+    assert totals[("tenant-b", "north", "2026-06-10")] == 2
+    assert totals[("tenant-a", "main", "2026-06-08")] == totals[("tenant-a", "main", "2026-06-12")] == 0
