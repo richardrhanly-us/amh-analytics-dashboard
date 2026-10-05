@@ -8,6 +8,7 @@ metrics, and the check-in count built on them.
     get_checkin_count(conn, tenant, ...)     check-ins on one local day, across both eras
     get_checkin_counts_by_hour(conn, ...)    the same check-ins, by wall-clock hour (Block 6b)
     get_reject_count(conn, tenant, ...)      rejects on one local day, across both eras (Block 7a)
+    get_reject_counts_by_reason(conn, ...)   the same rejects, by reason (Block 8b)
 
 The two helpers are pure. The lookup runs its REAL SQL against an in-memory
 SQLite table; v2_cutovers has no row level security in production either, so
@@ -25,6 +26,7 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -48,6 +50,7 @@ from services.operational_metrics_service import (
     local_day_bounds,
     local_hour_boundaries,
 )
+from services.reject_reason import REJECT_REASONS
 from services.tenant_resolution_service import ResolvedOperationalTenant
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -3054,6 +3057,1006 @@ def test_for_a_cut_over_branch_the_reject_count_intentionally_differs_from_the_d
 
 
 # =====================================================================================================================
+# Block 8b: get_reject_counts_by_reason
+# =====================================================================================================================
+#
+# The real SQL, against the same in-memory SQLite database as the reject count.
+# SQLite puts no constraint on reject_events.error_class, so a row can be
+# stored here with a class PostgreSQL's pattern check would also let through
+# ("jam") -- and with ones it would not, which the service must survive too.
+#
+# A result is compared by NAME below (_named): only the reasons that have a
+# count, keyed by their code. The tuples themselves, their length and their
+# order have their own tests.
+
+RejectReasonCounts = operational_metrics_service.RejectReasonCounts
+
+NO_REASON_COUNTS = (0,) * 8
+REASON_LOGGER = "sortview.operational_metrics"
+UNEXPECTED_CLASS_WARNING = "Reject rows with an unrecognised stored class were counted as other: rows={}"
+BEFORE_JUNE = _utc(2026, 6, 1, 5, 0)      # a cutover well before 10 June: that day is entirely v2's
+
+
+def _reason_counts(db, local_date=JUNE_10, *, tenant=TENANT_A, zone=CHICAGO, fail_on=None):
+    with db.connect() as conn:
+        recorder = Recorder(conn, fail_on=fail_on)
+        result = operational_metrics_service.get_reject_counts_by_reason(
+            recorder, tenant, local_date=local_date, zone=zone
+        )
+    return result, recorder
+
+
+def _named(counts: tuple[int, ...]) -> dict[str, int]:
+    assert len(counts) == len(REJECT_REASONS) == 8
+    return {reason: count for reason, count in zip(REJECT_REASONS, counts, strict=True) if count}
+
+
+def _reasons(db, local_date=JUNE_10, **kwargs) -> dict[str, int]:
+    result, _ = _reason_counts(db, local_date, **kwargs)
+    return _named(result.counts)
+
+
+def _reason_warnings(caplog) -> list[logging.LogRecord]:
+    return [record for record in caplog.records if record.name == REASON_LOGGER]
+
+
+# --- a legacy row's reason is classified from its message -------------------------------------------------------------
+
+V1_RULE_MESSAGES = [
+    ("Item not found in database", "item_not_found"),
+    ("No item found for this tag", "item_not_found"),
+    ("ACS connection failure", "ils_acs_failure"),
+    ("Multiple RFID tags detected", "rfid_collision"),
+    ("Multiple tags in the field", "rfid_collision"),
+    ("Collection code mismatch", "configuration_error"),
+    ("Library not found", "routing_error"),
+    ("Something else entirely", "other"),
+    ("item not found in ACS", "item_not_found"),        # the first rule that matches decides
+    ("ACS: MULTIPLE RFID TAGS", "ils_acs_failure"),
+]
+V1_NO_TEXT = [None, "", " ", "   ", "\t", "nan", " NaN "]
+
+
+@pytest.mark.parametrize(("message", "reason"), V1_RULE_MESSAGES)
+def test_a_legacy_reject_lands_in_the_slot_of_the_rule_its_message_matches(reject_db, message, reason):
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), error_message=message)
+
+    result, _ = _reason_counts(reject_db)
+
+    assert _named(result.counts) == {reason: 1}
+    assert result.v1_counts == result.counts and result.v2_counts == NO_REASON_COUNTS
+    assert result.unexpected_class_rows == 0
+
+
+@pytest.mark.parametrize("message", V1_NO_TEXT, ids=repr)
+def test_a_legacy_reject_with_no_text_is_unknown(reject_db, message):
+    # NULL, empty, blank and the literal "nan": the Contract v2 meaning of `unknown`, not the dashboard's "Other".
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), error_message=message)
+
+    assert _reasons(reject_db) == {"unknown": 1}
+
+
+def test_every_kind_of_legacy_message_in_one_day(reject_db):
+    for minute, (message, _) in enumerate(V1_RULE_MESSAGES):
+        _v1_reject(reject_db, _local(2026, 6, 10, 9, minute), error_message=message)
+    for minute, message in enumerate(V1_NO_TEXT):
+        _v1_reject(reject_db, _local(2026, 6, 10, 10, minute), error_message=message)
+
+    result, recorder = _reason_counts(reject_db)
+
+    assert _named(result.counts) == {
+        "item_not_found": 3, "ils_acs_failure": 2, "rfid_collision": 2, "configuration_error": 1, "routing_error": 1,
+        "other": 1, "unknown": 7,
+    }
+    assert result.counts[REJECT_REASONS.index("communication_error")] == 0   # no message is ever one
+    assert recorder.tables() == ["v2_cutovers", "rejects"]
+
+
+def test_distinct_messages_with_the_same_reason_add_together(reject_db):
+    # Four different stored texts -- four groups in the database -- and one reason.
+    for minute, message in enumerate(["Item not found", "ITEM NOT FOUND in database", "no item found",
+                                      "  Item Not Found (sorter 2)"]):
+        _v1_reject(reject_db, _local(2026, 6, 10, 9, minute), _local(2026, 6, 10, 10, minute), error_message=message)
+    _v1_reject(reject_db, _local(2026, 6, 10, 11, 0), error_message="Library not found")
+
+    assert _reasons(reject_db) == {"item_not_found": 8, "routing_error": 1}
+
+
+# --- a v2 row's stored class IS its reason ----------------------------------------------------------------------------
+
+@pytest.mark.parametrize("error_class", V2_REASONS)
+def test_each_canonical_v2_class_lands_in_its_own_slot(reject_db, error_class):
+    _cutover(reject_db, BEFORE_JUNE)
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), error_class=error_class)
+
+    result, _ = _reason_counts(reject_db)
+
+    expected = [0] * 8
+    expected[REJECT_REASONS.index(error_class)] = 1
+    assert result.counts == tuple(expected)
+    assert result.v2_counts == result.counts and result.v1_counts == NO_REASON_COUNTS
+    assert result.unexpected_class_rows == 0
+
+
+def test_all_eight_v2_classes_in_one_day_each_keep_their_own_count(reject_db):
+    assert tuple(V2_REASONS) == REJECT_REASONS
+    _cutover(reject_db, BEFORE_JUNE)
+    for slot, error_class in enumerate(REJECT_REASONS):
+        _v2_reject(reject_db, *[_utc(2026, 6, 10, 18, slot)] * (slot + 1), error_class=error_class)
+
+    result, recorder = _reason_counts(reject_db)
+
+    assert result.counts == result.v2_counts == (1, 2, 3, 4, 5, 6, 7, 8)   # REJECT_REASONS order
+    assert result.unexpected_class_rows == 0
+    assert recorder.tables() == ["v2_cutovers", "reject_events"]
+
+
+def test_a_v2_class_is_never_classified_as_if_it_were_a_message(reject_db):
+    # The dashboard defect this must not repeat: read as text, "rfid_collision" matches no rule and becomes Other.
+    _cutover(reject_db, BEFORE_JUNE)
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), _utc(2026, 6, 10, 18, 1), error_class="rfid_collision")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 2), error_class="unknown")
+
+    assert _reasons(reject_db) == {"rfid_collision": 2, "unknown": 1}
+
+
+def test_a_communication_error_can_only_come_from_a_v2_row(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), error_message="communication error")
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 1), error_message="connection timed out")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), _utc(2026, 6, 10, 18, 1), error_class="communication_error")
+
+    result, _ = _reason_counts(reject_db)
+
+    assert _named(result.v1_counts) == {"other": 2}
+    assert _named(result.v2_counts) == {"communication_error": 2}
+    assert _named(result.counts) == {"communication_error": 2, "other": 2}
+
+
+def test_unknown_is_one_reason_whichever_era_it_comes_from(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), error_message=None)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 1), error_message="")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), error_class="unknown")
+
+    result, _ = _reason_counts(reject_db)
+
+    assert _named(result.counts) == {"unknown": 3}
+    assert (_named(result.v1_counts), _named(result.v2_counts)) == ({"unknown": 2}, {"unknown": 1})
+
+
+# --- what is counted --------------------------------------------------------------------------------------------------
+
+def test_every_reject_row_is_counted_under_its_reason_with_no_deduplication(reject_db):
+    # The same item, the same second, the same message, three times over: three rows, three rejects.
+    _v1_reject(reject_db, *[_local(2026, 6, 10, 9, 0)] * 3, barcode="same-barcode", error_message="ACS timeout")
+    _cutover(reject_db, NOON_CUTOVER)
+    _v2_reject(reject_db, *[_utc(2026, 6, 10, 18, 0)] * 2, item_key="a" * 64, error_class="rfid_collision")
+
+    result, _ = _reason_counts(reject_db)
+
+    assert _named(result.counts) == {"ils_acs_failure": 3, "rfid_collision": 2}
+    assert sum(result.counts) == _reject_counts(reject_db)[0] == 5
+
+
+def test_an_item_rejected_several_times_counts_each_time_under_each_reason(reject_db):
+    _cutover(reject_db, BEFORE_JUNE)
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), _utc(2026, 6, 10, 18, 5), item_key="b" * 64,
+               error_class="item_not_found")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 19, 0), item_key="b" * 64, error_class="routing_error")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 20, 0), item_key=None, error_class="routing_error")   # no item at all
+
+    assert _reasons(reject_db) == {"item_not_found": 2, "routing_error": 2}
+
+
+def test_check_in_rows_do_not_affect_the_reason_counts(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0))
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0))
+    before = _reason_counts(reject_db)[0]
+
+    _v1(reject_db, _local(2026, 6, 10, 9, 0), _local(2026, 6, 10, 10, 0))
+    _v2(reject_db, _utc(2026, 6, 10, 18, 0))
+    after, recorder = _reason_counts(reject_db)
+
+    assert after == before
+    assert recorder.tables() == ["v2_cutovers", "rejects", "reject_events"]   # neither check-in table is read
+
+
+# --- a stored v2 class that is not one of the eight -------------------------------------------------------------------
+
+def test_an_unexpected_stored_class_is_counted_as_other(reject_db):
+    _cutover(reject_db, BEFORE_JUNE)
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), _utc(2026, 6, 10, 18, 1), error_class="jam")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 2), error_class="sensor_fault")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 3), error_class="other")            # a real `other`
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 4), error_class="item_not_found")
+
+    result, _ = _reason_counts(reject_db)
+
+    assert _named(result.counts) == {"item_not_found": 1, "other": 4}
+    assert result.unexpected_class_rows == 3                                        # rows, not distinct classes
+    assert sum(result.counts) == _reject_counts(reject_db)[0] == 5                  # nothing dropped from the total
+
+
+@pytest.mark.parametrize("stored", ["jam", "Item Not Found", "ITEM_NOT_FOUND", " other", "other ", "", "nan", None],
+                         ids=repr)
+def test_a_class_is_recognised_only_exactly_as_stored(reject_db, stored):
+    # No stripping, no lower-casing, no reading it as a message: not one of the eight codes means `other`.
+    _cutover(reject_db, BEFORE_JUNE)
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), error_class=stored)
+
+    result, _ = _reason_counts(reject_db)
+
+    assert (_named(result.counts), result.unexpected_class_rows) == ({"other": 1}, 1)
+
+
+def test_unexpected_classes_log_exactly_one_warning_carrying_only_the_row_count(reject_db, caplog):
+    _cutover(reject_db, BEFORE_JUNE)
+    _v2_reject(reject_db, *[_utc(2026, 6, 10, 18, 0)] * 4, error_class="jam")
+    _v2_reject(reject_db, *[_utc(2026, 6, 10, 19, 0)] * 3, error_class="sensor_fault")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 20, 0), error_class="rfid_collision")
+
+    with caplog.at_level(logging.DEBUG):
+        result, _ = _reason_counts(reject_db)
+
+    (warning,) = _reason_warnings(caplog)          # one per call, not one per class or per row
+    assert warning.levelno == logging.WARNING
+    assert warning.getMessage() == UNEXPECTED_CLASS_WARNING.format(7)
+    assert warning.args == (7,) == (result.unexpected_class_rows,)
+    for leaked in ("jam", "sensor_fault", "rfid_collision", "customer", "branch", "2026", "acme", "main"):
+        assert leaked not in warning.getMessage(), leaked
+    assert warning.exc_info is None and warning.stack_info is None
+
+
+def test_no_warning_is_logged_when_every_class_is_canonical(reject_db, caplog):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), error_message="a message matching no rule at all")
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 1), error_message=None)
+    for minute, error_class in enumerate(REJECT_REASONS):
+        _v2_reject(reject_db, _utc(2026, 6, 10, 18, minute), error_class=error_class)
+
+    with caplog.at_level(logging.DEBUG):
+        result, _ = _reason_counts(reject_db)
+
+    assert result.unexpected_class_rows == 0
+    assert _reason_warnings(caplog) == []
+
+
+def test_an_unexpected_class_outside_what_is_counted_is_neither_counted_nor_warned_about(reject_db, caplog):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v2_reject(reject_db, _utc(2026, 6, 10, 16, 0), error_class="jam")                      # before the cutover
+    _v2_reject(reject_db, _utc(2026, 6, 11, 5, 0), error_class="jam")                       # the next local day
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), error_class="jam", customer_id=CUSTOMER_B)
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), error_class="jam", branch_id=BRANCH_B)
+
+    with caplog.at_level(logging.DEBUG):
+        result, _ = _reason_counts(reject_db)
+
+    assert result == RejectReasonCounts(NO_REASON_COUNTS, NO_REASON_COUNTS, NO_REASON_COUNTS, 0)
+    assert _reason_warnings(caplog) == []
+
+
+def test_with_no_cutover_an_unexpected_v2_class_is_never_even_read(reject_db, caplog):
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), error_class="jam")
+
+    with caplog.at_level(logging.DEBUG):
+        result, recorder = _reason_counts(reject_db)
+
+    assert result.unexpected_class_rows == 0 and _reason_warnings(caplog) == []
+    assert "reject_events" not in recorder.tables()
+
+
+# --- raw text never leaves the function -------------------------------------------------------------------------------
+
+CANARY = "CANARY-31234000123456 Smith, Pat"
+
+
+def test_the_legacy_message_text_is_in_neither_the_result_nor_any_log(reject_db, caplog):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), error_message=f"Item not found {CANARY}", barcode=CANARY)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 1), error_message=CANARY)
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), error_class="jam")
+
+    with caplog.at_level(logging.DEBUG):
+        result, _ = _reason_counts(reject_db)
+
+    assert _named(result.counts) == {"item_not_found": 1, "other": 2}
+    assert "CANARY" not in repr(result) and "jam" not in repr(result)
+    assert all(type(value) is int for counts in (result.counts, result.v1_counts, result.v2_counts) for value in counts)
+    for record in caplog.records:
+        assert "CANARY" not in record.getMessage() and "jam" not in record.getMessage(), record.name
+
+
+def test_a_failure_after_the_legacy_text_was_read_does_not_carry_it(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), error_message=CANARY)
+
+    with pytest.raises(RuntimeError) as raised:
+        _reason_counts(reject_db, fail_on="reject_events")
+
+    assert "CANARY" not in str(raised.value)
+
+
+# --- the eras share the day exactly as in get_reject_count ------------------------------------------------------------
+
+def test_a_v1_only_branch_gets_its_reasons_from_the_legacy_table_alone(reject_db):
+    _v1_reject(reject_db, _local(2026, 6, 9, 23, 59, 59), error_message="Library not found")    # the day before
+    _v1_reject(reject_db, _local(2026, 6, 10, 0, 0), error_message="Item not found")
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 30), error_message="ACS timeout")
+    _v1_reject(reject_db, _local(2026, 6, 10, 23, 59, 59), error_message="ACS down")
+    _v1_reject(reject_db, _local(2026, 6, 11, 0, 0), error_message="Library not found")         # the day after
+
+    result, recorder = _reason_counts(reject_db)
+
+    assert _named(result.counts) == {"item_not_found": 1, "ils_acs_failure": 2}
+    assert result.v1_counts == result.counts and result.v2_counts == NO_REASON_COUNTS
+    assert recorder.tables() == ["v2_cutovers", "rejects"]   # the v2 table is never read
+
+
+def test_with_no_cutover_v2_reasons_are_ignored_even_if_they_exist(reject_db):
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), error_message="Collection code missing")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 15, 0), _utc(2026, 6, 10, 16, 0), error_class="rfid_collision")
+
+    result, recorder = _reason_counts(reject_db)
+
+    assert _named(result.counts) == {"configuration_error": 1}
+    assert "reject_events" not in recorder.tables()
+
+
+def test_a_v2_only_day_gets_its_reasons_from_the_v2_table_alone(reject_db):
+    _cutover(reject_db, BEFORE_JUNE)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), error_message="Library not found")   # legacy, after the cutover
+    _v2_reject(reject_db, _utc(2026, 6, 10, 5, 0), _utc(2026, 6, 11, 4, 59, 59), error_class="rfid_collision")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 15, 0), error_class="configuration_error")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 4, 59, 59), _utc(2026, 6, 11, 5, 0), error_class="other")   # outside the day
+
+    result, recorder = _reason_counts(reject_db)
+
+    assert _named(result.counts) == {"rfid_collision": 2, "configuration_error": 1}
+    assert result.v2_counts == result.counts and result.v1_counts == NO_REASON_COUNTS
+    assert recorder.tables() == ["v2_cutovers", "reject_events"]    # no v1 query at all
+
+
+def test_a_cutover_inside_the_day_takes_each_eras_reasons_from_its_own_part(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    # v1, local wall clock: the two before noon count; the one at noon and the one after do not.
+    _v1_reject(reject_db, _local(2026, 6, 10, 8, 0), error_message="Item not found")
+    _v1_reject(reject_db, _local(2026, 6, 10, 11, 59, 59), error_message="ACS timeout")
+    _v1_reject(reject_db, _local(2026, 6, 10, 12, 0), _local(2026, 6, 10, 15, 0), error_message="Library not found")
+    # v2, instants: the one before the cutover does not count; at it and after it do; the next local midnight does not.
+    _v2_reject(reject_db, _utc(2026, 6, 10, 16, 59, 59), error_class="configuration_error")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 17, 0), error_class="item_not_found")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 22, 0), _utc(2026, 6, 11, 4, 59, 59), error_class="rfid_collision")
+    _v2_reject(reject_db, _utc(2026, 6, 11, 5, 0), error_class="communication_error")
+
+    result, recorder = _reason_counts(reject_db)
+
+    assert _named(result.v1_counts) == {"item_not_found": 1, "ils_acs_failure": 1}
+    assert _named(result.v2_counts) == {"item_not_found": 1, "rfid_collision": 2}
+    assert _named(result.counts) == {"item_not_found": 2, "ils_acs_failure": 1, "rfid_collision": 2}
+    assert recorder.tables() == ["v2_cutovers", "rejects", "reject_events"]
+
+
+def test_a_reject_exactly_at_the_cutover_has_v2s_reason_and_one_second_before_has_v1s(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 10, 11, 59, 59), error_message="ACS timeout")        # v1's
+    _v1_reject(reject_db, _local(2026, 6, 10, 12, 0, 0), error_message="Library not found")    # the cutover moment: not v1's
+    _v2_reject(reject_db, _utc(2026, 6, 10, 16, 59, 59), error_class="configuration_error")    # one second before: not v2's
+    _v2_reject(reject_db, _utc(2026, 6, 10, 17, 0, 0), error_class="rfid_collision")           # the cutover moment: v2's
+
+    result, _ = _reason_counts(reject_db)
+
+    assert _named(result.v1_counts) == {"ils_acs_failure": 1}
+    assert _named(result.v2_counts) == {"rfid_collision": 1}
+
+
+def test_a_cutover_after_the_day_leaves_its_reasons_to_v1(reject_db):
+    _cutover(reject_db, _utc(2026, 6, 20, 17, 0))
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), _local(2026, 6, 10, 21, 0), error_message="Multiple tags")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 15, 0), error_class="item_not_found")   # a v2 row before the cutover
+
+    result, recorder = _reason_counts(reject_db)
+
+    assert _named(result.counts) == {"rfid_collision": 2}
+    assert recorder.tables() == ["v2_cutovers", "rejects"]          # no v2 query at all
+
+
+def test_a_rollback_makes_the_branch_v1_only_again_for_reasons(reject_db):
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), error_message="Item not found")
+    _v1_reject(reject_db, _local(2026, 6, 10, 15, 0), error_message="Library not found")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 20, 0), error_class="jam")
+    _cutover(reject_db, NOON_CUTOVER, set_at="2026-06-01 00:00:00+00:00")
+    _cutover(reject_db, None, set_at="2026-06-12 00:00:00+00:00")   # the latest record: a rollback
+
+    result, recorder = _reason_counts(reject_db)
+
+    assert _named(result.counts) == {"item_not_found": 1, "routing_error": 1}   # 15:00 is v1's again
+    assert result.unexpected_class_rows == 0                                    # v2 is not read at all
+    assert recorder.tables() == ["v2_cutovers", "rejects"]
+
+
+@pytest.mark.parametrize(
+    ("cutover_at", "expected_tables"),
+    [
+        (None, ["v2_cutovers", "rejects"]),
+        (_utc(2026, 6, 1, 17, 0), ["v2_cutovers", "reject_events"]),
+        (_utc(2026, 6, 10, 5, 0), ["v2_cutovers", "reject_events"]),
+        (NOON_CUTOVER, ["v2_cutovers", "rejects", "reject_events"]),
+        (_utc(2026, 6, 11, 5, 0), ["v2_cutovers", "rejects"]),
+        (_utc(2026, 6, 20, 17, 0), ["v2_cutovers", "rejects"]),
+    ],
+    ids=["no cutover", "cutover before the day", "cutover at the day's start", "cutover inside the day",
+         "cutover at the day's end", "cutover after the day"],
+)
+def test_the_cutover_is_looked_up_once_and_only_the_eras_that_own_part_of_the_day_are_grouped(
+    reject_db, cutover_at, expected_tables
+):
+    if cutover_at is not None:
+        _cutover(reject_db, cutover_at)
+
+    result, recorder = _reason_counts(reject_db)
+
+    assert recorder.tables() == expected_tables
+    assert recorder.tables().count("v2_cutovers") == 1
+    assert len(recorder.statements) <= 3
+    assert result == RejectReasonCounts(NO_REASON_COUNTS, NO_REASON_COUNTS, NO_REASON_COUNTS, 0)   # an empty day
+
+
+def test_the_reason_counts_bind_exactly_what_the_reject_count_binds(reject_db):
+    # The same day and the same cutover give both functions the same statements' worth of bounds: one time model.
+    for cutover_at in (None, _utc(2026, 6, 1, 17, 0), NOON_CUTOVER, _utc(2026, 6, 10, 19, 30), _utc(2026, 6, 20, 17, 0)):
+        if cutover_at is not None:
+            _cutover(reject_db, cutover_at, set_at=cutover_at.isoformat(sep=" "))
+
+        for local_date, zone in ((JUNE_10, CHICAGO), (JUNE_10, KOLKATA), (SPRING_FORWARD, CHICAGO), (FALL_BACK, CHICAGO)):
+            _, reasons = _reason_counts(reject_db, local_date, zone=zone)
+            _, total = _reject_count(reject_db, local_date, zone=zone)
+
+            assert reasons.tables() == total.tables()
+            assert [parameters for _, parameters in reasons.statements] == [
+                parameters for _, parameters in total.statements
+            ]
+
+
+# --- the counts add up to the reject count ----------------------------------------------------------------------------
+
+_SUM_MESSAGES = ["Item not found", "ACS timeout", "Multiple RFID tags", "Collection code missing", "Library not found",
+                 "Something else", "", None, "nan", "no item found"]
+_SUM_CLASSES = [*REJECT_REASONS, "jam", "sensor_fault"]
+
+
+def _seed_rejects_around(db, year, month, day) -> None:
+    """Rows in both tables on the day before, the day and the day after, every few hours, cycling through every
+    kind of message and class (two of the classes are not reason codes)."""
+    midnight = _local(year, month, day) - timedelta(days=1)
+    for step in range(36):                                      # every two hours for three days
+        _v1_reject(db, midnight + timedelta(hours=2 * step, minutes=7),
+                   error_message=_SUM_MESSAGES[step % len(_SUM_MESSAGES)])
+        _v2_reject(db, (midnight + timedelta(hours=2 * step, minutes=13)).replace(tzinfo=UTC),
+                   error_class=_SUM_CLASSES[step % len(_SUM_CLASSES)])
+
+
+def test_the_reason_counts_always_add_up_to_the_reject_count(reject_db):
+    for month, day in ((6, 10), (3, 8), (11, 1)):
+        _seed_rejects_around(reject_db, 2026, month, day)
+
+    cutovers = [
+        ("never cut over", "skip"),
+        ("cut over before everything", _utc(2026, 1, 1, 6, 0)),          # every day is v2's
+        ("cut over at noon on 10 June", NOON_CUTOVER),                   # mixed
+        ("rolled back", None),                                           # v1 only again
+        ("cut over inside the spring-forward date", _utc(2026, 3, 8, 15, 0)),
+        ("cut over inside the fall-back date", _utc(2026, 11, 1, 18, 0)),
+        ("cut over after everything", _utc(2027, 1, 1, 6, 0)),           # every day is v1's
+    ]
+    days = [date(2026, 6, 9), JUNE_10, date(2026, 6, 11), date(2026, 3, 7), SPRING_FORWARD, date(2026, 3, 9),
+            date(2026, 10, 31), FALL_BACK, date(2026, 11, 2)]
+    seen_v1 = seen_v2 = seen_mixed = seen_unexpected = 0
+
+    for order, (label, cutover_at) in enumerate(cutovers):
+        if cutover_at != "skip":
+            _cutover(reject_db, cutover_at, set_at=f"2026-12-{order + 1:02d} 00:00:00+00:00")
+
+        for local_date in days:
+            for zone in (CHICAGO, KOLKATA, LONDON):
+                reasons, _ = _reason_counts(reject_db, local_date, zone=zone)
+                total, _ = _reject_count(reject_db, local_date, zone=zone)
+                where = (label, local_date, zone.key)
+
+                assert sum(reasons.counts) == total.total, where
+                assert sum(reasons.v1_counts) == total.v1_count, where
+                assert sum(reasons.v2_counts) == total.v2_count, where
+                assert reasons.counts == tuple(
+                    v1 + v2 for v1, v2 in zip(reasons.v1_counts, reasons.v2_counts, strict=True)
+                ), where
+                assert len(reasons.counts) == len(reasons.v1_counts) == len(reasons.v2_counts) == 8, where
+                assert reasons.unexpected_class_rows <= reasons.v2_counts[REJECT_REASONS.index("other")], where
+
+                seen_v1 += bool(total.v1_count and not total.v2_count)
+                seen_v2 += bool(total.v2_count and not total.v1_count)
+                seen_mixed += bool(total.v1_count and total.v2_count)
+                seen_unexpected += bool(reasons.unexpected_class_rows)
+
+    # The comparison really covered v1-only, v2-only and mixed days, and days holding unexpected classes.
+    assert min(seen_v1, seen_v2, seen_mixed, seen_unexpected) > 0
+
+
+def test_the_days_around_a_cutover_keep_every_reject_under_exactly_one_reason(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 9, 10, 0), _local(2026, 6, 9, 23, 30), _local(2026, 6, 10, 0, 30),
+               _local(2026, 6, 10, 11, 0), error_message="ACS timeout")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 17, 0), _utc(2026, 6, 10, 23, 0), _utc(2026, 6, 11, 4, 0),
+               _utc(2026, 6, 11, 5, 0), _utc(2026, 6, 11, 20, 0), error_class="routing_error")
+
+    per_day = [_reasons(reject_db, day) for day in (date(2026, 6, 9), date(2026, 6, 10), date(2026, 6, 11))]
+
+    assert per_day == [{"ils_acs_failure": 2}, {"ils_acs_failure": 2, "routing_error": 3}, {"routing_error": 2}]
+    assert sum(sum(day.values()) for day in per_day) == 9   # nine rows stored, nine counted, none twice
+
+
+# --- time zones and DST -----------------------------------------------------------------------------------------------
+
+def test_reasons_on_the_spring_forward_date(reject_db):
+    # v1-only: every wall-clock time on 8 March -- one stamped in the hour that did not exist -- none on either side.
+    _v1_reject(reject_db, _local(2026, 3, 7, 23, 59, 59), _local(2026, 3, 9, 0, 0), error_message="Collection code")
+    _v1_reject(reject_db, _local(2026, 3, 8, 0, 0), error_message="Item not found")
+    _v1_reject(reject_db, _local(2026, 3, 8, 2, 30), error_message="ACS timeout")
+    _v1_reject(reject_db, _local(2026, 3, 8, 3, 0), error_message="Library not found")
+    _v1_reject(reject_db, _local(2026, 3, 8, 23, 59, 59), error_message="")
+    assert _reasons(reject_db, SPRING_FORWARD) == {
+        "item_not_found": 1, "ils_acs_failure": 1, "routing_error": 1, "unknown": 1,
+    }
+
+    # Once cut over before that date: the day is [06:00Z, 05:00Z next day) -- 23 hours.
+    _cutover(reject_db, _utc(2026, 3, 1, 6, 0))
+    _v2_reject(reject_db, _utc(2026, 3, 8, 5, 59, 59), _utc(2026, 3, 9, 5, 0), error_class="communication_error")
+    _v2_reject(reject_db, _utc(2026, 3, 8, 6, 0), error_class="rfid_collision")
+    _v2_reject(reject_db, _utc(2026, 3, 9, 4, 59, 59), error_class="other")
+
+    result, recorder = _reason_counts(reject_db, SPRING_FORWARD)
+
+    assert _named(result.counts) == {"rfid_collision": 1, "other": 1}
+    assert result.v1_counts == NO_REASON_COUNTS
+    parameters = recorder.parameters_for("reject_events")
+    assert parameters["end_utc"] - parameters["start_utc"] == timedelta(hours=23)
+
+
+def test_reasons_on_the_fall_back_date(reject_db):
+    # v1-only: both passes through 01:30 are just rows stamped 01:30 on 1 November.
+    _v1_reject(reject_db, _local(2026, 10, 31, 23, 59, 59), _local(2026, 11, 2, 0, 0), error_message="Collection code")
+    _v1_reject(reject_db, _local(2026, 11, 1, 0, 0), error_message="Item not found")
+    _v1_reject(reject_db, _local(2026, 11, 1, 1, 30), _local(2026, 11, 1, 1, 30), error_message="Multiple tags")
+    _v1_reject(reject_db, _local(2026, 11, 1, 23, 59, 59), error_message="Library not found")
+    assert _reasons(reject_db, FALL_BACK) == {"item_not_found": 1, "rfid_collision": 2, "routing_error": 1}
+
+    # Once cut over before that date: the day is [05:00Z, 06:00Z next day) -- 25 hours.
+    _cutover(reject_db, _utc(2026, 10, 1, 5, 0))
+    _v2_reject(reject_db, _utc(2026, 11, 1, 4, 59, 59), _utc(2026, 11, 2, 6, 0), error_class="communication_error")
+    _v2_reject(reject_db, _utc(2026, 11, 1, 5, 0), error_class="item_not_found")
+    _v2_reject(reject_db, FIRST_0130, error_class="ils_acs_failure")
+    _v2_reject(reject_db, SECOND_0130, error_class="unknown")
+    _v2_reject(reject_db, _utc(2026, 11, 2, 5, 59, 59), error_class="ils_acs_failure")
+
+    result, recorder = _reason_counts(reject_db, FALL_BACK)
+
+    # Both real 01:30s are counted, once each, each under its own reason.
+    assert _named(result.counts) == {"item_not_found": 1, "ils_acs_failure": 2, "unknown": 1}
+    parameters = recorder.parameters_for("reject_events")
+    assert parameters["end_utc"] - parameters["start_utc"] == timedelta(hours=25)
+
+
+def test_a_cutover_inside_a_dst_date_partitions_its_reasons_correctly(reject_db):
+    _cutover(reject_db, _utc(2026, 3, 8, 15, 0))                    # 10:00 CDT, after the clocks went forward
+    _v1_reject(reject_db, _local(2026, 3, 8, 1, 30), _local(2026, 3, 8, 9, 59, 59), error_message="ACS timeout")
+    _v1_reject(reject_db, _local(2026, 3, 8, 10, 0), error_message="Library not found")
+    _v2_reject(reject_db, _utc(2026, 3, 8, 14, 59, 59), error_class="configuration_error")
+    _v2_reject(reject_db, _utc(2026, 3, 8, 15, 0), _utc(2026, 3, 9, 4, 0), error_class="rfid_collision")
+
+    result, recorder = _reason_counts(reject_db, SPRING_FORWARD)
+
+    assert _named(result.counts) == {"ils_acs_failure": 2, "rfid_collision": 2}
+    assert recorder.parameters_for("rejects")["end_local"] == _local(2026, 3, 8, 10, 0)
+
+
+def test_the_reason_counts_are_made_in_the_zone_they_are_given(reject_db):
+    _v1_reject(reject_db, _local(2026, 6, 10, 0, 30), error_message="Item not found")
+    _v1_reject(reject_db, _local(2026, 6, 10, 23, 30), error_message="Library not found")
+    _cutover(reject_db, _utc(2026, 6, 10, 12, 0))                   # 07:00 in Chicago, 17:30 in Kolkata
+    _v2_reject(reject_db, _utc(2026, 6, 10, 12, 0), error_class="rfid_collision")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 20, 0), error_class="configuration_error")
+
+    # Chicago: v1 before 07:00 local; v2 from 12:00Z to 05:00Z next day.
+    assert _reasons(reject_db, zone=CHICAGO) == {"item_not_found": 1, "rfid_collision": 1, "configuration_error": 1}
+    # Kolkata: v1 before 17:30 local; the local day ends at 18:30Z, so only the 12:00Z row is v2's.
+    assert _reasons(reject_db, zone=KOLKATA) == {"item_not_found": 1, "rfid_collision": 1}
+
+
+def test_a_half_hour_zone_bounds_the_v2_reasons_on_the_utc_half_hour(reject_db):
+    _cutover(reject_db, _utc(2026, 6, 1, 0, 0))
+    # The Kolkata day of 10 June is [18:30Z on the 9th, 18:30Z on the 10th).
+    _v2_reject(reject_db, _utc(2026, 6, 9, 18, 29, 59), _utc(2026, 6, 10, 18, 30), error_class="other")
+    _v2_reject(reject_db, _utc(2026, 6, 9, 18, 30), error_class="routing_error")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 29, 59), error_class="unknown")
+
+    result, recorder = _reason_counts(reject_db, zone=KOLKATA)
+
+    assert _named(result.counts) == {"routing_error": 1, "unknown": 1}
+    parameters = recorder.parameters_for("reject_events")
+    assert (parameters["start_utc"], parameters["end_utc"]) == (_utc(2026, 6, 9, 18, 30), _utc(2026, 6, 10, 18, 30))
+
+
+def test_an_evening_v2_reject_has_its_reason_on_its_local_day_not_its_utc_day(reject_db):
+    _cutover(reject_db, BEFORE_JUNE)
+    _v2_reject(reject_db, _utc(2026, 6, 11, 1, 30), error_class="routing_error")   # 20:30 on 10 June in Chicago
+
+    assert _reasons(reject_db, date(2026, 6, 10)) == {"routing_error": 1}
+    assert _reasons(reject_db, date(2026, 6, 11)) == {}
+
+
+# --- the tenant filter (SQLite has no RLS: only the statements' own WHERE separates these rows) -----------------------
+
+def test_another_customers_rejects_never_reach_the_reason_counts(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), error_message="Item not found")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), error_class="rfid_collision")
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), _local(2026, 6, 10, 10, 0), customer_id=CUSTOMER_B,
+               error_message="Library not found")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), _utc(2026, 6, 10, 19, 0), customer_id=CUSTOMER_B,
+               error_class="communication_error")
+
+    assert _reasons(reject_db) == {"item_not_found": 1, "rfid_collision": 1}
+
+
+def test_another_branchs_rejects_never_reach_the_reason_counts(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), error_message="Item not found")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), error_class="rfid_collision")
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), _local(2026, 6, 10, 10, 0), branch_id=BRANCH_B,
+               error_message="Library not found")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), _utc(2026, 6, 10, 19, 0), branch_id=BRANCH_B,
+               error_class="communication_error")
+
+    assert _reasons(reject_db) == {"item_not_found": 1, "rfid_collision": 1}
+
+
+def test_another_tenants_cutover_does_not_change_this_tenants_reason_counts(reject_db):
+    _cutover(reject_db, BEFORE_JUNE, customer_id=CUSTOMER_B, branch_id=BRANCH_B)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), error_message="ACS timeout")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), error_class="rfid_collision")
+
+    result, recorder = _reason_counts(reject_db)
+
+    assert _named(result.counts) == {"ils_acs_failure": 1}   # this tenant has no cutover: v1 only
+    assert recorder.tables() == ["v2_cutovers", "rejects"]
+
+
+def test_each_tenant_gets_its_own_reason_counts_from_the_same_tables(reject_db):
+    tenant_b = ResolvedOperationalTenant(
+        org_slug="beta", branch_slug="main", access_mode="read_only",
+        operational_customer_id=CUSTOMER_B, operational_branch_id=BRANCH_B,
+    )
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), error_message="Item not found")
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), _local(2026, 6, 10, 10, 0), _local(2026, 6, 10, 11, 0),
+               customer_id=CUSTOMER_B, branch_id=BRANCH_B, error_message="Library not found")
+
+    assert _reasons(reject_db, tenant=TENANT_A) == {"item_not_found": 1}
+    assert _reasons(reject_db, tenant=tenant_b) == {"routing_error": 3}   # a read_only tenant reads like any other
+
+
+def test_every_reason_statement_is_bound_to_the_resolved_tenants_ids(reject_db):
+    tenant_b = ResolvedOperationalTenant(
+        org_slug="beta", branch_slug="main", access_mode="full",
+        operational_customer_id=CUSTOMER_B, operational_branch_id=BRANCH_B,
+    )
+    _cutover(reject_db, NOON_CUTOVER)
+    _cutover(reject_db, NOON_CUTOVER, customer_id=CUSTOMER_B, branch_id=BRANCH_B)
+
+    for tenant in (TENANT_A, tenant_b):
+        _, recorder = _reason_counts(reject_db, tenant=tenant)
+
+        assert len(recorder.statements) == 3
+        for sql, parameters in recorder.statements:
+            assert "customer_id = :customer_id AND branch_id = :branch_id" in sql
+            assert parameters["customer_id"] == tenant.operational_customer_id
+            assert parameters["branch_id"] == tenant.operational_branch_id
+
+
+# --- the statements and their parameters ------------------------------------------------------------------------------
+
+def test_the_v1_reason_statement_has_the_approved_shape():
+    assert _statement("_V1_REJECT_REASON_COUNT_SQL") == (
+        "SELECT error_message, COUNT(*) FROM rejects "
+        "WHERE customer_id = :customer_id AND branch_id = :branch_id "
+        "AND event_time >= :start_local AND event_time < :end_local "   # strictly before its upper bound
+        "GROUP BY error_message"
+    )
+
+
+def test_the_v2_reason_statement_has_the_approved_shape():
+    assert _statement("_V2_REJECT_REASON_COUNT_SQL") == (
+        "SELECT error_class, COUNT(*) FROM reject_events "
+        "WHERE customer_id = :customer_id AND branch_id = :branch_id "
+        "AND event_time >= :start_utc AND event_time < :end_utc "      # from its lower bound, inclusive
+        "GROUP BY error_class"
+    )
+
+
+def test_each_reason_statement_is_the_reject_count_statement_with_only_the_grouping_added():
+    for name, column in (("_V1_REJECT_REASON_COUNT_SQL", "error_message"), ("_V2_REJECT_REASON_COUNT_SQL", "error_class")):
+        count_statement = _statement(name.replace("_REASON", ""))
+
+        assert _statement(name) == (
+            count_statement.replace("SELECT COUNT(*)", f"SELECT {column}, COUNT(*)") + f" GROUP BY {column}"
+        )
+
+
+@pytest.mark.parametrize(
+    ("name", "reason_column"),
+    [("_V1_REJECT_REASON_COUNT_SQL", "error_message"), ("_V2_REJECT_REASON_COUNT_SQL", "error_class")],
+)
+def test_a_reason_statement_names_only_the_tenant_the_time_and_its_one_reason_column(name, reason_column):
+    sql = _statement(name)
+    words = set(sql.replace(",", " ").replace("(", " ").replace(")", " ").replace(":", " ").split())
+
+    assert words - {"SELECT", "COUNT", "*", "FROM", "WHERE", "AND", "GROUP", "BY", "=", ">=", "<"} == {
+        "rejects" if reason_column == "error_message" else "reject_events",
+        "customer_id", "branch_id", "event_time", reason_column,
+        *(("start_local", "end_local") if reason_column == "error_message" else ("start_utc", "end_utc")),
+    }
+    assert sql.upper().count(" FROM ") == 1
+    for forbidden in ("BARCODE", "ITEM_KEY", "EVENT_KEY", "KEY_ID", "SOURCE_FILE", "JOIN", "DISTINCT", "ORDER BY",
+                      "CAST", "SELECT *", "CHECKIN", "ACS", "REJECTS_CLEAN", "AT TIME ZONE", "NOW()", "::", "CURRENT_",
+                      "TIMEZONE", "LOWER", "LIKE", "CASE", "HAVING", "LIMIT", "UNION"):
+        assert forbidden not in sql.upper(), (name, forbidden)
+
+
+def test_the_two_reason_statements_never_name_each_others_reason_column():
+    assert "error_class" not in _statement("_V1_REJECT_REASON_COUNT_SQL")
+    assert "error_message" not in _statement("_V2_REJECT_REASON_COUNT_SQL")
+
+
+def test_the_reason_counts_bind_naive_v1_bounds_and_aware_utc_v2_bounds(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+
+    _, recorder = _reason_counts(reject_db)
+
+    v1, v2 = recorder.parameters_for("rejects"), recorder.parameters_for("reject_events")
+    assert (v1["start_local"], v1["end_local"]) == (_local(2026, 6, 10, 0, 0), _local(2026, 6, 10, 12, 0))
+    assert v1["start_local"].tzinfo is None and v1["end_local"].tzinfo is None
+    assert (v2["start_utc"], v2["end_utc"]) == (_utc(2026, 6, 10, 17, 0), _utc(2026, 6, 11, 5, 0))
+    assert v2["start_utc"].utcoffset() == timedelta(0) and v2["end_utc"].utcoffset() == timedelta(0)
+    # Nothing else is bound: no reason, no pattern, no limit.
+    assert set(v1) == {"customer_id", "branch_id", "start_local", "end_local"}
+    assert set(v2) == {"customer_id", "branch_id", "start_utc", "end_utc"}
+
+
+def test_the_reason_bound_parameters_declare_their_time_zone_handling():
+    v1 = operational_metrics_service._V1_REJECT_REASON_COUNT_SQL._bindparams
+    v2 = operational_metrics_service._V2_REJECT_REASON_COUNT_SQL._bindparams
+    assert set(v1) == {"customer_id", "branch_id", "start_local", "end_local"}
+    assert set(v2) == {"customer_id", "branch_id", "start_utc", "end_utc"}
+
+    assert v1["start_local"].type.timezone is False and v1["end_local"].type.timezone is False
+    assert v2["start_utc"].type.timezone is True and v2["end_utc"].type.timezone is True
+
+
+def test_without_a_cutover_v1_gets_the_whole_local_day_of_reasons(reject_db):
+    _, recorder = _reason_counts(reject_db)
+
+    parameters = recorder.parameters_for("rejects")
+    assert (parameters["start_local"], parameters["end_local"]) == (_local(2026, 6, 10), _local(2026, 6, 11))
+
+
+# --- failures ---------------------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("failing", ["v2_cutovers", "rejects", "reject_events"])
+def test_a_failure_in_any_reason_statement_propagates_and_no_partial_counts_are_returned(reject_db, failing):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0))
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0))
+
+    with pytest.raises(RuntimeError, match=f"synthetic failure reading {failing}"):
+        _reason_counts(reject_db, fail_on=failing)
+
+
+def test_a_failing_v2_grouping_does_not_come_back_as_v1_only_reasons(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0))
+    with reject_db.begin() as conn:
+        conn.execute(text("DROP TABLE reject_events"))
+
+    with pytest.raises(Exception, match="reject_events"):
+        _reason_counts(reject_db)
+
+
+def test_a_failing_v1_grouping_does_not_come_back_as_v2_only_reasons(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0))
+    with reject_db.begin() as conn:
+        conn.execute(text("DROP TABLE rejects"))
+
+    with pytest.raises(Exception, match="rejects"):
+        _reason_counts(reject_db)
+
+
+def test_a_failing_cutover_lookup_is_never_read_as_no_cutover(reject_db):
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0))
+    with reject_db.begin() as conn:
+        conn.execute(text("DROP TABLE v2_cutovers"))
+
+    with pytest.raises(Exception, match="v2_cutovers"):
+        _reason_counts(reject_db)
+
+
+def test_a_failure_logs_no_unexpected_class_warning(reject_db, caplog):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), error_class="jam")
+
+    with caplog.at_level(logging.DEBUG), pytest.raises(RuntimeError):
+        _reason_counts(reject_db, fail_on="reject_events")
+
+    assert _reason_warnings(caplog) == []
+
+
+def test_the_reason_counts_need_neither_check_in_table(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0))
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0))
+    with reject_db.begin() as conn:
+        conn.execute(text("DROP TABLE checkins"))
+        conn.execute(text("DROP TABLE checkin_events"))
+
+    assert _reasons(reject_db) == {"item_not_found": 2}
+
+
+# --- the result -------------------------------------------------------------------------------------------------------
+
+def test_an_empty_day_is_eight_zeros_in_every_tuple(reject_db):
+    result, _ = _reason_counts(reject_db)
+
+    assert result == RejectReasonCounts(
+        counts=(0, 0, 0, 0, 0, 0, 0, 0), v1_counts=(0, 0, 0, 0, 0, 0, 0, 0), v2_counts=(0, 0, 0, 0, 0, 0, 0, 0),
+        unexpected_class_rows=0,
+    )
+
+
+def test_the_reason_result_always_has_one_entry_per_reason_in_the_fixed_order(reject_db):
+    assert REJECT_REASONS == ("item_not_found", "ils_acs_failure", "rfid_collision", "configuration_error",
+                              "routing_error", "communication_error", "other", "unknown")
+    _cutover(reject_db, NOON_CUTOVER)
+    # Stored in an order unlike the reasons': the result's order comes from REJECT_REASONS, never from the data.
+    _v2_reject(reject_db, *[_utc(2026, 6, 10, 18, 0)] * 2, error_class="unknown")
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 1), error_class="other")
+    _v1_reject(reject_db, *[_local(2026, 6, 10, 9, 0)] * 3, error_message="Library not found")
+    _v1_reject(reject_db, *[_local(2026, 6, 10, 9, 1)] * 4, error_message="Item not found")
+
+    result, _ = _reason_counts(reject_db)
+
+    assert result.v1_counts == (4, 0, 0, 0, 3, 0, 0, 0)
+    assert result.v2_counts == (0, 0, 0, 0, 0, 0, 1, 2)
+    assert result.counts == (4, 0, 0, 0, 3, 0, 1, 2)
+
+
+def test_the_reason_result_is_an_immutable_value_whose_counts_are_the_sum_of_the_eras(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), _local(2026, 6, 10, 10, 0))
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0))
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 1), error_class="jam")
+
+    result, _ = _reason_counts(reject_db)
+
+    assert [f.name for f in dataclasses.fields(RejectReasonCounts)] == [
+        "counts", "v1_counts", "v2_counts", "unexpected_class_rows",
+    ]
+    assert result == RejectReasonCounts(
+        counts=(3, 0, 0, 0, 0, 0, 1, 0), v1_counts=(2, 0, 0, 0, 0, 0, 0, 0), v2_counts=(1, 0, 0, 0, 0, 0, 1, 0),
+        unexpected_class_rows=1,
+    )
+    for counts in (result.counts, result.v1_counts, result.v2_counts):
+        assert type(counts) is tuple and len(counts) == 8
+        assert all(type(value) is int for value in counts)
+    assert type(result.unexpected_class_rows) is int
+    assert result.counts == tuple(v1 + v2 for v1, v2 in zip(result.v1_counts, result.v2_counts, strict=True))
+    assert RejectReasonCounts is not RejectCount
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        result.counts = NO_REASON_COUNTS
+    assert not hasattr(result, "__dict__")   # slots: nothing can be attached to it either
+
+
+def test_the_reason_function_takes_a_connection_a_tenant_a_date_and_a_zone():
+    parameters = inspect.signature(operational_metrics_service.get_reject_counts_by_reason).parameters
+
+    assert list(parameters) == ["conn", "tenant", "local_date", "zone"]
+    assert parameters["local_date"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameters["zone"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert all(p.default is inspect.Parameter.empty for p in parameters.values())   # nothing defaults, least of all the date
+    assert list(parameters) == list(inspect.signature(operational_metrics_service.get_reject_count).parameters)
+
+
+def test_nothing_is_cached_between_reason_counts(reject_db):
+    assert _reasons(reject_db) == {}
+
+    _v1_reject(reject_db, _local(2026, 6, 10, 9, 0), error_message="ACS timeout")
+    assert _reasons(reject_db) == {"ils_acs_failure": 1}
+
+    _cutover(reject_db, BEFORE_JUNE)
+    assert _reasons(reject_db) == {}
+
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), error_class="routing_error")
+    assert _reasons(reject_db) == {"routing_error": 1}
+
+
+# --- what the new function is built from, and what it left alone ------------------------------------------------------
+
+def test_the_reason_counts_use_the_block_8a_reasons_and_classifier():
+    from services import reject_reason
+
+    assert operational_metrics_service.REJECT_REASONS is reject_reason.REJECT_REASONS
+    assert operational_metrics_service.classify_legacy_reject_message is reject_reason.classify_legacy_reject_message
+    assert operational_metrics_service.reason_for_error_class is reject_reason.reason_for_error_class
+
+    source = inspect.getsource(operational_metrics_service.get_reject_counts_by_reason)
+    for used in ("local_day_bounds(local_date, zone)", "get_effective_cutover(conn, tenant)",
+                 "cutover_boundary(cutover_at, zone)", "classify_legacy_reject_message(error_message)",
+                 "reason_for_error_class(error_class)", "_V1_REJECT_REASON_COUNT_SQL", "_V2_REJECT_REASON_COUNT_SQL"):
+        assert used in source, used
+
+
+def test_the_reason_counts_know_nothing_of_the_dashboard_the_collector_or_any_other_metric():
+    source = inspect.getsource(operational_metrics_service.get_reject_counts_by_reason)
+
+    for forbidden in ("simplify", "reject_logic", "pandas", "streamlit", "mixed_era", "collector", "v2_normalize",
+                      "checkin", "rate", "barcode", "item_key", "event_key", "fetchall", "now(", "_REJECT_COUNT_SQL",
+                      "DISTINCT", "set("):
+        assert forbidden not in source, forbidden
+
+
+def test_adding_the_reason_counts_left_the_reject_count_and_the_check_in_functions_as_they_were():
+    # Additive: the reason counts repeat the few lines of era clamping rather than sharing them, so the existing
+    # functions and statements did not have to change.
+    reject_source = inspect.getsource(operational_metrics_service.get_reject_count)
+    assert "_V1_REJECT_COUNT_SQL" in reject_source and "_V2_REJECT_COUNT_SQL" in reject_source
+
+    for function in (operational_metrics_service.get_reject_count, operational_metrics_service.get_checkin_count,
+                     operational_metrics_service.get_checkin_counts_by_hour):
+        source = inspect.getsource(function).lower()
+        for added in ("reason", "classify", "logger", "unexpected", "group by", "error_"):
+            assert added not in source, (function.__name__, added)
+
+    for name in ("_V1_REJECT_COUNT_SQL", "_V2_REJECT_COUNT_SQL", "_V1_CHECKIN_COUNT_SQL", "_V2_CHECKIN_COUNT_SQL",
+                 "_V1_CHECKIN_HOURLY_COUNT_SQL", "_V2_CHECKIN_HOURLY_COUNT_SQL"):
+        assert "GROUP BY" not in _statement(name) and "error_" not in _statement(name), name
+
+
+def test_the_reject_count_is_unaffected_by_what_the_reason_counts_read(reject_db):
+    _cutover(reject_db, NOON_CUTOVER)
+    for minute, message in enumerate(V1_NO_TEXT):
+        _v1_reject(reject_db, _local(2026, 6, 10, 9, minute), error_message=message)
+    _v2_reject(reject_db, _utc(2026, 6, 10, 18, 0), error_class="jam")
+
+    before = _reject_count(reject_db)[0]
+    reasons, _ = _reason_counts(reject_db)
+    after, recorder = _reject_count(reject_db)
+
+    assert before == after == RejectCount(total=8, v1_count=7, v2_count=1)
+    assert sum(reasons.counts) == 8
+    for sql, _ in recorder.statements:                      # the count still reads no reason column
+        assert "error_" not in sql and "GROUP BY" not in sql
+
+
+def test_the_reason_warning_is_the_modules_only_log_call_and_names_no_value():
+    source = inspect.getsource(operational_metrics_service)
+
+    assert operational_metrics_service.logger.name == REASON_LOGGER
+    assert source.count("logger.") == 1
+    assert source.count("logger.warning(") == 1
+    call = source[source.index("logger.warning("):].split(")\n")[0]
+    assert '"Reject rows with an unrecognised stored class were counted as other: rows=%d"' in call
+    assert call.rstrip().endswith("unexpected_class_rows")   # the one argument: an integer count
+
+
+# =====================================================================================================================
 # Module boundaries
 # =====================================================================================================================
 
@@ -3063,11 +4066,13 @@ def test_the_module_depends_only_on_the_standard_library_sqlalchemy_and_the_reso
 
     assert imports == [
         "from __future__ import annotations",
+        "import logging",
         "from dataclasses import dataclass",
         "from datetime import UTC, date, datetime, time, timedelta",
         "from zoneinfo import ZoneInfo",
         "from sqlalchemy import DateTime, bindparam, text",
         "from sqlalchemy.engine import Connection",
+        "from services.reject_reason import (",
         "from services.tenant_resolution_service import ResolvedOperationalTenant",
     ]
 
@@ -3086,7 +4091,8 @@ def test_no_sql_in_the_module_depends_on_the_database_session_time_zone():
     statements = [name for name in vars(operational_metrics_service) if name.endswith("_SQL")]
     assert sorted(statements) == [
         "_EFFECTIVE_CUTOVER_SQL", "_V1_CHECKIN_COUNT_SQL", "_V1_CHECKIN_HOURLY_COUNT_SQL", "_V1_REJECT_COUNT_SQL",
-        "_V2_CHECKIN_COUNT_SQL", "_V2_CHECKIN_HOURLY_COUNT_SQL", "_V2_REJECT_COUNT_SQL",
+        "_V1_REJECT_REASON_COUNT_SQL", "_V2_CHECKIN_COUNT_SQL", "_V2_CHECKIN_HOURLY_COUNT_SQL", "_V2_REJECT_COUNT_SQL",
+        "_V2_REJECT_REASON_COUNT_SQL",
     ]
 
     for name in statements:
