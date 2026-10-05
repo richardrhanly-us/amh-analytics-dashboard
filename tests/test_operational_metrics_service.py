@@ -2,9 +2,11 @@
 metrics, and the check-in count built on them.
 
     local_day_bounds(local_date, zone)       one local day, as naive-local bounds (v1) and UTC instants (v2)
+    local_hour_boundaries(local_date, zone)  that day's 24 wall-clock hours, in the same two forms (Block 6a)
     cutover_boundary(cutover_at, zone)       a cutover instant, in the same two forms
     get_effective_cutover(conn, tenant)      the tenant's current cutover, from v2_cutovers
     get_checkin_count(conn, tenant, ...)     check-ins on one local day, across both eras
+    get_checkin_counts_by_hour(conn, ...)    the same check-ins, by wall-clock hour (Block 6b)
 
 The two helpers are pure. The lookup runs its REAL SQL against an in-memory
 SQLite table; v2_cutovers has no row level security in production either, so
@@ -36,11 +38,14 @@ from sqlalchemy.pool import StaticPool
 
 from services import operational_metrics_service
 from services.operational_metrics_service import (
+    WALL_CLOCK_HOURS_PER_DAY,
     CutoverBoundary,
     LocalDayBounds,
+    LocalHourBoundaries,
     cutover_boundary,
     get_effective_cutover,
     local_day_bounds,
+    local_hour_boundaries,
 )
 from services.tenant_resolution_service import ResolvedOperationalTenant
 
@@ -51,6 +56,8 @@ CHICAGO = ZoneInfo("America/Chicago")
 KOLKATA = ZoneInfo("Asia/Kolkata")      # UTC+05:30, no DST
 LONDON = ZoneInfo("Europe/London")      # DST on different dates from Chicago
 HAVANA = ZoneInfo("America/Havana")     # changes its clocks AT local midnight
+LORD_HOWE = ZoneInfo("Australia/Lord_Howe")     # moves its clocks by 30 minutes
+APIA = ZoneInfo("Pacific/Apia")         # skipped a whole calendar date in 2011
 
 ORDINARY = date(2026, 6, 1)             # CDT, UTC-5
 WINTER = date(2026, 1, 15)              # CST, UTC-6
@@ -184,6 +191,286 @@ def test_the_bounds_are_an_immutable_value():
     ]
     with pytest.raises(dataclasses.FrozenInstanceError):
         bounds.v1_start_local = _local(2026, 1, 1)
+
+
+# =====================================================================================================================
+# local_hour_boundaries (Block 6a)
+# =====================================================================================================================
+
+def _v2_hour_widths(boundaries: LocalHourBoundaries) -> list[timedelta]:
+    instants = boundaries.v2_boundaries_utc
+    return [instants[hour + 1] - instants[hour] for hour in range(24)]
+
+
+def _v2_hour_of(instant: datetime, boundaries: LocalHourBoundaries) -> list[int]:
+    """Every wall-clock hour whose half-open interval holds `instant`."""
+    instants = boundaries.v2_boundaries_utc
+    return [hour for hour in range(24) if instants[hour] <= instant < instants[hour + 1]]
+
+
+def _v1_hour_of(stamped: datetime, boundaries: LocalHourBoundaries) -> list[int]:
+    locals_ = boundaries.v1_boundaries_local
+    return [hour for hour in range(24) if locals_[hour] <= stamped < locals_[hour + 1]]
+
+
+HOUR_BOUNDARY_CASES = [
+    (ORDINARY, CHICAGO), (WINTER, CHICAGO), (SPRING_FORWARD, CHICAGO), (FALL_BACK, CHICAGO),
+    (ORDINARY, KOLKATA), (ORDINARY, LONDON),
+    (date(2026, 3, 8), HAVANA), (date(2026, 11, 1), HAVANA),
+    (date(2026, 4, 5), LORD_HOWE), (date(2026, 10, 4), LORD_HOWE),
+    (date(2011, 12, 30), APIA),
+]
+
+
+@pytest.mark.parametrize(("local_date", "zone"), HOUR_BOUNDARY_CASES)
+def test_there_are_always_25_boundaries_for_each_table(local_date, zone):
+    boundaries = local_hour_boundaries(local_date, zone)
+
+    assert WALL_CLOCK_HOURS_PER_DAY == 24
+    assert len(boundaries.v1_boundaries_local) == 25
+    assert len(boundaries.v2_boundaries_utc) == 25
+    assert boundaries.local_date == local_date
+    assert boundaries.timezone_name == zone.key
+
+
+@pytest.mark.parametrize(("local_date", "zone"), HOUR_BOUNDARY_CASES)
+def test_the_first_and_last_boundaries_are_the_bounds_of_the_local_day(local_date, zone):
+    boundaries = local_hour_boundaries(local_date, zone)
+    day = local_day_bounds(local_date, zone)
+
+    assert boundaries.v1_boundaries_local[0] == day.v1_start_local
+    assert boundaries.v1_boundaries_local[24] == day.v1_end_local
+    assert boundaries.v2_boundaries_utc[0] == day.v2_start_utc
+    assert boundaries.v2_boundaries_utc[24] == day.v2_end_utc
+
+
+@pytest.mark.parametrize(("local_date", "zone"), HOUR_BOUNDARY_CASES)
+def test_the_v1_boundaries_are_the_naive_wall_clock_hours_whatever_the_zone(local_date, zone):
+    boundaries = local_hour_boundaries(local_date, zone)
+
+    year, month, day = local_date.year, local_date.month, local_date.day
+    following = local_date + timedelta(days=1)
+    assert boundaries.v1_boundaries_local == (
+        *(_local(year, month, day, hour) for hour in range(24)),
+        _local(following.year, following.month, following.day),
+    )
+    assert all(boundary.tzinfo is None for boundary in boundaries.v1_boundaries_local)
+
+
+@pytest.mark.parametrize(("local_date", "zone"), HOUR_BOUNDARY_CASES)
+def test_the_v2_boundaries_are_aware_utc_and_never_decrease(local_date, zone):
+    instants = local_hour_boundaries(local_date, zone).v2_boundaries_utc
+
+    assert all(instant.tzinfo is UTC for instant in instants)
+    assert all(instants[hour] <= instants[hour + 1] for hour in range(24))
+
+
+@pytest.mark.parametrize(("local_date", "zone"), HOUR_BOUNDARY_CASES)
+def test_the_24_v2_hours_tile_the_local_day_exactly(local_date, zone):
+    # Never decreasing, with the day's own bounds at each end: every instant
+    # of the day is in exactly one hour, which is what makes the hourly counts
+    # add up to the day's count.
+    boundaries = local_hour_boundaries(local_date, zone)
+    day = local_day_bounds(local_date, zone)
+
+    assert sum(_v2_hour_widths(boundaries), timedelta()) == day.v2_end_utc - day.v2_start_utc
+
+    instant = day.v2_start_utc
+    while instant < day.v2_end_utc:
+        assert len(_v2_hour_of(instant, boundaries)) == 1
+        instant += timedelta(minutes=15)
+    assert _v2_hour_of(day.v2_start_utc - timedelta(seconds=1), boundaries) == []
+    assert _v2_hour_of(day.v2_end_utc, boundaries) == []
+
+
+def test_an_ordinary_day_has_24_one_hour_buckets_at_the_daylight_offset():
+    boundaries = local_hour_boundaries(ORDINARY, CHICAGO)
+
+    assert _v2_hour_widths(boundaries) == [timedelta(hours=1)] * 24
+    assert boundaries.v2_boundaries_utc[0] == _utc(2026, 6, 1, 5)       # 00:00 CDT
+    assert boundaries.v2_boundaries_utc[9] == _utc(2026, 6, 1, 14)      # 09:00 CDT
+    assert boundaries.v2_boundaries_utc[24] == _utc(2026, 6, 2, 5)
+
+
+def test_a_winter_day_has_24_one_hour_buckets_at_the_standard_offset():
+    boundaries = local_hour_boundaries(WINTER, CHICAGO)
+
+    assert _v2_hour_widths(boundaries) == [timedelta(hours=1)] * 24
+    assert boundaries.v2_boundaries_utc[9] == _utc(2026, 1, 15, 15)     # 09:00 CST
+
+
+def test_on_an_ordinary_day_an_instant_and_its_wall_clock_reading_name_the_same_hour():
+    boundaries = local_hour_boundaries(ORDINARY, CHICAGO)
+
+    for hour in range(24):
+        stamped = _local(2026, 6, 1, hour, 30)
+        instant = stamped.replace(tzinfo=CHICAGO).astimezone(UTC)
+        assert _v1_hour_of(stamped, boundaries) == [hour]
+        assert _v2_hour_of(instant, boundaries) == [hour]
+
+
+def test_an_event_exactly_on_the_hour_belongs_to_the_hour_it_starts():
+    boundaries = local_hour_boundaries(ORDINARY, CHICAGO)
+
+    assert _v1_hour_of(_local(2026, 6, 1, 9), boundaries) == [9]
+    assert _v1_hour_of(_local(2026, 6, 1, 8, 59, 59), boundaries) == [8]
+    assert _v2_hour_of(_utc(2026, 6, 1, 14), boundaries) == [9]
+    assert _v2_hour_of(_utc(2026, 6, 1, 13, 59, 59), boundaries) == [8]
+
+
+# --- spring forward: the skipped hour ---------------------------------------------------------------------------------
+
+def test_on_the_spring_forward_date_the_skipped_hour_is_zero_wide_for_v2():
+    boundaries = local_hour_boundaries(SPRING_FORWARD, CHICAGO)
+    widths = _v2_hour_widths(boundaries)
+
+    assert widths[2] == timedelta(0)
+    assert [hour for hour, width in enumerate(widths) if width != timedelta(hours=1)] == [2]
+    assert sum(widths, timedelta()) == timedelta(hours=23)
+    # 02:00 and 03:00 are the same instant: the moment the clocks jump.
+    assert boundaries.v2_boundaries_utc[2] == boundaries.v2_boundaries_utc[3] == _utc(2026, 3, 8, 8)
+
+
+def test_no_instant_falls_in_the_skipped_hour():
+    boundaries = local_hour_boundaries(SPRING_FORWARD, CHICAGO)
+
+    assert _v2_hour_of(_utc(2026, 3, 8, 7, 59, 59), boundaries) == [1]     # 01:59:59 CST
+    assert _v2_hour_of(_utc(2026, 3, 8, 8), boundaries) == [3]             # 03:00:00 CDT
+    instant = boundaries.v2_boundaries_utc[0]
+    while instant < boundaries.v2_boundaries_utc[24]:
+        assert _v2_hour_of(instant, boundaries) != [2]
+        instant += timedelta(minutes=5)
+
+
+def test_a_legacy_row_stamped_in_the_skipped_hour_still_belongs_to_the_hour_it_names():
+    boundaries = local_hour_boundaries(SPRING_FORWARD, CHICAGO)
+
+    assert _v1_hour_of(_local(2026, 3, 8, 2, 30), boundaries) == [2]
+    assert boundaries.v1_boundaries_local[3] - boundaries.v1_boundaries_local[2] == timedelta(hours=1)
+
+
+# --- fall back: the repeated hour, both passes merged -----------------------------------------------------------------
+
+def test_on_the_fall_back_date_the_repeated_hour_is_two_hours_wide_for_v2():
+    boundaries = local_hour_boundaries(FALL_BACK, CHICAGO)
+    widths = _v2_hour_widths(boundaries)
+
+    assert widths[1] == timedelta(hours=2)
+    assert [hour for hour, width in enumerate(widths) if width != timedelta(hours=1)] == [1]
+    assert sum(widths, timedelta()) == timedelta(hours=25)
+    assert boundaries.v2_boundaries_utc[1] == _utc(2026, 11, 1, 6)      # 01:00 CDT, the first pass
+    assert boundaries.v2_boundaries_utc[2] == _utc(2026, 11, 1, 8)      # 02:00 CST
+
+
+def test_both_passes_through_the_repeated_hour_fall_in_the_same_bucket():
+    boundaries = local_hour_boundaries(FALL_BACK, CHICAGO)
+
+    first_pass = _utc(2026, 11, 1, 6, 30)       # 01:30 CDT
+    second_pass = _utc(2026, 11, 1, 7, 30)      # 01:30 CST
+    assert first_pass.astimezone(CHICAGO).replace(tzinfo=None) == _local(2026, 11, 1, 1, 30)
+    assert second_pass.astimezone(CHICAGO).replace(tzinfo=None) == _local(2026, 11, 1, 1, 30)
+
+    assert _v2_hour_of(first_pass, boundaries) == [1]
+    assert _v2_hour_of(second_pass, boundaries) == [1]
+    # ...which is the bucket the one legacy reading they share falls in.
+    assert _v1_hour_of(_local(2026, 11, 1, 1, 30), boundaries) == [1]
+
+
+def test_the_hours_either_side_of_the_repeated_hour_are_exact():
+    boundaries = local_hour_boundaries(FALL_BACK, CHICAGO)
+
+    assert _v2_hour_of(_utc(2026, 11, 1, 5, 59, 59), boundaries) == [0]    # 00:59:59 CDT
+    assert _v2_hour_of(_utc(2026, 11, 1, 6), boundaries) == [1]            # 01:00:00 CDT
+    assert _v2_hour_of(_utc(2026, 11, 1, 7, 59, 59), boundaries) == [1]    # 01:59:59 CST
+    assert _v2_hour_of(_utc(2026, 11, 1, 8), boundaries) == [2]            # 02:00:00 CST
+
+
+# --- zones whose offset is not a whole number of hours ----------------------------------------------------------------
+
+def test_a_half_hour_zone_has_boundaries_on_the_utc_half_hour():
+    boundaries = local_hour_boundaries(ORDINARY, KOLKATA)
+
+    assert _v2_hour_widths(boundaries) == [timedelta(hours=1)] * 24
+    assert boundaries.v2_boundaries_utc[0] == _utc(2026, 5, 31, 18, 30)     # 00:00 IST
+    assert boundaries.v2_boundaries_utc[9] == _utc(2026, 6, 1, 3, 30)       # 09:00 IST
+    assert boundaries.v2_boundaries_utc[24] == _utc(2026, 6, 1, 18, 30)
+    assert all(instant.minute == 30 for instant in boundaries.v2_boundaries_utc)
+
+
+def test_in_a_half_hour_zone_an_instant_is_bucketed_by_its_local_hour_not_its_utc_hour():
+    boundaries = local_hour_boundaries(ORDINARY, KOLKATA)
+
+    # 03:15 and 03:45 UTC share a UTC hour but are 08:45 and 09:15 in Kolkata.
+    assert _v2_hour_of(_utc(2026, 6, 1, 3, 15), boundaries) == [8]
+    assert _v2_hour_of(_utc(2026, 6, 1, 3, 45), boundaries) == [9]
+
+
+def test_a_zone_that_moves_its_clocks_by_half_an_hour_has_a_half_hour_and_a_ninety_minute_bucket():
+    # Lord Howe Island moves its clocks by 30 minutes: back at 02:00 on
+    # 5 April 2026 (01:30-01:59 happens twice) and forward at 02:00 on
+    # 4 October 2026 (02:00-02:29 does not exist).
+    back = _v2_hour_widths(local_hour_boundaries(date(2026, 4, 5), LORD_HOWE))
+    forward = _v2_hour_widths(local_hour_boundaries(date(2026, 10, 4), LORD_HOWE))
+
+    assert back[1] == timedelta(minutes=90)
+    assert sum(back, timedelta()) == timedelta(hours=24, minutes=30)
+    assert forward[2] == timedelta(minutes=30)
+    assert sum(forward, timedelta()) == timedelta(hours=23, minutes=30)
+
+
+# --- clock changes at the edge of the day, and beyond it --------------------------------------------------------------
+
+def test_a_zone_that_changes_its_clocks_at_midnight_puts_the_change_in_hour_zero():
+    forward = _v2_hour_widths(local_hour_boundaries(date(2026, 3, 8), HAVANA))
+    back = _v2_hour_widths(local_hour_boundaries(date(2026, 11, 1), HAVANA))
+
+    assert forward[0] == timedelta(0)
+    assert sum(forward, timedelta()) == timedelta(hours=23)
+    assert back[0] == timedelta(hours=2)
+    assert sum(back, timedelta()) == timedelta(hours=25)
+
+
+def test_a_local_date_that_never_happened_has_24_empty_v2_hours():
+    # Samoa crossed the date line at the end of 29 December 2011: the 30th was
+    # skipped entirely. Unclamped, the hours of that date would run past the
+    # end of the (zero-length) day.
+    boundaries = local_hour_boundaries(date(2011, 12, 30), APIA)
+
+    assert _v2_hour_widths(boundaries) == [timedelta(0)] * 24
+    assert len(set(boundaries.v2_boundaries_utc)) == 1
+    assert len(boundaries.v1_boundaries_local) == 25        # a legacy reading is still bucketed by its label
+
+
+def test_consecutive_days_hour_boundaries_meet_exactly():
+    for zone in (CHICAGO, KOLKATA, HAVANA, LORD_HOWE):
+        for first in (date(2026, 3, 7), date(2026, 3, 8), date(2026, 10, 31), date(2026, 11, 1)):
+            today = local_hour_boundaries(first, zone)
+            tomorrow = local_hour_boundaries(first + timedelta(days=1), zone)
+
+            assert today.v2_boundaries_utc[24] == tomorrow.v2_boundaries_utc[0]
+            assert today.v1_boundaries_local[24] == tomorrow.v1_boundaries_local[0]
+
+
+def test_the_hour_boundaries_are_an_immutable_value():
+    boundaries = local_hour_boundaries(ORDINARY, CHICAGO)
+
+    assert [f.name for f in dataclasses.fields(LocalHourBoundaries)] == [
+        "local_date", "timezone_name", "v1_boundaries_local", "v2_boundaries_utc",
+    ]
+    assert isinstance(boundaries.v1_boundaries_local, tuple)
+    assert isinstance(boundaries.v2_boundaries_utc, tuple)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        boundaries.v2_boundaries_utc = ()
+
+
+def test_the_helper_is_pure_and_takes_only_a_date_and_a_zone():
+    assert list(inspect.signature(local_hour_boundaries).parameters) == ["local_date", "zone"]
+
+    source = inspect.getsource(local_hour_boundaries)
+    assert "conn" not in source
+    assert "execute" not in source
+    assert "now(" not in source
+    assert "today(" not in source
 
 
 # =====================================================================================================================
@@ -1247,6 +1534,803 @@ def test_for_a_cut_over_branch_the_count_intentionally_differs_from_the_dashboar
 
 
 # =====================================================================================================================
+# Block 6b: get_checkin_counts_by_hour
+# =====================================================================================================================
+#
+# The real SQL again, against the same three in-memory SQLite tables and with
+# the same helpers as the day count above. Every expectation is written as
+# {hour: count} for the hours that are not zero.
+
+CheckinHourlyCounts = operational_metrics_service.CheckinHourlyCounts
+NO_HOURS = (0,) * 24
+
+
+def _hourly(db, local_date=JUNE_10, *, tenant=TENANT_A, zone=CHICAGO, fail_on=None):
+    with db.connect() as conn:
+        recorder = Recorder(conn, fail_on=fail_on)
+        result = operational_metrics_service.get_checkin_counts_by_hour(
+            recorder, tenant, local_date=local_date, zone=zone,
+        )
+    return result, recorder
+
+
+def _busy(counts: tuple[int, ...]) -> dict[int, int]:
+    assert len(counts) == 24
+    return {hour: count for hour, count in enumerate(counts) if count}
+
+
+def _by_hour(db, local_date=JUNE_10, **kwargs) -> dict[int, int]:
+    result, _ = _hourly(db, local_date, **kwargs)
+    return _busy(result.counts)
+
+
+def _assert_the_hours_add_up_to_the_day(db, local_date=JUNE_10, **kwargs) -> int:
+    """The invariant: for the same tenant, date and zone, the 24 hourly counts
+    sum to get_checkin_count's total -- and era by era, too."""
+    hourly, _ = _hourly(db, local_date, **kwargs)
+    day, _ = _count(db, local_date, **kwargs)
+
+    assert sum(hourly.counts) == day.total
+    assert sum(hourly.v1_counts) == day.v1_count
+    assert sum(hourly.v2_counts) == day.v2_count
+    return day.total
+
+
+# --- no cutover: the branch is v1 only --------------------------------------------------------------------------------
+
+def test_a_v1_only_branch_counts_each_row_in_the_hour_it_was_stamped(db):
+    _v1(db, _local(2026, 6, 9, 23, 59, 59), _local(2026, 6, 10, 0, 0), _local(2026, 6, 10, 9, 5),
+        _local(2026, 6, 10, 9, 55), _local(2026, 6, 10, 14, 30), _local(2026, 6, 10, 23, 59, 59),
+        _local(2026, 6, 11, 0, 0))
+
+    result, recorder = _hourly(db)
+
+    assert _busy(result.counts) == {0: 1, 9: 2, 14: 1, 23: 1}
+    assert result.v1_counts == result.counts
+    assert result.v2_counts == NO_HOURS
+    assert recorder.tables() == ["v2_cutovers", "checkins"]   # the v2 table is never read
+    assert _assert_the_hours_add_up_to_the_day(db) == 5
+
+
+def test_with_no_cutover_v2_rows_are_ignored_hour_by_hour_even_if_they_exist(db):
+    _v1(db, _local(2026, 6, 10, 9, 0))
+    _v2(db, _utc(2026, 6, 10, 15, 0), _utc(2026, 6, 10, 16, 0))
+
+    result, recorder = _hourly(db)
+
+    assert _busy(result.counts) == {9: 1}
+    assert "checkin_events" not in recorder.tables()
+    _assert_the_hours_add_up_to_the_day(db)
+
+
+def test_a_tenant_with_no_rows_has_24_zero_hours(db):
+    result, recorder = _hourly(db)
+
+    assert result == CheckinHourlyCounts(counts=NO_HOURS, v1_counts=NO_HOURS, v2_counts=NO_HOURS)
+    assert recorder.tables() == ["v2_cutovers", "checkins"]
+
+
+def test_hours_in_which_nothing_happened_are_zero_not_missing(db):
+    _v1(db, _local(2026, 6, 10, 3, 0), _local(2026, 6, 10, 22, 0))    # outside any "operating hours"
+
+    result, _ = _hourly(db)
+
+    assert len(result.counts) == 24
+    assert result.counts == (0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0)
+
+
+def test_every_hour_of_the_day_is_its_own_bucket_in_order(db):
+    # H + 1 rows stamped in hour H, so a count that landed in the wrong bucket would show.
+    for hour in range(24):
+        _v1(db, *[_local(2026, 6, 10, hour, 30)] * (hour + 1))
+
+    result, _ = _hourly(db)
+
+    assert result.counts == tuple(range(1, 25))
+    assert _assert_the_hours_add_up_to_the_day(db) == 300
+
+
+def test_an_hour_owns_its_first_instant_and_not_its_last(db):
+    _v1(db, _local(2026, 6, 10, 8, 59, 59), _local(2026, 6, 10, 9, 0, 0), _local(2026, 6, 10, 9, 59, 59),
+        _local(2026, 6, 10, 10, 0, 0))
+
+    assert _by_hour(db) == {8: 1, 9: 2, 10: 1}
+
+    # The same four moments as v2 instants (09:00 CDT is 14:00Z).
+    _cutover(db, _utc(2026, 6, 1, 5, 0))
+    _v2(db, _utc(2026, 6, 10, 13, 59, 59), _utc(2026, 6, 10, 14, 0, 0), _utc(2026, 6, 10, 14, 59, 59),
+        _utc(2026, 6, 10, 15, 0, 0))
+
+    result, _ = _hourly(db)
+    assert _busy(result.v2_counts) == {8: 1, 9: 2, 10: 1}
+    assert result.v1_counts == NO_HOURS
+
+
+def test_every_row_is_counted_in_its_hour_with_no_deduplication(db):
+    _v1(db, *[_local(2026, 6, 10, 9, 0)] * 3, barcode="same-barcode")
+    _cutover(db, NOON_CUTOVER)
+    _v2(db, *[_utc(2026, 6, 10, 18, 0)] * 2)
+
+    assert _by_hour(db) == {9: 3, 13: 2}
+    _assert_the_hours_add_up_to_the_day(db)
+
+
+def test_a_rollback_makes_the_branch_v1_only_again_hour_by_hour(db):
+    _v1(db, _local(2026, 6, 10, 9, 0), _local(2026, 6, 10, 15, 0))
+    _v2(db, _utc(2026, 6, 10, 20, 0))
+    _cutover(db, NOON_CUTOVER, set_at="2026-06-01 00:00:00+00:00")
+    _cutover(db, None, set_at="2026-06-12 00:00:00+00:00")   # the latest record: a rollback
+
+    result, recorder = _hourly(db)
+
+    assert _busy(result.counts) == {9: 1, 15: 1}             # 15:00 is v1's again; the v2 row is not counted
+    assert result.v2_counts == NO_HOURS
+    assert recorder.tables() == ["v2_cutovers", "checkins"]
+    _assert_the_hours_add_up_to_the_day(db)
+
+
+# --- the cutover's position relative to the requested day -------------------------------------------------------------
+
+def test_a_cutover_before_the_day_makes_every_hour_a_v2_hour(db):
+    _cutover(db, _utc(2026, 6, 1, 17, 0))
+    _v1(db, _local(2026, 6, 10, 9, 0))                # a legacy row after the cutover: not counted
+    _v2(db, _utc(2026, 6, 10, 5, 0), _utc(2026, 6, 10, 15, 0), _utc(2026, 6, 11, 4, 59, 59))
+    _v2(db, _utc(2026, 6, 10, 4, 59, 59), _utc(2026, 6, 11, 5, 0))   # just outside the local day
+
+    result, recorder = _hourly(db)
+
+    assert _busy(result.counts) == {0: 1, 10: 1, 23: 1}
+    assert result.v1_counts == NO_HOURS
+    assert recorder.tables() == ["v2_cutovers", "checkin_events"]    # no v1 query at all
+    _assert_the_hours_add_up_to_the_day(db)
+
+
+def test_a_date_long_after_the_cutover_is_v2_only(db):
+    _cutover(db, _utc(2026, 1, 5, 12, 0))
+    _v2(db, _utc(2026, 6, 10, 13, 15), _utc(2026, 6, 10, 13, 45), _utc(2026, 6, 11, 1, 30))
+
+    result, recorder = _hourly(db)
+
+    assert _busy(result.counts) == {8: 2, 20: 1}      # 20:30 CDT is already 11 June in UTC
+    assert result.counts == result.v2_counts
+    assert recorder.tables() == ["v2_cutovers", "checkin_events"]
+
+
+def test_a_cutover_after_the_day_leaves_every_hour_a_v1_hour(db):
+    _cutover(db, _utc(2026, 6, 20, 17, 0))
+    _v1(db, _local(2026, 6, 10, 9, 0), _local(2026, 6, 10, 21, 0))
+    _v2(db, _utc(2026, 6, 10, 15, 0))                 # a v2 row before the cutover: not counted
+
+    result, recorder = _hourly(db)
+
+    assert _busy(result.counts) == {9: 1, 21: 1}
+    assert result.v2_counts == NO_HOURS
+    assert recorder.tables() == ["v2_cutovers", "checkins"]          # no v2 query at all
+    _assert_the_hours_add_up_to_the_day(db)
+
+
+def test_a_cutover_at_the_local_midnight_that_starts_the_day_gives_every_hour_to_v2(db):
+    _cutover(db, _utc(2026, 6, 10, 5, 0))             # 00:00 local on 10 June
+    _v1(db, _local(2026, 6, 10, 0, 0), _local(2026, 6, 10, 9, 0))
+    _v2(db, _utc(2026, 6, 10, 5, 0), _utc(2026, 6, 10, 15, 0))
+
+    result, recorder = _hourly(db)
+
+    assert _busy(result.counts) == {0: 1, 10: 1}
+    assert result.v1_counts == NO_HOURS
+    assert recorder.tables() == ["v2_cutovers", "checkin_events"]
+    _assert_the_hours_add_up_to_the_day(db)
+
+
+def test_a_cutover_at_the_next_local_midnight_gives_every_hour_to_v1(db):
+    _cutover(db, _utc(2026, 6, 11, 5, 0))             # 00:00 local on 11 June
+    _v1(db, _local(2026, 6, 10, 0, 0), _local(2026, 6, 10, 23, 59, 59))
+    _v2(db, _utc(2026, 6, 10, 15, 0), _utc(2026, 6, 11, 5, 0))
+
+    result, recorder = _hourly(db)
+
+    assert _busy(result.counts) == {0: 1, 23: 1}
+    assert result.v2_counts == NO_HOURS
+    assert recorder.tables() == ["v2_cutovers", "checkins"]
+
+    # ...and the day after is entirely v2's, from its first hour.
+    assert _by_hour(db, date(2026, 6, 11)) == {0: 1}
+
+
+def test_a_cutover_exactly_on_an_hour_boundary_splits_the_day_between_whole_hours(db):
+    _cutover(db, NOON_CUTOVER)                        # 12:00 local
+    # v1: 08:00 and 11:59:59 count; 12:00 and 15:00 do not (v1 is strictly before).
+    _v1(db, _local(2026, 6, 10, 8, 0), _local(2026, 6, 10, 11, 59, 59), _local(2026, 6, 10, 12, 0),
+        _local(2026, 6, 10, 15, 0))
+    # v2: 11:59:59 local does not count; 12:00, 17:00 and 23:59:59 local do; the next midnight does not.
+    _v2(db, _utc(2026, 6, 10, 16, 59, 59), _utc(2026, 6, 10, 17, 0), _utc(2026, 6, 10, 22, 0),
+        _utc(2026, 6, 11, 4, 59, 59), _utc(2026, 6, 11, 5, 0))
+
+    result, recorder = _hourly(db)
+
+    assert _busy(result.v1_counts) == {8: 1, 11: 1}
+    assert _busy(result.v2_counts) == {12: 1, 17: 1, 23: 1}
+    assert _busy(result.counts) == {8: 1, 11: 1, 12: 1, 17: 1, 23: 1}
+    # No hour is shared: every hour before noon is v1's alone, every hour from noon v2's alone.
+    assert all(count == 0 for count in result.v1_counts[12:])
+    assert all(count == 0 for count in result.v2_counts[:12])
+    assert recorder.tables() == ["v2_cutovers", "checkins", "checkin_events"]
+    assert _assert_the_hours_add_up_to_the_day(db) == 5
+
+
+HALF_PAST_TWO_CUTOVER = _utc(2026, 6, 10, 19, 30)     # 14:30 local on 10 June (CDT)
+
+
+def test_a_cutover_in_the_middle_of_an_hour_splits_that_hour_between_the_eras(db):
+    _cutover(db, HALF_PAST_TWO_CUTOVER)
+    # v1, wall clock: 13:50, 14:00, 14:10 and 14:29:59 count; 14:30 and 14:45 do not.
+    _v1(db, _local(2026, 6, 10, 13, 50), _local(2026, 6, 10, 14, 0), _local(2026, 6, 10, 14, 10),
+        _local(2026, 6, 10, 14, 29, 59), _local(2026, 6, 10, 14, 30), _local(2026, 6, 10, 14, 45))
+    # v2, instants: 14:10 and 14:29:59 local do not count; 14:30, 14:40, 14:59:59 and 15:00 local do.
+    _v2(db, _utc(2026, 6, 10, 19, 10), _utc(2026, 6, 10, 19, 29, 59), _utc(2026, 6, 10, 19, 30),
+        _utc(2026, 6, 10, 19, 40), _utc(2026, 6, 10, 19, 59, 59), _utc(2026, 6, 10, 20, 0))
+
+    result, recorder = _hourly(db)
+
+    assert _busy(result.v1_counts) == {13: 1, 14: 3}
+    assert _busy(result.v2_counts) == {14: 3, 15: 1}
+    assert _busy(result.counts) == {13: 1, 14: 6, 15: 1}     # hour 14 is the sum of both eras' shares
+    assert recorder.tables() == ["v2_cutovers", "checkins", "checkin_events"]
+    assert _assert_the_hours_add_up_to_the_day(db) == 8
+
+
+def test_exactly_at_a_mid_hour_cutover_belongs_to_v2_and_one_second_before_to_v1(db):
+    _cutover(db, HALF_PAST_TWO_CUTOVER)
+    _v1(db, _local(2026, 6, 10, 14, 29, 59))          # one second before, as v1 holds it
+    _v1(db, _local(2026, 6, 10, 14, 30, 0))           # the cutover moment as a v1 row: not v1's
+    _v2(db, _utc(2026, 6, 10, 19, 29, 59))            # one second before, as v2 holds it: not v2's
+    _v2(db, _utc(2026, 6, 10, 19, 30, 0))             # the cutover moment as a v2 row
+
+    result, _ = _hourly(db)
+
+    assert _busy(result.v1_counts) == {14: 1}
+    assert _busy(result.v2_counts) == {14: 1}
+    assert _busy(result.counts) == {14: 2}            # each moment counted once: no gap, no double count
+
+
+def test_a_mid_hour_cutover_clamps_the_range_and_leaves_the_hour_boundaries_whole(db):
+    _cutover(db, HALF_PAST_TWO_CUTOVER)
+
+    _, recorder = _hourly(db)
+
+    v1, v2 = recorder.parameters_for("checkins"), recorder.parameters_for("checkin_events")
+    # The outer range is the era's share of the day, exactly as the day count binds it...
+    assert (v1["start_local"], v1["end_local"]) == (_local(2026, 6, 10, 0, 0), _local(2026, 6, 10, 14, 30))
+    assert (v2["start_utc"], v2["end_utc"]) == (HALF_PAST_TWO_CUTOVER, _utc(2026, 6, 11, 5, 0))
+    # ...while the 25 hour boundaries are the whole day's, untouched by the cutover.
+    hours = local_hour_boundaries(JUNE_10, CHICAGO)
+    assert tuple(v1[f"boundary_{index}"] for index in range(25)) == hours.v1_boundaries_local
+    assert tuple(v2[f"boundary_{index}"] for index in range(25)) == hours.v2_boundaries_utc
+
+
+def test_the_days_around_a_cutover_add_up_hour_by_hour_with_nothing_lost_or_counted_twice(db):
+    _cutover(db, HALF_PAST_TWO_CUTOVER)
+    v1_rows = [_local(2026, 6, 9, 10, 0), _local(2026, 6, 9, 23, 30), _local(2026, 6, 10, 0, 30),
+               _local(2026, 6, 10, 14, 15)]
+    v2_rows = [_utc(2026, 6, 10, 19, 30), _utc(2026, 6, 10, 23, 0), _utc(2026, 6, 11, 4, 0), _utc(2026, 6, 11, 5, 0),
+               _utc(2026, 6, 11, 20, 0)]
+    _v1(db, *v1_rows)
+    _v2(db, *v2_rows)
+
+    days = (date(2026, 6, 9), date(2026, 6, 10), date(2026, 6, 11))
+
+    assert [_by_hour(db, day) for day in days] == [{10: 1, 23: 1}, {0: 1, 14: 2, 18: 1, 23: 1}, {0: 1, 15: 1}]
+    assert sum(_assert_the_hours_add_up_to_the_day(db, day) for day in days) == len(v1_rows) + len(v2_rows)
+
+
+# --- DST ------------------------------------------------------------------------------------------------------------------
+
+def test_on_the_spring_forward_date_no_v2_row_can_land_in_the_skipped_hour(db):
+    _cutover(db, _utc(2026, 3, 1, 6, 0))
+    # 01:59:59 CST, then the very next second, 03:00:00 CDT; and the day's two ends.
+    _v2(db, _utc(2026, 3, 8, 6, 0), _utc(2026, 3, 8, 7, 59, 59), _utc(2026, 3, 8, 8, 0), _utc(2026, 3, 8, 8, 30),
+        _utc(2026, 3, 9, 4, 59, 59))
+    _v2(db, _utc(2026, 3, 8, 5, 59, 59), _utc(2026, 3, 9, 5, 0))     # just outside the 23-hour day
+
+    result, recorder = _hourly(db, SPRING_FORWARD)
+
+    assert _busy(result.counts) == {0: 1, 1: 1, 3: 2, 23: 1}
+    assert result.counts[2] == 0
+    parameters = recorder.parameters_for("checkin_events")
+    assert parameters["boundary_2"] == parameters["boundary_3"] == _utc(2026, 3, 8, 8)   # a zero-wide hour
+    assert parameters["boundary_24"] - parameters["boundary_0"] == timedelta(hours=23)
+    assert _assert_the_hours_add_up_to_the_day(db, SPRING_FORWARD) == 5
+
+
+def test_a_legacy_row_stamped_in_the_skipped_hour_is_counted_in_the_hour_it_names(db):
+    # A wall-clock reading that should not exist. It is a row all the same: it
+    # is counted on its day, and so it must be counted in one of the hours.
+    _v1(db, _local(2026, 3, 8, 1, 59), _local(2026, 3, 8, 2, 15), _local(2026, 3, 8, 2, 45),
+        _local(2026, 3, 8, 3, 0))
+
+    result, _ = _hourly(db, SPRING_FORWARD)
+
+    assert _busy(result.counts) == {1: 1, 2: 2, 3: 1}
+    assert _assert_the_hours_add_up_to_the_day(db, SPRING_FORWARD) == 4
+
+
+def test_a_cutover_inside_the_spring_forward_date_partitions_its_hours_correctly(db):
+    _cutover(db, _utc(2026, 3, 8, 15, 30))            # 10:30 CDT, after the clocks went forward
+    _v1(db, _local(2026, 3, 8, 1, 30), _local(2026, 3, 8, 2, 30), _local(2026, 3, 8, 10, 29, 59),
+        _local(2026, 3, 8, 10, 30))
+    _v2(db, _utc(2026, 3, 8, 15, 29, 59), _utc(2026, 3, 8, 15, 30), _utc(2026, 3, 9, 4, 0))
+
+    result, _ = _hourly(db, SPRING_FORWARD)
+
+    assert _busy(result.v1_counts) == {1: 1, 2: 1, 10: 1}
+    assert _busy(result.v2_counts) == {10: 1, 23: 1}
+    assert _busy(result.counts) == {1: 1, 2: 1, 10: 2, 23: 1}
+    _assert_the_hours_add_up_to_the_day(db, SPRING_FORWARD)
+
+
+def test_on_the_fall_back_date_both_passes_through_the_repeated_hour_share_one_bucket(db):
+    _cutover(db, _utc(2026, 10, 1, 5, 0))
+    # 00:59:59 CDT | 01:00 CDT, 01:30 CDT, 01:30 CST, 01:59:59 CST | 02:00 CST
+    _v2(db, _utc(2026, 11, 1, 5, 59, 59), _utc(2026, 11, 1, 6, 0), FIRST_0130, SECOND_0130,
+        _utc(2026, 11, 1, 7, 59, 59), _utc(2026, 11, 1, 8, 0))
+    _v2(db, _utc(2026, 11, 1, 4, 59, 59), _utc(2026, 11, 2, 6, 0))   # just outside the 25-hour day
+
+    result, recorder = _hourly(db, FALL_BACK)
+
+    assert _busy(result.counts) == {0: 1, 1: 4, 2: 1}
+    parameters = recorder.parameters_for("checkin_events")
+    assert parameters["boundary_2"] - parameters["boundary_1"] == timedelta(hours=2)
+    assert parameters["boundary_24"] - parameters["boundary_0"] == timedelta(hours=25)
+    assert _assert_the_hours_add_up_to_the_day(db, FALL_BACK) == 6
+
+
+def test_on_the_fall_back_date_legacy_rows_have_the_same_single_merged_bucket(db):
+    # Two rows stamped 01:30 -- one from each pass, for all the data can say.
+    _v1(db, _local(2026, 11, 1, 0, 30), _local(2026, 11, 1, 1, 30), _local(2026, 11, 1, 1, 30),
+        _local(2026, 11, 1, 2, 30))
+
+    result, _ = _hourly(db, FALL_BACK)
+
+    assert _busy(result.counts) == {0: 1, 1: 2, 2: 1}
+    assert len(result.counts) == 24                    # 24 buckets on a 25-hour day, too
+    _assert_the_hours_add_up_to_the_day(db, FALL_BACK)
+
+
+def test_a_cutover_inside_the_repeated_hour_still_adds_up_and_stays_in_that_one_bucket(db):
+    """The 5a limitation, hour by hour. Which legacy rows of the repeated hour
+    count is decided by wall-clock value alone, exactly as in the day count;
+    whatever that decides, everything from the hour stays in bucket 1."""
+    _v1(db, _local(2026, 11, 1, 0, 45), _local(2026, 11, 1, 1, 15), _local(2026, 11, 1, 1, 15),
+        _local(2026, 11, 1, 1, 45))
+    _v2(db, _utc(2026, 11, 1, 6, 45), _utc(2026, 11, 1, 7, 45), _utc(2026, 11, 1, 9, 0))
+
+    _cutover(db, FIRST_0130, set_at="2026-10-01 00:00:00+00:00")
+    first_pass, _ = _hourly(db, FALL_BACK)
+    assert _busy(first_pass.v1_counts) == {0: 1, 1: 2}
+    assert _busy(first_pass.v2_counts) == {1: 2, 3: 1}
+    assert _assert_the_hours_add_up_to_the_day(db, FALL_BACK) == 6
+
+    _cutover(db, SECOND_0130, set_at="2026-10-02 00:00:00+00:00")
+    second_pass, _ = _hourly(db, FALL_BACK)
+    assert second_pass.v1_counts == first_pass.v1_counts          # v1 cannot tell the two cutovers apart
+    assert _busy(second_pass.v2_counts) == {1: 1, 3: 1}
+    assert _assert_the_hours_add_up_to_the_day(db, FALL_BACK) == 5
+
+
+# --- other zones ------------------------------------------------------------------------------------------------------
+
+def test_in_a_half_hour_zone_a_v2_row_is_counted_in_its_local_hour_not_its_utc_hour(db):
+    _cutover(db, _utc(2026, 6, 1, 0, 0))
+    # 03:15Z and 03:45Z share a UTC hour; in Kolkata they are 08:45 and 09:15.
+    _v2(db, _utc(2026, 6, 9, 18, 30), _utc(2026, 6, 10, 3, 15), _utc(2026, 6, 10, 3, 45),
+        _utc(2026, 6, 10, 18, 29, 59))
+    _v2(db, _utc(2026, 6, 9, 18, 29, 59), _utc(2026, 6, 10, 18, 30))   # just outside the Kolkata day
+
+    result, recorder = _hourly(db, zone=KOLKATA)
+
+    assert _busy(result.counts) == {0: 1, 8: 1, 9: 1, 23: 1}
+    parameters = recorder.parameters_for("checkin_events")
+    assert all(parameters[f"boundary_{index}"].minute == 30 for index in range(25))
+    assert _assert_the_hours_add_up_to_the_day(db, zone=KOLKATA) == 4
+
+
+def test_a_mid_hour_cutover_in_a_half_hour_zone_splits_the_local_hour(db):
+    _cutover(db, _utc(2026, 6, 10, 4, 0))             # 09:30 in Kolkata
+    _v1(db, _local(2026, 6, 10, 9, 10), _local(2026, 6, 10, 9, 29, 59), _local(2026, 6, 10, 9, 30))
+    _v2(db, _utc(2026, 6, 10, 3, 59, 59), _utc(2026, 6, 10, 4, 0), _utc(2026, 6, 10, 4, 29, 59),
+        _utc(2026, 6, 10, 4, 30))
+
+    result, _ = _hourly(db, zone=KOLKATA)
+
+    assert _busy(result.v1_counts) == {9: 2}
+    assert _busy(result.v2_counts) == {9: 2, 10: 1}
+    assert _busy(result.counts) == {9: 4, 10: 1}
+    _assert_the_hours_add_up_to_the_day(db, zone=KOLKATA)
+
+
+def test_the_hours_are_those_of_the_zone_it_is_given(db):
+    _v1(db, _local(2026, 6, 10, 0, 30), _local(2026, 6, 10, 23, 30))
+    _cutover(db, _utc(2026, 6, 10, 12, 0))            # 07:00 in Chicago, 17:30 in Kolkata
+    _v2(db, _utc(2026, 6, 10, 12, 0), _utc(2026, 6, 10, 20, 0))
+
+    # Chicago: v1 before 07:00 -> hour 0; v2 at 07:00 and 15:00 local.
+    assert _by_hour(db, zone=CHICAGO) == {0: 1, 7: 1, 15: 1}
+    # Kolkata: v1 before 17:30 -> hour 0; the 12:00Z row is 17:30 local; 20:00Z is already the next day.
+    assert _by_hour(db, zone=KOLKATA) == {0: 1, 17: 1}
+
+
+def test_zones_that_move_their_clocks_by_half_an_hour_or_at_midnight_still_add_up(db):
+    _cutover(db, _utc(2026, 1, 1, 0, 0))
+    # A v2 row every 20 minutes across both of 2026's clock changes in each zone.
+    instants = []
+    for start in (_utc(2026, 3, 7), _utc(2026, 4, 4), _utc(2026, 10, 3), _utc(2026, 10, 31)):
+        instants += [start + timedelta(minutes=20 * step) for step in range(3 * 24 * 3)]
+    _v2(db, *instants)
+
+    for zone, days in (
+        (LORD_HOWE, (date(2026, 4, 5), date(2026, 10, 4))),
+        (HAVANA, (date(2026, 3, 8), date(2026, 11, 1))),
+        (CHICAGO, (SPRING_FORWARD, FALL_BACK)),
+    ):
+        for day in days:
+            bounds = local_day_bounds(day, zone)
+            expected = sum(1 for instant in instants if bounds.v2_start_utc <= instant < bounds.v2_end_utc)
+
+            assert expected > 0
+            assert _assert_the_hours_add_up_to_the_day(db, day, zone=zone) == expected
+
+
+# --- the hours always add up to the day -------------------------------------------------------------------------------
+
+_ADD_UP_V1 = [_local(2026, 6, 9, 23, 59, 59), *[_local(2026, 6, 10, hour, minute) for hour in range(24)
+                                                for minute in (0, 29, 30, 59)], _local(2026, 6, 11, 0, 0)]
+_ADD_UP_V2 = [_utc(2026, 6, 10, 4, 59, 59), *[_utc(2026, 6, 10, 5) + timedelta(minutes=15 * step)
+                                              for step in range(24 * 4)], _utc(2026, 6, 11, 5, 0)]
+
+
+@pytest.mark.parametrize(
+    "cutover_at",
+    [
+        None,
+        _utc(2026, 6, 1, 17, 0),
+        _utc(2026, 6, 10, 5, 0),
+        NOON_CUTOVER,
+        HALF_PAST_TWO_CUTOVER,
+        _utc(2026, 6, 10, 19, 29, 59),
+        _utc(2026, 6, 11, 4, 59, 59),
+        _utc(2026, 6, 11, 5, 0),
+        _utc(2026, 6, 20, 17, 0),
+    ],
+    ids=["no cutover", "before the day", "at the day's start", "on an hour boundary", "inside an hour",
+         "one second before the half hour", "in the day's last second", "at the day's end", "after the day"],
+)
+@pytest.mark.parametrize("zone", [CHICAGO, KOLKATA], ids=["Chicago", "Kolkata"])
+def test_the_24_hourly_counts_sum_to_the_days_count_wherever_the_cutover_is(db, cutover_at, zone):
+    _v1(db, *_ADD_UP_V1)
+    _v2(db, *_ADD_UP_V2)
+    if cutover_at is not None:
+        _cutover(db, cutover_at)
+
+    assert _assert_the_hours_add_up_to_the_day(db, zone=zone) > 0
+
+    hourly, _ = _hourly(db, zone=zone)
+    assert hourly.counts == tuple(v1 + v2 for v1, v2 in zip(hourly.v1_counts, hourly.v2_counts, strict=True))
+
+
+@pytest.mark.parametrize("local_date", [SPRING_FORWARD, FALL_BACK], ids=["spring forward", "fall back"])
+@pytest.mark.parametrize("cutover_hour_utc", [None, 7, 8, 15], ids=["no cutover", "07:00Z", "08:00Z", "15:00Z"])
+def test_the_24_hourly_counts_sum_to_the_days_count_on_dst_dates(db, local_date, cutover_hour_utc):
+    year, month, day = local_date.year, local_date.month, local_date.day
+    _v1(db, *[_local(year, month, day, hour, minute) for hour in range(24) for minute in (0, 30)])
+    _v2(db, *[_utc(year, month, day, 4) + timedelta(minutes=30 * step) for step in range(56)])
+    if cutover_hour_utc is not None:
+        _cutover(db, _utc(year, month, day, cutover_hour_utc, 30))
+
+    assert _assert_the_hours_add_up_to_the_day(db, local_date) > 0
+
+
+# --- the tenant filter (SQLite has no RLS: only the statements' own WHERE separates these rows) -----------------------
+
+def test_another_customers_rows_are_in_no_hour(db):
+    _cutover(db, NOON_CUTOVER)
+    _v1(db, _local(2026, 6, 10, 9, 0))
+    _v2(db, _utc(2026, 6, 10, 18, 0))
+    _v1(db, _local(2026, 6, 10, 9, 0), _local(2026, 6, 10, 10, 0), customer_id=CUSTOMER_B)
+    _v2(db, _utc(2026, 6, 10, 18, 0), _utc(2026, 6, 10, 19, 0), customer_id=CUSTOMER_B)
+
+    assert _by_hour(db) == {9: 1, 13: 1}
+
+
+def test_another_branchs_rows_are_in_no_hour(db):
+    _cutover(db, NOON_CUTOVER)
+    _v1(db, _local(2026, 6, 10, 9, 0))
+    _v2(db, _utc(2026, 6, 10, 18, 0))
+    _v1(db, _local(2026, 6, 10, 9, 0), _local(2026, 6, 10, 10, 0), branch_id=BRANCH_B)
+    _v2(db, _utc(2026, 6, 10, 18, 0), _utc(2026, 6, 10, 19, 0), branch_id=BRANCH_B)
+
+    assert _by_hour(db) == {9: 1, 13: 1}
+
+
+def test_another_tenants_cutover_does_not_change_this_tenants_hours(db):
+    _cutover(db, _utc(2026, 6, 1, 5, 0), customer_id=CUSTOMER_B, branch_id=BRANCH_B)
+    _v1(db, _local(2026, 6, 10, 9, 0))
+    _v2(db, _utc(2026, 6, 10, 18, 0))
+
+    assert _by_hour(db) == {9: 1}     # this tenant has no cutover: v1 only
+
+
+def test_each_tenant_gets_its_own_hours_from_the_same_tables(db):
+    tenant_b = ResolvedOperationalTenant(
+        org_slug="beta", branch_slug="main", access_mode="read_only",
+        operational_customer_id=CUSTOMER_B, operational_branch_id=BRANCH_B,
+    )
+    _v1(db, _local(2026, 6, 10, 9, 0))
+    _v1(db, _local(2026, 6, 10, 9, 0), _local(2026, 6, 10, 10, 0), _local(2026, 6, 10, 10, 30),
+        customer_id=CUSTOMER_B, branch_id=BRANCH_B)
+
+    assert _by_hour(db, tenant=TENANT_A) == {9: 1}
+    assert _by_hour(db, tenant=tenant_b) == {9: 1, 10: 2}
+
+
+def test_every_hourly_statement_is_bound_to_the_resolved_tenants_ids(db):
+    _cutover(db, NOON_CUTOVER)
+
+    _, recorder = _hourly(db)
+
+    assert len(recorder.statements) == 3
+    for sql, parameters in recorder.statements:
+        assert "WHERE customer_id = :customer_id AND branch_id = :branch_id" in sql
+        assert parameters["customer_id"] == CUSTOMER_A
+        assert parameters["branch_id"] == BRANCH_A
+
+
+# --- the statements and their parameters ------------------------------------------------------------------------------
+
+_HOURLY_COLUMNS = ", ".join(
+    f"COUNT(*) FILTER (WHERE event_time >= :boundary_{hour} AND event_time < :boundary_{hour + 1})"
+    for hour in range(24)
+)
+
+
+def test_the_v1_hourly_statement_has_the_approved_shape():
+    assert _statement("_V1_CHECKIN_HOURLY_COUNT_SQL") == (
+        f"SELECT {_HOURLY_COLUMNS} FROM checkins "
+        "WHERE customer_id = :customer_id AND branch_id = :branch_id "
+        "AND event_time >= :start_local AND event_time < :end_local"
+    )
+
+
+def test_the_v2_hourly_statement_has_the_approved_shape():
+    assert _statement("_V2_CHECKIN_HOURLY_COUNT_SQL") == (
+        f"SELECT {_HOURLY_COLUMNS} FROM checkin_events "
+        "WHERE customer_id = :customer_id AND branch_id = :branch_id "
+        "AND event_time >= :start_utc AND event_time < :end_utc"
+    )
+
+
+def test_each_hourly_statement_shares_its_where_clause_with_the_day_count():
+    # The same rows are selected; only what is done with them differs.
+    for hourly, daily in (("_V1_CHECKIN_HOURLY_COUNT_SQL", "_V1_CHECKIN_COUNT_SQL"),
+                          ("_V2_CHECKIN_HOURLY_COUNT_SQL", "_V2_CHECKIN_COUNT_SQL")):
+        assert _statement(hourly).split(" FROM ")[1] == _statement(daily).split(" FROM ")[1]
+
+
+def test_the_hourly_statements_are_24_conditional_counts_over_one_table_each():
+    for name in ("_V1_CHECKIN_HOURLY_COUNT_SQL", "_V2_CHECKIN_HOURLY_COUNT_SQL"):
+        sql = _statement(name).upper()
+
+        assert sql.count("COUNT(*) FILTER (WHERE EVENT_TIME >= :BOUNDARY_") == 24
+        assert sql.count(" FROM ") == 1
+        for forbidden in ("JOIN", "DISTINCT", "GROUP BY", "SELECT *", "REJECT", "ACS", "AT TIME ZONE", "NOW()",
+                          "::DATE", "CURRENT_", "EXTRACT", "DATE_TRUNC", "TIMEZONE", "INTERVAL"):
+            assert forbidden not in sql, (name, forbidden)
+
+
+def test_the_hourly_statements_bind_naive_v1_times_and_aware_v2_times():
+    time_binds = {f"boundary_{index}" for index in range(25)}
+
+    v1 = operational_metrics_service._V1_CHECKIN_HOURLY_COUNT_SQL._bindparams
+    v2 = operational_metrics_service._V2_CHECKIN_HOURLY_COUNT_SQL._bindparams
+    assert set(v1) == {"customer_id", "branch_id", "start_local", "end_local"} | time_binds
+    assert set(v2) == {"customer_id", "branch_id", "start_utc", "end_utc"} | time_binds
+
+    assert all(v1[name].type.timezone is False for name in time_binds | {"start_local", "end_local"})
+    assert all(v2[name].type.timezone is True for name in time_binds | {"start_utc", "end_utc"})
+
+
+def test_every_time_actually_bound_is_naive_for_v1_and_aware_utc_for_v2(db):
+    _cutover(db, HALF_PAST_TWO_CUTOVER)
+
+    _, recorder = _hourly(db)
+
+    v1 = {name: value for name, value in recorder.parameters_for("checkins").items() if isinstance(value, datetime)}
+    v2 = {name: value for name, value in recorder.parameters_for("checkin_events").items()
+          if isinstance(value, datetime)}
+    assert len(v1) == len(v2) == 27
+    assert all(value.tzinfo is None for value in v1.values())
+    assert all(value.utcoffset() == timedelta(0) for value in v2.values())
+
+
+def test_without_a_cutover_v1_gets_the_whole_local_day_of_hours(db):
+    _, recorder = _hourly(db)
+
+    parameters = recorder.parameters_for("checkins")
+    assert (parameters["start_local"], parameters["end_local"]) == (_local(2026, 6, 10), _local(2026, 6, 11))
+    assert (parameters["boundary_0"], parameters["boundary_24"]) == (_local(2026, 6, 10), _local(2026, 6, 11))
+
+
+# --- how many statements run -------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    ("cutover_at", "expected_tables"),
+    [
+        (None, ["v2_cutovers", "checkins"]),
+        (_utc(2026, 6, 1, 17, 0), ["v2_cutovers", "checkin_events"]),
+        (_utc(2026, 6, 10, 5, 0), ["v2_cutovers", "checkin_events"]),
+        (NOON_CUTOVER, ["v2_cutovers", "checkins", "checkin_events"]),
+        (HALF_PAST_TWO_CUTOVER, ["v2_cutovers", "checkins", "checkin_events"]),
+        (_utc(2026, 6, 11, 5, 0), ["v2_cutovers", "checkins"]),
+        (_utc(2026, 6, 20, 17, 0), ["v2_cutovers", "checkins"]),
+    ],
+    ids=["no cutover", "cutover before the day", "cutover at the day's start", "cutover on an hour boundary",
+         "cutover inside an hour", "cutover at the day's end", "cutover after the day"],
+)
+def test_the_hourly_counts_take_one_lookup_and_one_statement_per_era_that_owns_part_of_the_day(
+    db, cutover_at, expected_tables
+):
+    # A row of each era at a quarter past every hour, so one statement is shown to be enough for all 24.
+    _v1(db, *[_local(2026, 6, 10, hour, 15) for hour in range(24)])
+    _v2(db, *[_utc(2026, 6, 10, 5, 15) + timedelta(hours=hour) for hour in range(24)])    # the same 24 moments
+    if cutover_at is not None:
+        _cutover(db, cutover_at)
+
+    result, recorder = _hourly(db)
+
+    assert recorder.tables() == expected_tables
+    assert recorder.tables().count("v2_cutovers") == 1
+    assert len(recorder.statements) <= 3
+    assert result.counts == (1,) * 24             # each moment once, whichever era's statement returned it
+
+
+def test_the_hourly_counts_run_exactly_the_statements_the_day_count_runs(db):
+    for cutover_at in (None, _utc(2026, 6, 1, 17, 0), HALF_PAST_TWO_CUTOVER, _utc(2026, 6, 20, 17, 0)):
+        if cutover_at is not None:
+            _cutover(db, cutover_at, set_at=cutover_at.isoformat(sep=" "))
+
+        _, hourly = _hourly(db)
+        _, daily = _count(db)
+
+        assert hourly.tables() == daily.tables()
+
+
+# --- failures -----------------------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("failing", ["v2_cutovers", "checkins", "checkin_events"])
+def test_a_failure_in_any_hourly_statement_propagates_and_no_partial_counts_are_returned(db, failing):
+    _cutover(db, NOON_CUTOVER)
+    _v1(db, _local(2026, 6, 10, 9, 0))
+    _v2(db, _utc(2026, 6, 10, 18, 0))
+
+    with pytest.raises(RuntimeError, match=f"synthetic failure reading {failing}"):
+        _hourly(db, fail_on=failing)
+
+
+def test_failing_v2_hours_do_not_come_back_as_v1_only_hours(db):
+    _cutover(db, NOON_CUTOVER)
+    _v1(db, _local(2026, 6, 10, 9, 0))
+    with db.begin() as conn:
+        conn.execute(text("DROP TABLE checkin_events"))
+
+    with pytest.raises(Exception, match="checkin_events"):
+        _hourly(db)
+
+
+def test_failing_v1_hours_do_not_come_back_as_v2_only_hours(db):
+    _cutover(db, NOON_CUTOVER)
+    _v2(db, _utc(2026, 6, 10, 18, 0))
+    with db.begin() as conn:
+        conn.execute(text("DROP TABLE checkins"))
+
+    with pytest.raises(Exception, match="checkins"):
+        _hourly(db)
+
+
+def test_a_statement_that_does_not_return_24_counts_is_refused():
+    with pytest.raises(ValueError, match="exactly 24 counts"):
+        operational_metrics_service._hourly_counts((1, 2, 3))
+
+
+# --- the result -----------------------------------------------------------------------------------------------------------
+
+def test_the_hourly_result_is_an_immutable_value_of_three_tuples_of_24_plain_integers(db):
+    _cutover(db, HALF_PAST_TWO_CUTOVER)
+    _v1(db, _local(2026, 6, 10, 9, 0), _local(2026, 6, 10, 14, 0))
+    _v2(db, _utc(2026, 6, 10, 19, 45))
+
+    result, _ = _hourly(db)
+
+    assert [f.name for f in dataclasses.fields(CheckinHourlyCounts)] == ["counts", "v1_counts", "v2_counts"]
+    for counts in dataclasses.astuple(result):
+        assert type(counts) is tuple
+        assert len(counts) == 24
+        assert all(type(count) is int and count >= 0 for count in counts)
+    assert _busy(result.counts) == {9: 1, 14: 2}
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        result.counts = ()
+
+
+def test_the_hourly_function_takes_a_connection_a_tenant_a_date_and_a_zone():
+    parameters = inspect.signature(operational_metrics_service.get_checkin_counts_by_hour).parameters
+
+    assert list(parameters) == ["conn", "tenant", "local_date", "zone"]
+    assert parameters["local_date"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameters["zone"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert all(p.default is inspect.Parameter.empty for p in parameters.values())   # nothing defaults, least of all the date
+
+
+def test_nothing_is_cached_between_hourly_counts(db):
+    assert _by_hour(db) == {}
+
+    _v1(db, _local(2026, 6, 10, 9, 0))
+    assert _by_hour(db) == {9: 1}
+
+    _cutover(db, _utc(2026, 6, 1, 5, 0))
+    assert _by_hour(db) == {}
+
+    _v2(db, _utc(2026, 6, 10, 18, 0))
+    assert _by_hour(db) == {13: 1}
+
+
+def test_the_hourly_service_knows_nothing_of_operating_hours_or_of_the_dashboard():
+    source = inspect.getsource(operational_metrics_service.get_checkin_counts_by_hour)
+
+    for forbidden in ("start_hour", "end_hour", "range(7", "mixed_era", "pandas", "streamlit", "fetchall", "now("):
+        assert forbidden not in source, forbidden
+
+
+# --- against the Streamlit dashboard (characterization only; the dashboard is not changed) ---------------------------
+
+def _dashboard_hours(v1_rows, cutover_at, local_date) -> dict[int, int]:
+    """What the dashboard's "Checkins by Hour" counts today, before its 7-20
+    display window: mixed_era_service's frame, filtered to the day by
+    metrics.get_date_filtered_df, then .dt.hour.value_counts()."""
+    import pandas as pd
+
+    import metrics
+    from services import mixed_era_service
+
+    v1 = pd.DataFrame({"datetime": [pd.Timestamp(row) for row in v1_rows], "barcode": ["synthetic"] * len(v1_rows)})
+    v2 = pd.DataFrame(columns=["datetime", "item_key", "destination"])
+    cutover = None if cutover_at is None else pd.Timestamp(cutover_at)
+
+    mixed = mixed_era_service._build_mixed_checkins(v1, v2, cutover)
+    day = metrics.get_date_filtered_df(mixed, local_date, local_date)
+    return {int(hour): int(count) for hour, count in day["datetime"].dt.hour.value_counts().items()}
+
+
+@pytest.mark.parametrize("local_date", [date(2026, 5, 31), date(2026, 6, 1), date(2026, 6, 2)])
+def test_for_a_v1_only_branch_the_sql_hours_equal_the_dashboards_hours(db, local_date):
+    _v1(db, *V1_ROWS)
+
+    assert _by_hour(db, local_date) == _dashboard_hours(V1_ROWS, None, local_date)
+
+
+def test_for_a_cut_over_branch_the_hours_intentionally_differ_from_the_dashboards_shifted_hours(db):
+    """Known and deliberate, as for the day count. Once a branch has a cutover
+    the dashboard moves each legacy row 5 hours earlier (CDT), so its hours
+    are shifted and its earliest rows fall on the day before. This service
+    counts each row in the hour it was stamped. Block 6 does not change the
+    dashboard."""
+    cutover_at = _utc(2026, 6, 10, 5, 0)
+    _v1(db, *V1_ROWS)
+    _cutover(db, cutover_at)
+
+    assert _by_hour(db, date(2026, 6, 1)) == {0: 1, 2: 1, 9: 2, 19: 1, 23: 1}
+    # 09:15 twice -> 04:15; 19:30 -> 14:30; 23:59:59 -> 18:59:59; and 2 June's 00:00 arrives as 19:00.
+    assert _dashboard_hours(V1_ROWS, cutover_at, date(2026, 6, 1)) == {4: 2, 14: 1, 18: 1, 19: 1}
+
+
+# =====================================================================================================================
 # Module boundaries
 # =====================================================================================================================
 
@@ -1277,7 +2361,10 @@ def test_the_module_reads_no_clock_no_environment_and_creates_no_engine():
 
 def test_no_sql_in_the_module_depends_on_the_database_session_time_zone():
     statements = [name for name in vars(operational_metrics_service) if name.endswith("_SQL")]
-    assert sorted(statements) == ["_EFFECTIVE_CUTOVER_SQL", "_V1_CHECKIN_COUNT_SQL", "_V2_CHECKIN_COUNT_SQL"]
+    assert sorted(statements) == [
+        "_EFFECTIVE_CUTOVER_SQL", "_V1_CHECKIN_COUNT_SQL", "_V1_CHECKIN_HOURLY_COUNT_SQL", "_V2_CHECKIN_COUNT_SQL",
+        "_V2_CHECKIN_HOURLY_COUNT_SQL",
+    ]
 
     for name in statements:
         sql = str(getattr(operational_metrics_service, name)).upper()

@@ -1226,3 +1226,245 @@ def test_checkin_counts_on_one_pooled_connection_never_see_each_others_tenant(
             assert conn.execute(text("SELECT COUNT(*) FROM checkin_events")).scalar() == 0
     finally:
         single.dispose()
+
+
+# --- GET .../checkins/by-hour?date=YYYY-MM-DD, end to end, as the runtime role ---
+#
+# The same real pieces as the count tests above, with the hourly statements:
+# 24 conditional counts per era, their boundaries bound as real TIMESTAMP
+# values for checkins and real TIMESTAMPTZ values for checkin_events. Every
+# answer is also checked against the count endpoint for the same day, on the
+# same server: the 24 hours must add up to it.
+
+CHECKINS_BY_HOUR_PATH = "/api/organizations/{org}/branches/{branch}/checkins/by-hour"
+
+
+def _checkins_by_hour(client, session, org, branch, day: str):
+    return client.get(
+        CHECKINS_BY_HOUR_PATH.format(org=org, branch=branch),
+        params={"date": day},
+        headers={"Cookie": f"__Host-sortview_api_session={session}"},
+    )
+
+
+def _hours_of(client, session, org, branch, day: str) -> dict[int, int]:
+    """The hours of `day` that are not zero, as {hour: count} -- after
+    checking the response is the approved shape, has all 24 hours in order,
+    and adds up to what the count endpoint says for the same day."""
+    response = _checkins_by_hour(client, session, org, branch, day)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert list(body) == ["date", "timezone", "hours"]
+    assert (body["date"], body["timezone"]) == (day, "America/Chicago")
+    assert [entry["hour"] for entry in body["hours"]] == list(range(24))
+    assert all(list(entry) == ["hour", "checkin_count"] for entry in body["hours"])
+    assert sum(entry["checkin_count"] for entry in body["hours"]) == _count_of(client, session, org, branch, day)
+    return {entry["hour"]: entry["checkin_count"] for entry in body["hours"] if entry["checkin_count"]}
+
+
+def test_checkins_by_hour_for_a_v1_only_branch_buckets_its_own_local_day(owner_engine, checkin_api):
+    with owner_engine.begin() as conn:
+        for stamped, barcode in (("2026-06-09 23:59:59", "a1"), ("2026-06-10 00:00:00", "a2"),
+                                 ("2026-06-10 09:05:00", "a3"), ("2026-06-10 09:55:00", "a4"),
+                                 ("2026-06-10 10:00:00", "a5"), ("2026-06-10 14:30:00", "a6"),
+                                 ("2026-06-10 23:59:59", "a7"), ("2026-06-11 00:00:00", "a8")):
+            _v1_checkin(conn, CUSTOMER_A, BRANCH_A, stamped, barcode)
+        # v2 rows for tenant A on that day, but NO cutover: they are not part of its history.
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 15:00:00+00")
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 18:00:00+00")
+        for hour in range(8, 13):
+            _v1_checkin(conn, CUSTOMER_B, BRANCH_B, f"2026-06-10 {hour:02d}:00:00", f"b{hour}")
+
+    response = _checkins_by_hour(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    expected = {0: 1, 9: 2, 10: 1, 14: 1, 23: 1}
+    assert response.json() == {
+        "date": "2026-06-10",
+        "timezone": "America/Chicago",
+        "hours": [{"hour": hour, "checkin_count": expected.get(hour, 0)} for hour in range(24)],
+    }
+    assert _hours_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == expected   # adds up to 6
+    assert _count_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == 6
+    assert _hours_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-09") == {23: 1}
+    assert _hours_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-11") == {0: 1}
+    assert _hours_of(checkin_api, SESSION_B, "tenant-b", "main", "2026-06-10") == {8: 1, 9: 1, 10: 1, 11: 1, 12: 1}
+
+
+def test_checkins_by_hour_splits_the_hour_a_real_cutover_falls_in(owner_engine, checkin_api):
+    with owner_engine.begin() as conn:
+        _set_cutover(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 19:30:00+00")   # 14:30 local, inside hour 14
+        # Legacy rows, by wall clock: v1 owns everything strictly before 14:30.
+        _v1_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 13:50:00", "v1-1350")            # hour 13
+        _v1_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 14:10:00", "v1-1410")            # hour 14
+        _v1_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 14:29:59", "v1-142959")          # hour 14, the last second
+        _v1_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 14:30:00", "v1-at-cutover")      # not v1's
+        _v1_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 14:45:00", "v1-after-cutover")   # not v1's
+        # Contract v2 rows, as instants: v2 owns everything from 19:30Z on.
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 19:10:00+00")   # 14:10 local, before the cutover: not v2's
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 19:29:59+00")   # one second before: not v2's
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 19:30:00+00")   # exactly at the cutover: hour 14, v2's
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 19:40:00+00")   # hour 14
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 19:59:59+00")   # hour 14, its last second
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 20:00:00+00")   # hour 15
+
+    # Hour 14 holds 2 legacy rows from before the cutover and 3 v2 rows from it on: nothing twice, nothing lost.
+    assert _hours_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == {13: 1, 14: 5, 15: 1}
+    assert _count_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == 7
+
+    response = _checkins_by_hour(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10")
+    for leaked in ("v1", "v2", "cutover", "era", "19:30", str(CUSTOMER_A), "customer_id", "branch_id"):
+        assert leaked not in response.text, leaked
+
+
+def test_checkins_by_hour_is_isolated_from_another_tenant_in_both_tables(owner_engine, checkin_api):
+    _seed_mixed_era_days(owner_engine)
+
+    # Tenant A on 10 June: one legacy row at 09:00, then v2 rows at 12:00, 17:00 and 23:59:59 local.
+    assert _hours_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == {9: 1, 12: 1, 17: 1, 23: 1}
+    # Tenant B has legacy rows at 08:00, 09:00 and 10:00 and v2 rows in six other hours that day. None of them is
+    # in tenant A's hours above (its 09:00 would be 2) -- and B's own hours are only its own v2 rows, at their
+    # local hours: 06, 09, 12, 15, 18 and 23Z are 01, 04, 07, 10, 13 and 18 CDT.
+    assert _hours_of(checkin_api, SESSION_B, "tenant-b", "main", "2026-06-10") == {
+        1: 1, 4: 1, 7: 1, 10: 1, 13: 1, 18: 1,
+    }
+    assert _hours_of(checkin_api, SESSION_B, "tenant-b", "north", "2026-06-10") == {9: 1, 15: 1}
+
+    for session, org, branch in ((SESSION_A, "tenant-b", "main"), (SESSION_A, "tenant-a", "north"),
+                                 (SESSION_B, "tenant-a", "main")):
+        refused = _checkins_by_hour(checkin_api, session, org, branch, "2026-06-10")
+        assert refused.status_code == 404 and refused.json() == TENANT_NOT_FOUND
+
+
+def test_checkins_by_hour_request_validation_through_the_real_app(checkin_api):
+    path = CHECKINS_BY_HOUR_PATH.format(org="tenant-a", branch="main")
+
+    assert checkin_api.get(path, params={"date": "2026-06-10"}).status_code == 401
+    assert checkin_api.get(path, headers={"Cookie": f"__Host-sortview_api_session={SESSION_A}"}).status_code == 422
+    assert _checkins_by_hour(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10T00:00:00").status_code == 422
+    assert _checkins_by_hour(checkin_api, SESSION_A, "tenant-a", "main", "2026-02-30").status_code == 422
+    assert _hours_of(checkin_api, SESSION_A, "tenant-a", "main", "2099-01-01") == {}   # 24 zeros
+
+
+@pytest.mark.parametrize("session_time_zone", ["UTC", "America/Chicago", "America/New_York", "Asia/Tokyo"])
+def test_checkins_by_hour_does_not_depend_on_the_database_session_time_zone(
+    owner_engine, checkin_api, runtime_engine, monkeypatch, session_time_zone
+):
+    _seed_mixed_era_days(owner_engine)
+    engine = create_engine(
+        runtime_engine.url, connect_args={"options": f"-c timezone={session_time_zone}"}, hide_parameters=True
+    )
+    monkeypatch.setattr(database, "_engine", engine)
+    try:
+        with engine.connect() as conn:
+            assert conn.execute(text("SHOW timezone")).scalar() == session_time_zone
+
+        # 9 June is all legacy rows, at 00:30 and 23:30 local: the first and last hours of the day.
+        assert _hours_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-09") == {0: 1, 23: 1}
+        # 10 June mixes both tables around the cutover; its v2 hours are local hours whatever the session says.
+        assert _hours_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-10") == {9: 1, 12: 1, 17: 1, 23: 1}
+        assert _hours_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-06-11") == {0: 1}
+        assert _hours_of(checkin_api, SESSION_B, "tenant-b", "north", "2026-06-10") == {9: 1, 15: 1}
+    finally:
+        engine.dispose()
+
+
+def test_checkins_by_hour_on_the_spring_forward_date(owner_engine, checkin_api):
+    with owner_engine.begin() as conn:
+        # Tenant A, cut over well before: 8 March 2026 is [06:00Z, 05:00Z next day) -- 23 hours.
+        _set_cutover(conn, CUSTOMER_A, BRANCH_A, "2026-03-01 06:00:00+00")
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-03-08 05:59:59+00")   # 23:59:59 CST on the 7th
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-03-08 06:00:00+00")   # 00:00 CST            -> hour 0
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-03-08 07:59:59+00")   # 01:59:59 CST         -> hour 1
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-03-08 08:00:00+00")   # the next second is 03:00 CDT -> hour 3
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-03-08 08:30:00+00")   # 03:30 CDT            -> hour 3
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-03-09 04:59:59+00")   # 23:59:59 CDT         -> hour 23
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-03-09 05:00:00+00")   # 00:00 CDT on the 9th
+        # Tenant B, never cut over: naive wall-clock rows, one of them stamped in the hour that did not exist.
+        for stamped, barcode in (("2026-03-08 01:59:00", "b1"), ("2026-03-08 02:30:00", "b2"),
+                                 ("2026-03-08 03:00:00", "b3")):
+            _v1_checkin(conn, CUSTOMER_B, BRANCH_B, stamped, barcode)
+
+    response = _checkins_by_hour(checkin_api, SESSION_A, "tenant-a", "main", "2026-03-08")
+    assert len(response.json()["hours"]) == 24                                   # 24 buckets on a 23-hour day
+    assert response.json()["hours"][2] == {"hour": 2, "checkin_count": 0}        # no instant is 02:xx that day
+
+    assert _hours_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-03-08") == {0: 1, 1: 1, 3: 2, 23: 1}
+    assert _count_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-03-08") == 5
+    assert _hours_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-03-07") == {23: 1}
+    assert _hours_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-03-09") == {0: 1}
+    # The legacy row stamped 02:30 is counted in the hour it names.
+    assert _hours_of(checkin_api, SESSION_B, "tenant-b", "main", "2026-03-08") == {1: 1, 2: 1, 3: 1}
+
+
+def test_checkins_by_hour_on_the_fall_back_date(owner_engine, checkin_api):
+    with owner_engine.begin() as conn:
+        # Tenant A, cut over well before: 1 November 2026 is [05:00Z, 06:00Z next day) -- 25 hours.
+        _set_cutover(conn, CUSTOMER_A, BRANCH_A, "2026-10-01 05:00:00+00")
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-11-01 04:59:59+00")   # 23:59:59 CDT on 31 October
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-11-01 05:59:59+00")   # 00:59:59 CDT          -> hour 0
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-11-01 06:00:00+00")   # 01:00 CDT, first pass -> hour 1
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-11-01 06:30:00+00")   # 01:30 CDT, first pass -> hour 1
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-11-01 07:30:00+00")   # 01:30 CST, second pass -> hour 1
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-11-01 07:59:59+00")   # 01:59:59 CST          -> hour 1
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-11-01 08:00:00+00")   # 02:00 CST             -> hour 2
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-11-02 05:59:59+00")   # 23:59:59 CST          -> hour 23
+        _v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-11-02 06:00:00+00")   # 00:00 CST on the 2nd
+        # Tenant B, never cut over: two legacy rows both stamped 01:30 share the one bucket that reading names.
+        _v1_checkin(conn, CUSTOMER_B, BRANCH_B, "2026-11-01 01:30:00", "b-first-pass")
+        _v1_checkin(conn, CUSTOMER_B, BRANCH_B, "2026-11-01 01:30:00", "b-second-pass")
+        _v1_checkin(conn, CUSTOMER_B, BRANCH_B, "2026-11-01 23:59:59", "b-late")
+
+    response = _checkins_by_hour(checkin_api, SESSION_A, "tenant-a", "main", "2026-11-01")
+    assert len(response.json()["hours"]) == 24                                   # 24 buckets on a 25-hour day
+
+    # Both passes through 01:xx -- four real instants across two real hours -- are in hour 1, once each.
+    assert _hours_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-11-01") == {0: 1, 1: 4, 2: 1, 23: 1}
+    assert _count_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-11-01") == 7
+    assert _hours_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-10-31") == {23: 1}
+    assert _hours_of(checkin_api, SESSION_A, "tenant-a", "main", "2026-11-02") == {0: 1}
+    assert _hours_of(checkin_api, SESSION_B, "tenant-b", "main", "2026-11-01") == {1: 2, 23: 1}
+
+
+def test_checkins_by_hour_on_one_pooled_connection_never_see_each_others_tenant(
+    owner_engine, checkin_api, runtime_engine, monkeypatch
+):
+    _seed_mixed_era_days(owner_engine)
+    # One connection: every statement of every request below runs on the same server backend.
+    single = create_engine(runtime_engine.url, pool_size=1, max_overflow=0, hide_parameters=True)
+    monkeypatch.setattr(database, "_engine", single)
+    tenant_a = {9: 1, 12: 1, 17: 1, 23: 1}
+    requests = (
+        (SESSION_A, "tenant-a", "main", tenant_a),
+        (SESSION_B, "tenant-b", "main", {1: 1, 4: 1, 7: 1, 10: 1, 13: 1, 18: 1}),
+        (SESSION_A, "tenant-a", "main", tenant_a),
+        (SESSION_B, "tenant-b", "north", {9: 1, 15: 1}),
+        (SESSION_A, "tenant-a", "main", tenant_a),
+    )
+    try:
+        for session, org, branch, expected in requests:
+            assert _hours_of(checkin_api, session, org, branch, "2026-06-10") == expected
+
+        # Change the pooled connection's SESSION time zone for good, then ask again.
+        with single.connect() as conn:
+            conn.execute(text("SET TIME ZONE 'Asia/Tokyo'"))
+            conn.commit()
+        with single.connect() as conn:
+            assert conn.execute(text("SHOW timezone")).scalar() == "Asia/Tokyo"
+
+        for session, org, branch, expected in requests:
+            assert _hours_of(checkin_api, session, org, branch, "2026-06-10") == expected
+        assert _checkins_by_hour(checkin_api, SESSION_A, "tenant-b", "main", "2026-06-10").status_code == 404
+
+        # Nothing of any request's tenant context is left on the pooled connection.
+        with single.connect() as conn:
+            settings = conn.execute(text(
+                "SELECT current_setting('app.operational_customer_id', true), "
+                "current_setting('app.operational_branch_id', true)"
+            )).one()
+            assert all(value in (None, "") for value in settings)
+            assert conn.execute(text("SELECT COUNT(*) FROM checkins")).scalar() == 0
+            assert conn.execute(text("SELECT COUNT(*) FROM checkin_events")).scalar() == 0
+    finally:
+        single.dispose()

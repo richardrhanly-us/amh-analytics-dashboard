@@ -32,6 +32,8 @@ from customer_api import settings
 from customer_api.errors import NO_STORE_HEADERS, CustomerApiRoute
 from customer_api.operational_schemas import (
     CheckinCountResponse,
+    CheckinHourCount,
+    CheckinsByHourResponse,
     IngestStatusFields,
     IngestStatusResponse,
 )
@@ -40,7 +42,10 @@ from customer_api.tenant_scope import (
     open_customer_tenant_connection,
     require_resolved_tenant,
 )
-from services.operational_metrics_service import get_checkin_count
+from services.operational_metrics_service import (
+    get_checkin_count,
+    get_checkin_counts_by_hour,
+)
 from services.operational_read_service import get_latest_ingest_status
 
 ResolvedTenant = Annotated[ResolvedOperationalTenant, Depends(require_resolved_tenant)]
@@ -104,6 +109,24 @@ def create_operational_router() -> APIRouter:
         # The connection is closed. Only the total is returned: which of the
         # branch's two data eras each check-in came from is not the caller's concern.
         body = CheckinCountResponse(date=local_date, timezone=zone.key, checkin_count=count.total)
+        return JSONResponse(content=body.model_dump(mode="json"), headers=NO_STORE_HEADERS)
+
+    @router.get("/checkins/by-hour")
+    def get_checkins_by_hour(tenant: ResolvedTenant, local_date: LocalDate) -> Response:
+        # The same day, in the same zone, as /checkins/count.
+        zone = settings.product_timezone()
+
+        with open_customer_tenant_connection(tenant) as conn:
+            hourly = get_checkin_counts_by_hour(conn, tenant, local_date=local_date, zone=zone)
+
+        # The connection is closed. Every wall-clock hour is returned, 0 to 23,
+        # with its total only: which hours a library is open, and which era a
+        # check-in came from, are not decided or disclosed here.
+        body = CheckinsByHourResponse(
+            date=local_date,
+            timezone=zone.key,
+            hours=[CheckinHourCount(hour=hour, checkin_count=count) for hour, count in enumerate(hourly.counts)],
+        )
         return JSONResponse(content=body.model_dump(mode="json"), headers=NO_STORE_HEADERS)
 
     return router
