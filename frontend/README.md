@@ -3,11 +3,11 @@
 The SortView customer web app: a React + TypeScript single-page app built
 with Vite. It is a static SPA. There is no server-side rendering.
 
-**Status: Block F3, organization and branch selection.** The app restores a
-session, signs in and signs out against the customer API (`/api/auth/*`),
-lists the signed-in user's organizations and lets them choose a branch. The
-branch page is a placeholder: there is no dashboard data yet. Nothing in this
-directory is used by the Python backend, the Streamlit app or the collector.
+**Status: Block F4, Live Today.** The app restores a session, signs in and
+signs out against the customer API (`/api/auth/*`), lists the signed-in
+user's organizations, lets them choose a branch, and shows that branch's Live
+Today figures. Nothing in this directory is used by the Python backend, the
+Streamlit app or the collector.
 
 ## Routes
 
@@ -20,13 +20,37 @@ signing in lands on the page that was asked for.
 | `/` | Redirects to `/organizations` |
 | `/organizations` | The user's organizations (`GET /api/organizations`) |
 | `/organizations/:orgSlug` | One organization and its branches (`GET /api/organizations/{org_slug}`) |
-| `/organizations/:orgSlug/branches/:branchSlug` | The selected branch (placeholder; no request of its own) |
+| `/organizations/:orgSlug/branches/:branchSlug` | The selected branch and its Live Today dashboard |
 | anything else | Not found |
 
 Organizations and branches appear in addresses by slug only. The API decides
 what a user can see: an organization it does not return, and a branch that is
 not in the organization it returns, both get the same "not found" page as an
 unknown address. A `401` from the API returns the app to the sign-in form.
+
+## Live Today
+
+The branch page shows, for today: the pipeline's last reported state and when
+it reported, check-ins (total, current hour, busiest hour, and by hour),
+rejects (total and rate) and the reject reasons that occurred. Figures are
+plain text and tables; there are no charts yet.
+
+- **"Today" is the product's day, not the browser's.** Pipeline status is read
+  first and names the product time zone; the date and current hour are worked
+  out in that zone and the four dated reads are made for that date. If
+  pipeline status cannot be read, no date is guessed and nothing else is asked.
+- **Refresh.** Everything refreshes together every 3 minutes, and from the
+  Refresh button. Pause stops the timer only; Refresh still works while
+  paused. A refresh after midnight in the product zone moves to the new day.
+  A browser tab in the background does not refresh until it is visible again.
+- **A branch with no live data.** If the API answers `404` for a branch the
+  organization lists, the page says live data is not available for it yet.
+- **Failures.** A section that cannot be loaded says so and the rest stay
+  visible. Network failures and `5xx` answers are retried twice; nothing else
+  is retried.
+
+Data is fetched with TanStack Query and held in memory only, per signed-in
+session.
 
 ## Requirements
 

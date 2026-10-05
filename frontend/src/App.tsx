@@ -1,10 +1,33 @@
+import { QueryClientProvider, type QueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
+
 import { useAuth } from './auth/useAuth.ts'
 import { ErrorMessage } from './components/ErrorMessage.tsx'
 import { LoginForm } from './components/LoginForm.tsx'
 import { UserMenu } from './components/UserMenu.tsx'
+import { createQueryClient } from './query/queryClient.ts'
 import { AppRouter } from './router/AppRouter.tsx'
 
-function AuthView() {
+type QueryClientFactory = (onSessionExpired: () => void) => QueryClient
+
+/**
+ * Everything a signed-in user sees. It owns the session's query client: made
+ * when the user signs in and gone, with all it holds, when this unmounts at
+ * sign-out or session expiry -- so the next person to sign in starts with
+ * nothing of the last one's.
+ */
+function SignedInApp({ createClient }: { createClient: QueryClientFactory }) {
+  const { sessionExpired } = useAuth()
+  const [queryClient] = useState(() => createClient(sessionExpired))
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AppRouter />
+    </QueryClientProvider>
+  )
+}
+
+function AuthView({ createClient }: { createClient: QueryClientFactory }) {
   const { state, retryRestore } = useAuth()
 
   switch (state.status) {
@@ -14,7 +37,7 @@ function AuthView() {
       return <LoginForm />
     case 'authenticated':
       // The only place the pages exist: nothing below here renders, or asks the API anything, until sign-in.
-      return <AppRouter />
+      return <SignedInApp createClient={createClient} />
     case 'error':
       return (
         <section aria-labelledby="restore-error-heading">
@@ -28,7 +51,8 @@ function AuthView() {
   }
 }
 
-function App() {
+/** `createClient` exists for tests, which need a query client that does not wait between retries. */
+function App({ createClient = createQueryClient }: { createClient?: QueryClientFactory }) {
   const { state } = useAuth()
 
   return (
@@ -38,7 +62,7 @@ function App() {
         {state.status === 'authenticated' && <UserMenu user={state.user} />}
       </header>
       <main>
-        <AuthView />
+        <AuthView createClient={createClient} />
       </main>
     </div>
   )

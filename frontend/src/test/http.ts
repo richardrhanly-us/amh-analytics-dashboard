@@ -69,14 +69,18 @@ export const ORGANIZATION_NOT_FOUND = { code: 'organization_not_found', message:
  * A handler runs once per matching request, so it can return a fresh Response (a Response body can be read
  * only once) or a promise the test settles later. A request with no handler fails like a dead network.
  */
-export function serveApi(routes: Record<string, () => Response | Promise<Response>>): FetchMock {
+export function serveApi(routes: ApiRoutes): FetchMock {
   const mock = stubFetch()
   mock.mockImplementation((url, init) => {
-    const handler = routes[`${init?.method ?? 'GET'} ${String(url)}`]
-    return handler === undefined ? Promise.reject(networkFailure()) : Promise.resolve(handler())
+    const request = `${init?.method ?? 'GET'} ${String(url)}`
+    // `?date=*` in a route answers that request for any date; the handler is given the URL to read it from.
+    const handler = routes[request] ?? routes[request.replace(/\?date=\d{4}-\d{2}-\d{2}$/, '?date=*')]
+    return handler === undefined ? Promise.reject(networkFailure()) : Promise.resolve(handler(String(url)))
   })
   return mock
 }
+
+export type ApiRoutes = Record<string, (url: string) => Response | Promise<Response>>
 
 export const NORTHBRIDGE = { slug: 'northbridge', name: 'Northbridge Library', role: 'admin', access_mode: 'full' }
 export const RIVERSIDE = { slug: 'riverside', name: 'Riverside Library', role: 'viewer', access_mode: 'read_only' }
@@ -99,4 +103,74 @@ export const RIVERSIDE_DETAIL = {
   branches: [{ slug: 'main', name: 'Riverside Main', is_primary: true }],
   subscription: null,
   entitlements: {},
+}
+
+export const TENANT_NOT_FOUND = { code: 'tenant_not_found', message: 'Organization or branch not found.' }
+
+export const REASON_CODES = [
+  'item_not_found',
+  'ils_acs_failure',
+  'rfid_collision',
+  'configuration_error',
+  'routing_error',
+  'communication_error',
+  'other',
+  'unknown',
+]
+
+/** What a branch's five Live Today reads answer. `hours` is 24 check-in counts; `reasons` is 8 reject counts. */
+export interface LiveFixture {
+  timezone: string
+  state: string
+  last_reported_at: string | null
+  hours: number[]
+  reasons: number[]
+}
+
+const hoursWith = (counts: Record<number, number>) => Array.from({ length: 24 }, (_, hour) => counts[hour] ?? 0)
+
+/** A branch mid-afternoon: 120 check-ins (busiest at 11 AM), 6 rejects. */
+export const LIVE: LiveFixture = {
+  timezone: 'America/Chicago',
+  state: 'ok',
+  last_reported_at: '2026-10-05T18:45:03Z',
+  hours: hoursWith({ 9: 20, 10: 25, 11: 40, 12: 18, 13: 17 }),
+  reasons: [3, 0, 1, 0, 0, 2, 0, 0],
+}
+
+const sum = (values: number[]) => values.reduce((total, value) => total + value, 0)
+const dateOf = (url: string) => new URL(url, 'http://test.invalid').searchParams.get('date')
+
+/** The exact body each of the five reads returns for `live`, for whichever date is asked. */
+export const liveBody = {
+  pipeline: (live: LiveFixture) => ({ timezone: live.timezone, state: live.state, last_reported_at: live.last_reported_at }),
+  checkinCount: (live: LiveFixture, date: string | null) => ({ date, timezone: live.timezone, checkin_count: sum(live.hours) }),
+  checkinsByHour: (live: LiveFixture, date: string | null) => ({
+    date,
+    timezone: live.timezone,
+    hours: live.hours.map((checkin_count, hour) => ({ hour, checkin_count })),
+  }),
+  rejectCount: (live: LiveFixture, date: string | null) => ({ date, timezone: live.timezone, reject_count: sum(live.reasons) }),
+  rejectsByReason: (live: LiveFixture, date: string | null) => ({
+    date,
+    timezone: live.timezone,
+    reasons: live.reasons.map((reject_count, index) => ({ reason: REASON_CODES[index], reject_count })),
+  }),
+}
+
+export function livePath(orgSlug: string, branchSlug: string): string {
+  return `/api/organizations/${orgSlug}/branches/${branchSlug}`
+}
+
+/** Routes for one branch's five Live Today reads. `live` may be a function, to answer differently over time. */
+export function liveRoutes(orgSlug: string, branchSlug: string, live: LiveFixture | (() => LiveFixture) = LIVE): ApiRoutes {
+  const base = `GET ${livePath(orgSlug, branchSlug)}`
+  const now = () => (typeof live === 'function' ? live() : live)
+  return {
+    [`${base}/pipeline-status`]: () => jsonResponse(200, liveBody.pipeline(now())),
+    [`${base}/checkins/count?date=*`]: (url) => jsonResponse(200, liveBody.checkinCount(now(), dateOf(url))),
+    [`${base}/checkins/by-hour?date=*`]: (url) => jsonResponse(200, liveBody.checkinsByHour(now(), dateOf(url))),
+    [`${base}/rejects/count?date=*`]: (url) => jsonResponse(200, liveBody.rejectCount(now(), dateOf(url))),
+    [`${base}/rejects/by-reason?date=*`]: (url) => jsonResponse(200, liveBody.rejectsByReason(now(), dateOf(url))),
+  }
 }
