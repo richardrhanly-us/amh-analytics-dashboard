@@ -64,6 +64,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
 import main
+from services import tenant_resolution_service
 from tenant_db import apply_tenant_context, tenant_connection
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -645,3 +646,122 @@ def test_tenant_connection_context_ends_with_the_block(owner_engine, runtime_eng
             assert conn.execute(text("SELECT COUNT(*) FROM checkins")).scalar() == 0
     finally:
         single.dispose()
+
+
+# --- operational tenant resolver (services/tenant_resolution_service.py), as the runtime role ---
+#
+# The resolver turns (user, organization slug, branch slug) into the
+# operational ids that tenant_connection then applies as the RLS context.
+# These tests run it against the real schema -- with its real UNIQUE / CHECK /
+# FK constraints -- as the non-owning runtime role, and then use the ids it
+# returns to read an RLS-protected table.
+
+USER_A, USER_B = 9001, 9002
+BRANCH_B_NORTH = 23  # a second branch, in tenant B only
+
+
+def _seed_members(owner_engine, runtime_engine) -> None:
+    """Adds what the resolver reads on top of _seed's two tenants: one user
+    per organization, and a second branch ("north") in tenant B. Both tenants
+    already have a branch whose slug is "main"."""
+    role = runtime_engine.url.username
+    with owner_engine.begin() as conn:
+        conn.execute(text("TRUNCATE app_users RESTART IDENTITY CASCADE"))
+        for user_id, org_id in ((USER_A, 1), (USER_B, 2)):
+            conn.execute(
+                text("INSERT INTO app_users (id, email, is_active) VALUES (:u, :e, TRUE)"),
+                {"u": user_id, "e": f"user-{user_id}@example.invalid"},
+            )
+            conn.execute(
+                text("INSERT INTO memberships (organization_id, user_id, role) VALUES (:o, :u, 'admin')"),
+                {"o": org_id, "u": user_id},
+            )
+        conn.execute(text(
+            "INSERT INTO branches (id, organization_id, slug, name, status, operational_branch_id) "
+            "VALUES (:b, 2, 'north', 'North', 'active', :b)"
+        ), {"b": BRANCH_B_NORTH})
+        # Production sortview_app holds SELECT on both (scripts/runtime_role_privileges.py);
+        # the phase 1 role above was only given what the ingestion endpoints need.
+        conn.execute(text(f"GRANT SELECT ON TABLE public.memberships, public.app_users TO {role}"))  # nosec B608
+
+
+@pytest.fixture
+def resolver(owner_engine, runtime_engine, monkeypatch):
+    _seed_members(owner_engine, runtime_engine)
+    monkeypatch.setattr(tenant_resolution_service, "get_engine", lambda: runtime_engine)
+    return tenant_resolution_service.resolve_operational_tenant
+
+
+def _barcodes_visible_to(runtime_engine, resolved) -> list[str]:
+    # deliberately unscoped: only the RLS context built from the resolved ids restricts the rows
+    with tenant_connection(runtime_engine, resolved.operational_customer_id, resolved.operational_branch_id) as conn:
+        return sorted(row[0] for row in conn.execute(text("SELECT barcode FROM checkins")).fetchall())
+
+
+def test_resolved_ids_scope_an_rls_read_to_exactly_that_tenant(owner_engine, runtime_engine, resolver):
+    with owner_engine.begin() as conn:
+        _insert_checkin(conn, CUSTOMER_A, BRANCH_A, "CANARY-RESOLVE-A")
+        _insert_checkin(conn, CUSTOMER_B, BRANCH_B, "CANARY-RESOLVE-B-MAIN")
+        _insert_checkin(conn, CUSTOMER_B, BRANCH_B_NORTH, "CANARY-RESOLVE-B-NORTH")
+
+    resolved_a = resolver(USER_A, "tenant-a", "main")
+    resolved_b_main = resolver(USER_B, "tenant-b", "main")
+    resolved_b_north = resolver(USER_B, "tenant-b", "north")
+
+    assert (resolved_a.operational_customer_id, resolved_a.operational_branch_id) == (CUSTOMER_A, BRANCH_A)
+    assert (resolved_b_main.operational_customer_id, resolved_b_main.operational_branch_id) == (CUSTOMER_B, BRANCH_B)
+    assert resolved_b_north.operational_branch_id == BRANCH_B_NORTH
+    assert resolved_a.access_mode == "full"
+    assert _barcodes_visible_to(runtime_engine, resolved_a) == ["CANARY-RESOLVE-A"]
+    assert _barcodes_visible_to(runtime_engine, resolved_b_main) == ["CANARY-RESOLVE-B-MAIN"]
+    assert _barcodes_visible_to(runtime_engine, resolved_b_north) == ["CANARY-RESOLVE-B-NORTH"]
+
+
+def test_a_user_cannot_resolve_another_organization_or_its_branch(resolver):
+    # Not a member of tenant B at all.
+    assert resolver(USER_A, "tenant-b", "main") is None
+    assert resolver(USER_A, "tenant-b", "north") is None
+    # A member of tenant A, naming a branch that exists only in tenant B.
+    assert resolver(USER_A, "tenant-a", "north") is None
+    # Both tenants have a "main": the user's own organization decides which one.
+    resolved = resolver(USER_A, "tenant-a", "main")
+    assert (resolved.operational_customer_id, resolved.operational_branch_id) == (CUSTOMER_A, BRANCH_A)
+    assert resolver(USER_B, "tenant-a", "main") is None
+
+
+def test_resolution_follows_organization_and_branch_state_on_the_real_schema(owner_engine, resolver):
+    def set_state(sql: str) -> None:
+        with owner_engine.begin() as conn:
+            conn.execute(text(sql))
+
+    set_state("UPDATE organizations SET status = 'suspended' WHERE slug = 'tenant-a'")
+    assert resolver(USER_A, "tenant-a", "main").access_mode == "read_only"
+
+    set_state("UPDATE organizations SET status = 'cancelled' WHERE slug = 'tenant-a'")
+    assert resolver(USER_A, "tenant-a", "main") is None
+
+    set_state("UPDATE organizations SET status = 'active', operational_customer_id = NULL WHERE slug = 'tenant-a'")
+    assert resolver(USER_A, "tenant-a", "main") is None
+
+    set_state("UPDATE branches SET status = 'inactive' WHERE id = 22")
+    assert resolver(USER_B, "tenant-b", "main") is None
+    assert resolver(USER_B, "tenant-b", "north") is not None  # no substitution, in either direction
+
+    set_state("UPDATE branches SET status = 'active', operational_branch_id = NULL WHERE id = 22")
+    assert resolver(USER_B, "tenant-b", "main") is None
+
+    set_state("UPDATE app_users SET is_active = FALSE WHERE id = 9002")
+    assert resolver(USER_B, "tenant-b", "north") is None
+
+
+def test_the_resolver_needs_no_tenant_context_and_leaves_none_behind(runtime_engine, resolver):
+    # It reads SaaS tables, which are outside operational RLS, and sets nothing.
+    assert resolver(USER_A, "tenant-a", "main") is not None
+
+    with runtime_engine.connect() as conn:
+        settings = conn.execute(text(
+            "SELECT current_setting('app.operational_customer_id', true), "
+            "current_setting('app.operational_branch_id', true)"
+        )).one()
+        assert all(value in (None, "") for value in settings)
+        assert conn.execute(text("SELECT COUNT(*) FROM checkins")).scalar() == 0
