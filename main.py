@@ -3,8 +3,10 @@ import json
 import logging
 import os
 import re
+import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Literal, NoReturn
 
 import sentry_sdk
@@ -40,6 +42,18 @@ from src.services.privacy_hardening import (
     safe_validation_body,
     safe_validation_errors,
 )
+
+# Customer API import seam (transitional). The framework-neutral services the customer API uses
+# (services.auth_service, services.session_service, services.access_service, ..., database, tenant_db) import each
+# other "flat", with src/ as the import root -- the layout Streamlit and the tests already give them. This process
+# starts from the repository root, so src/ is added to sys.path here: once, derived from this file's location (never
+# the working directory), and APPENDED, so nothing the collector routes import can be shadowed by a module in src/.
+# Everything above this line -- the collector's own `src.services.*` imports -- resolved before it and is unaffected.
+_SRC_DIR = str(Path(__file__).resolve().parent / "src")
+if _SRC_DIR not in sys.path:
+    sys.path.append(_SRC_DIR)
+
+from customer_api.router import create_customer_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -1179,3 +1193,8 @@ def status_v2(request: Request, data: StatusV2Request, authorization: str | None
 
 app.include_router(v2_upload_router)
 app.include_router(v2_status_router)
+
+# Customer-facing (browser) routes, under /api. See src/customer_api/. The router is built around this app's own
+# limiter, so customer code never imports this module; collector limits above are separate per-route buckets.
+customer_router = create_customer_router(limiter)
+app.include_router(customer_router)
