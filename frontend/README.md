@@ -3,11 +3,30 @@
 The SortView customer web app: a React + TypeScript single-page app built
 with Vite. It is a static SPA. There is no server-side rendering.
 
-**Status: Block F2, authentication shell.** The app restores a session, signs
-in and signs out against the customer API (`/api/auth/*`), and shows a
-placeholder once signed in. There is no routing, organization or branch
-selection, or dashboard data yet. Nothing in this directory is used by the
-Python backend, the Streamlit app or the collector.
+**Status: Block F3, organization and branch selection.** The app restores a
+session, signs in and signs out against the customer API (`/api/auth/*`),
+lists the signed-in user's organizations and lets them choose a branch. The
+branch page is a placeholder: there is no dashboard data yet. Nothing in this
+directory is used by the Python backend, the Streamlit app or the collector.
+
+## Routes
+
+Routing is React Router in the browser, and exists only once signed in.
+Signed out, every address shows the sign-in form and keeps its place, so
+signing in lands on the page that was asked for.
+
+| Address | Page |
+| --- | --- |
+| `/` | Redirects to `/organizations` |
+| `/organizations` | The user's organizations (`GET /api/organizations`) |
+| `/organizations/:orgSlug` | One organization and its branches (`GET /api/organizations/{org_slug}`) |
+| `/organizations/:orgSlug/branches/:branchSlug` | The selected branch (placeholder; no request of its own) |
+| anything else | Not found |
+
+Organizations and branches appear in addresses by slug only. The API decides
+what a user can see: an organization it does not return, and a branch that is
+not in the organization it returns, both get the same "not found" page as an
+unknown address. A `401` from the API returns the app to the sign-in form.
 
 ## Requirements
 

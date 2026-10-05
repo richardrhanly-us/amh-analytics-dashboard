@@ -20,7 +20,7 @@ import { useAuth } from './useAuth.ts'
 
 /** Shows the auth state as text and exposes each action as a button. */
 function Probe() {
-  const { state, login, logout, retryRestore } = useAuth()
+  const { state, login, logout, retryRestore, sessionExpired } = useAuth()
   const [outcome, setOutcome] = useState('')
   const [renders, setRenders] = useState(0)
 
@@ -41,6 +41,7 @@ function Probe() {
       <button onClick={() => run(login('alice@example.test', 'pw'))}>login</button>
       <button onClick={() => run(logout())}>logout</button>
       <button onClick={retryRestore}>retry</button>
+      <button onClick={sessionExpired}>expire</button>
       <button onClick={() => setRenders((count) => count + 1)}>rerender</button>
     </div>
   )
@@ -224,6 +225,36 @@ describe('logout', () => {
     await waitFor(() => expect(screen.getByTestId('outcome').textContent).toMatch(/^rejected: /))
     expect(status()).toBe('authenticated')
     expect(screen.getByTestId('user')).toHaveTextContent('alice@example.test')
+  })
+})
+
+describe('a session that ended on the server', () => {
+  it('drops the user and becomes unauthenticated, with no request', async () => {
+    const user = userEvent.setup()
+    const fetchMock = stubFetch()
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, ALICE))
+
+    renderProbe()
+    await settled('authenticated')
+    await user.click(screen.getByRole('button', { name: 'expire' }))
+
+    expect(status()).toBe('unauthenticated')
+    expect(screen.getByTestId('user')).toHaveTextContent('')
+    expect(requestedUrls(fetchMock)).toEqual(['/api/auth/session'])
+  })
+
+  it('can be followed by a new login', async () => {
+    const user = userEvent.setup()
+    const fetchMock = stubFetch()
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, ALICE)).mockResolvedValueOnce(jsonResponse(200, ALICE))
+
+    renderProbe()
+    await settled('authenticated')
+    await user.click(screen.getByRole('button', { name: 'expire' }))
+    await user.click(screen.getByRole('button', { name: 'login' }))
+
+    await settled('authenticated')
+    expect(requestedUrls(fetchMock)).toEqual(['/api/auth/session', '/api/auth/login'])
   })
 })
 

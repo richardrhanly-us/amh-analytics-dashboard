@@ -1,9 +1,7 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import App from './App.tsx'
-import { AuthProvider } from './auth/AuthProvider.tsx'
 import {
   ALICE,
   callOf,
@@ -18,20 +16,23 @@ import {
   requestedUrls,
   stubFetch,
 } from './test/http.ts'
+import { renderApp } from './test/render.tsx'
 
 const PASSWORD = '  Pä$$ w0rd"\\ é  '
 
-function renderApp() {
-  return render(
-    <AuthProvider>
-      <App />
-    </AuthProvider>,
-  )
+/**
+ * A stubbed fetch for the whole app. Responses queued with mockResolvedValueOnce and friends are used first;
+ * any other request -- once signed in, the app asks for the organization list -- gets an empty list.
+ */
+function stubApp(): FetchMock {
+  const fetchMock = stubFetch()
+  fetchMock.mockImplementation(() => Promise.resolve(jsonResponse(200, [])))
+  return fetchMock
 }
 
 /** Renders the app for a visitor with no session and waits for the sign-in form. */
 async function renderSignedOut(): Promise<FetchMock> {
-  const fetchMock = stubFetch()
+  const fetchMock = stubApp()
   fetchMock.mockResolvedValueOnce(jsonResponse(401, NOT_AUTHENTICATED))
   renderApp()
   await screen.findByRole('button', { name: 'Sign in' })
@@ -40,11 +41,17 @@ async function renderSignedOut(): Promise<FetchMock> {
 
 /** Renders the app for a visitor whose session restores as ALICE and waits for the shell. */
 async function renderSignedIn(user: typeof ALICE = ALICE): Promise<FetchMock> {
-  const fetchMock = stubFetch()
+  const fetchMock = stubApp()
   fetchMock.mockResolvedValueOnce(jsonResponse(200, user))
   renderApp()
   await screen.findByRole('button', { name: 'Sign out' })
+  await landed()
   return fetchMock
+}
+
+/** Waits until the signed-in app has asked for, and shown, its (empty) organization list. */
+async function landed() {
+  await screen.findByText('Your account does not have access to any organizations.')
 }
 
 const emailInput = () => screen.getByLabelText('Email')
@@ -73,7 +80,7 @@ describe('while the session is being restored', () => {
 
   it('shows a recoverable error, not the sign-in form, when the check fails', async () => {
     const user = userEvent.setup()
-    const fetchMock = stubFetch()
+    const fetchMock = stubApp()
     fetchMock.mockRejectedValueOnce(networkFailure()).mockResolvedValueOnce(jsonResponse(200, ALICE))
 
     renderApp()
@@ -155,18 +162,21 @@ describe('the sign-in form', () => {
     expect(await screen.findByText('Alice Example')).toBeInTheDocument()
     expect(screen.getByText('alice@example.test')).toBeInTheDocument()
     expect(screen.queryByLabelText('Password')).not.toBeInTheDocument()
-    expect(requestedUrls(fetchMock)).toEqual(['/api/auth/session', '/api/auth/login'])
+    expect(requestedUrls(fetchMock)).toEqual(['/api/auth/session', '/api/auth/login', '/api/organizations'])
   })
 
   it('does not bring the password back when the form is shown again after signing out', async () => {
     const user = userEvent.setup()
     const fetchMock = await renderSignedOut()
-    fetchMock.mockResolvedValueOnce(jsonResponse(200, ALICE)).mockResolvedValueOnce(noContent())
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, ALICE))
 
     await user.type(emailInput(), 'alice@example.test')
     await user.type(passwordInput(), 'pw')
     await user.click(screen.getByRole('button', { name: 'Sign in' }))
-    await user.click(await screen.findByRole('button', { name: 'Sign out' }))
+    const signOut = await screen.findByRole('button', { name: 'Sign out' })
+    await landed()
+    fetchMock.mockResolvedValueOnce(noContent())
+    await user.click(signOut)
 
     await screen.findByRole('button', { name: 'Sign in' })
     expect(passwordInput()).toHaveValue('')
@@ -268,14 +278,14 @@ describe('the sign-in form', () => {
   })
 })
 
-describe('the signed-in shell', () => {
-  it('shows the SortView heading, who is signed in and the placeholder', async () => {
+describe('the signed-in header', () => {
+  it('shows the SortView heading and who is signed in', async () => {
     await renderSignedIn()
 
     expect(screen.getByRole('heading', { level: 1, name: 'SortView' })).toBeInTheDocument()
     expect(screen.getByText('Alice Example')).toBeInTheDocument()
     expect(screen.getByText('alice@example.test')).toBeInTheDocument()
-    expect(screen.getByText('Dashboard migration in progress.')).toBeInTheDocument()
+    expect(screen.getByRole('banner')).toContainElement(screen.getByRole('button', { name: 'Sign out' }))
   })
 
   it('shows just the email for a user with no name', async () => {
@@ -295,8 +305,8 @@ describe('the signed-in shell', () => {
 
     expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument()
     expect(screen.queryByText('alice@example.test')).not.toBeInTheDocument()
-    expect(requestedUrls(fetchMock)).toEqual(['/api/auth/session', '/api/auth/logout'])
-    expect(callOf(fetchMock, 1).init.method).toBe('POST')
+    expect(requestedUrls(fetchMock)).toEqual(['/api/auth/session', '/api/organizations', '/api/auth/logout'])
+    expect(callOf(fetchMock, 2).init.method).toBe('POST')
   })
 
   it('disables the button while a logout is in flight', async () => {
@@ -335,12 +345,13 @@ describe('the signed-in shell', () => {
 
   it('contains nothing of the dashboard yet', async () => {
     const fetchMock = await renderSignedIn()
+    await screen.findByText('Your account does not have access to any organizations.')
 
-    for (const role of ['navigation', 'link', 'combobox', 'listbox', 'table', 'img', 'tab', 'textbox']) {
+    for (const role of ['combobox', 'listbox', 'table', 'img', 'tab', 'textbox']) {
       expect(screen.queryByRole(role)).not.toBeInTheDocument()
     }
-    expect(screen.getAllByRole('button')).toHaveLength(1)
-    expect(document.body.textContent).not.toMatch(/organization|branch|library|reject|items|today|\d{2,}/i)
-    expect(requestedUrls(fetchMock)).toEqual(['/api/auth/session'])
+    expect(within(screen.getByRole('main')).queryByRole('button')).not.toBeInTheDocument()
+    expect(screen.getByRole('main').textContent).not.toMatch(/reject|check-?in|pipeline|items|today|\d{2,}/i)
+    expect(requestedUrls(fetchMock)).toEqual(['/api/auth/session', '/api/organizations'])
   })
 })
