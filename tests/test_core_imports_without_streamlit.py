@@ -32,6 +32,9 @@ STREAMLIT_FREE_MODULES = [
     "services.entitlement_service",
     "customer_api.router",
     "services.tenant_resolution_service",
+    "services.operational_read_service",
+    "customer_api.tenant_scope",
+    "customer_api.operational_routes",
 ]
 
 

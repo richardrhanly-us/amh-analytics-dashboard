@@ -63,8 +63,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
+import database
 import main
-from services import tenant_resolution_service
+from customer_api import tenant_scope
+from services import session_service, tenant_resolution_service
 from tenant_db import apply_tenant_context, tenant_connection
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -765,3 +767,173 @@ def test_the_resolver_needs_no_tenant_context_and_leaves_none_behind(runtime_eng
         )).one()
         assert all(value in (None, "") for value in settings)
         assert conn.execute(text("SELECT COUNT(*) FROM checkins")).scalar() == 0
+
+
+# --- GET /api/organizations/{org}/branches/{branch}/ingest-status, end to end, as the runtime role ---
+#
+# The first customer route that reads an RLS-protected table. Only the
+# authenticated user is stubbed (the runtime role in this harness has no
+# grant on auth_sessions). Everything after authentication is real: the
+# tenant-scope dependency, the tenant resolver, tenant_connection, the
+# context read-back, the read service's SQL, the RLS policy on
+# ingest_key_ids, and the response serialization.
+
+INGEST_STATUS_PATH = "/api/organizations/{org}/branches/{branch}/ingest-status"
+INGEST_STATUS_FIELDS = {
+    "health_status", "last_error_class", "pending_outbox_count", "quarantined_count", "oldest_pending_event_at",
+    "last_success_at", "watcher_last_active_at", "last_heartbeat_at", "collector_last_run_at",
+    "collector_next_run_at", "collector_run_duration_ms", "collector_schedule_status",
+}
+TENANT_NOT_FOUND = {"code": "tenant_not_found", "message": "Organization or branch not found."}
+
+SESSION_A, SESSION_B = "synthetic-session-a", "synthetic-session-b"
+_SESSION_USERS = {
+    SESSION_A: {"id": USER_A, "email": f"user-{USER_A}@example.invalid", "full_name": ""},
+    SESSION_B: {"id": USER_B, "email": f"user-{USER_B}@example.invalid", "full_name": ""},
+}
+KEY_A = "3db44444-931c-43cc-af3c-b1001443e761"
+KEY_B_MAIN = "6b0c9b37-aba4-4c93-b09b-c562977ff157"
+KEY_B_NORTH = "ced68da9-90c0-4d06-91fb-c6ffebf31b93"
+
+
+def _insert_ingest_status(conn, customer_id, branch_id, key_id, health_status, minutes_ago) -> None:
+    conn.execute(text("""
+        INSERT INTO ingest_key_ids (key_id, customer_id, branch_id, algorithm, status, health_status, last_heartbeat_at)
+        VALUES (:k, :c, :b, 'hmac-sha256-v1', 'active', :h, now() - make_interval(mins => :m))
+    """), {"k": key_id, "c": customer_id, "b": branch_id, "h": health_status, "m": minutes_ago})
+
+
+@pytest.fixture
+def customer_api(owner_engine, runtime_engine, monkeypatch):
+    """The real customer API with the runtime role as its database engine.
+
+    Tenant A's status is the OLDEST of the three: any read that was not
+    scoped to its own tenant would pick one of tenant B's newer rows."""
+    _seed_members(owner_engine, runtime_engine)
+    with owner_engine.begin() as conn:
+        _insert_ingest_status(conn, CUSTOMER_A, BRANCH_A, KEY_A, "healthy", 30)
+        _insert_ingest_status(conn, CUSTOMER_B, BRANCH_B, KEY_B_MAIN, "error", 5)
+        _insert_ingest_status(conn, CUSTOMER_B, BRANCH_B_NORTH, KEY_B_NORTH, "degraded", 1)
+
+    # The one flat database engine both the resolver and the tenant scope use.
+    monkeypatch.setattr(database, "_engine", runtime_engine)
+    monkeypatch.setattr(session_service, "validate_session", lambda raw_token: _SESSION_USERS.get(raw_token))
+    monkeypatch.delenv("SORTVIEW_CUSTOMER_COOKIE_SECURE", raising=False)
+    return TestClient(main.app, raise_server_exceptions=False)
+
+
+def _ingest_status(client, session, org, branch):
+    return client.get(
+        INGEST_STATUS_PATH.format(org=org, branch=branch),
+        headers={"Cookie": f"__Host-sortview_api_session={session}"},
+    )
+
+
+def test_ingest_status_route_returns_each_user_only_their_own_branch_status(customer_api):
+    a = _ingest_status(customer_api, SESSION_A, "tenant-a", "main")
+    b_main = _ingest_status(customer_api, SESSION_B, "tenant-b", "main")
+    b_north = _ingest_status(customer_api, SESSION_B, "tenant-b", "north")
+
+    assert (a.status_code, b_main.status_code, b_north.status_code) == (200, 200, 200)
+    # Tenant B's rows are both newer than tenant A's; neither may win for user A.
+    assert a.json()["status"]["health_status"] == "healthy"
+    assert b_main.json()["status"]["health_status"] == "error"
+    assert b_north.json()["status"]["health_status"] == "degraded"
+
+    assert set(a.json()) == {"status"}
+    assert set(a.json()["status"]) == INGEST_STATUS_FIELDS
+    assert datetime.fromisoformat(a.json()["status"]["last_heartbeat_at"]).tzinfo is not None
+    for key_id in (KEY_A, KEY_B_MAIN, KEY_B_NORTH):
+        assert key_id not in a.text + b_main.text + b_north.text
+
+
+def test_ingest_status_route_refuses_another_tenants_organization_or_branch(customer_api):
+    refused = [
+        _ingest_status(customer_api, SESSION_A, "tenant-b", "main"),    # not a member of tenant B
+        _ingest_status(customer_api, SESSION_A, "tenant-b", "north"),
+        _ingest_status(customer_api, SESSION_A, "tenant-a", "north"),   # tenant B's branch slug under tenant A
+        _ingest_status(customer_api, SESSION_B, "tenant-a", "main"),
+    ]
+
+    for response in refused:
+        assert response.status_code == 404
+        assert response.json() == TENANT_NOT_FOUND
+        assert "degraded" not in response.text and "error" not in response.text.replace("not_found", "")
+
+
+def test_ingest_status_route_reports_no_status_when_only_other_tenants_have_an_active_key(owner_engine, customer_api):
+    with owner_engine.begin() as conn:
+        conn.execute(
+            text("UPDATE ingest_key_ids SET status = 'retired', retired_at = now() WHERE customer_id = :c"),
+            {"c": CUSTOMER_A},
+        )
+
+    response = _ingest_status(customer_api, SESSION_A, "tenant-a", "main")
+
+    # Tenant B still has two active keys. A valid tenant with none of its own gets "no status", never B's.
+    assert response.status_code == 200
+    assert response.json() == {"status": None}
+    assert _ingest_status(customer_api, SESSION_B, "tenant-b", "main").json()["status"]["health_status"] == "error"
+
+
+def test_ingest_status_route_requires_a_session(customer_api):
+    response = customer_api.get(INGEST_STATUS_PATH.format(org="tenant-a", branch="main"))
+
+    assert response.status_code == 401
+
+
+def test_the_production_tenant_connection_is_verified_and_scoped_by_rls(customer_api, runtime_engine):
+    resolved_a = tenant_resolution_service.resolve_operational_tenant(USER_A, "tenant-a", "main")
+    resolved_b = tenant_resolution_service.resolve_operational_tenant(USER_B, "tenant-b", "main")
+
+    with tenant_scope.open_customer_tenant_connection(resolved_a) as conn:
+        # The context read-back passed against a real server, and these are the values it saw.
+        settings = conn.execute(text(
+            "SELECT current_setting('app.operational_customer_id', true), "
+            "current_setting('app.operational_branch_id', true)"
+        )).one()
+        assert tuple(settings) == (str(CUSTOMER_A), str(BRANCH_A))
+
+        # deliberately unscoped: no WHERE clause, so only RLS can be restricting this to tenant A's row
+        assert conn.execute(text("SELECT health_status FROM ingest_key_ids")).scalars().all() == ["healthy"]
+
+        # The real read-back refuses this very connection for any other tenant.
+        with pytest.raises(tenant_scope.TenantContextError):
+            tenant_scope._verify_tenant_context(conn, resolved_b)
+
+    # ...and refuses a connection that carries no tenant context at all.
+    with runtime_engine.connect() as conn, pytest.raises(tenant_scope.TenantContextError):
+        tenant_scope._verify_tenant_context(conn, resolved_a)
+
+
+def test_sequential_requests_on_one_pooled_connection_never_see_each_others_tenant(
+    customer_api, runtime_engine, monkeypatch
+):
+    # A one-connection pool makes the reuse deterministic: every request below
+    # -- resolver query and tenant-scoped read alike -- runs on the same server backend.
+    single = create_engine(runtime_engine.url, pool_size=1, max_overflow=0, hide_parameters=True)
+    monkeypatch.setattr(database, "_engine", single)
+    try:
+        seen = [
+            _ingest_status(customer_api, session, org, branch).json()["status"]["health_status"]
+            for session, org, branch in (
+                (SESSION_A, "tenant-a", "main"),
+                (SESSION_B, "tenant-b", "main"),
+                (SESSION_A, "tenant-a", "main"),
+                (SESSION_B, "tenant-b", "north"),
+                (SESSION_A, "tenant-a", "main"),
+            )
+        ]
+        assert seen == ["healthy", "error", "healthy", "degraded", "healthy"]
+        assert _ingest_status(customer_api, SESSION_A, "tenant-b", "main").status_code == 404
+
+        # Nothing of any request's tenant context is left on the pooled connection.
+        with single.connect() as conn:
+            settings = conn.execute(text(
+                "SELECT current_setting('app.operational_customer_id', true), "
+                "current_setting('app.operational_branch_id', true)"
+            )).one()
+            assert all(value in (None, "") for value in settings)
+            assert conn.execute(text("SELECT COUNT(*) FROM ingest_key_ids")).scalar() == 0
+    finally:
+        single.dispose()

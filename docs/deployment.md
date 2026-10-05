@@ -20,6 +20,10 @@ The backend API is responsible for:
 - receiving `/upload-pipeline-status`
 - authenticating the AMH agent
 - writing data into Neon
+- serving the customer (browser) API under `/api`: session login and logout, the
+  signed-in user's organization context, and one read-only operational endpoint,
+  `GET /api/organizations/{org_slug}/branches/{branch_slug}/ingest-status`
+  (a branch's latest Contract v2 collector status, or `status: null` if it has none)
 
 Typical backend deployment flow:
 
