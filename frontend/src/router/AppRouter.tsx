@@ -1,10 +1,12 @@
-import { Navigate, Route, Routes } from 'react-router'
+import { useRef } from 'react'
+import { Navigate, Route, Routes, useLocation } from 'react-router'
 
 import { BranchPage } from '../pages/BranchPage.tsx'
 import { NotFoundPage } from '../pages/NotFoundPage.tsx'
 import { OrganizationLayout } from '../pages/OrganizationLayout.tsx'
 import { OrganizationPage } from '../pages/OrganizationPage.tsx'
 import { OrganizationsPage } from '../pages/OrganizationsPage.tsx'
+import { PageArrivalContext } from './PageArrivalContext.ts'
 import { ORGANIZATIONS_PATH } from './paths.ts'
 
 /**
@@ -14,15 +16,20 @@ import { ORGANIZATIONS_PATH } from './paths.ts'
  * before sign-in.
  */
 export function AppRouter() {
+  // The entry the signed-in app opens on counts as already introduced: see PageHeading.
+  const introducedRef = useRef(useLocation().key)
+
   return (
-    <Routes>
-      <Route index element={<Navigate to={ORGANIZATIONS_PATH} replace />} />
-      <Route path="organizations" element={<OrganizationsPage />} />
-      <Route path="organizations/:orgSlug" element={<OrganizationLayout />}>
-        <Route index element={<OrganizationPage />} />
-        <Route path="branches/:branchSlug" element={<BranchPage />} />
-      </Route>
-      <Route path="*" element={<NotFoundPage />} />
-    </Routes>
+    <PageArrivalContext value={introducedRef}>
+      <Routes>
+        <Route index element={<Navigate to={ORGANIZATIONS_PATH} replace />} />
+        <Route path="organizations" element={<OrganizationsPage />} />
+        <Route path="organizations/:orgSlug" element={<OrganizationLayout />}>
+          <Route index element={<OrganizationPage />} />
+          <Route path="branches/:branchSlug" element={<BranchPage />} />
+        </Route>
+        <Route path="*" element={<NotFoundPage />} />
+      </Routes>
+    </PageArrivalContext>
   )
 }

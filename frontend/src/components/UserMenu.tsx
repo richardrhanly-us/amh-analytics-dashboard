@@ -41,7 +41,8 @@ export function UserMenu({ user }: { user: User }) {
         <span className="identity-email">{user.email}</span>
       </p>
 
-      <button type="button" onClick={handleLogout} disabled={signingOut}>
+      {/* Unavailable while signing out, but not `disabled`: a disabled button drops keyboard focus. */}
+      <button type="button" onClick={handleLogout} aria-disabled={signingOut}>
         {signingOut ? 'Signing out…' : 'Sign out'}
       </button>
 

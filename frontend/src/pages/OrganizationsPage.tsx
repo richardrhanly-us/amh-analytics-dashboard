@@ -2,6 +2,7 @@ import { Link } from 'react-router'
 
 import { listOrganizations, type OrganizationSummary } from '../api/organizations.ts'
 import { LoadFailure } from '../components/LoadFailure.tsx'
+import { PageHeading } from '../components/PageHeading.tsx'
 import { useResource } from '../hooks/useResource.ts'
 import { organizationPath } from '../router/paths.ts'
 import { roleLabel } from './labels.ts'
@@ -27,8 +28,8 @@ export function OrganizationsPage() {
   const { resource, retry } = useResource('', loadOrganizations)
 
   return (
-    <section aria-labelledby="organizations-heading">
-      <h2 id="organizations-heading">Organizations</h2>
+    <>
+      <PageHeading>Organizations</PageHeading>
 
       {resource.status === 'loading' && <p role="status">Loading organizations…</p>}
 
@@ -49,6 +50,6 @@ export function OrganizationsPage() {
             ))}
           </ul>
         ))}
-    </section>
+    </>
   )
 }

@@ -68,7 +68,8 @@ export function LoginForm() {
         />
       </div>
 
-      <button type="submit" disabled={submitting}>
+      {/* Unavailable while signing in, but not `disabled`: a disabled button drops keyboard focus. */}
+      <button type="submit" aria-disabled={submitting}>
         {submitting ? 'Signing in…' : 'Sign in'}
       </button>
     </form>

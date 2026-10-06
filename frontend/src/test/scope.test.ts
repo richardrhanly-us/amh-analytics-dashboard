@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import packageJson from '../../package.json?raw'
+import css from '../index.css?raw'
 
 /**
  * Guards on what this block is allowed to contain. They read the shipped
@@ -39,8 +40,15 @@ describe('scope of this block', () => {
     ['a UI or chart framework', /tailwind|^@mui\/|bootstrap|chart|recharts|^d3|visx|nivo|victory|plotly/],
     ['a date library', /^(moment.*|dayjs|date-fns.*|luxon|@js-joda\/.*|spacetime|temporal-polyfill|@date-io\/.*)$/],
     ['a browser test runner', /playwright|cypress/],
+    ['a component library', /^@radix-ui\/|^@headlessui\/|^@chakra-ui\/|^antd$|^@mantine\/|^react-aria|^@emotion\/|styled-components|^sass$|^less$|postcss/],
+    ['an icon library', /icon|lucide|fontawesome|feather|phosphor/],
+    ['an accessibility test library', /axe|pa11y|lighthouse/],
   ])('does not depend on %s', (_label, pattern) => {
     expect(installed.filter((name) => pattern.test(name))).toEqual([])
+  })
+
+  it('runs on exactly the four libraries it had before the dashboard was drawn', () => {
+    expect(Object.keys(manifest.dependencies ?? {}).sort()).toEqual(['@tanstack/react-query', 'react', 'react-dom', 'react-router'])
   })
 
   it('imports none of those libraries either', () => {
@@ -129,5 +137,78 @@ describe('scope of this block', () => {
     expect(paths).toMatch(/encodeURIComponent\(orgSlug\)/)
     expect(paths).toMatch(/encodeURIComponent\(branchSlug\)/)
     expect(paths).not.toMatch(/\d/)
+  })
+
+  it('offers nothing beyond today: no other dates, reports, exports or administration', () => {
+    expect(offenders(/type="date"|datetime-local|<select|download=|text\/csv|Blob\(|createObjectURL/)).toEqual([])
+    expect(offenders(/\b(Overview|Reports?|Historical|Export|Administration|Settings|Reset password|Change password)\b(?! dashboard data)/)).toEqual([])
+  })
+})
+
+describe('how the dashboard is drawn', () => {
+  const chart = shipped.find(([path]) => path === '../liveToday/HourlyCheckinsChart.tsx')?.[1] ?? ''
+  const markup = shipped.filter(([path]) => path.endsWith('.tsx'))
+
+  it('draws the chart as SVG that stretches, and measures nothing', () => {
+    expect(chart).toMatch(/<svg viewBox=/)
+    expect(chart).toMatch(/preserveAspectRatio="none"/)
+    expect(offenders(/ResizeObserver|getBoundingClientRect|offsetWidth|clientWidth|innerWidth|matchMedia|addEventListener\(\s*['"]resize/)).toEqual([])
+    expect(offenders(/<canvas|<img\b|\.(png|jpe?g|gif|webp|svg)['"]/)).toEqual([])
+  })
+
+  it('gives the chart no hover-only details and no bar anyone can focus', () => {
+    expect(chart).not.toMatch(/onMouse|onPointer|onFocus|onClick|onKey|tabIndex|<title|\btitle=/)
+    expect(offenders(/\btitle=|onMouseEnter|onMouseOver|onPointerEnter|:hover/)).toEqual([])
+  })
+
+  it('lays out with grid and flex that reflow, never a fixed desktop width', () => {
+    expect(css).toMatch(/\.metrics \{[^}]*grid-template-columns: repeat\(auto-fit, minmax\([\d.]+rem, 1fr\)\)/)
+    expect(css).toMatch(/\.live-controls \{[^}]*flex-wrap: wrap/)
+    expect(css).toMatch(/\.live-buttons \{[^}]*flex-wrap: wrap/)
+    expect(css).toMatch(/\.breadcrumb ol \{[^}]*flex-wrap: wrap/)
+    // No length in pixels except hairlines and the 1px box that hides text from sight.
+    const pixels = (css.match(/\b\d+(\.\d+)?px\b/g) ?? []).filter((length) => !['1px', '3px', '2px'].includes(length))
+    expect(pixels).toEqual([])
+    // No element is given a width, or a least width, that a narrow screen could not hold.
+    expect(css).not.toMatch(/^\s*min-width:\s*[1-9]|^\s*width:\s*\d{2,}(rem|em|px)|overflow-x:\s*(scroll|auto)/m)
+    expect(css).not.toMatch(/\b\d+vw\b/)
+  })
+
+  it('keeps a visible focus ring on everything, and never removes an outline', () => {
+    expect(css).toMatch(/^:focus-visible \{\s*outline: 3px solid var\(--accent\);\s*outline-offset: 2px;/m)
+    expect(css).not.toMatch(/outline:\s*(none|0)\b|outline-width:\s*0\b|outline-style:\s*none/)
+    expect(css).not.toMatch(/:focus(?!-visible)/)
+  })
+
+  it('moves nothing: no animation and no transition, so none to turn off', () => {
+    const moving = /animation|transition|@keyframes|scroll-behavior:\s*smooth/
+    // If motion is ever added, it must come with a reduced-motion rule.
+    expect(moving.test(css) && !/prefers-reduced-motion:\s*reduce/.test(css)).toBe(false)
+    expect(css).not.toMatch(moving)
+    expect(offenders(/requestAnimationFrame|\.animate\(/)).toEqual([])
+  })
+
+  it('sets no tab order of its own and makes no control out of a div or span', () => {
+    expect(offenders(/tabIndex=\{\s*[1-9]|tabIndex="[1-9]|tabindex="[1-9]/)).toEqual([])
+    expect(markup.filter(([, text]) => /tabIndex=\{-1\}/.test(text)).map(([path]) => path).sort()).toEqual([
+      '../App.tsx',
+      '../components/PageHeading.tsx',
+    ])
+    expect(offenders(/<(div|span|p|li|td|th|tr|svg|rect|section)\b[^>]*\bon(Click|KeyDown|KeyUp|KeyPress)=/)).toEqual([])
+    expect(offenders(/role="(button|link|tab|menuitem|checkbox|switch)"/)).toEqual([])
+    expect(offenders(/aria-live=/)).toEqual([])
+    // A busy button is aria-disabled and ignores the click: a `disabled` one would drop keyboard focus.
+    expect(offenders(/\sdisabled=/)).toEqual([])
+  })
+
+  it('has one timer, the refresh interval, with no countdown and nothing to configure', () => {
+    expect(offenders(/setInterval|setTimeout|Date\.now\(|countdown|secondsLeft|remaining/i)).toEqual([])
+    expect(offenders(/refetchInterval/)).toEqual(['../liveToday/useLiveToday.ts'])
+    expect(offenders(/REFRESH_INTERVAL_MS\s*=/)).toEqual(['../liveToday/useLiveToday.ts'])
+  })
+
+  it('adds no theme switch: light and dark still follow the system, as before', () => {
+    expect(offenders(/data-theme|theme-toggle|ThemeProvider|prefers-color-scheme/i)).toEqual([])
+    expect(css).toMatch(/color-scheme: light dark/)
   })
 })

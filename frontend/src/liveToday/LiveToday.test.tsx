@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -41,6 +41,8 @@ const SERVER_ERROR = () => jsonResponse(500, { code: 'internal_error', message: 
 const UNAVAILABLE = 'Live dashboard data is not available for this branch yet.'
 
 const hoursWith = (counts: Record<number, number>) => Array.from({ length: 24 }, (_, hour) => counts[hour] ?? 0)
+/** The icon drawn for each pipeline state, as the tests come across them. */
+const ICON_SHAPES: Record<string, string> = {}
 const live = (changes: Partial<LiveFixture>): LiveFixture => ({ ...LIVE, ...changes })
 
 /** A signed-in user at a branch whose five reads answer `fixture`, unless a test replaces a route. */
@@ -75,6 +77,22 @@ const endpoints = (urls: string[]) => urls.map((url) => url.split('/branches/')[
 function metric(label: string | RegExp): HTMLElement {
   return screen.getByText(label, { selector: 'dt' }).nextElementSibling as HTMLElement
 }
+/** The line under a summary figure -- which hour it is, or why there is no figure -- or null. */
+function note(label: string): string | null {
+  return metric(label).nextElementSibling?.textContent ?? null
+}
+const chart = () => screen.getByRole('img', { name: 'Bar chart of check-ins in each hour of the day' })
+/** The drawn height of each hour's bar, in the chart's own units (0 to 100). */
+const barHeights = () =>
+  Array.from(chart().querySelectorAll('rect[data-hour]')).map((bar) => Number(bar.getAttribute('height')))
+/** The hourly table's body rows, opening the table first if it is closed. */
+function hourlyRows(): string[][] {
+  const show = screen.queryByRole('button', { name: 'Show hourly table' })
+  if (show !== null) {
+    fireEvent.click(show)
+  }
+  return rows('Hourly check-ins')
+}
 /** A table's body rows as [first cell, second cell] text. */
 function rows(name: string): string[][] {
   return within(screen.getByRole('table', { name }))
@@ -89,8 +107,8 @@ const refreshButton = () => screen.getByRole('button', { name: /^Refresh/ })
 const pass = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms))
 /** Waits until the dashboard has loaded every section. */
 async function loaded() {
-  await screen.findByRole('table', { name: 'Hourly check-ins' })
-  await waitFor(() => expect(refreshButton()).toBeEnabled())
+  await screen.findByRole('img', { name: /^Bar chart of check-ins/ })
+  await waitFor(() => expect(refreshButton()).not.toHaveAttribute('aria-disabled', 'true'))
 }
 
 beforeEach(() => {
@@ -145,10 +163,10 @@ describe('the order things are asked in', () => {
 
   it.each([
     // The same instant, 9:30 PM Monday in Chicago: three zones, two dates.
-    ['America/Chicago', '2026-10-05', 'Monday, October 5, 2026', 'Current hour (9 PM)'],
-    ['Asia/Tokyo', '2026-10-06', 'Tuesday, October 6, 2026', 'Current hour (11 AM)'],
-    ['Pacific/Honolulu', '2026-10-05', 'Monday, October 5, 2026', 'Current hour (4 PM)'],
-  ])('takes today and the hour from the product zone %s, not from this machine', async (timezone, date, dateText, hourLabel) => {
+    ['America/Chicago', '2026-10-05', 'Monday, October 5, 2026', '9–10 PM'],
+    ['Asia/Tokyo', '2026-10-06', 'Tuesday, October 6, 2026', '11 AM–12 PM'],
+    ['Pacific/Honolulu', '2026-10-05', 'Monday, October 5, 2026', '4–5 PM'],
+  ])('takes today and the hour from the product zone %s, not from this machine', async (timezone, date, dateText, hourRange) => {
     vi.setSystemTime(new Date('2026-10-06T02:30:00Z'))
     const fetchMock = serve({}, live({ timezone }))
 
@@ -157,7 +175,8 @@ describe('the order things are asked in', () => {
 
     expect(datesAsked(fetchMock)).toEqual([date, date, date, date])
     expect(main()).toHaveTextContent(`${dateText} (${timezone})`)
-    expect(screen.getByText(hourLabel, { selector: 'dt' })).toBeInTheDocument()
+    expect(note('Current hour')).toBe(hourRange)
+    expect(screen.getByText(/^Busiest hour: .* Hours are in /)).toHaveTextContent(`Hours are in ${timezone} time.`)
   })
 
   it('asks for nothing dated, and guesses no date, when pipeline status cannot be read', async () => {
@@ -228,10 +247,24 @@ describe('the figures', () => {
     await loaded()
 
     expect(main()).toHaveTextContent('Monday, October 5, 2026 (America/Chicago)')
-    expect(metric('Check-ins')).toHaveTextContent(/^120$/)
-    expect(metric('Current hour (1 PM)')).toHaveTextContent(/^17$/)
-    expect(metric('Busiest hour')).toHaveTextContent(/^11 AM \(40\)$/)
-    expect(metric('Rejects')).toHaveTextContent(/^6$/)
+    expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
+    expect(metric('Current hour')).toHaveTextContent(/^17$/)
+    expect(note('Current hour')).toBe('1–2 PM')
+    expect(metric('Busiest hour')).toHaveTextContent(/^40$/)
+    expect(note('Busiest hour')).toBe('11 AM–12 PM')
+    expect(note('Check-ins today')).toBeNull()
+    expect(note('Rejects today')).toBeNull()
+    expect(note('Reject rate')).toBeNull()
+    expect(screen.getAllByRole('term').map((term) => term.textContent)).toEqual([
+      'Status',
+      'Last reported',
+      'Check-ins today',
+      'Current hour',
+      'Busiest hour',
+      'Rejects today',
+      'Reject rate',
+    ])
+    expect(metric('Rejects today')).toHaveTextContent(/^6$/)
     expect(metric('Reject rate')).toHaveTextContent(/^5\.0%$/)
   })
 
@@ -242,7 +275,8 @@ describe('the figures', () => {
     renderApp(CENTRAL)
     await loaded()
 
-    expect(metric('Current hour (3 PM)')).toHaveTextContent(/^0$/)
+    expect(metric('Current hour')).toHaveTextContent(/^0$/)
+    expect(note('Current hour')).toBe('3–4 PM')
   })
 
   it('gives the earliest hour when hours tie for busiest', async () => {
@@ -251,7 +285,10 @@ describe('the figures', () => {
     renderApp(CENTRAL)
     await loaded()
 
-    expect(metric('Busiest hour')).toHaveTextContent(/^9 AM \(40\)$/)
+    expect(metric('Busiest hour')).toHaveTextContent(/^40$/)
+    expect(note('Busiest hour')).toBe('9–10 AM')
+    // The chart's own summary names the same hour: one rule, in one place.
+    expect(screen.getByText(/^Busiest hour: /)).toHaveTextContent('Busiest hour: 9–10 AM, 40 check-ins.')
   })
 
   it('shows no busiest hour and no reject rate on a day with no check-ins', async () => {
@@ -260,11 +297,13 @@ describe('the figures', () => {
     renderApp(CENTRAL)
     await loaded()
 
-    expect(metric('Check-ins')).toHaveTextContent(/^0$/)
-    expect(metric('Busiest hour')).toHaveTextContent('No check-ins yet')
-    expect(metric('Rejects')).toHaveTextContent(/^0$/)
-    expect(metric('Reject rate')).toHaveTextContent('Not available (no check-ins)')
-    expect(main()).not.toHaveTextContent(/NaN|Infinity|12 AM \(0\)/)
+    expect(metric('Check-ins today')).toHaveTextContent(/^0$/)
+    expect(metric('Busiest hour')).toHaveTextContent(/^No check-ins yet$/)
+    expect(note('Busiest hour')).toBeNull()
+    expect(metric('Rejects today')).toHaveTextContent(/^0$/)
+    expect(metric('Reject rate')).toHaveTextContent(/^Not available$/)
+    expect(note('Reject rate')).toBe('No check-ins yet')
+    expect(main()).not.toHaveTextContent(/NaN|Infinity|Busiest hour: /)
   })
 
   it('shows no reject rate, rather than infinity, for rejects without check-ins', async () => {
@@ -273,8 +312,9 @@ describe('the figures', () => {
     renderApp(CENTRAL)
     await loaded()
 
-    expect(metric('Rejects')).toHaveTextContent(/^4$/)
-    expect(metric('Reject rate')).toHaveTextContent('Not available (no check-ins)')
+    expect(metric('Rejects today')).toHaveTextContent(/^4$/)
+    expect(metric('Reject rate')).toHaveTextContent(/^Not available$/)
+    expect(note('Reject rate')).toBe('No check-ins yet')
     expect(main()).not.toHaveTextContent(/NaN|Infinity|%/)
   })
 
@@ -284,7 +324,7 @@ describe('the figures', () => {
     renderApp(CENTRAL)
     await loaded()
 
-    const hourly = rows('Hourly check-ins')
+    const hourly = hourlyRows()
     expect(hourly).toHaveLength(24)
     expect(hourly[0]).toEqual(['12 AM', '0'])
     expect(hourly[11]).toEqual(['11 AM', '40'])
@@ -316,18 +356,6 @@ describe('the figures', () => {
     expect(screen.getByText('No rejects today.')).toBeInTheDocument()
     expect(screen.queryByRole('table', { name: 'Top reject reasons' })).not.toBeInTheDocument()
   })
-
-  it('draws no chart', async () => {
-    serve()
-
-    renderApp(CENTRAL)
-    await loaded()
-
-    for (const role of ['img', 'progressbar', 'meter', 'figure']) {
-      expect(screen.queryByRole(role)).not.toBeInTheDocument()
-    }
-    expect(document.querySelector('svg, canvas')).toBeNull()
-  })
 })
 
 describe('refreshing', () => {
@@ -350,10 +378,10 @@ describe('refreshing', () => {
     const second = liveRequests(fetchMock).slice(5)
     expect(second[0]).toBe(`${API}/pipeline-status`)
     expect(endpoints(second.slice(1)).sort()).toEqual(['checkins/by-hour', 'checkins/count', 'rejects/by-reason', 'rejects/count'])
-    await waitFor(() => expect(metric('Check-ins')).toHaveTextContent(/^133$/))
+    await waitFor(() => expect(metric('Check-ins today')).toHaveTextContent(/^133$/))
     expect(metric('Status')).toHaveTextContent(/^Degraded$/)
-    expect(metric('Current hour (1 PM)')).toHaveTextContent(/^30$/)
-    expect(metric('Rejects')).toHaveTextContent(/^10$/)
+    expect(metric('Current hour')).toHaveTextContent(/^30$/)
+    expect(metric('Rejects today')).toHaveTextContent(/^10$/)
     expect(rows('Top reject reasons')[0]).toEqual(['Unknown', '4'])
   })
 
@@ -379,7 +407,7 @@ describe('refreshing', () => {
     expect(screen.getByRole('button', { name: 'Resume automatic refresh' })).toBeInTheDocument()
     await pass(REFRESH_INTERVAL_MS * 3)
     expect(liveRequests(fetchMock)).toHaveLength(5)
-    expect(metric('Check-ins')).toHaveTextContent(/^120$/)
+    expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
   })
 
   it('refreshes everything from the button while paused, and stays paused', async () => {
@@ -393,7 +421,7 @@ describe('refreshing', () => {
     fixture = live({ hours: hoursWith({ 13: 200 }) })
     await person.click(refreshButton())
 
-    await waitFor(() => expect(metric('Check-ins')).toHaveTextContent(/^200$/))
+    await waitFor(() => expect(metric('Check-ins today')).toHaveTextContent(/^200$/))
     const second = liveRequests(fetchMock).slice(5)
     expect(second[0]).toBe(`${API}/pipeline-status`)
     expect(endpoints(second).sort()).toEqual(['checkins/by-hour', 'checkins/count', 'pipeline-status', 'rejects/by-reason', 'rejects/count'])
@@ -442,17 +470,17 @@ describe('refreshing', () => {
     await person.click(refreshButton())
 
     const busy = await screen.findByRole('button', { name: 'Refreshing…' })
-    expect(busy).toBeDisabled()
+    expect(busy).toHaveAttribute('aria-disabled', 'true')
     await person.click(busy)
     await person.click(busy)
     await pass(1000)
     expect(liveRequests(fetchMock)).toHaveLength(6)
     // What was already loaded stays on screen while the refresh runs.
-    expect(metric('Check-ins')).toHaveTextContent(/^120$/)
+    expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
 
     slow.resolve(jsonResponse(200, liveBody.pipeline(LIVE)))
     await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(10))
-    await waitFor(() => expect(refreshButton()).toBeEnabled())
+    await waitFor(() => expect(refreshButton()).not.toHaveAttribute('aria-disabled', 'true'))
   })
 
   it('says when the figures were last updated, in the product zone', async () => {
@@ -473,7 +501,7 @@ describe('refreshing', () => {
     await loaded()
     expect(datesAsked(fetchMock)).toEqual(['2026-10-05', '2026-10-05', '2026-10-05', '2026-10-05'])
     expect(main()).toHaveTextContent('Monday, October 5, 2026')
-    expect(screen.getByText('Current hour (11 PM)', { selector: 'dt' })).toBeInTheDocument()
+    expect(note('Current hour')).toBe('11 PM–12 AM')
 
     await pass(REFRESH_INTERVAL_MS + 5000)
 
@@ -481,7 +509,7 @@ describe('refreshing', () => {
     expect(datesAsked(fetchMock).slice(4)).toEqual(['2026-10-06', '2026-10-06', '2026-10-06', '2026-10-06'])
     await waitFor(() => expect(main()).toHaveTextContent('Tuesday, October 6, 2026'))
     expect(main()).not.toHaveTextContent('Monday, October 5, 2026')
-    await waitFor(() => expect(screen.getByText('Current hour (12 AM)', { selector: 'dt' })).toBeInTheDocument())
+    await waitFor(() => expect(note('Current hour')).toBe('12–1 AM'))
   })
 
   it('moves to the new day on a manual refresh after midnight as well', async () => {
@@ -508,17 +536,18 @@ describe('changing branch', () => {
 
     renderApp(CENTRAL)
     await loaded()
-    expect(metric('Check-ins')).toHaveTextContent(/^120$/)
+    expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
     await person.click(within(main()).getByRole('link', { name: 'Northbridge Library' }))
     await person.click(await within(main()).findByRole('link', { name: 'East Side Branch' }))
 
     expect(await screen.findByText('Loading live data…')).toBeInTheDocument()
-    expect(main()).not.toHaveTextContent(/120|11 AM \(40\)|Item not found/)
+    expect(main()).not.toHaveTextContent(/120|11 AM–12 PM|Item not found/)
 
     eastPipeline.resolve(jsonResponse(200, liveBody.pipeline(LIVE)))
     await loaded()
-    expect(metric('Check-ins')).toHaveTextContent(/^7$/)
-    expect(metric('Busiest hour')).toHaveTextContent(/^8 AM \(7\)$/)
+    expect(metric('Check-ins today')).toHaveTextContent(/^7$/)
+    expect(metric('Busiest hour')).toHaveTextContent(/^7$/)
+    expect(note('Busiest hour')).toBe('8–9 AM')
     const east = liveRequests(fetchMock).filter((url) => url.includes('/east-side/'))
     expect(east).toHaveLength(5)
     expect(liveRequests(fetchMock).filter((url) => url.includes('/central/'))).toHaveLength(5)
@@ -564,7 +593,7 @@ describe('changing branch', () => {
     await person.click(await within(main()).findByRole('link', { name: 'Central Branch' }))
     await loaded()
 
-    expect(metric('Check-ins')).toHaveTextContent(/^300$/)
+    expect(metric('Check-ins today')).toHaveTextContent(/^300$/)
     expect(liveRequests(fetchMock)).toHaveLength(10)
   })
 })
@@ -578,8 +607,8 @@ describe('a suspended organization', () => {
     await loaded()
 
     expect(screen.getByText(/currently suspended/)).toBeInTheDocument()
-    expect(metric('Check-ins')).toHaveTextContent(/^120$/)
-    expect(screen.getByRole('button', { name: 'Pause automatic refresh' })).toBeEnabled()
+    expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
+    expect(screen.getByRole('button', { name: 'Pause automatic refresh' })).not.toHaveAttribute('aria-disabled', 'true')
     await person.click(refreshButton())
     await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(10))
   })
@@ -710,7 +739,7 @@ describe('failures', () => {
     await person.click(screen.getByRole('button', { name: 'Try again' }))
 
     await loaded()
-    expect(metric('Check-ins')).toHaveTextContent(/^120$/)
+    expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(liveRequests(fetchMock)).toHaveLength(6)
   })
@@ -723,10 +752,10 @@ describe('failures', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Some live data could not be loaded. Use Refresh to try again.')
     expect(metric('Status')).toHaveTextContent(/^OK$/)
-    expect(metric('Check-ins')).toHaveTextContent(/^120$/)
-    expect(metric('Rejects')).toHaveTextContent(/^6$/)
+    expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
+    expect(metric('Rejects today')).toHaveTextContent(/^6$/)
     expect(metric('Reject rate')).toHaveTextContent(/^5\.0%$/)
-    expect(rows('Hourly check-ins')).toHaveLength(24)
+    expect(hourlyRows()).toHaveLength(24)
     const reasons = screen.getByRole('heading', { level: 3, name: 'Top reject reasons' }).parentElement as HTMLElement
     expect(reasons).toHaveTextContent('Could not load.')
     expect(screen.queryByRole('table', { name: 'Top reject reasons' })).not.toBeInTheDocument()
@@ -738,14 +767,17 @@ describe('failures', () => {
 
     renderApp(CENTRAL)
     await screen.findByRole('alert')
-    await waitFor(() => expect(metric('Rejects')).toHaveTextContent(/^6$/))
+    await waitFor(() => expect(metric('Rejects today')).toHaveTextContent(/^6$/))
 
-    expect(metric('Check-ins')).toHaveTextContent('Could not load')
-    expect(metric(/^Current hour/)).toHaveTextContent('Could not load')
+    expect(metric('Check-ins today')).toHaveTextContent('Could not load')
+    expect(metric('Current hour')).toHaveTextContent('Could not load')
+    expect(note('Current hour')).toBeNull()
     expect(metric('Busiest hour')).toHaveTextContent('Could not load')
     expect(metric('Reject rate')).toHaveTextContent('Could not load')
     expect(main()).not.toHaveTextContent(/NaN|Infinity|%/)
-    expect(screen.queryByRole('table', { name: 'Hourly check-ins' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Show hourly table' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 3, name: 'Hourly check-ins' }).parentElement).toHaveTextContent('Could not load.')
     expect(rows('Top reject reasons')).toHaveLength(3)
   })
 
@@ -773,9 +805,9 @@ describe('failures', () => {
     await person.click(refreshButton())
 
     expect(await screen.findByRole('alert')).toHaveTextContent('The latest refresh failed. Some of what is shown may be out of date.')
-    expect(metric('Check-ins')).toHaveTextContent(/^120$/)
+    expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
     expect(metric('Status')).toHaveTextContent(/^OK$/)
-    expect(rows('Hourly check-ins')).toHaveLength(24)
+    expect(hourlyRows()).toHaveLength(24)
 
     await person.click(refreshButton())
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
@@ -816,5 +848,426 @@ describe('retries', () => {
     expect(await screen.findByRole('alert')).toBeInTheDocument()
     await pass(10_000)
     expect(liveRequests(fetchMock)).toEqual([`${API}/pipeline-status`])
+  })
+})
+
+describe('the hourly chart', () => {
+  it('draws one bar for each of the 24 hours, each as tall as its share of the busiest', async () => {
+    serve()
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    const heights = barHeights()
+    expect(heights).toHaveLength(24)
+    // 20, 25, 40, 18 and 17 check-ins against an axis that tops out at 40.
+    expect(heights.slice(9, 14)).toEqual([50, 62.5, 100, 45, 42.5])
+    expect(heights.filter((height) => height === 0)).toHaveLength(19)
+    expect(Array.from(chart().querySelectorAll('rect[data-hour]')).map((bar) => bar.getAttribute('data-hour'))).toEqual(
+      Array.from({ length: 24 }, (_, hour) => String(hour)),
+    )
+  })
+
+  it('is one named image, described in words, with the product zone', async () => {
+    serve()
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    expect(screen.getAllByRole('img')).toEqual([chart()])
+    expect(chart()).toHaveAccessibleDescription(
+      'Busiest hour: 11 AM–12 PM, 40 check-ins. Current hour: 1–2 PM, 17 check-ins. Hours are in America/Chicago time.',
+    )
+    // The description is a sentence anyone can read, not text kept for screen readers alone.
+    expect(screen.getByText(/^Busiest hour: 11 AM–12 PM/)).toBeVisible()
+  })
+
+  it('keeps the drawing out of the accessibility tree and out of the tab order', async () => {
+    serve()
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    const drawing = chart().querySelector('svg') as SVGElement
+    expect(drawing).toHaveAttribute('aria-hidden', 'true')
+    expect(drawing).toHaveAttribute('focusable', 'false')
+    expect(chart().querySelectorAll('a, button, input, [tabindex], [onclick], title')).toHaveLength(0)
+    expect(chart()).not.toHaveAttribute('tabindex')
+    // Everything else in the chart is decoration around the drawing, hidden the same way.
+    for (const part of Array.from(chart().children)) {
+      expect(part.getAttribute('aria-hidden') === 'true' || part.querySelector('svg[aria-hidden="true"]') !== null).toBe(true)
+    }
+  })
+
+  it('stretches to its container instead of having a size of its own', async () => {
+    serve()
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    const drawing = chart().querySelector('svg') as SVGElement
+    expect(drawing).toHaveAttribute('viewBox', '0 0 24 100')
+    expect(drawing).toHaveAttribute('preserveAspectRatio', 'none')
+    expect(drawing).not.toHaveAttribute('width')
+    expect(drawing).not.toHaveAttribute('height')
+  })
+
+  it('marks the current hour with a word over its column, not with colour alone', async () => {
+    serve()
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    const now = within(chart()).getByText('Now')
+    // 1 PM is the fourteenth of the 24 columns.
+    expect(now.style.gridColumn).toBe('14')
+    expect(within(chart()).getAllByText('Now')).toHaveLength(1)
+    expect(chart().querySelector('rect[data-current-hour]')).toHaveAttribute('x', '13')
+    expect(chart()).toHaveAccessibleDescription(/Current hour: 1–2 PM, 17 check-ins\./)
+  })
+
+  it('labels the axis every few hours rather than all 24', async () => {
+    serve()
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    const labels = Array.from(chart().querySelectorAll('.chart-x span')).map((label) => label.textContent)
+    expect(labels).toEqual(['12 AM', '3 AM', '6 AM', '9 AM', '12 PM', '3 PM', '6 PM', '9 PM'])
+    expect(Array.from(chart().querySelectorAll('.chart-y span')).map((label) => label.textContent)).toEqual(['0', '10', '20', '30', '40'])
+  })
+
+  it('shows an empty plot that says so on a day with no check-ins', async () => {
+    serve({}, live({ hours: hoursWith({}), reasons: [0, 0, 0, 0, 0, 0, 0, 0] }))
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    expect(barHeights()).toEqual(Array.from({ length: 24 }, () => 0))
+    expect(within(chart()).getByText('No check-ins yet today')).toBeInTheDocument()
+    expect(chart()).toHaveAccessibleDescription(
+      'No check-ins yet today. Current hour: 1–2 PM, 0 check-ins. Hours are in America/Chicago time.',
+    )
+    expect(Array.from(chart().querySelectorAll('.chart-y span')).map((label) => label.textContent)).toEqual(['0', '1'])
+    expect(within(chart()).getByText('Now')).toBeInTheDocument()
+    expect(hourlyRows().map(([, checkins]) => checkins)).toEqual(Array.from({ length: 24 }, () => '0'))
+    expect(main()).not.toHaveTextContent(/NaN|Infinity/)
+  })
+
+  it('fits one very large hour, and still shows the small ones beside it', async () => {
+    serve({}, live({ hours: hoursWith({ 10: 1_000_000, 11: 3, 13: 1 }) }))
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    const heights = barHeights()
+    expect(Math.max(...heights)).toBe(100)
+    expect(heights[10]).toBe(100)
+    // Too small to draw to scale, so drawn at the smallest height a bar may have -- not left out like a zero.
+    expect(heights[11]).toBeGreaterThan(0)
+    expect(heights[11]).toBeLessThan(5)
+    expect(heights[13]).toBeGreaterThan(0)
+    expect(heights[12]).toBe(0)
+    expect(Array.from(chart().querySelectorAll('.chart-y span')).map((label) => label.textContent)).toEqual(['0', '500K', '1M'])
+    expect(metric('Busiest hour')).toHaveTextContent(/^1,000,000$/)
+    expect(hourlyRows()[10]).toEqual(['10 AM', '1,000,000'])
+    expect(hourlyRows()[11]).toEqual(['11 AM', '3'])
+  })
+
+  it('gives every exact figure in a table that opens and closes from a button', async () => {
+    serve()
+    const person = user()
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    const toggle = screen.getByRole('button', { name: 'Show hourly table' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('table', { name: 'Hourly check-ins' })).not.toBeInTheDocument()
+
+    await person.click(toggle)
+
+    const open = screen.getByRole('button', { name: 'Hide hourly table' })
+    expect(open).toHaveAttribute('aria-expanded', 'true')
+    const table = screen.getByRole('table', { name: 'Hourly check-ins' })
+    expect(document.getElementById(open.getAttribute('aria-controls') ?? '')).toContainElement(table)
+    expect(rows('Hourly check-ins')).toHaveLength(24)
+    const current = within(table).getByRole('row', { current: true })
+    expect(current).toHaveTextContent('1 PM (current hour)17')
+
+    await person.click(open)
+    expect(screen.queryByRole('table', { name: 'Hourly check-ins' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the table open, with new figures, across a refresh', async () => {
+    let fixture = LIVE
+    serve({}, () => fixture)
+    const person = user()
+
+    renderApp(CENTRAL)
+    await loaded()
+    await person.click(screen.getByRole('button', { name: 'Show hourly table' }))
+    fixture = live({ hours: hoursWith({ 13: 55 }) })
+    await person.click(refreshButton())
+
+    await waitFor(() => expect(rows('Hourly check-ins')[13]).toEqual(['1 PM (current hour)', '55']))
+    expect(barHeights()[13]).toBeGreaterThan(90)
+  })
+})
+
+describe('the pipeline panel', () => {
+  it.each([
+    ['ok', 'OK'],
+    ['degraded', 'Degraded'],
+    ['failed', 'Failed'],
+    ['unknown', 'Unknown'],
+  ])('gives the state %s an icon of its own beside its word', async (state, label) => {
+    serve({}, live({ state }))
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    const status = metric('Status')
+    expect(status).toHaveTextContent(new RegExp(`^${label}$`))
+    const icon = status.querySelector('svg') as SVGElement
+    expect(icon).toHaveAttribute('aria-hidden', 'true')
+    // The icon's shape, which no other state shares: so the state shows without its colour.
+    const shape = Array.from(icon.querySelectorAll('path'))
+      .map((path) => `${path.getAttribute('d')} ${path.getAttribute('stroke-dasharray') ?? 'solid'}`)
+      .join(' | ')
+    expect(ICON_SHAPES[state]).toBeUndefined()
+    ICON_SHAPES[state] = shape
+    expect(Object.values(ICON_SHAPES).filter((other) => other === shape)).toHaveLength(1)
+  })
+
+  it('keeps the state and the time of the report as two separate facts', async () => {
+    serve({}, live({ state: 'failed', last_reported_at: '2026-09-01T15:00:00Z' }))
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    expect(metric('Status')).toHaveTextContent(/^Failed$/)
+    expect(metric('Status').querySelector('time')).toBeNull()
+    expect(metric('Last reported')).toHaveTextContent(/^Sep 1, 2026, 10:00\sAM CDT$/)
+  })
+})
+
+describe('the first load', () => {
+  it('holds the page with empty blocks that say nothing, and announces the loading in words', async () => {
+    const pipeline = deferred<Response>()
+    serve({ [PIPELINE]: () => pipeline.promise })
+
+    renderApp(CENTRAL)
+
+    expect(await screen.findByText('Loading live data…')).toHaveRole('status')
+    expect(screen.getAllByRole('status')).toHaveLength(1)
+    const outline = document.querySelector('.skeleton') as HTMLElement
+    expect(outline).toHaveAttribute('aria-hidden', 'true')
+    expect(outline.textContent).toBe('')
+    expect(screen.getByRole('heading', { level: 2, name: 'Central Branch' })).toBeInTheDocument()
+    expect(within(main()).getByRole('link', { name: 'Northbridge Library' })).toBeInTheDocument()
+    expect(main().textContent).not.toMatch(/\d/)
+    expect(screen.queryByRole('term')).not.toBeInTheDocument()
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+    expect(within(main()).queryByRole('button')).not.toBeInTheDocument()
+  })
+
+  it('says each figure is loading, and shows no number for it, until its own read answers', async () => {
+    const byHour = deferred<Response>()
+    serve({ [BY_HOUR]: () => byHour.promise })
+
+    renderApp(CENTRAL)
+    await waitFor(() => expect(metric('Check-ins today')).toHaveTextContent(/^120$/))
+
+    expect(metric('Current hour')).toHaveTextContent(/^Loading…$/)
+    expect(metric('Busiest hour')).toHaveTextContent(/^Loading…$/)
+    expect(note('Current hour')).toBeNull()
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 3, name: 'Hourly check-ins' }).parentElement).toHaveTextContent(/Loading…$/)
+
+    byHour.resolve(jsonResponse(200, liveBody.checkinsByHour(LIVE, TODAY)))
+    await loaded()
+    expect(metric('Current hour')).toHaveTextContent(/^17$/)
+  })
+})
+
+describe('what is said aloud', () => {
+  /** The polite live region on the loaded dashboard. */
+  const announcer = () => screen.getByRole('status')
+
+  it('says nothing until the person does something', async () => {
+    serve()
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    expect(announcer()).toBeEmptyDOMElement()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('confirms pausing and resuming', async () => {
+    serve()
+    const person = user()
+
+    renderApp(CENTRAL)
+    await loaded()
+    await person.click(screen.getByRole('button', { name: 'Pause automatic refresh' }))
+    expect(announcer()).toHaveTextContent(/^Automatic refresh paused\.$/)
+
+    await person.click(screen.getByRole('button', { name: 'Resume automatic refresh' }))
+    expect(announcer()).toHaveTextContent(/^Automatic refresh resumed\.$/)
+  })
+
+  it('confirms a refresh the person asked for, once the new data is in', async () => {
+    const slow = deferred<Response>()
+    serve({ [PIPELINE]: inTurn(() => jsonResponse(200, liveBody.pipeline(LIVE)), () => slow.promise) })
+    const person = user()
+
+    renderApp(CENTRAL)
+    await loaded()
+    await pass(60_000)
+    await person.click(refreshButton())
+    await screen.findByRole('button', { name: 'Refreshing…' })
+    expect(announcer()).toBeEmptyDOMElement()
+
+    slow.resolve(jsonResponse(200, liveBody.pipeline(LIVE)))
+
+    await waitFor(() => expect(announcer()).toHaveTextContent(/^Live data refreshed\.$/))
+    await waitFor(() => expect(refreshButton()).not.toHaveAttribute('aria-disabled', 'true'))
+  })
+
+  it('leaves a failed refresh to the alert, and does not also call it refreshed', async () => {
+    serve({ [PIPELINE]: inTurn(() => jsonResponse(200, liveBody.pipeline(LIVE)), SERVER_ERROR) })
+    const person = user()
+
+    renderApp(CENTRAL)
+    await loaded()
+    await person.click(refreshButton())
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The latest refresh failed.')
+    expect(announcer()).toBeEmptyDOMElement()
+  })
+
+  it('does not announce a timed refresh, or the figures it brings', async () => {
+    let fixture = LIVE
+    const fetchMock = serve({}, () => fixture)
+
+    renderApp(CENTRAL)
+    await loaded()
+    fixture = live({ hours: hoursWith({ 13: 300 }) })
+    await pass(REFRESH_INTERVAL_MS + 5000)
+    await waitFor(() => expect(metric('Check-ins today')).toHaveTextContent(/^300$/))
+    await pass(REFRESH_INTERVAL_MS)
+    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(15))
+
+    expect(announcer()).toBeEmptyDOMElement()
+    // Nothing that changes with a refresh sits in a live region: not the figures, not the time of the update.
+    const liveRegions = Array.from(document.querySelectorAll('[role="status"], [role="alert"], [role="log"], [aria-live]'))
+    expect(liveRegions).toEqual([announcer()])
+    expect(screen.getByText(/Last updated/).closest('[role="status"], [aria-live]')).toBeNull()
+  })
+
+  it('shows whether automatic refresh is on, and when the data was last updated, without a countdown', async () => {
+    serve()
+    const person = user()
+
+    renderApp(CENTRAL)
+    await loaded()
+    const status = screen.getByText(/Refreshes automatically every 3 minutes\./).closest('p') as HTMLElement
+    expect(status).toHaveTextContent(/^Refreshes automatically every 3 minutes\. Last updated Oct 5, 2026, 1:50\sPM CDT\.$/)
+    expect(within(status).getByText(/1:50\sPM CDT/)).toHaveAttribute('datetime', '2026-10-05T18:50:00.000Z')
+
+    // A minute passes with no refresh: nothing on the page counts it down.
+    const before = main().textContent
+    await pass(60_000)
+    expect(main().textContent).toBe(before)
+
+    await person.click(screen.getByRole('button', { name: 'Pause automatic refresh' }))
+    expect(status).toHaveTextContent(/^Automatic refresh is paused\. Last updated Oct 5, 2026, 1:50\sPM CDT\.$/)
+    // The interval is not something the person can set.
+    for (const role of ['spinbutton', 'slider', 'combobox', 'textbox', 'radio', 'checkbox', 'timer', 'progressbar']) {
+      expect(screen.queryByRole(role)).not.toBeInTheDocument()
+    }
+  })
+
+  it('names the parts that failed where they are, and leaves the rest alone', async () => {
+    serve({ [CHECKIN_COUNT]: SERVER_ERROR })
+
+    renderApp(CENTRAL)
+    await loaded()
+    await screen.findByRole('alert')
+
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.getByRole('alert')).toHaveTextContent(/^Some live data could not be loaded\. Use Refresh to try again\.$/)
+    const failed = screen.getAllByRole('term').filter((term) => /^Could not load$/.test(term.nextElementSibling?.textContent ?? ''))
+    expect(failed.map((term) => term.textContent)).toEqual(['Check-ins today', 'Reject rate'])
+    expect(metric('Current hour')).toHaveTextContent(/^17$/)
+    expect(metric('Rejects today')).toHaveTextContent(/^6$/)
+    expect(barHeights()).toHaveLength(24)
+    expect(refreshButton()).not.toHaveAttribute('aria-disabled', 'true')
+  })
+})
+
+describe('trying again after pipeline status could not be read', () => {
+  it('starts one retry, not two, when Try again is clicked twice at once', async () => {
+    const slow = deferred<Response>()
+    const fetchMock = serve({ [PIPELINE]: inTurn(SERVER_ERROR, () => slow.promise) })
+
+    renderApp(CENTRAL)
+    await screen.findByRole('alert')
+    expect(liveRequests(fetchMock)).toHaveLength(1)
+    const retry = screen.getByRole('button', { name: 'Try again' })
+    expect(retry).not.toHaveAttribute('disabled')
+    // Two activations before the page has had a chance to redraw.
+    act(() => {
+      fireEvent.click(retry)
+      fireEvent.click(retry)
+    })
+    await pass(1000)
+
+    expect(liveRequests(fetchMock)).toEqual([`${API}/pipeline-status`, `${API}/pipeline-status`])
+    // While the retry runs the page is loading again: there is no button left to press a third time.
+    expect(screen.getByText('Loading live data…')).toHaveRole('status')
+    expect(screen.queryByRole('button', { name: /Try again|Trying again/ })).not.toBeInTheDocument()
+
+    slow.resolve(jsonResponse(200, liveBody.pipeline(LIVE)))
+    await loaded()
+    expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
+    expect(liveRequests(fetchMock)).toHaveLength(6)
+  })
+
+  it('starts one retry from the keyboard, however often the key is pressed', async () => {
+    const slow = deferred<Response>()
+    const fetchMock = serve({ [PIPELINE]: inTurn(SERVER_ERROR, () => slow.promise) })
+    const person = user()
+
+    renderApp(CENTRAL)
+    await screen.findByRole('alert')
+    screen.getByRole('button', { name: 'Try again' }).focus()
+    await person.keyboard('{Enter}')
+    await person.keyboard('{Enter}')
+    await person.keyboard(' ')
+    await pass(1000)
+
+    expect(liveRequests(fetchMock)).toEqual([`${API}/pipeline-status`, `${API}/pipeline-status`])
+
+    slow.resolve(jsonResponse(200, liveBody.pipeline(LIVE)))
+    await loaded()
+    expect(liveRequests(fetchMock)).toHaveLength(6)
+  })
+
+  it('offers Try again once more, and asks once more, when the retry fails too', async () => {
+    const fetchMock = serve({ [PIPELINE]: SERVER_ERROR })
+    const person = user()
+
+    renderApp(CENTRAL)
+    await screen.findByRole('alert')
+    await person.click(screen.getByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(2))
+
+    const again = await screen.findByRole('button', { name: 'Try again' })
+    expect(again).not.toHaveAttribute('aria-disabled', 'true')
+    await person.click(again)
+    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(3))
   })
 })

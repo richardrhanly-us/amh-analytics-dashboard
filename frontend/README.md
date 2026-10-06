@@ -3,11 +3,12 @@
 The SortView customer web app: a React + TypeScript single-page app built
 with Vite. It is a static SPA. There is no server-side rendering.
 
-**Status: Block F4, Live Today.** The app restores a session, signs in and
-signs out against the customer API (`/api/auth/*`), lists the signed-in
-user's organizations, lets them choose a branch, and shows that branch's Live
-Today figures. Nothing in this directory is used by the Python backend, the
-Streamlit app or the collector.
+**Status: Block F5, Live Today presentation.** The app restores a session,
+signs in and signs out against the customer API (`/api/auth/*`), lists the
+signed-in user's organizations, lets them choose a branch, and shows that
+branch's Live Today dashboard. It is not deployed anywhere yet: there is no
+production hosting for this frontend. Nothing in this directory is used by
+the Python backend, the Streamlit app or the collector.
 
 ## Routes
 
@@ -32,8 +33,21 @@ unknown address. A `401` from the API returns the app to the sign-in form.
 
 The branch page shows, for today: the pipeline's last reported state and when
 it reported, check-ins (total, current hour, busiest hour, and by hour),
-rejects (total and rate) and the reject reasons that occurred. Figures are
-plain text and tables; there are no charts yet.
+rejects (total and rate) and the reject reasons that occurred.
+
+- **Hourly chart.** Check-ins by hour are drawn as a bar chart: plain SVG
+  rendered by React, with no chart library. It stretches to its container, so
+  it fits a phone without sideways scrolling, and labels fewer hours when
+  narrow.
+- **Not SVG-only.** The chart is a single named image, described by a sentence
+  on the page (busiest hour, current hour, time zone). The exact 24 figures
+  are a real table behind the "Show hourly table" button. The chart has no
+  tooltips and nothing in it takes focus. Summary figures and reject reasons
+  are a description list and a table.
+- **Keyboard and screen readers.** Following a link, or Back and Forward,
+  moves focus to the new page's heading; signing in, signing out and an
+  expired session move it to the page content. Only what the person asked for
+  is announced (pause, resume, a manual refresh); a timed refresh is silent.
 
 - **"Today" is the product's day, not the browser's.** Pipeline status is read
   first and names the product time zone; the date and current hour are worked

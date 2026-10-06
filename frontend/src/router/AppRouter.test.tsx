@@ -215,7 +215,7 @@ describe('the signed-in app', () => {
     expect(address()).toBe('/organizations/northbridge/branches/central')
     expect(screen.getByRole('heading', { level: 2, name: 'Central Branch' })).toBeInTheDocument()
     expect(screen.getByRole('banner')).toHaveTextContent('alice@example.test')
-    expect(screen.getByRole('button', { name: 'Sign out' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Sign out' })).not.toHaveAttribute('aria-disabled', 'true')
     expect(organizationRequests(fetchMock)).toEqual(['/api/organizations/northbridge'])
   })
 
@@ -612,7 +612,8 @@ describe('a branch page', () => {
 
     expect(liveRequests(fetchMock)).toHaveLength(5)
     expect(liveRequests(fetchMock).every((url) => url.startsWith('/api/organizations/northbridge/branches/central/'))).toBe(true)
-    for (const role of ['img', 'combobox', 'tab', 'progressbar', 'meter']) {
+    // The hourly chart is the one image; there is still no picker, tab strip or gauge.
+    for (const role of ['combobox', 'tab', 'tablist', 'progressbar', 'meter']) {
       expect(screen.queryByRole(role)).not.toBeInTheDocument()
     }
   })

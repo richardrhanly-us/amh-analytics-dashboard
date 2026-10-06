@@ -8,6 +8,8 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
+    // Left off, Vitest hands every stylesheet to the tests as an empty string -- and the scope tests read index.css.
+    css: true,
     // Every test starts from clean mocks, environment variables and globals.
     restoreMocks: true,
     unstubEnvs: true,

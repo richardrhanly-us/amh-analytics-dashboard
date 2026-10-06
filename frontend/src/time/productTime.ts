@@ -93,3 +93,14 @@ export function formatCalendarDate(date: string): string | null {
 export function formatHour(hour: number): string {
   return `${hour % 12 === 0 ? 12 : hour % 12} ${hour < 12 ? 'AM' : 'PM'}`
 }
+
+/**
+ * The whole wall-clock hour that starts at `hour`, 0 to 23: 13 is "1–2 PM",
+ * 11 is "11 AM–12 PM", 23 is "11 PM–12 AM". AM or PM is written once when
+ * both ends share it.
+ */
+export function formatHourRange(hour: number): string {
+  const start = formatHour(hour)
+  const end = formatHour((hour + 1) % 24)
+  return start.slice(-2) === end.slice(-2) ? `${start.slice(0, -3)}–${end}` : `${start}–${end}`
+}
