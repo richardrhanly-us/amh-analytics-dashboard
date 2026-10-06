@@ -58,7 +58,9 @@ const EAST = report({ checkins: () => 7, rejects: () => 0, transit: [], home: 'E
 function serve(overrides: ApiRoutes = {}, fixture: ReportFixture | (() => ReportFixture) = REPORT): FetchMock {
   return serveApi({
     'GET /api/auth/session': () => jsonResponse(200, ALICE),
-    'GET /api/organizations/northbridge': () => jsonResponse(200, NORTHBRIDGE_DETAIL),
+    // A member who is not an owner or admin: these are the four reports every member sees. The fifth, Efficiency,
+    // is for owners and admins only and is tested in EfficiencySection.test.tsx.
+    'GET /api/organizations/northbridge': () => jsonResponse(200, { ...NORTHBRIDGE_DETAIL, role: 'manager' }),
     'GET /api/organizations/riverside': () => jsonResponse(200, RIVERSIDE_DETAIL),
     ...reportRoutes('northbridge', 'central', fixture),
     ...reportRoutes('northbridge', 'east-side', EAST),
@@ -258,7 +260,7 @@ describe('arriving at a sorter’s reports', () => {
   })
 
   it('says so when more than one collector reports for the site', async () => {
-    const detail = { ...NORTHBRIDGE_DETAIL, sorters: [{ ...NORTHBRIDGE_DETAIL.sorters[0], collector_count: 2 }] }
+    const detail = { ...NORTHBRIDGE_DETAIL, role: 'manager', sorters: [{ ...NORTHBRIDGE_DETAIL.sorters[0], collector_count: 2 }] }
     serve({ 'GET /api/organizations/northbridge': () => jsonResponse(200, detail) })
 
     renderApp(CENTRAL_REPORTS)
