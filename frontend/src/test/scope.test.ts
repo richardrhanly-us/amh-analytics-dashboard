@@ -140,9 +140,14 @@ describe('scope of this block', () => {
     expect(paths).not.toMatch(/\d/)
   })
 
-  it('offers nothing beyond today: no other dates, reports, exports or administration', () => {
-    expect(offenders(/type="date"|datetime-local|<select|download=|text\/csv|Blob\(|createObjectURL/)).toEqual([])
-    expect(offenders(/\b(Overview|Reports?|Historical|Export|Administration|Settings|Reset password|Change password)\b(?! dashboard data)/)).toEqual([])
+  it('offers reports and a date range, and still no exports, efficiency figures or administration', () => {
+    // Dates are chosen in one place: the report range control.
+    expect(offenders(/type="date"/)).toEqual(['../reports/DateRangeControl.tsx'])
+    expect(offenders(/datetime-local|<select|download=|text\/csv|Blob\(|createObjectURL|\.pdf/)).toEqual([])
+    expect(offenders(/\b(Historical|Export|Administration|Settings|Reset password|Change password)\b(?! dashboard data)/)).toEqual([])
+    // Not in this app yet: return on investment, staff-time estimates, and anything that diagnoses or advises.
+    expect(offenders(/\bROI\b|return on investment|staff[- ]time|labor value|hours saved|payback/i)).toEqual([])
+    expect(offenders(/top issues|recommended attention|correlat|caused by|exception bin|estimated holds/i)).toEqual([])
   })
 })
 
@@ -194,6 +199,8 @@ describe('how the dashboard is drawn', () => {
     expect(markup.filter(([, text]) => /tabIndex=\{-1\}/.test(text)).map(([path]) => path).sort()).toEqual([
       '../App.tsx',
       '../components/PageHeading.tsx',
+      // A report section's heading takes focus when its "Try again" succeeds and the button goes.
+      '../reports/ReportSections.tsx',
     ])
     expect(offenders(/<(div|span|p|li|td|th|tr|svg|rect|section)\b[^>]*\bon(Click|KeyDown|KeyUp|KeyPress)=/)).toEqual([])
     expect(offenders(/role="(button|link|tab|menuitem|checkbox|switch)"/)).toEqual([])
@@ -226,7 +233,7 @@ describe('how the dashboard is drawn', () => {
     expect(pages.filter(([, text]) => /organization\.sorters/.test(text)).map(([path]) => path).sort()).toEqual([
       '../pages/LegacyBranchRedirect.tsx',
       '../pages/OrganizationPage.tsx',
-      '../pages/SorterPage.tsx',
+      '../pages/SorterLayout.tsx',
     ])
     // One dashboard page, at the sorter address; the old branch address only redirects to it.
     const router = shipped.find(([path]) => path === '../router/AppRouter.tsx')?.[1] ?? ''
@@ -234,10 +241,13 @@ describe('how the dashboard is drawn', () => {
       '<Route path="organizations"',
       '<Route path="organizations/:orgSlug"',
       '<Route path="sorters/:sorterSlug"',
+      '<Route path="reports"',
       '<Route path="branches/:branchSlug"',
       '<Route path="*"',
     ])
     expect(offenders(/<LiveToday\s/).sort()).toEqual(['../pages/SorterPage.tsx'])
+    // One reports page too, under the same sorter address.
+    expect(offenders(/<SorterReports\s/).sort()).toEqual(['../pages/SorterReportsPage.tsx'])
     expect(allSources['../pages/BranchPage.tsx']).toBeUndefined()
   })
 

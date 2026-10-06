@@ -192,7 +192,7 @@ describe('the order things are asked in', () => {
     await pass(1000)
     expect(liveRequests(fetchMock)).toEqual([`${API}/pipeline-status`])
     expect(datesAsked(fetchMock)).toEqual([])
-    expect(main()).not.toHaveTextContent(/2026|Today/)
+    expect(main()).not.toHaveTextContent(/2026|October|Monday/)
   })
 })
 
@@ -1319,7 +1319,8 @@ describe('today in three groups', () => {
     await loaded()
 
     const heading = screen.getByRole('heading', { level: 2, name: 'Central Library AMH' })
-    expect(heading.nextElementSibling).toHaveTextContent(/^Live activity for this sorter, at Central Branch$/)
+    expect(heading).toBeInTheDocument()
+    expect(screen.getByText('Live activity for this sorter, at Central Branch')).toHaveClass('page-context')
     expect(screen.getByRole('group', { name: 'Routing' })).toHaveTextContent('Where this sorter sent today’s check-ins.')
     expect(main()).not.toHaveTextContent(/installation|machine|Tech Logic|UltraSort/i)
   })
@@ -1502,7 +1503,12 @@ describe('routing', () => {
     }
     expect(routing().querySelectorAll('a, button, [tabindex], [onclick], [href]')).toHaveLength(0)
     // The only links on the page are still the two in the breadcrumb.
-    expect(within(main()).getAllByRole('link').map((link) => link.textContent)).toEqual(['Organizations', 'Northbridge Library'])
+    expect(within(main()).getAllByRole('link').map((link) => link.textContent)).toEqual([
+      'Organizations',
+      'Northbridge Library',
+      'Live Today',
+      'Reports',
+    ])
   })
 
   it('adds no live region: routing figures are read when reached, not announced', async () => {

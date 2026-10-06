@@ -104,25 +104,26 @@ export interface RejectsByReason {
   reasons: RejectReasonCount[]
 }
 
-const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/
-const DESTINATION_KEY = /^[a-z0-9][a-z0-9_]{0,63}$/
+export const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/
+export const DESTINATION_KEY = /^[a-z0-9][a-z0-9_]{0,63}$/
 const LABEL_MAX_LENGTH = 200
 
-function record(value: unknown): Record<string, unknown> {
+// The validators below are shared with the range reports (api/reports.ts).
+export function record(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw unexpectedResponse(200)
   }
   return value as Record<string, unknown>
 }
 
-function count(value: unknown): number {
+export function count(value: unknown): number {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
     throw unexpectedResponse(200)
   }
   return value
 }
 
-function timezone(value: unknown): string {
+export function timezone(value: unknown): string {
   if (!isValidTimeZone(value)) {
     throw unexpectedResponse(200)
   }
@@ -130,7 +131,7 @@ function timezone(value: unknown): string {
 }
 
 /** A configured label: text with something in it, and not absurdly long. */
-function label(value: unknown): string {
+export function label(value: unknown): string {
   if (typeof value !== 'string' || value.trim() === '' || value.length > LABEL_MAX_LENGTH) {
     throw unexpectedResponse(200)
   }
@@ -160,7 +161,7 @@ function segment(slug: string): string {
   return encodeURIComponent(slug)
 }
 
-function branchPath(orgSlug: string, branchSlug: string): string {
+export function branchPath(orgSlug: string, branchSlug: string): string {
   return `/api/organizations/${segment(orgSlug)}/branches/${segment(branchSlug)}`
 }
 

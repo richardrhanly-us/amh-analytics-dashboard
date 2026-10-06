@@ -22,6 +22,7 @@ signing in lands on the page that was asked for.
 | `/organizations` | The user's organizations (`GET /api/organizations`) |
 | `/organizations/:orgSlug` | One organization and its sorting machines (`GET /api/organizations/{org_slug}`) |
 | `/organizations/:orgSlug/sorters/:sorterSlug` | One sorter and its Live Today dashboard |
+| `/organizations/:orgSlug/sorters/:sorterSlug/reports` | That sorter's reports over a range of days |
 | `/organizations/:orgSlug/branches/:branchSlug` | The address a sorter used to have: redirects to the sorter hosted at that branch, or is not found |
 | anything else | Not found |
 
@@ -55,6 +56,49 @@ fully supported. Two machines at the *same* branch are shown as one sorter
 whose figures are combined (`collector_count` above 1, and the page says so);
 telling them apart needs per-installation attribution of events, which is
 deferred.
+
+## Reports
+
+A sorter has two views, linked from under its name: **Live Today** and
+**Reports**. Reports covers a range of days in four sections, each read from
+its own endpoint under the sorter's host branch
+(`.../reports/{overview|volume|routing|reliability}?from=&to=`):
+
+- **Overview**: check-ins, average per day, active days, transit, rejects,
+  busiest day, and a daily chart.
+- **Volume & capacity**: averages per calendar day and per active day, the
+  busiest day, weekday and hour, a typical week and a typical day.
+- **Routing**: home, each configured destination in the API's order, and
+  "Other" when there is any; daily transit.
+- **Reliability**: rejects, the reject rate, daily rejects and reasons, under
+  the API's own classification.
+
+There are no organization-wide reports, and nothing about efficiency or cost.
+
+**The range.** Presets for the last 7, 30 and 90 days, or two dates. It opens
+on the last 30 days ending today. Dates are calendar dates in the product's
+time zone (from pipeline status), never the browser's. A range may not be
+reversed, end after today, or cover more than 92 days; such a range is refused
+before anything is asked of the API. The 92 days are what the API accepts at
+present (`MAX_RANGE_DAYS` in `src/reports/dateRange.ts`), not a product rule.
+A range that includes today says its figures will still rise. The range is
+held by the page, not the address: reloading returns to the default.
+
+**The arithmetic.** The API returns whole-number counts only. Every rate and
+average is worked out in one place, `src/reports/derive.ts`, from totals: a
+rate is one total over another, never an average of daily rates. A figure with
+no denominator is shown as "Not available", never as 0, and a range with no
+check-ins is an ordinary report.
+
+**Loading and failure.** Each section loads on its own. One that fails says so
+in its own panel with its own "Try again", and the other three stay. A `404`
+shows "Reports are not available for this sorter yet." A `401` returns to the
+sign-in form. Nothing is kept between ranges or sorters: a new range starts
+empty, so one range's figures are never shown under another's dates.
+
+**Charts** are plain SVG bars with no library. Each is one named image with a
+sentence saying what it shows and a "Show table" button for the exact
+figures; nothing depends on hovering.
 
 ## Live Today
 

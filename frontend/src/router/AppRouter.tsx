@@ -6,7 +6,9 @@ import { NotFoundPage } from '../pages/NotFoundPage.tsx'
 import { OrganizationLayout } from '../pages/OrganizationLayout.tsx'
 import { OrganizationPage } from '../pages/OrganizationPage.tsx'
 import { OrganizationsPage } from '../pages/OrganizationsPage.tsx'
+import { SorterLayout } from '../pages/SorterLayout.tsx'
 import { SorterPage } from '../pages/SorterPage.tsx'
+import { SorterReportsPage } from '../pages/SorterReportsPage.tsx'
 import { PageArrivalContext } from './PageArrivalContext.ts'
 import { ORGANIZATIONS_PATH } from './paths.ts'
 
@@ -27,7 +29,10 @@ export function AppRouter() {
         <Route path="organizations" element={<OrganizationsPage />} />
         <Route path="organizations/:orgSlug" element={<OrganizationLayout />}>
           <Route index element={<OrganizationPage />} />
-          <Route path="sorters/:sorterSlug" element={<SorterPage />} />
+          <Route path="sorters/:sorterSlug" element={<SorterLayout />}>
+            <Route index element={<SorterPage />} />
+            <Route path="reports" element={<SorterReportsPage />} />
+          </Route>
           {/* The address a sorter's dashboard used to have: redirects to the sorter hosted there, if one is. */}
           <Route path="branches/:branchSlug" element={<LegacyBranchRedirect />} />
         </Route>
