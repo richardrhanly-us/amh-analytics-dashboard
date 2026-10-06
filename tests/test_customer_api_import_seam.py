@@ -81,6 +81,7 @@ CUSTOMER_ROUTES = {
     ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/reports/volume"),
     ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/reports/routing"),
     ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/reports/reliability"),
+    ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/reports/efficiency"),
     ("GET", "/api/organizations/{org_slug}/reports/overview"),
     ("GET", "/api/organizations/{org_slug}/reports/routing-network"),
     ("GET", "/api/organizations/{org_slug}/reports/reliability"),
