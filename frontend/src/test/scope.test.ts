@@ -304,6 +304,13 @@ describe('how the dashboard is drawn', () => {
     ])
     expect(liveToday).toMatch(/role="group" aria-labelledby=/)
     expect(css).toMatch(/\.metric dt \{[^}]*overflow-wrap: anywhere/)
+    // The zones are bands with an accent each, and the pipeline's state is a pill in its own colour. Every one of
+    // them is beside a word that says the same thing, and none of it moves.
+    expect(css).toMatch(/--zone-operations: light-dark\(/)
+    expect(css).toMatch(/--zone-routing: light-dark\(/)
+    expect(css).toMatch(/--zone-rejects: light-dark\(/)
+    expect(liveToday).toMatch(/\{live\.paused \? 'Paused' : 'Live'\}/)
+    expect(css).toMatch(/\.live-today \.metrics \{\s*grid-template-columns: repeat\(auto-fit, minmax\(min\(100%, 11\.5rem\), 1fr\)\);/)
   })
 
   it('adds no theme switch: light and dark still follow the system, as before', () => {

@@ -27,7 +27,7 @@ export function PipelinePanel({ pipeline }: { pipeline: PipelineStatus }) {
   const [outline, mark] = STATE_ICONS[pipeline.state]
 
   return (
-    <section className="panel" aria-labelledby="pipeline-heading">
+    <section className={`panel pipeline-panel pipeline-panel-${pipeline.state}`} aria-labelledby="pipeline-heading">
       <h3 id="pipeline-heading">Pipeline</h3>
       <dl className="pipeline-facts">
         <div>
