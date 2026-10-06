@@ -84,6 +84,10 @@ CUSTOMER_ROUTES = {
     ("GET", "/api/organizations/{org_slug}/reports/overview"),
     ("GET", "/api/organizations/{org_slug}/reports/routing-network"),
     ("GET", "/api/organizations/{org_slug}/reports/reliability"),
+    ("GET", "/api/organizations/{org_slug}/settings/efficiency"),
+    ("PUT", "/api/organizations/{org_slug}/settings/efficiency"),
+    ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/settings/efficiency"),
+    ("PUT", "/api/organizations/{org_slug}/branches/{branch_slug}/settings/efficiency"),
 }
 
 _PROBE = """
