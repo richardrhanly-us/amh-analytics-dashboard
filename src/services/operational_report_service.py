@@ -1,5 +1,5 @@
 """Range reports for one sorter site: the counts behind the customer API's
-Overview, Volume, Routing and Reliability reports.
+Overview, Volume, Routing, Reliability and Bin Volume reports.
 
 Everything here is a COUNT OF STORED ROWS over a range of local calendar
 days. Nothing is derived: no rate, average, percentage or "busiest" anything.
@@ -78,6 +78,7 @@ from services.reject_reason import (
     reason_for_error_class,
 )
 from services.routing_destination import RoutingConfig, destination_key
+from services.sort_bin import bin_key, bin_order
 from services.tenant_resolution_service import ResolvedOperationalTenant
 
 logger = logging.getLogger("sortview.operational_reports")
@@ -245,10 +246,13 @@ _V1_CHECKINS_BY_DESTINATION = _Source("checkins", aware=False, group_column="des
 _V2_CHECKINS_BY_DESTINATION = _Source("checkin_events", aware=True, group_column="destination")
 _V1_REJECTS_BY_MESSAGE = _Source("rejects", aware=False, group_column="error_message")
 _V2_REJECTS_BY_CLASS = _Source("reject_events", aware=True, group_column="error_class")
+_V1_CHECKINS_BY_BIN = _Source("checkins", aware=False, group_column="bin")
+_V2_CHECKINS_BY_BIN = _Source("checkin_events", aware=True, group_column="bin")
 
 _SOURCES = (
     _V1_CHECKINS, _V2_CHECKINS, _V1_REJECTS, _V2_REJECTS,
     _V1_CHECKINS_BY_DESTINATION, _V2_CHECKINS_BY_DESTINATION, _V1_REJECTS_BY_MESSAGE, _V2_REJECTS_BY_CLASS,
+    _V1_CHECKINS_BY_BIN, _V2_CHECKINS_BY_BIN,
 )
 
 
@@ -375,16 +379,35 @@ def get_checkin_counts_by_hour(
     The days are counted a week at a time -- 168 buckets a statement -- and
     a week an era owns none of is not asked for.
     """
+    by_day = [[0] * WALL_CLOCK_HOURS_PER_DAY for _ in window.local_range.dates]
+
+    for first, source, owned, boundaries in _weeks_of_hours(window, _V1_CHECKINS, _V2_CHECKINS):
+        buckets = len(boundaries) - 1
+        counts = _bucket_counts(_execute_bucket_count(conn, tenant, source, owned, boundaries).one(), buckets)
+        for index, count in enumerate(counts):
+            by_day[first + index // WALL_CLOCK_HOURS_PER_DAY][index % WALL_CLOCK_HOURS_PER_DAY] += count
+
+    return tuple(tuple(hours) for hours in by_day)
+
+
+def _weeks_of_hours(
+    window: ReportWindow, v1_source: _Source, v2_source: _Source
+) -> Iterator[tuple[int, _Source, tuple[datetime, datetime], tuple[datetime, ...]]]:
+    """The statements an hourly count of the window needs, a week of
+    wall-clock hours at a time: (index of the week's first day, source, the
+    part of that week the source's era owns, the week's hour boundaries).
+
+    Bucket N of a week is hour N % 24 of its day N // 24. A week an era owns
+    none of is not yielded, so its table is not read for it.
+    """
     local = window.local_range
     hours_per_day = [local_hour_boundaries(day, local.zone) for day in local.dates]
-    by_day = [[0] * WALL_CLOCK_HOURS_PER_DAY for _ in local.dates]
 
     for first in range(0, local.days, _HOUR_BUCKET_DAYS_PER_STATEMENT):
         week = hours_per_day[first:first + _HOUR_BUCKET_DAYS_PER_STATEMENT]
-        buckets = len(week) * WALL_CLOCK_HOURS_PER_DAY
         for source, span, boundaries in (
-            (_V1_CHECKINS, window.v1_span, _week_boundaries(day.v1_boundaries_local for day in week)),
-            (_V2_CHECKINS, window.v2_span, _week_boundaries(day.v2_boundaries_utc for day in week)),
+            (v1_source, window.v1_span, _week_boundaries(day.v1_boundaries_local for day in week)),
+            (v2_source, window.v2_span, _week_boundaries(day.v2_boundaries_utc for day in week)),
         ):
             if span is None:
                 continue
@@ -392,11 +415,7 @@ def get_checkin_counts_by_hour(
             owned = (max(span[0], boundaries[0]), min(span[1], boundaries[-1]))
             if owned[0] >= owned[1]:
                 continue
-            counts = _bucket_counts(_execute_bucket_count(conn, tenant, source, owned, boundaries).one(), buckets)
-            for index, count in enumerate(counts):
-                by_day[first + index // WALL_CLOCK_HOURS_PER_DAY][index % WALL_CLOCK_HOURS_PER_DAY] += count
-
-    return tuple(tuple(hours) for hours in by_day)
+            yield first, source, owned, boundaries
 
 
 def _week_boundaries(days_of_boundaries) -> tuple[datetime, ...]:
@@ -564,7 +583,94 @@ def get_reject_reason_counts_by_day(
 
 
 # =====================================================================================================================
-# The four reports
+# Check-ins, by sort bin and wall-clock hour
+# =====================================================================================================================
+
+@dataclass(frozen=True, slots=True)
+class BinCounts:
+    """Check-ins logged in one sort bin over a range. `key` is the bin's
+    number (services.sort_bin.bin_key). `hour_counts` has 24 entries: entry N
+    is the TOTAL for wall-clock hour N across every day of the range."""
+
+    key: str
+    hour_counts: tuple[int, ...]
+
+    @property
+    def checkin_count(self) -> int:
+        return sum(self.hour_counts)
+
+
+@dataclass(frozen=True, slots=True)
+class BinVolumeReport:
+    """A site's check-ins over a range by the sort bin each was logged in.
+
+    `bins` has one entry for each bin that at least one check-in of the range
+    was logged in, in numeric order -- and no other: nothing here knows which
+    bins a sorter has. `unknown_count` is the check-ins whose stored bin
+    names no bin. Every check-in is in exactly one of the two, so
+    `checkin_count` is the range's check-in count.
+    """
+
+    bins: tuple[BinCounts, ...]
+    unknown_count: int
+
+    @property
+    def known_count(self) -> int:
+        return sum(counts.checkin_count for counts in self.bins)
+
+    @property
+    def checkin_count(self) -> int:
+        return self.known_count + self.unknown_count
+
+
+def get_bin_volume_report(conn: Connection, tenant: ResolvedOperationalTenant, window: ReportWindow) -> BinVolumeReport:
+    """Check-ins in the window by sort bin, and for each bin by wall-clock
+    hour.
+
+    The rows are the volume report's rows, counted in the same hour buckets
+    (get_checkin_counts_by_hour) and only grouped by the one stored column
+    that says which bin: so the total here is the range's check-in count, an
+    hour is a wall-clock hour on every day including the days the clocks
+    change, and each era's rows count only on its own side of the cutover.
+
+    A stored bin becomes its services.sort_bin.bin_key -- the same key
+    whichever table it came from -- or, when it names no bin, is counted as
+    unknown. Nothing is left out and nothing is counted twice. Every figure
+    is a sum of the one grouped count, so the bins, their hours and the
+    totals always agree.
+
+    One statement runs per week of the window per era that owns part of it.
+    A stored bin is read only as the key of a group.
+    """
+    by_key: dict[str, list[int]] = {}
+    unknown_count = 0
+
+    for _first, source, owned, boundaries in _weeks_of_hours(window, _V1_CHECKINS_BY_BIN, _V2_CHECKINS_BY_BIN):
+        buckets = len(boundaries) - 1
+        # One row per distinct stored bin, a NULL one included.
+        for stored, *row in _execute_bucket_count(conn, tenant, source, owned, boundaries):
+            counts = _bucket_counts(row, buckets)
+            key = bin_key(stored)
+            if key is None:
+                unknown_count += sum(counts)
+                continue
+            hours = by_key.setdefault(key, [0] * WALL_CLOCK_HOURS_PER_DAY)
+            for index, count in enumerate(counts):
+                hours[index % WALL_CLOCK_HOURS_PER_DAY] += count
+
+    return BinVolumeReport(
+        bins=tuple(
+            BinCounts(key=key, hour_counts=tuple(by_key[key]))
+            for key in sorted(by_key, key=bin_order)
+            # Observed bins only: a bin is here because a check-in of the range was logged in it.
+            if any(by_key[key])
+        ),
+        unknown_count=unknown_count,
+    )
+
+
+# =====================================================================================================================
+# The reports
 # =====================================================================================================================
 
 @dataclass(frozen=True, slots=True)

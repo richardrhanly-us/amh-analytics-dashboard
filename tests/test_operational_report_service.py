@@ -429,9 +429,10 @@ def test_every_time_is_bound_with_the_type_its_table_keeps(source):
 
 
 def test_the_sources_are_the_four_tables_in_both_forms_and_nothing_else():
+    # Reports R7A added the two check-in tables grouped by the sort bin a check-in was logged in.
     assert sorted((source.table, source.aware, source.group_column or "") for source in _SOURCES) == [
-        ("checkin_events", True, ""), ("checkin_events", True, "destination"),
-        ("checkins", False, ""), ("checkins", False, "destination"),
+        ("checkin_events", True, ""), ("checkin_events", True, "bin"), ("checkin_events", True, "destination"),
+        ("checkins", False, ""), ("checkins", False, "bin"), ("checkins", False, "destination"),
         ("reject_events", True, ""), ("reject_events", True, "error_class"),
         ("rejects", False, ""), ("rejects", False, "error_message"),
     ]
@@ -482,6 +483,7 @@ def test_the_module_depends_only_on_the_standard_library_sqlalchemy_and_the_sing
         "from services.operational_metrics_service import (",
         "from services.reject_reason import (",
         "from services.routing_destination import RoutingConfig, destination_key",
+        "from services.sort_bin import bin_key, bin_order",
         "from services.tenant_resolution_service import ResolvedOperationalTenant",
     ]
 

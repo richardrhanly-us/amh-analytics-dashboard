@@ -1226,7 +1226,7 @@ def test_the_reasons_route_never_reads_a_check_in_table(api, saas_db, operationa
     assert "90001" not in response.text and "80002" not in response.text
 
 
-def test_the_branch_routes_are_exactly_the_seven_operational_endpoints_the_five_reports_and_the_efficiency_settings():
+def test_the_branch_routes_are_exactly_the_seven_operational_endpoints_the_six_reports_and_the_efficiency_settings():
     paths = sorted(r.path.split("/branches/{branch_slug}/")[1] for r in main.app.routes
                    if "/branches/{branch_slug}/" in getattr(r, "path", ""))
 
@@ -1235,6 +1235,8 @@ def test_the_branch_routes_are_exactly_the_seven_operational_endpoints_the_five_
                      "rejects/count",
                      # The range reports (customer_api.report_routes) are under the same site prefix.
                      # ... and so is the Efficiency report (customer_api.efficiency_report_routes, Reports R6C).
+                     # ... and Bin Volume (customer_api.report_routes, Reports R7A).
+                     "reports/bins",
                      "reports/efficiency",
                      "reports/overview", "reports/reliability", "reports/routing", "reports/volume",
                      # Reports R6B: a sorter site's Efficiency settings, read (GET) and replaced (PUT).

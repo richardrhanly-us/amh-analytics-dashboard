@@ -7,7 +7,9 @@ worked out by whoever shows them, from the counts and the range's `days`.
 Every list is FULL LENGTH, with explicit zeros: one entry per calendar date
 of the range, 24 hours, every reject reason, every destination enabled in
 the site's settings. A range with no activity at all is a complete answer
-made of zeros, never an empty one.
+made of zeros, never an empty one. The one list that is not full length is
+the bin report's `bins`: which bins a sorter has is not known, so only the
+bins that were observed are listed.
 
 As everywhere in the customer API, the rows these are built from sit next to
 identifiers and stored text that never leave the server -- tenant ids, item
@@ -125,6 +127,41 @@ class RoutingReportResponse(_ResponseModel):
     transit_count: int
     other_count: int
     days: list[RoutingDay]
+
+
+class BinVolumeBin(_ResponseModel):
+    """One sort bin that check-ins of the range were logged in. `key` is the
+    bin's number as the sorter logs it, without leading zeros: an identifier
+    of a physical bin, not a count and not a destination. `hours` always has
+    24 entries, for hours 0 to 23 of the local clock in order, each the TOTAL
+    for that hour across every day of the range; they add up to
+    `checkin_count`."""
+
+    key: str
+    checkin_count: int
+    hours: list[int]
+
+
+class BinVolumeReportResponse(_ResponseModel):
+    """A sorter site's check-ins over a range by the sort bin each was
+    logged in. `checkin_count` is every check-in of the range -- the same
+    count the overview and volume reports give -- and is exactly
+    `known_bin_count + unknown_bin_count`.
+
+    `bins` lists only bins that were OBSERVED in the range, in numeric order,
+    and adds up to `known_bin_count`. A bin with no check-ins in the range is
+    not listed, because which bins a sorter has is not known: a missing bin
+    is not a zero. `unknown_bin_count` is the check-ins whose logged bin was
+    missing or was not a bin number.
+
+    A bin says where an item physically went on the sorter. It says nothing
+    about how full the bin was, where the item was routed or what it was."""
+
+    range: ReportRange
+    checkin_count: int
+    known_bin_count: int
+    unknown_bin_count: int
+    bins: list[BinVolumeBin]
 
 
 class ReliabilityReason(_ResponseModel):
