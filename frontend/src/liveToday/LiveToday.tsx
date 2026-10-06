@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 
+import type { CheckinsByDestination } from '../api/liveToday.ts'
 import { ErrorMessage } from '../components/ErrorMessage.tsx'
 import { formatCalendarDate, formatHourRange, formatInstant } from '../time/productTime.ts'
 import { HourlyCheckins } from './HourlyCheckins.tsx'
@@ -110,8 +111,66 @@ function Controls({ live }: { live: LiveTodayData }) {
   )
 }
 
+/** A share of the day's check-ins, to one decimal place: "10.8% of today". Never asked of a day with none. */
+function shareOfToday(part: number, total: number): string {
+  return `${((part / total) * 100).toFixed(1)}% of today`
+}
+
+/** A routed count and what share of the day it is. A day with no check-ins has no shares, and says so. */
+function routed(part: number, total: number): Figure {
+  return { ...count(part), note: total > 0 ? shareOfToday(part, total) : 'No check-ins yet' }
+}
+
+/** One named group of figures within today's summary. A group, not a landmark: the page has enough of those. */
+function SummaryGroup({ name, heading, children }: { name: string; heading: string; children: ReactNode }) {
+  return (
+    <div className="summary-group" role="group" aria-labelledby={`${name}-heading`}>
+      <h4 id={`${name}-heading`}>{heading}</h4>
+      {children}
+    </div>
+  )
+}
+
+/**
+ * Where the sorter sent today's check-ins: the total in transit, then one
+ * figure for each destination the site has configured, however many that is.
+ * These are outcomes of this one sorter -- nothing here is a link, because a
+ * destination has no dashboard of its own.
+ */
+function Routing({ routing }: { routing: Section<CheckinsByDestination> }) {
+  if (routing.status !== 'ready') {
+    return (
+      <dl className="metrics">
+        <MetricCard label="Total transit" {...figure(routing, () => count(0))} />
+      </dl>
+    )
+  }
+
+  const { checkin_count: total, home, transit, transit_count: transitCount, other_count: otherCount } = routing.data
+
+  return (
+    <>
+      {transit.length === 0 ? (
+        <p className="quiet">No transit destinations are configured for this sorter site.</p>
+      ) : (
+        <dl className="metrics">
+          <MetricCard label="Total transit" {...routed(transitCount, total)} />
+          {transit.map((destination) => (
+            <MetricCard key={destination.key} label={destination.label} {...routed(destination.checkin_count, total)} />
+          ))}
+        </dl>
+      )}
+      {/* The rest of the day's check-ins, so the figures above can be seen to add up. */}
+      <p className="routing-accounting">
+        Kept at {home.label}: {home.checkin_count.toLocaleString('en-US')}.
+        {otherCount > 0 && ` Other routing: ${otherCount.toLocaleString('en-US')}.`}
+      </p>
+    </>
+  )
+}
+
 function Today({ live }: { live: LiveTodayData }) {
-  const { checkinCount, checkinsByHour, rejectCount, currentHour } = live
+  const { checkinCount, checkinsByHour, checkinsByDestination, rejectCount, currentHour } = live
   const dateText = live.date === null ? null : formatCalendarDate(live.date)
 
   return (
@@ -122,38 +181,48 @@ function Today({ live }: { live: LiveTodayData }) {
           {dateText} ({live.timeZone})
         </p>
       )}
-      <dl className="metrics">
-        <MetricCard label="Check-ins today" {...figure(checkinCount, (data) => count(data.checkin_count))} />
-        <MetricCard
-          label="Current hour"
-          {...figure(checkinsByHour, (data) =>
-            currentHour === null
-              ? { tone: 'empty', text: 'Not available' }
-              : { ...count(checkinsInHour(data.hours, currentHour)), note: formatHourRange(currentHour) },
-          )}
-        />
-        <MetricCard
-          label="Busiest hour"
-          {...figure(checkinsByHour, (data) => {
-            const busiest = busiestHour(data.hours)
-            return busiest === null
-              ? { tone: 'empty', text: 'No check-ins yet' }
-              : { ...count(busiest.checkin_count), note: formatHourRange(busiest.hour) }
-          })}
-        />
-        <MetricCard label="Rejects today" {...figure(rejectCount, (data) => count(data.reject_count))} />
-        <MetricCard
-          label="Reject rate"
-          {...figure(rejectCount, (rejects) =>
-            figure(checkinCount, (checkins) => {
-              const rate = rejectRate(rejects.reject_count, checkins.checkin_count)
-              return rate === null
-                ? { tone: 'empty', text: 'Not available', note: 'No check-ins yet' }
-                : { tone: 'value', text: formatRate(rate) }
-            }),
-          )}
-        />
-      </dl>
+      <SummaryGroup name="operations" heading="Operations">
+        <dl className="metrics">
+          <MetricCard label="Check-ins today" {...figure(checkinCount, (data) => count(data.checkin_count))} />
+          <MetricCard
+            label="Current hour"
+            {...figure(checkinsByHour, (data) =>
+              currentHour === null
+                ? { tone: 'empty', text: 'Not available' }
+                : { ...count(checkinsInHour(data.hours, currentHour)), note: formatHourRange(currentHour) },
+            )}
+          />
+          <MetricCard
+            label="Busiest hour"
+            {...figure(checkinsByHour, (data) => {
+              const busiest = busiestHour(data.hours)
+              return busiest === null
+                ? { tone: 'empty', text: 'No check-ins yet' }
+                : { ...count(busiest.checkin_count), note: formatHourRange(busiest.hour) }
+            })}
+          />
+        </dl>
+      </SummaryGroup>
+      <SummaryGroup name="routing" heading="Routing">
+        <p className="summary-caption">Where this sorter sent today&rsquo;s check-ins.</p>
+        <Routing routing={checkinsByDestination} />
+      </SummaryGroup>
+      <SummaryGroup name="rejects" heading="Rejects">
+        <dl className="metrics">
+          <MetricCard label="Rejects today" {...figure(rejectCount, (data) => count(data.reject_count))} />
+          <MetricCard
+            label="Reject rate"
+            {...figure(rejectCount, (rejects) =>
+              figure(checkinCount, (checkins) => {
+                const rate = rejectRate(rejects.reject_count, checkins.checkin_count)
+                return rate === null
+                  ? { tone: 'empty', text: 'Not available', note: 'No check-ins yet' }
+                  : { tone: 'value', text: formatRate(rate) }
+              }),
+            )}
+          />
+        </dl>
+      </SummaryGroup>
     </section>
   )
 }
@@ -165,7 +234,14 @@ function Today({ live }: { live: LiveTodayData }) {
  * that it could not load.
  */
 function problem(live: LiveTodayData): string | null {
-  const sections = [live.pipeline, live.checkinCount, live.checkinsByHour, live.rejectCount, live.rejectsByReason]
+  const sections = [
+    live.pipeline,
+    live.checkinCount,
+    live.checkinsByHour,
+    live.checkinsByDestination,
+    live.rejectCount,
+    live.rejectsByReason,
+  ]
   if (sections.some((part) => part.status === 'error')) {
     return 'Some live data could not be loaded. Use Refresh to try again.'
   }

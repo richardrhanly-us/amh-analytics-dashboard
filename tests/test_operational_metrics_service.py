@@ -4073,6 +4073,7 @@ def test_the_module_depends_only_on_the_standard_library_sqlalchemy_and_the_reso
         "from sqlalchemy import DateTime, bindparam, text",
         "from sqlalchemy.engine import Connection",
         "from services.reject_reason import (",
+        "from services.routing_destination import RoutingConfig, destination_key",
         "from services.tenant_resolution_service import ResolvedOperationalTenant",
     ]
 
@@ -4090,8 +4091,9 @@ def test_the_module_reads_no_clock_no_environment_and_creates_no_engine():
 def test_no_sql_in_the_module_depends_on_the_database_session_time_zone():
     statements = [name for name in vars(operational_metrics_service) if name.endswith("_SQL")]
     assert sorted(statements) == [
-        "_EFFECTIVE_CUTOVER_SQL", "_V1_CHECKIN_COUNT_SQL", "_V1_CHECKIN_HOURLY_COUNT_SQL", "_V1_REJECT_COUNT_SQL",
-        "_V1_REJECT_REASON_COUNT_SQL", "_V2_CHECKIN_COUNT_SQL", "_V2_CHECKIN_HOURLY_COUNT_SQL", "_V2_REJECT_COUNT_SQL",
+        "_EFFECTIVE_CUTOVER_SQL", "_V1_CHECKIN_COUNT_SQL", "_V1_CHECKIN_DESTINATION_COUNT_SQL",
+        "_V1_CHECKIN_HOURLY_COUNT_SQL", "_V1_REJECT_COUNT_SQL", "_V1_REJECT_REASON_COUNT_SQL", "_V2_CHECKIN_COUNT_SQL",
+        "_V2_CHECKIN_DESTINATION_COUNT_SQL", "_V2_CHECKIN_HOURLY_COUNT_SQL", "_V2_REJECT_COUNT_SQL",
         "_V2_REJECT_REASON_COUNT_SQL",
     ]
 

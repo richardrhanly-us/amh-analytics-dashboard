@@ -77,6 +77,51 @@ class CheckinsByHourResponse(_ResponseModel):
     hours: list[CheckinHourCount]
 
 
+class RoutingHome(_ResponseModel):
+    """Check-ins the sorter kept at its own site. `label` is what the site
+    calls home in its settings."""
+
+    label: str
+    checkin_count: int
+
+
+class RoutingDestination(_ResponseModel):
+    """Check-ins the sorter routed to one of the site's configured
+    destinations. `key` identifies the destination and is stable for as long
+    as its configured `label` says the same thing; it is a slug, never a
+    stored value. A destination is a routing outcome of this sorter site --
+    not a site, branch or sorter of its own."""
+
+    key: str
+    label: str
+    checkin_count: int
+
+
+class CheckinsByDestinationResponse(_ResponseModel):
+    """Check-ins on one local calendar day, by where the sorter routed them.
+    `date` and `timezone` are as in CheckinCountResponse, and `checkin_count`
+    is that response's count for the same day.
+
+    `transit` always has one entry for each destination enabled in the site's
+    settings, in configured order, zero where there were none, and
+    `transit_count` is their sum. `other_count` is every check-in that is
+    neither home nor a configured destination. Every check-in is in exactly
+    one of the three:
+
+        home.checkin_count + transit_count + other_count == checkin_count
+
+    No stored destination value, and nothing that identifies an item, is part
+    of the answer."""
+
+    date: dt.date
+    timezone: str
+    checkin_count: int
+    home: RoutingHome
+    transit: list[RoutingDestination]
+    transit_count: int
+    other_count: int
+
+
 class RejectCountResponse(_ResponseModel):
     """Rejects on one local calendar day. `date` and `timezone` are as in
     CheckinCountResponse. Every stored reject of the day is counted, whatever

@@ -4,11 +4,13 @@ import { useCallback, useEffect, useState } from 'react'
 import { isApiError } from '../api/client.ts'
 import {
   getCheckinCount,
+  getCheckinsByDestination,
   getCheckinsByHour,
   getPipelineStatus,
   getRejectCount,
   getRejectsByReason,
   type CheckinCount,
+  type CheckinsByDestination,
   type CheckinsByHour,
   type PipelineStatus,
   type RejectCount,
@@ -53,6 +55,7 @@ export interface LiveToday {
   asOf: number | null
   checkinCount: Section<CheckinCount>
   checkinsByHour: Section<CheckinsByHour>
+  checkinsByDestination: Section<CheckinsByDestination>
   rejectCount: Section<RejectCount>
   rejectsByReason: Section<RejectsByReason>
   /** The API answered 404 for a branch the user can see: it has no live data to show. */
@@ -70,12 +73,12 @@ export interface LiveToday {
  *
  * ORDER. Pipeline status is asked first, because it names the product's time
  * zone. "Today" is the calendar date in that zone at the moment that answer
- * arrived -- never the browser's date -- and only then are the four dated
+ * arrived -- never the browser's date -- and only then are the five dated
  * reads made, all for that one date. If pipeline status cannot be read, no
  * date is guessed and no dated read is made.
  *
  * REFRESH. One timer, on pipeline status. Each time a new pipeline status
- * arrives the four dated reads are refreshed after it, so a refresh -- timed
+ * arrives the five dated reads are refreshed after it, so a refresh -- timed
  * or from the button -- is always the whole set, in the same order as the
  * first load. Pausing stops the timer and nothing else.
  *
@@ -111,10 +114,11 @@ export function useLiveToday(orgSlug: string, branchSlug: string): LiveToday {
   })
   const checkinCountQuery = useQuery(dated('checkins/count', getCheckinCount))
   const checkinsByHourQuery = useQuery(dated('checkins/by-hour', getCheckinsByHour))
+  const checkinsByDestinationQuery = useQuery(dated('checkins/by-destination', getCheckinsByDestination))
   const rejectCountQuery = useQuery(dated('rejects/count', getRejectCount))
   const rejectsByReasonQuery = useQuery(dated('rejects/by-reason', getRejectsByReason))
 
-  // A new pipeline status (`asOf` moved) is followed by the day's four reads. One already in flight -- the first
+  // A new pipeline status (`asOf` moved) is followed by the day's five reads. One already in flight -- the first
   // load, or a new date's -- is left alone rather than started again.
   useEffect(() => {
     if (date !== null) {
@@ -125,7 +129,14 @@ export function useLiveToday(orgSlug: string, branchSlug: string): LiveToday {
     }
   }, [queryClient, orgSlug, branchSlug, date, asOf])
 
-  const queries = [pipelineQuery, checkinCountQuery, checkinsByHourQuery, rejectCountQuery, rejectsByReasonQuery]
+  const queries = [
+    pipelineQuery,
+    checkinCountQuery,
+    checkinsByHourQuery,
+    checkinsByDestinationQuery,
+    rejectCountQuery,
+    rejectsByReasonQuery,
+  ]
   const refreshing = queries.some((query) => query.isFetching)
   const refetchPipeline = pipelineQuery.refetch
 
@@ -143,6 +154,7 @@ export function useLiveToday(orgSlug: string, branchSlug: string): LiveToday {
     asOf,
     checkinCount: section(checkinCountQuery),
     checkinsByHour: section(checkinsByHourQuery),
+    checkinsByDestination: section(checkinsByDestinationQuery),
     rejectCount: section(rejectCountQuery),
     rejectsByReason: section(rejectsByReasonQuery),
     unavailable: queries.some((query) => isApiError(query.error) && query.error.status === 404),

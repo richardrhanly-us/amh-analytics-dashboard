@@ -82,6 +82,9 @@ describe('the structure of a page', () => {
       'H2 Central Branch',
       'H3 Pipeline',
       'H3 Today',
+      'H4 Operations',
+      'H4 Routing',
+      'H4 Rejects',
       'H3 Hourly check-ins',
       'H3 Top reject reasons',
     ])

@@ -95,7 +95,7 @@ describe('scope of this block', () => {
     expect(offenders(/console\./)).toEqual([])
   })
 
-  it('calls no API beyond auth, the two organization endpoints and the five Live Today reads', () => {
+  it('calls no API beyond auth, the two organization endpoints and the six Live Today reads', () => {
     const paths = shipped.flatMap(([, text]) => text.match(/['"`]\/api\/[^'"`]*['"`]/g) ?? [])
 
     expect([...new Set(paths.map((path) => path.slice(1, -1)))].sort()).toEqual([
@@ -108,13 +108,14 @@ describe('scope of this block', () => {
       '/api/organizations/${segment(orgSlug)}/branches/${segment(branchSlug)}',
     ])
 
-    // Under a branch: exactly the five Live Today reads, each named once, in the one module that makes them.
+    // Under a branch: exactly the six Live Today reads, each named once, in the one module that makes them.
     const endpoints = shipped.flatMap(([path, text]) =>
       (text.match(/['"`](pipeline-status|checkins\/[a-z-]+|rejects\/[a-z-]+)['"`]/g) ?? []).map(
         (found) => `${path} ${found.slice(1, -1)}`,
       ),
     )
     expect(endpoints.filter((found) => found.startsWith('../api/liveToday.ts ')).sort()).toEqual([
+      '../api/liveToday.ts checkins/by-destination',
       '../api/liveToday.ts checkins/by-hour',
       '../api/liveToday.ts checkins/count',
       '../api/liveToday.ts rejects/by-reason',
@@ -162,7 +163,7 @@ describe('how the dashboard is drawn', () => {
   })
 
   it('lays out with grid and flex that reflow, never a fixed desktop width', () => {
-    expect(css).toMatch(/\.metrics \{[^}]*grid-template-columns: repeat\(auto-fit, minmax\([\d.]+rem, 1fr\)\)/)
+    expect(css).toMatch(/\.metrics \{[^}]*grid-template-columns: repeat\(auto-fill, minmax\([\d.]+rem, 1fr\)\)/)
     expect(css).toMatch(/\.live-controls \{[^}]*flex-wrap: wrap/)
     expect(css).toMatch(/\.live-buttons \{[^}]*flex-wrap: wrap/)
     expect(css).toMatch(/\.breadcrumb ol \{[^}]*flex-wrap: wrap/)
@@ -205,6 +206,27 @@ describe('how the dashboard is drawn', () => {
     expect(offenders(/setInterval|setTimeout|Date\.now\(|countdown|secondsLeft|remaining/i)).toEqual([])
     expect(offenders(/refetchInterval/)).toEqual(['../liveToday/useLiveToday.ts'])
     expect(offenders(/REFRESH_INTERVAL_MS\s*=/)).toEqual(['../liveToday/useLiveToday.ts'])
+  })
+
+  it('names no destination and no library of its own: routing comes from the API', () => {
+    expect(offenders(/westside|library express|library_express|braunfels|nbpl|ultrasort|tech logic/i)).toEqual([])
+  })
+
+  it('treats a destination as an outcome, never as a place to go: no routing card links anywhere', () => {
+    const liveToday = shipped.find(([path]) => path === '../liveToday/LiveToday.tsx')?.[1] ?? ''
+    expect(liveToday).not.toMatch(/<Link\b|<a\b|href=|branchPath|useNavigate/)
+    expect(offenders(/installation/i)).toEqual([])
+  })
+
+  it('groups today as three named groups without adding landmarks', () => {
+    const liveToday = shipped.find(([path]) => path === '../liveToday/LiveToday.tsx')?.[1] ?? ''
+    expect(liveToday.match(/<SummaryGroup name="(\w+)"/g)).toEqual([
+      '<SummaryGroup name="operations"',
+      '<SummaryGroup name="routing"',
+      '<SummaryGroup name="rejects"',
+    ])
+    expect(liveToday).toMatch(/role="group" aria-labelledby=/)
+    expect(css).toMatch(/\.metric dt \{[^}]*overflow-wrap: anywhere/)
   })
 
   it('adds no theme switch: light and dark still follow the system, as before', () => {
