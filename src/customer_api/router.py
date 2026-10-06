@@ -14,6 +14,7 @@ from customer_api.auth_routes import create_auth_router
 from customer_api.errors import CustomerApiRoute
 from customer_api.operational_routes import create_operational_router
 from customer_api.organization_routes import create_organization_router
+from customer_api.report_routes import create_report_router
 
 API_PREFIX = "/api"
 
@@ -28,4 +29,5 @@ def create_customer_router(limiter: Limiter) -> APIRouter:
     router.include_router(create_auth_router(limiter))
     router.include_router(create_organization_router())
     router.include_router(create_operational_router())
+    router.include_router(create_report_router())
     return router

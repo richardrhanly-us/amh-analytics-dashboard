@@ -1226,10 +1226,12 @@ def test_the_reasons_route_never_reads_a_check_in_table(api, saas_db, operationa
     assert "90001" not in response.text and "80002" not in response.text
 
 
-def test_the_branch_routes_are_exactly_the_seven_operational_endpoints():
+def test_the_branch_routes_are_exactly_the_seven_operational_endpoints_and_the_four_reports():
     paths = sorted(r.path.split("/branches/{branch_slug}/")[1] for r in main.app.routes
                    if "/branches/{branch_slug}/" in getattr(r, "path", ""))
 
     # Block 9e added pipeline-status; the five that were here before are exactly as they were.
     assert paths == ["checkins/by-destination", "checkins/by-hour", "checkins/count", "ingest-status", "pipeline-status", "rejects/by-reason",
-                     "rejects/count"]
+                     "rejects/count",
+                     # The range reports (customer_api.report_routes) are under the same site prefix.
+                     "reports/overview", "reports/reliability", "reports/routing", "reports/volume"]
