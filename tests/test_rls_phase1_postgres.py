@@ -2979,3 +2979,162 @@ def test_sorter_sites_are_one_per_host_branch_isolated_by_organization_and_carry
     ]
     assert list_sorter_sites("no-such-tenant") == []
     assert "CANARY" not in repr(tenant_a + tenant_b) and "9.9.9" not in repr(tenant_a + tenant_b)
+
+
+# --- GET .../reports/{overview,volume,routing,reliability}?from=&to=, end to end, as the runtime role ---
+#
+# The range reports against real tables: real TIMESTAMP bounds for the legacy
+# tables, real TIMESTAMPTZ bounds for the current ones, many FILTER columns in
+# one statement, real row level security. What is proved here and nowhere
+# else: that every day of a range is what the single-day endpoints answer for
+# it ON A REAL SERVER, and that the database session's time zone cannot move
+# a single row between days, hours or eras.
+
+REPORT_PATH = "/api/organizations/{org}/branches/{branch}/reports/{report}"
+SITE_PATH = "/api/organizations/{org}/branches/{branch}/{endpoint}"
+
+
+@pytest.fixture
+def reports_api(routing_api, owner_engine, monkeypatch):
+    """The routing fixture's tenants and settings, on 20 June 2026, with tenant A cut over at 12:00 local on
+    10 June (17:00Z) and rows in BOTH tables on both sides of the cutover."""
+    from controlled_clock import ControlledClock
+
+    from customer_api import report_routes
+
+    # The report routes read this clock, not the real one: 20 June 2026, whatever today is.
+    stand_in = ControlledClock(datetime(2026, 6, 20, 18, 0, tzinfo=UTC)).datetime_class()
+    monkeypatch.setattr(report_routes, "datetime", stand_in)
+    with owner_engine.begin() as conn:
+        _set_cutover(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 17:00:00+00")
+        for day in range(7, 14):
+            for number, (clock, destination) in enumerate(
+                (("00:00:00", "Main"), ("09:30:00", "Westside"), ("11:59:59", "Library Express"),
+                 ("12:00:00", "Northgate Annex"), ("23:59:59", "1"))
+            ):
+                _routed_v1_checkin(conn, CUSTOMER_A, BRANCH_A, f"2026-06-{day:02d} {clock}", f"a-{day}-{number}", destination)
+            for clock, destination in (("05:00:00", "main"), ("16:59:59", "westside"), ("17:00:00", "library_express"),
+                                       ("23:30:00", "unknown")):
+                _routed_v2_checkin(conn, CUSTOMER_A, BRANCH_A, f"2026-06-{day:02d} {clock}+00", destination)
+            _v1_reject(conn, CUSTOMER_A, BRANCH_A, f"2026-06-{day:02d} 09:30:00", f"ar-{day}-1", "Item not found")
+            _v1_reject(conn, CUSTOMER_A, BRANCH_A, f"2026-06-{day:02d} 23:59:59", f"ar-{day}-2", "Multiple RFID tags")
+            _v2_reject(conn, CUSTOMER_A, BRANCH_A, f"2026-06-{day:02d} 17:00:00+00", "routing_error")
+            _v2_reject(conn, CUSTOMER_A, BRANCH_A, f"2026-06-{day:02d} 23:30:00+00", "ils_acs_failure")
+            # Tenant B is busier on every day, in the legacy tables only.
+            for number in range(9):
+                _routed_v1_checkin(conn, CUSTOMER_B, BRANCH_B, f"2026-06-{day:02d} 10:00:00", f"b-{day}-{number}", "Westside")
+            _v1_reject(conn, CUSTOMER_B, BRANCH_B, f"2026-06-{day:02d} 10:00:00", f"br-{day}", "Item not found")
+    return routing_api
+
+
+def _report_of(client, session, org, branch, report: str, first: str, last: str):
+    return client.get(
+        REPORT_PATH.format(org=org, branch=branch, report=report),
+        params={"from": first, "to": last},
+        headers={"Cookie": f"__Host-sortview_api_session={session}"},
+    )
+
+
+def _site_read(client, session, org, branch, endpoint: str, day: str) -> dict:
+    response = client.get(
+        SITE_PATH.format(org=org, branch=branch, endpoint=endpoint),
+        params={"date": day},
+        headers={"Cookie": f"__Host-sortview_api_session={session}"},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _assert_reports_reconcile_with_the_single_day_reads(client, session, org, branch, days: list[str]) -> dict:
+    """Reads the four reports over `days` and checks every date of each against the single-day endpoints.
+    Returns the overview, for the caller's own assertions."""
+    reports = {}
+    for report in ("overview", "volume", "routing", "reliability"):
+        response = _report_of(client, session, org, branch, report, days[0], days[-1])
+        assert response.status_code == 200, response.text
+        reports[report] = response.json()
+        assert reports[report]["range"] == {
+            "from": days[0], "to": days[-1], "days": len(days), "timezone": "America/Chicago", "includes_today": False,
+        }
+        assert [entry["date"] for entry in reports[report]["days"]] == days
+
+    hours_total = [0] * 24
+    reasons_total: dict[str, int] = {}
+    for index, day in enumerate(days):
+        checkins = _site_read(client, session, org, branch, "checkins/count", day)["checkin_count"]
+        rejects = _site_read(client, session, org, branch, "rejects/count", day)["reject_count"]
+        by_destination = _site_read(client, session, org, branch, "checkins/by-destination", day)
+        for hour in _site_read(client, session, org, branch, "checkins/by-hour", day)["hours"]:
+            hours_total[hour["hour"]] += hour["checkin_count"]
+        for reason in _site_read(client, session, org, branch, "rejects/by-reason", day)["reasons"]:
+            reasons_total[reason["reason"]] = reasons_total.get(reason["reason"], 0) + reason["reject_count"]
+
+        assert reports["overview"]["days"][index] == {"date": day, "checkin_count": checkins, "reject_count": rejects}
+        assert reports["volume"]["days"][index] == {"date": day, "checkin_count": checkins}
+        assert reports["reliability"]["days"][index] == {"date": day, "checkin_count": checkins, "reject_count": rejects}
+        assert reports["routing"]["days"][index] == {
+            "date": day,
+            "checkin_count": checkins,
+            "home_count": by_destination["home"]["checkin_count"],
+            "transit_counts": [entry["checkin_count"] for entry in by_destination["transit"]],
+            "other_count": by_destination["other_count"],
+        }
+
+    assert [entry["checkin_count"] for entry in reports["volume"]["hours"]] == hours_total
+    assert {entry["reason"]: entry["reject_count"] for entry in reports["reliability"]["reasons"]} == reasons_total
+    overview, routing = reports["overview"], reports["routing"]
+    assert overview["home_count"] + overview["transit_count"] + overview["other_count"] == overview["checkin_count"]
+    assert routing["checkin_count"] == reports["volume"]["checkin_count"] == overview["checkin_count"]
+    assert (overview["home_count"], overview["transit_count"], overview["other_count"]) == (
+        routing["home"]["checkin_count"], routing["transit_count"], routing["other_count"])
+    return overview
+
+
+JUNE_8_TO_12 = ["2026-06-08", "2026-06-09", "2026-06-10", "2026-06-11", "2026-06-12"]
+
+
+def test_range_reports_across_a_cutover_reconcile_with_the_single_day_reads_on_a_real_server(reports_api):
+    overview = _assert_reports_reconcile_with_the_single_day_reads(reports_api, SESSION_A, "tenant-a", "main", JUNE_8_TO_12)
+
+    # 8, 9 June: legacy only, five check-ins and two rejects a day.
+    # 10 June: three legacy check-ins before noon (the 12:00:00 row is at the cutover: v2 owns that instant),
+    #          then the two current rows from 17:00Z on.
+    # 11, 12 June: current only. A row at 05:00Z is 00:00 local on that date; one at 23:30Z is 18:30 local.
+    assert [day["checkin_count"] for day in overview["days"]] == [5, 5, 5, 4, 4]
+    assert [day["reject_count"] for day in overview["days"]] == [2, 2, 3, 2, 2]
+    assert overview["active_days"] == 5
+
+
+def test_range_reports_do_not_depend_on_the_database_session_time_zone(reports_api, runtime_engine, monkeypatch):
+    answers = []
+    for zone in ("UTC", "Asia/Tokyo", "America/Los_Angeles", "Asia/Kolkata"):
+        shifted = create_engine(runtime_engine.url, hide_parameters=True, connect_args={"options": f"-c timezone={zone}"})
+        monkeypatch.setattr(database, "_engine", shifted)
+        try:
+            overview = _assert_reports_reconcile_with_the_single_day_reads(
+                reports_api, SESSION_A, "tenant-a", "main", JUNE_8_TO_12)
+            volume = _report_of(reports_api, SESSION_A, "tenant-a", "main", "volume", "2026-06-08", "2026-06-12").json()
+            answers.append((overview, volume))
+        finally:
+            shifted.dispose()
+
+    assert all(answer == answers[0] for answer in answers)
+    assert answers[0][0]["checkin_count"] == 23
+
+
+def test_range_reports_are_isolated_by_tenant_and_refuse_what_the_single_day_reads_refuse(reports_api):
+    tenant_a = _report_of(reports_api, SESSION_A, "tenant-a", "main", "overview", "2026-06-08", "2026-06-12").json()
+    tenant_b = _report_of(reports_api, SESSION_B, "tenant-b", "main", "overview", "2026-06-08", "2026-06-12").json()
+
+    assert (tenant_a["checkin_count"], tenant_a["reject_count"]) == (23, 11)
+    assert (tenant_b["checkin_count"], tenant_b["reject_count"]) == (45, 5)
+    # Tenant B's organization has one destination, Westside; nothing of tenant A's is in its answer.
+    assert (tenant_b["home_count"], tenant_b["transit_count"], tenant_b["other_count"]) == (0, 45, 0)
+
+    for report in ("overview", "volume", "routing", "reliability"):
+        crossed = _report_of(reports_api, SESSION_A, "tenant-b", "main", report, "2026-06-08", "2026-06-12")
+        assert crossed.status_code == 404
+        assert crossed.json() == {"code": "tenant_not_found", "message": "Organization or branch not found."}
+        assert _report_of(reports_api, "no-such-session", "tenant-a", "main", report, "2026-06-08", "2026-06-12").status_code == 401
+        assert _report_of(reports_api, SESSION_A, "tenant-a", "main", report, "2026-06-12", "2026-06-08").status_code == 422
+        assert _report_of(reports_api, SESSION_A, "tenant-a", "main", report, "2026-06-19", "2026-06-21").status_code == 422

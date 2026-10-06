@@ -1085,20 +1085,22 @@ def test_the_dated_metric_routes_still_require_their_date_and_do_not_read_a_stat
     assert operational.log == []
 
 
-def test_the_branch_routes_are_exactly_the_seven_operational_endpoints():
+def test_the_branch_routes_are_exactly_the_seven_operational_endpoints_and_the_four_reports():
     paths = sorted(r.path.split("/branches/{branch_slug}/")[1] for r in main.app.routes
                    if "/branches/{branch_slug}/" in getattr(r, "path", ""))
 
     assert paths == ["checkins/by-destination", "checkins/by-hour", "checkins/count", "ingest-status", "pipeline-status", "rejects/by-reason",
-                     "rejects/count"]
+                     "rejects/count",
+                     # The range reports (customer_api.report_routes) are under the same site prefix.
+                     "reports/overview", "reports/reliability", "reports/routing", "reports/volume"]
 
 
-def test_the_customer_api_has_exactly_twelve_routes_all_get_except_login_and_logout():
+def test_the_customer_api_has_exactly_sixteen_routes_all_get_except_login_and_logout():
     customer = sorted((method, route.path) for route in main.customer_router.routes for method in route.methods)
 
-    assert len(customer) == 12
+    assert len(customer) == 16
     assert [path for method, path in customer if method == "POST"] == ["/api/auth/login", "/api/auth/logout"]
-    assert sum(1 for method, _ in customer if method == "GET") == 10
+    assert sum(1 for method, _ in customer if method == "GET") == 14
     assert ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/pipeline-status") in customer
 
 

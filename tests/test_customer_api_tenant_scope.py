@@ -631,7 +631,7 @@ def test_the_module_holds_no_state_and_caches_nothing():
         assert not hasattr(function, "clear"), name
 
 
-def test_only_the_operational_routes_use_the_tenant_scope():
+def test_only_the_operational_and_report_routes_use_the_tenant_scope():
     # Block 4c gave the tenant scope its one production caller. Any other
     # customer module that starts opening tenant connections should be a
     # deliberate change to this list.
@@ -641,4 +641,6 @@ def test_only_the_operational_routes_use_the_tenant_scope():
         if path.name != "tenant_scope.py" and "tenant_scope" in path.read_text(encoding="utf-8")
     )
 
-    assert users == ["operational_routes.py"]
+    # Reports R2 added the second: the sorter-site range reports, which resolve
+    # and scope a request exactly as the single-day reads do.
+    assert users == ["operational_routes.py", "report_routes.py"]
