@@ -10,7 +10,7 @@ import { PipelinePanel } from './PipelinePanel.tsx'
 import { RejectReasons } from './RejectReasons.tsx'
 import { REFRESH_INTERVAL_MS, useLiveToday, type LiveToday as LiveTodayData, type Section } from './useLiveToday.ts'
 
-const UNAVAILABLE = 'Live dashboard data is not available for this branch yet.'
+const UNAVAILABLE = 'Live dashboard data is not available for this sorter yet.'
 
 /** A section's figure once loaded; until then, words saying why there is none -- never a placeholder number. */
 function figure<T>(section: Section<T>, read: (data: T) => Figure): Figure {
@@ -151,7 +151,7 @@ function Routing({ routing }: { routing: Section<CheckinsByDestination> }) {
   return (
     <>
       {transit.length === 0 ? (
-        <p className="quiet">No transit destinations are configured for this sorter site.</p>
+        <p className="quiet">No transit destinations are configured for this sorter.</p>
       ) : (
         <dl className="metrics">
           <MetricCard label="Total transit" {...routed(transitCount, total)} />
@@ -251,12 +251,15 @@ function problem(live: LiveTodayData): string | null {
   return null
 }
 
-/** The Live Today dashboard for one branch the user can see. */
+/**
+ * The Live Today dashboard for one sorter the user can see. `branchSlug` is the sorter's host branch: the scope
+ * the operational API reads by.
+ */
 export function LiveToday({ orgSlug, branchSlug }: { orgSlug: string; branchSlug: string }) {
   const live = useLiveToday(orgSlug, branchSlug)
 
   if (live.unavailable) {
-    // The branch exists -- the organization lists it -- but has no live data. That is not "not found".
+    // The sorter exists -- the organization lists it -- but has no live data. That is not "not found".
     return (
       <section aria-labelledby="live-heading">
         <h3 id="live-heading">Live Today</h3>

@@ -24,7 +24,13 @@ from db_fakes import FakeEngine, FakeQueryResult
 from fastapi.testclient import TestClient
 
 import main
-from services import access_service, entitlement_service, session_service
+from services import (
+    access_service,
+    entitlement_service,
+    session_service,
+    sorter_inventory_service,
+)
+from services.sorter_inventory_service import SorterSite
 
 COOKIE = {"Cookie": "__Host-sortview_api_session=synthetic-opaque-session-token"}
 USER = {"id": 7, "email": "user@example.invalid", "full_name": "Test User"}
@@ -41,6 +47,11 @@ BRANCHES = [
     {"id": 700002, "branch_id": 600002, "branch_slug": "east", "branch_name": "East",
      "is_primary": False, "status": "active"},
 ]
+# One registered sorter, at the main branch. East has none: it is a branch, not a machine.
+SORTERS = [SorterSite(slug="main", name="Main Library AMH", host_branch_slug="main", host_branch_name="Main",
+                      status="active", collector_count=1)]
+SORTERS_JSON = [{"slug": "main", "name": "Main Library AMH", "host_branch": {"slug": "main", "name": "Main"},
+                 "status": "active", "collector_count": 1}]
 SUBSCRIPTION = {"id": 500001, "status": "active", "started_at": None, "ends_at": None,
                 "plan_id": 400001, "plan_code": "pro", "plan_name": "Pro"}
 ENTITLEMENTS = {"exports": {"enabled": True, "limit_value": None},
@@ -67,7 +78,7 @@ class Services:
     services, with per-organization answers."""
 
     def __init__(self, monkeypatch, *, user=USER, memberships=(ACME, BETA), modes=None, roles=None,
-                 subscription=SUBSCRIPTION, entitlements=ENTITLEMENTS, branches=BRANCHES):
+                 subscription=SUBSCRIPTION, entitlements=ENTITLEMENTS, branches=BRANCHES, sorters=SORTERS):
         self.calls: list[tuple] = []
         self.user = user
         self.memberships = [dict(m) for m in memberships]
@@ -76,6 +87,7 @@ class Services:
         self.subscription = subscription
         self.entitlements = entitlements
         self.branches = branches
+        self.sorters = list(sorters)
         self.raise_on: dict[str, Exception] = {}
 
         monkeypatch.setattr(session_service, "validate_session", self._validate_session)
@@ -83,6 +95,7 @@ class Services:
         monkeypatch.setattr(access_service, "get_org_access_mode", self._get_org_access_mode)
         monkeypatch.setattr(access_service, "get_org_branches", self._get_org_branches)
         monkeypatch.setattr(entitlement_service, "build_entitlement_context", self._build_entitlement_context)
+        monkeypatch.setattr(sorter_inventory_service, "list_sorter_sites", self._list_sorter_sites)
 
     def _record(self, name, *args):
         self.calls.append((name, *args))
@@ -104,6 +117,10 @@ class Services:
     def _get_org_branches(self, org_slug):
         self._record("get_org_branches", org_slug)
         return [dict(b) for b in self.branches]
+
+    def _list_sorter_sites(self, org_slug):
+        self._record("list_sorter_sites", org_slug)
+        return list(self.sorters)
 
     def _build_entitlement_context(self, user_id, org_slug):
         self._record("build_entitlement_context", user_id, org_slug)
@@ -246,6 +263,7 @@ def test_the_detail_returns_the_organization_its_branches_and_its_entitlements(a
             {"slug": "main", "name": "Main", "is_primary": True},
             {"slug": "east", "name": "East", "is_primary": False},
         ],
+        "sorters": SORTERS_JSON,
         "subscription": {"plan_code": "pro", "plan_name": "Pro", "status": "active"},
         "entitlements": {
             "exports": {"enabled": True, "limit_value": None},
@@ -259,6 +277,7 @@ def test_the_detail_returns_the_organization_its_branches_and_its_entitlements(a
         ("get_org_access_mode", "acme"),
         ("build_entitlement_context", 7, "acme"),
         ("get_org_branches", "acme"),
+        ("list_sorter_sites", "acme"),
     ]
 
 
@@ -377,7 +396,8 @@ def test_a_blocked_organization_is_refused_before_its_entitlements_are_read(api,
 
 
 @pytest.mark.parametrize(
-    "failing", ["get_user_memberships", "get_org_access_mode", "build_entitlement_context", "get_org_branches"]
+    "failing",
+    ["get_user_memberships", "get_org_access_mode", "build_entitlement_context", "get_org_branches", "list_sorter_sites"],
 )
 def test_a_database_failure_in_the_detail_is_500_never_404(api, monkeypatch, failing):
     services = Services(monkeypatch)
@@ -455,6 +475,7 @@ def test_the_organization_routes_are_read_only():
 # =====================================================================================================================
 
 MEMBERSHIP_ROWS = [dict(ACME), dict(BETA)]
+INSTALLATION_ROWS = [{"name": "Main Library AMH", "status": "active", "branch_slug": "main", "branch_name": "Main"}]
 
 
 def _real_core(monkeypatch, results) -> FakeEngine:
@@ -464,6 +485,7 @@ def _real_core(monkeypatch, results) -> FakeEngine:
     monkeypatch.setattr(session_service, "validate_session", lambda raw_token: dict(USER))
     monkeypatch.setattr(access_service, "get_engine", lambda: engine)
     monkeypatch.setattr(entitlement_service, "get_engine", lambda: engine)
+    monkeypatch.setattr(sorter_inventory_service, "get_engine", lambda: engine)
     return engine
 
 
@@ -475,6 +497,7 @@ def _detail_results():
         FakeQueryResult(first=dict(SUBSCRIPTION)),                                   # get_org_subscription
         FakeQueryResult(all_rows=[{"feature_key": "exports", "enabled": True, "limit_value": None}]),
         FakeQueryResult(all_rows=[dict(b) for b in BRANCHES]),                       # get_org_branches
+        FakeQueryResult(all_rows=[dict(row) for row in INSTALLATION_ROWS]),          # list_sorter_sites
     ]
 
 
@@ -495,8 +518,11 @@ def test_the_detail_runs_the_core_queries_scoped_to_the_session_user_and_the_pat
         {"org_slug": "acme"},
         {"plan_id": 400001},
         {"org_slug": "acme"},
+        {"org_slug": "acme"},
     ]
     assert "b.status = 'active'" in engine.calls[5]["sql"]  # only active branches, as the dashboard offers
+    assert "FROM collector_installations" in engine.calls[6]["sql"]
+    assert response.json()["sorters"] == SORTERS_JSON
 
 
 def test_nothing_is_cached_between_requests(api, monkeypatch):
@@ -506,7 +532,7 @@ def test_nothing_is_cached_between_requests(api, monkeypatch):
     second = api.get("/api/organizations/acme", headers=COOKIE)
 
     assert first.status_code == second.status_code == 200
-    assert len(engine.calls) == 12  # every lookup ran again for the second request
+    assert len(engine.calls) == 14  # every lookup ran again for the second request
 
 
 def test_the_list_reads_each_organizations_status_fresh(api, monkeypatch):
@@ -543,3 +569,127 @@ def test_the_routes_use_the_core_services_and_never_a_streamlit_adapter(api, mon
 
     assert api.get("/api/organizations", headers=COOKIE).status_code == 200
     assert api.get("/api/organizations/acme", headers=COOKIE).status_code == 200
+
+
+# =====================================================================================================================
+# Sorting machines: the organization's registered sorter sites
+# =====================================================================================================================
+
+def _site(slug, name, branch_name, status="active", collectors=1) -> SorterSite:
+    return SorterSite(slug=slug, name=name, host_branch_slug=slug, host_branch_name=branch_name, status=status,
+                      collector_count=collectors)
+
+
+def test_the_detail_lists_the_organizations_sorters_separately_from_its_branches(api, monkeypatch):
+    Services(monkeypatch)
+
+    body = api.get("/api/organizations/acme", headers=COOKIE).json()
+
+    assert body["sorters"] == SORTERS_JSON
+    # East is still a branch of the organization. It is not a sorter, and nothing made it one.
+    assert [branch["slug"] for branch in body["branches"]] == ["main", "east"]
+    assert [sorter["slug"] for sorter in body["sorters"]] == ["main"]
+
+
+def test_a_sorter_carries_exactly_its_five_public_fields(api, monkeypatch):
+    Services(monkeypatch)
+
+    response = api.get("/api/organizations/acme", headers=COOKIE)
+
+    for sorter in response.json()["sorters"]:
+        assert list(sorter) == ["slug", "name", "host_branch", "status", "collector_count"]
+        assert list(sorter["host_branch"]) == ["slug", "name"]
+    _assert_no_internal_or_operational_identifier(response)
+    for leaked in ("hostname", "collector_version", "installation_id", "token", "enrollment", "last_seen", "installed_at"):
+        assert leaked not in response.text
+
+
+def test_an_organization_with_no_registered_sorter_has_an_empty_list_whatever_its_branches(api, monkeypatch):
+    Services(monkeypatch, sorters=[])
+
+    body = api.get("/api/organizations/acme", headers=COOKIE).json()
+
+    assert body["sorters"] == []
+    assert len(body["branches"]) == 2
+
+
+def test_an_organization_with_several_sorter_sites_lists_each_in_the_order_given(api, monkeypatch):
+    Services(monkeypatch, sorters=[
+        _site("central", "Central Library AMH", "Central Library"),
+        _site("east", "East Branch AMH", "East Branch", status="provisioning"),
+        _site("depot", "Old Depot Sorter", "Depot", status="inactive", collectors=0),
+    ])
+
+    sorters = api.get("/api/organizations/acme", headers=COOKIE).json()["sorters"]
+
+    assert [(s["slug"], s["name"], s["host_branch"]["name"], s["status"], s["collector_count"]) for s in sorters] == [
+        ("central", "Central Library AMH", "Central Library", "active", 1),
+        ("east", "East Branch AMH", "East Branch", "provisioning", 1),
+        ("depot", "Old Depot Sorter", "Depot", "inactive", 0),
+    ]
+
+
+def test_a_site_with_two_collectors_is_one_sorter_marked_as_combined(api, monkeypatch):
+    Services(monkeypatch, sorters=[_site("main", "Main Library AMH", "Main", collectors=2)])
+
+    sorters = api.get("/api/organizations/acme", headers=COOKIE).json()["sorters"]
+
+    assert len(sorters) == 1
+    assert sorters[0]["collector_count"] == 2
+
+
+def test_a_status_the_contract_does_not_have_is_a_500_never_a_sorter(api, monkeypatch):
+    Services(monkeypatch, sorters=[_site("main", "Main Library AMH", "Main", status="retired")])
+
+    response = TestClient(main.app, raise_server_exceptions=False).get("/api/organizations/acme", headers=COOKIE)
+
+    assert response.status_code == 500
+    assert response.json() == INTERNAL_ERROR
+
+
+def test_the_sorters_asked_for_are_the_path_organizations_and_no_other(api, monkeypatch):
+    services = Services(monkeypatch)
+
+    api.get("/api/organizations/beta", headers=COOKIE, params={"org_slug": "acme", "organization_id": 900001})
+
+    assert ("list_sorter_sites", "beta") in services.calls
+    assert ("list_sorter_sites", "acme") not in services.calls
+
+
+@pytest.mark.parametrize("mode", ["blocked", "unknown-mode"])
+def test_no_sorter_is_read_for_an_organization_that_is_not_visible(api, monkeypatch, mode):
+    services = Services(monkeypatch, modes={"acme": mode})
+
+    response = api.get("/api/organizations/acme", headers=COOKIE)
+
+    assert response.status_code == 404
+    assert response.json() == NOT_FOUND
+    assert "list_sorter_sites" not in services.names()
+
+
+def test_no_sorter_is_read_for_an_organization_the_user_is_not_a_member_of(api, monkeypatch):
+    services = Services(monkeypatch, memberships=(BETA,))
+
+    response = api.get("/api/organizations/acme", headers=COOKIE)
+
+    assert response.status_code == 404
+    assert response.json() == NOT_FOUND
+    assert "list_sorter_sites" not in services.names()
+
+
+def test_a_suspended_organization_still_lists_its_sorters(api, monkeypatch):
+    Services(monkeypatch, modes={"acme": "read_only"})
+
+    body = api.get("/api/organizations/acme", headers=COOKIE).json()
+
+    assert body["access_mode"] == "read_only"
+    assert body["sorters"] == SORTERS_JSON
+
+
+def test_the_organization_list_carries_no_sorters(api, monkeypatch):
+    services = Services(monkeypatch)
+
+    response = api.get("/api/organizations", headers=COOKIE)
+
+    assert "sorters" not in response.text
+    assert "list_sorter_sites" not in services.names()

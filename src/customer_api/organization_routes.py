@@ -3,7 +3,8 @@
 These routes describe what the user may reach, in SaaS terms only: an
 organization and a branch are identified by slug. They read the uncached core
 services (services.access_service, services.entitlement_service) -- never the
-Streamlit adapters -- so membership, role and organization status are looked
+Streamlit adapters -- and services.sorter_inventory_service, so membership,
+role, organization status and the organization's sorting machines are looked
 up fresh on every request. They run no SQL of their own, set no tenant
 context and read no operational table.
 """
@@ -22,9 +23,11 @@ from customer_api.organization_schemas import (
     FeatureEntitlement,
     OrganizationDetail,
     OrganizationSummary,
+    SorterHostBranch,
+    SorterSummary,
     SubscriptionSummary,
 )
-from services import access_service, entitlement_service
+from services import access_service, entitlement_service, sorter_inventory_service
 
 CurrentUser = Annotated[dict[str, Any], Depends(require_current_user)]
 
@@ -100,6 +103,19 @@ def create_organization_router() -> APIRouter:
             branches=[
                 BranchSummary(slug=branch["branch_slug"], name=branch["branch_name"], is_primary=branch["is_primary"])
                 for branch in access_service.get_org_branches(org_slug)
+            ],
+            # The machines the organization runs SortView on: registered
+            # installations, one entry per host branch. Never derived from the
+            # branch list above or from routing destinations.
+            sorters=[
+                SorterSummary(
+                    slug=site.slug,
+                    name=site.name,
+                    host_branch=SorterHostBranch(slug=site.host_branch_slug, name=site.host_branch_name),
+                    status=site.status,
+                    collector_count=site.collector_count,
+                )
+                for site in sorter_inventory_service.list_sorter_sites(org_slug)
             ],
             subscription=None if subscription is None else SubscriptionSummary(
                 plan_code=subscription["plan_code"],

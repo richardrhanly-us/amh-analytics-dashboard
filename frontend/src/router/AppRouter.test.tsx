@@ -8,6 +8,7 @@ import {
   deferred,
   type FetchMock,
   jsonResponse,
+  LIVE,
   liveRoutes,
   networkFailure,
   noContent,
@@ -69,7 +70,7 @@ describe('before sign-in', () => {
   it('shows the sign-in form and asks for no organization when nobody is signed in', async () => {
     const fetchMock = serve({ [SESSION]: () => jsonResponse(401, NOT_AUTHENTICATED) })
 
-    renderApp('/organizations/northbridge/branches/central')
+    renderApp('/organizations/northbridge/sorters/central')
 
     expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument()
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
@@ -121,9 +122,9 @@ describe('the signed-in app', () => {
   it('shows who is signed in on every page', async () => {
     serve()
 
-    renderApp('/organizations/northbridge/branches/central')
+    renderApp('/organizations/northbridge/sorters/central')
 
-    await heading('Central Branch')
+    await heading('Central Library AMH')
     const banner = screen.getByRole('banner')
     expect(within(banner).getByRole('heading', { level: 1, name: 'SortView' })).toBeInTheDocument()
     expect(within(banner).getByText('Alice Example')).toBeInTheDocument()
@@ -162,7 +163,7 @@ describe('the signed-in app', () => {
     expect(requestedUrls(fetchMock).at(-1)).toBe('/api/auth/logout')
   })
 
-  it.each(['/organizations', '/organizations/northbridge', '/organizations/northbridge/branches/central', '/nowhere'])(
+  it.each(['/organizations', '/organizations/northbridge', '/organizations/northbridge/sorters/central', '/nowhere'])(
     'leaves %s for / on a successful sign-out',
     async (path) => {
       serve({ 'POST /api/auth/logout': () => noContent() })
@@ -185,8 +186,8 @@ describe('the signed-in app', () => {
     })
     const user = userEvent.setup()
 
-    renderApp('/organizations/northbridge/branches/central')
-    await heading('Central Branch')
+    renderApp('/organizations/northbridge/sorters/central')
+    await heading('Central Library AMH')
     await user.click(screen.getByRole('button', { name: 'Sign out' }))
     await screen.findByRole('button', { name: 'Sign in' })
     await user.type(screen.getByLabelText('Email'), 'bob@example.test')
@@ -207,13 +208,13 @@ describe('the signed-in app', () => {
     const fetchMock = serve({ 'POST /api/auth/logout': fail })
     const user = userEvent.setup()
 
-    renderApp('/organizations/northbridge/branches/central')
-    await heading('Central Branch')
+    renderApp('/organizations/northbridge/sorters/central')
+    await heading('Central Library AMH')
     await user.click(screen.getByRole('button', { name: 'Sign out' }))
 
     expect(await screen.findByRole('alert')).toBeInTheDocument()
-    expect(address()).toBe('/organizations/northbridge/branches/central')
-    expect(screen.getByRole('heading', { level: 2, name: 'Central Branch' })).toBeInTheDocument()
+    expect(address()).toBe('/organizations/northbridge/sorters/central')
+    expect(screen.getByRole('heading', { level: 2, name: 'Central Library AMH' })).toBeInTheDocument()
     expect(screen.getByRole('banner')).toHaveTextContent('alice@example.test')
     expect(screen.getByRole('button', { name: 'Sign out' })).not.toHaveAttribute('aria-disabled', 'true')
     expect(organizationRequests(fetchMock)).toEqual(['/api/organizations/northbridge'])
@@ -222,7 +223,7 @@ describe('the signed-in app', () => {
   it.each([
     ['/organizations', 'GET /api/organizations'],
     ['/organizations/northbridge', 'GET /api/organizations/northbridge'],
-    ['/organizations/northbridge/branches/central', 'GET /api/organizations/northbridge'],
+    ['/organizations/northbridge/sorters/central', 'GET /api/organizations/northbridge'],
   ])('keeps the address %s when the session expires', async (path, expiredRequest) => {
     serve({ [expiredRequest]: () => jsonResponse(401, NOT_AUTHENTICATED) })
 
@@ -239,9 +240,9 @@ describe('the signed-in app', () => {
     renderApp('/')
     await user.click(await within(main()).findByRole('link', { name: 'Northbridge Library' }))
     await heading('Northbridge Library')
-    await user.click(link('East Side Branch'))
-    await heading('East Side Branch')
-    expect(address()).toBe('/organizations/northbridge/branches/east-side')
+    await user.click(link('East Side AMH'))
+    await heading('East Side AMH')
+    expect(address()).toBe('/organizations/northbridge/sorters/east-side')
 
     await user.click(screen.getByRole('button', { name: 'browser-back' }))
     await heading('Northbridge Library')
@@ -364,13 +365,13 @@ describe('the organization list', () => {
     })
     const user = userEvent.setup()
 
-    renderApp('/organizations/northbridge/branches/central')
+    renderApp('/organizations/northbridge/sorters/central')
     await screen.findByRole('button', { name: 'Sign in' })
     await user.type(screen.getByLabelText('Email'), 'alice@example.test')
     await user.type(screen.getByLabelText('Password'), 'pw{Enter}')
 
-    await heading('Central Branch')
-    expect(address()).toBe('/organizations/northbridge/branches/central')
+    await heading('Central Library AMH')
+    expect(address()).toBe('/organizations/northbridge/sorters/central')
     expect(requestedUrls(fetchMock).filter((url) => url === '/api/auth/session')).toHaveLength(1)
   })
 
@@ -415,44 +416,47 @@ describe('an organization page', () => {
     await heading('Northbridge Library')
   })
 
-  it('shows the organization, a way back, and exactly its returned branches as links', async () => {
+  it('shows the organization, a way back, and exactly its returned sorters as links', async () => {
     serve()
 
     renderApp('/organizations/northbridge')
     await heading('Northbridge Library')
 
-    expect(within(main()).getByRole('heading', { level: 3, name: 'Branches' })).toBeInTheDocument()
+    expect(within(main()).getByRole('heading', { level: 3, name: 'Sorting machines' })).toBeInTheDocument()
     const breadcrumb = within(main()).getByRole('navigation', { name: 'Breadcrumb' })
     expect(within(breadcrumb).getByRole('link', { name: 'Organizations' })).toHaveAttribute('href', '/organizations')
 
-    const branches = within(main()).getByRole('list', { name: 'Branches' })
-    expect(within(branches).getAllByRole('link').map((element) => element.textContent)).toEqual([
-      'Central Branch',
-      'East Side Branch',
+    const sorters = within(main()).getByRole('list', { name: 'Sorting machines' })
+    expect(within(sorters).getAllByRole('link').map((element) => element.textContent)).toEqual([
+      'Central Library AMH',
+      'East Side AMH',
     ])
-    expect(link('Central Branch')).toHaveAttribute('href', '/organizations/northbridge/branches/central')
-    expect(link('East Side Branch')).toHaveAttribute('href', '/organizations/northbridge/branches/east-side')
+    expect(link('Central Library AMH')).toHaveAttribute('href', '/organizations/northbridge/sorters/central')
+    expect(link('East Side AMH')).toHaveAttribute('href', '/organizations/northbridge/sorters/east-side')
   })
 
-  it('marks the primary branch in words', async () => {
+  it('says where each machine is, in words beside its name', async () => {
     serve()
 
     renderApp('/organizations/northbridge')
     await heading('Northbridge Library')
 
-    const [central, eastSide] = within(within(main()).getByRole('list', { name: 'Branches' })).getAllByRole('listitem')
-    expect(central).toHaveTextContent('Primary branch')
-    expect(eastSide).not.toHaveTextContent('Primary')
+    const [central, eastSide] = within(within(main()).getByRole('list', { name: 'Sorting machines' })).getAllByRole('listitem')
+    expect(central).toHaveTextContent(/^Central Library AMHCentral Branch$/)
+    expect(eastSide).toHaveTextContent(/^East Side AMHEast Side Branch$/)
+    expect(main()).not.toHaveTextContent(/Primary|Branches/)
   })
 
-  it('says so when the organization has no branches', async () => {
-    serve({ [NORTHBRIDGE_URL]: () => jsonResponse(200, { ...NORTHBRIDGE_DETAIL, branches: [] }) })
+  it('says so when the organization has no sorting machines, however many branches it has', async () => {
+    serve({ [NORTHBRIDGE_URL]: () => jsonResponse(200, { ...NORTHBRIDGE_DETAIL, sorters: [] }) })
 
     renderApp('/organizations/northbridge')
     await heading('Northbridge Library')
 
-    expect(screen.getByText('This organization has no active branches.')).toBeInTheDocument()
+    expect(screen.getByText('No sorting machines are registered for this organization yet.')).toBeInTheDocument()
+    expect(within(main()).getByRole('heading', { level: 3, name: 'Sorting machines' })).toBeInTheDocument()
     expect(linkNames()).toEqual(['Organizations'])
+    expect(main()).not.toHaveTextContent(/Central Branch|East Side Branch|Westside/)
   })
 
   it('explains a suspended organization and keeps its branches reachable', async () => {
@@ -465,8 +469,8 @@ describe('an organization page', () => {
     expect(screen.getByRole('note')).toHaveTextContent(
       'This organization’s account is currently suspended. Historical dashboard data remains available.',
     )
-    await user.click(link('Riverside Main'))
-    await heading('Riverside Main')
+    await user.click(link('Riverside Main AMH'))
+    await heading('Riverside Main AMH')
     expect(screen.getByRole('note')).toHaveTextContent('currently suspended')
   })
 
@@ -558,8 +562,8 @@ describe('an organization page', () => {
     await waitFor(() => expect(address()).toBe('/organizations/riverside'))
 
     expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('Riverside Library')
-    expect(main()).not.toHaveTextContent(/Northbridge|Central Branch/)
-    expect(linkNames()).toEqual(['Organizations', 'Riverside Main'])
+    expect(main()).not.toHaveTextContent(/Northbridge|Central Library AMH/)
+    expect(linkNames()).toEqual(['Organizations', 'Riverside Main AMH'])
   })
 
   it('shows the loading state, not the previous organization, the moment the address changes', async () => {
@@ -576,7 +580,7 @@ describe('an organization page', () => {
     await user.click(link('Riverside Library'))
 
     expect(await screen.findByText('Loading organization…')).toBeInTheDocument()
-    expect(main()).not.toHaveTextContent(/Northbridge|Central Branch/)
+    expect(main()).not.toHaveTextContent(/Northbridge|Central Library AMH/)
 
     slow.resolve(jsonResponse(200, RIVERSIDE_DETAIL))
     await heading('Riverside Library')
@@ -588,14 +592,14 @@ describe('a branch page', () => {
     const session = deferred<Response>()
     const fetchMock = serve({ [SESSION]: () => session.promise })
 
-    renderApp('/organizations/northbridge/branches/east-side')
+    renderApp('/organizations/northbridge/sorters/east-side')
     expect(screen.getByRole('status')).toHaveTextContent('Checking your session')
     session.resolve(jsonResponse(200, ALICE))
 
-    await heading('East Side Branch')
+    await heading('East Side AMH')
     expect(link('Northbridge Library')).toBeInTheDocument()
     expect(await screen.findByRole('heading', { level: 3, name: 'Today' })).toBeInTheDocument()
-    expect(address()).toBe('/organizations/northbridge/branches/east-side')
+    expect(address()).toBe('/organizations/northbridge/sorters/east-side')
     expect(requestedUrls(fetchMock).slice(0, 3)).toEqual([
       '/api/auth/session',
       '/api/organizations/northbridge',
@@ -606,8 +610,8 @@ describe('a branch page', () => {
   it('asks for live data only for the branch in the address', async () => {
     const fetchMock = serve()
 
-    renderApp('/organizations/northbridge/branches/central')
-    await heading('Central Branch')
+    renderApp('/organizations/northbridge/sorters/central')
+    await heading('Central Library AMH')
     await screen.findByRole('heading', { level: 3, name: 'Top reject reasons' })
 
     expect(liveRequests(fetchMock)).toHaveLength(6)
@@ -621,7 +625,7 @@ describe('a branch page', () => {
   it('asks for no live data for a branch the organization did not return', async () => {
     const fetchMock = serve()
 
-    renderApp('/organizations/northbridge/branches/west')
+    renderApp('/organizations/northbridge/sorters/west')
     await heading('Page not found')
 
     expect(liveRequests(fetchMock)).toEqual([])
@@ -631,8 +635,8 @@ describe('a branch page', () => {
     const fetchMock = serve()
     const user = userEvent.setup()
 
-    renderApp('/organizations/northbridge/branches/central')
-    await heading('Central Branch')
+    renderApp('/organizations/northbridge/sorters/central')
+    await heading('Central Library AMH')
 
     const breadcrumb = within(main()).getByRole('navigation', { name: 'Breadcrumb' })
     expect(within(breadcrumb).getByRole('link', { name: 'Organizations' })).toHaveAttribute('href', '/organizations')
@@ -643,8 +647,8 @@ describe('a branch page', () => {
 
     await user.click(link('Northbridge Library'))
     await heading('Northbridge Library')
-    await user.click(link('East Side Branch'))
-    await heading('East Side Branch')
+    await user.click(link('East Side AMH'))
+    await heading('East Side AMH')
 
     // Moving between an organization and its branches reuses the organization already loaded.
     expect(organizationRequests(fetchMock)).toEqual(['/api/organizations/northbridge'])
@@ -656,10 +660,10 @@ describe('a branch page', () => {
 
     renderApp('/organizations/northbridge')
     await heading('Northbridge Library')
-    await user.click(link('East Side Branch'))
+    await user.click(link('East Side AMH'))
 
-    await heading('East Side Branch')
-    expect(address()).toBe('/organizations/northbridge/branches/east-side')
+    await heading('East Side AMH')
+    expect(address()).toBe('/organizations/northbridge/sorters/east-side')
     expect(address()).not.toMatch(/\d/)
   })
 
@@ -668,11 +672,11 @@ describe('a branch page', () => {
     async (branchSlug) => {
       const fetchMock = serve()
 
-      renderApp(`/organizations/northbridge/branches/${branchSlug}`)
+      renderApp(`/organizations/northbridge/sorters/${branchSlug}`)
 
       await heading('Page not found')
       expect(main()).toHaveTextContent(NOT_FOUND_TEXT)
-      expect(main()).not.toHaveTextContent(/Northbridge|Central Branch|west/)
+      expect(main()).not.toHaveTextContent(/Northbridge|Central Library AMH|west/)
       expect(requestedUrls(fetchMock)).toEqual(['/api/auth/session', '/api/organizations/northbridge'])
     },
   )
@@ -680,7 +684,7 @@ describe('a branch page', () => {
   it('shows the not-found page when the organization itself is not available', async () => {
     serve({ [NORTHBRIDGE_URL]: () => jsonResponse(404, ORGANIZATION_NOT_FOUND) })
 
-    renderApp('/organizations/northbridge/branches/central')
+    renderApp('/organizations/northbridge/sorters/central')
 
     await heading('Page not found')
     expect(main()).not.toHaveTextContent(/Central|northbridge/i)
@@ -705,7 +709,7 @@ describe('what a missing page gives away', () => {
     const missing = await notFoundMarkup('/organizations/no-such-org', {
       'GET /api/organizations/no-such-org': () => jsonResponse(404, ORGANIZATION_NOT_FOUND),
     })
-    const unknownBranch = await notFoundMarkup('/organizations/northbridge/branches/no-such-branch')
+    const unknownBranch = await notFoundMarkup('/organizations/northbridge/sorters/no-such-branch')
 
     expect(hidden).toBe(unknownAddress)
     expect(missing).toBe(unknownAddress)
@@ -720,7 +724,13 @@ describe('slugs in addresses', () => {
     const fetchMock = serve({
       [LIST]: () => jsonResponse(200, [odd]),
       'GET /api/organizations/north%20bridge%3Fx': () =>
-        jsonResponse(200, { ...NORTHBRIDGE_DETAIL, slug: odd.slug, branches: [{ slug: 'a b', name: 'Odd Branch', is_primary: false }] }),
+        jsonResponse(200, {
+          ...NORTHBRIDGE_DETAIL,
+          slug: odd.slug,
+          branches: [{ slug: 'a b', name: 'Odd Branch', is_primary: false }],
+          sorters: [{ slug: 'a b', name: 'Odd Sorter', host_branch: { slug: 'a b', name: 'Odd Branch' }, status: 'active', collector_count: 1 }],
+        }),
+      ...liveRoutes('north bridge?x', 'a b'),
     })
     const user = userEvent.setup()
 
@@ -730,10 +740,454 @@ describe('slugs in addresses', () => {
 
     await user.click(link('Northbridge Library'))
     await heading('Northbridge Library')
-    expect(link('Odd Branch')).toHaveAttribute('href', '/organizations/north%20bridge%3Fx/branches/a%20b')
+    expect(link('Odd Sorter')).toHaveAttribute('href', '/organizations/north%20bridge%3Fx/sorters/a%20b')
 
-    await user.click(link('Odd Branch'))
-    await heading('Odd Branch')
+    await user.click(link('Odd Sorter'))
+    await heading('Odd Sorter')
     expect(organizationRequests(fetchMock)).toEqual(['/api/organizations', '/api/organizations/north%20bridge%3Fx'])
+  })
+})
+
+// =====================================================================================================================
+// F5.6: an organization's sorting machines, and the address each one has
+// =====================================================================================================================
+
+const sorter = (slug: string, name: string, hostName: string, changes: Record<string, unknown> = {}) => ({
+  slug,
+  name,
+  host_branch: { slug, name: hostName },
+  status: 'active',
+  collector_count: 1,
+  ...changes,
+})
+
+/** Metro: a sorter at Central and one at Westside. Each routes to the other's location. */
+const METRO = { slug: 'metro', name: 'Metro Library System', role: 'viewer', access_mode: 'full' }
+const METRO_DETAIL = {
+  ...METRO,
+  branches: [
+    { slug: 'central', name: 'Central Library', is_primary: true },
+    { slug: 'westside', name: 'Westside', is_primary: false },
+    { slug: 'north', name: 'North', is_primary: false },
+  ],
+  sorters: [sorter('central', 'Central Library AMH', 'Central Library'), sorter('westside', 'Westside AMH', 'Westside')],
+  subscription: null,
+  entitlements: {},
+}
+const hours = (counts: Record<number, number>) => Array.from({ length: 24 }, (_, hour) => counts[hour] ?? 0)
+const METRO_CENTRAL = { ...LIVE, hours: hours({ 9: 100 }), routing: { home: 'Central', transit: [['westside', 'Westside', 30], ['north', 'North', 5]] as [string, string, number][] } }
+const METRO_WESTSIDE = { ...LIVE, hours: hours({ 10: 40 }), routing: { home: 'Westside', transit: [['central', 'Central', 12]] as [string, string, number][] } }
+
+function serveMetro(overrides: Routes = {}): FetchMock {
+  return serve({
+    [LIST]: () => jsonResponse(200, [METRO, NORTHBRIDGE]),
+    'GET /api/organizations/metro': () => jsonResponse(200, METRO_DETAIL),
+    ...liveRoutes('metro', 'central', METRO_CENTRAL),
+    ...liveRoutes('metro', 'westside', METRO_WESTSIDE),
+    ...overrides,
+  })
+}
+
+const figure = (label: string) => screen.getByText(label, { selector: 'dt' }).nextElementSibling as HTMLElement
+const sorterList = () => within(main()).getByRole('list', { name: 'Sorting machines' })
+
+describe('the sorting machines of an organization', () => {
+  it('is headed Sorting machines, and lists only the sorters the API returned', async () => {
+    serve()
+
+    renderApp('/organizations/northbridge')
+    await heading('Northbridge Library')
+
+    expect(within(main()).getByRole('heading', { level: 3, name: 'Sorting machines' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Branches' })).not.toBeInTheDocument()
+    expect(within(sorterList()).getAllByRole('listitem')).toHaveLength(2)
+    // Westside is one of the organization's branches, and somewhere items are routed to. It has no machine.
+    expect(NORTHBRIDGE_DETAIL.branches.map((branch) => branch.name)).toContain('Westside')
+    expect(main()).not.toHaveTextContent('Westside')
+    expect(linkNames()).toEqual(['Organizations', 'Central Library AMH', 'East Side AMH'])
+  })
+
+  it('shows an organization with one sorter as a list of one, not straight to its dashboard', async () => {
+    const fetchMock = serve()
+
+    renderApp('/organizations/riverside')
+    await heading('Riverside Library')
+
+    expect(address()).toBe('/organizations/riverside')
+    expect(within(sorterList()).getAllByRole('link').map((element) => element.textContent)).toEqual(['Riverside Main AMH'])
+    expect(link('Riverside Main AMH')).toHaveAttribute('href', '/organizations/riverside/sorters/main')
+    expect(liveRequests(fetchMock)).toEqual([])
+  })
+
+  it('names the machine and says where it is, and links by the sorter, not the name', async () => {
+    serveMetro()
+
+    renderApp('/organizations/metro')
+    await heading('Metro Library System')
+
+    const [central, westside] = within(sorterList()).getAllByRole('listitem')
+    expect(central).toHaveTextContent(/^Central Library AMHCentral Library$/)
+    expect(westside).toHaveTextContent(/^Westside AMHWestside$/)
+    expect(link('Central Library AMH')).toHaveAttribute('href', '/organizations/metro/sorters/central')
+    expect(link('Westside AMH')).toHaveAttribute('href', '/organizations/metro/sorters/westside')
+    // North is a branch and a routing destination only.
+    expect(main()).not.toHaveTextContent('North')
+  })
+
+  it('says so, in words, when a machine is being set up or is inactive, and still lists it', async () => {
+    serveMetro({
+      'GET /api/organizations/metro': () =>
+        jsonResponse(200, {
+          ...METRO_DETAIL,
+          sorters: [
+            sorter('central', 'Central Library AMH', 'Central Library'),
+            sorter('westside', 'Westside AMH', 'Westside', { status: 'provisioning' }),
+            sorter('north', 'North Sorter', 'North', { status: 'inactive', collector_count: 0 }),
+          ],
+        }),
+    })
+
+    renderApp('/organizations/metro')
+    await heading('Metro Library System')
+
+    const [central, westside, north] = within(sorterList()).getAllByRole('listitem')
+    expect(central).toHaveTextContent(/^Central Library AMHCentral Library$/)
+    expect(westside).toHaveTextContent(/^Westside AMHWestside · Being set up$/)
+    expect(north).toHaveTextContent(/^North SorterNorth · Inactive$/)
+    expect(linkNames()).toEqual(['Organizations', 'Central Library AMH', 'Westside AMH', 'North Sorter'])
+    expect(main()).not.toHaveTextContent(/provisioning|collector_count/)
+  })
+
+  it('shows a long machine name whole', async () => {
+    const long = 'Bartholomew-Featherstonehaugh Memorial Library — Tech Logic UltraSort, Returns Room B (replacement unit)'
+    serveMetro({
+      'GET /api/organizations/metro': () => jsonResponse(200, { ...METRO_DETAIL, sorters: [sorter('central', long, 'Central Library')] }),
+    })
+    const user = userEvent.setup()
+
+    renderApp('/organizations/metro')
+    await heading('Metro Library System')
+    expect(link(long)).toBeVisible()
+
+    await user.click(link(long))
+    expect(await heading(long)).toBeVisible()
+    expect(within(main()).getByRole('navigation', { name: 'Breadcrumb' })).toHaveTextContent(long)
+  })
+
+  it.each([
+    ['two sorters with one slug', [sorter('central', 'A', 'Central'), { ...sorter('central', 'B', 'East'), host_branch: { slug: 'east', name: 'East' } }]],
+    ['two sorters at one host branch', [sorter('central', 'A', 'Central'), { ...sorter('other', 'B', 'Central'), host_branch: { slug: 'central', name: 'Central' } }]],
+    ['a sorter with no slug', [sorter('', 'A', 'Central')]],
+    ['a sorter with no name', [sorter('central', '   ', 'Central')]],
+    ['a sorter with no host branch', [{ slug: 'central', name: 'A', status: 'active', collector_count: 1 }]],
+    ['a status this app does not know', [sorter('central', 'A', 'Central', { status: 'retired' })]],
+    ['a collector count that is not a count', [sorter('central', 'A', 'Central', { collector_count: -1 })]],
+    ['sorters that are not a list', { central: sorter('central', 'A', 'Central') }],
+    ['no sorters field at all', undefined],
+  ])('refuses an organization answered with %s, rather than guessing', async (_label, sorters) => {
+    serveMetro({ 'GET /api/organizations/metro': () => jsonResponse(200, { ...METRO_DETAIL, sorters }) })
+
+    renderApp('/organizations/metro')
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Sorting machines' })).not.toBeInTheDocument()
+    expect(linkNames()).toEqual([])
+  })
+})
+
+describe('a sorter page', () => {
+  it('shows the machine, where it is, and its dashboard, read by its host branch', async () => {
+    const fetchMock = serveMetro()
+
+    renderApp('/organizations/metro/sorters/central')
+    await heading('Central Library AMH')
+    await waitFor(() => expect(figure('Check-ins today')).toHaveTextContent(/^100$/))
+
+    expect(main()).toHaveTextContent('Live activity for this sorter, at Central Library')
+    expect(main()).not.toHaveTextContent(/branch/i)
+    expect(liveRequests(fetchMock).every((url) => url.startsWith('/api/organizations/metro/branches/central/'))).toBe(true)
+    expect(liveRequests(fetchMock)).toHaveLength(6)
+    expect(screen.queryByRole('note')).not.toBeInTheDocument()
+  })
+
+  it('names the sorter, not its host branch, in the breadcrumb and the browser tab', async () => {
+    serveMetro()
+
+    renderApp('/organizations/metro/sorters/westside')
+    await heading('Westside AMH')
+
+    const steps = within(within(main()).getByRole('navigation', { name: 'Breadcrumb' })).getAllByRole('listitem')
+    expect(steps.map((step) => step.textContent)).toEqual(['Organizations', 'Metro Library System', 'Westside AMH'])
+    expect(within(steps[2]).getByText('Westside AMH')).toHaveAttribute('aria-current', 'page')
+    expect(document.title).toBe('Westside AMH – SortView')
+  })
+
+  it('keeps two sorters of one organization apart: each has its own figures and its own routing', async () => {
+    const fetchMock = serveMetro()
+    const user = userEvent.setup()
+
+    renderApp('/organizations/metro')
+    await heading('Metro Library System')
+    await user.click(link('Central Library AMH'))
+    await heading('Central Library AMH')
+    await waitFor(() => expect(figure('Westside')).toHaveTextContent(/^30$/))
+    expect(figure('Check-ins today')).toHaveTextContent(/^100$/)
+    expect(figure('North')).toHaveTextContent(/^5$/)
+    expect(main()).toHaveTextContent('Kept at Central: 65.')
+
+    await user.click(link('Metro Library System'))
+    await user.click(link('Westside AMH'))
+    await heading('Westside AMH')
+    await waitFor(() => expect(figure('Central')).toHaveTextContent(/^12$/))
+    expect(figure('Check-ins today')).toHaveTextContent(/^40$/)
+    expect(main()).toHaveTextContent('Kept at Westside: 28.')
+    expect(screen.queryByText('North', { selector: 'dt' })).not.toBeInTheDocument()
+
+    expect(liveRequests(fetchMock).filter((url) => url.includes('/branches/central/'))).toHaveLength(6)
+    expect(liveRequests(fetchMock).filter((url) => url.includes('/branches/westside/'))).toHaveLength(6)
+    // The organization was read once: moving between its sorters asks nothing new about it.
+    expect(organizationRequests(fetchMock)).toEqual(['/api/organizations/metro'])
+  })
+
+  it('lets a place be a destination of one sorter and the host of another, without confusing the two', async () => {
+    serveMetro()
+
+    renderApp('/organizations/metro/sorters/central')
+    await heading('Central Library AMH')
+    await waitFor(() => expect(figure('Westside')).toHaveTextContent(/^30$/))
+
+    // Westside hosts a sorter of its own. On Central's dashboard it is still just where 30 items went:
+    // a figure, not a link, and not left out.
+    const routing = screen.getByRole('group', { name: 'Routing' })
+    expect(within(routing).getByText('Westside', { selector: 'dt' })).toBeInTheDocument()
+    expect(within(routing).queryByRole('link')).not.toBeInTheDocument()
+    expect(linkNames()).toEqual(['Organizations', 'Metro Library System'])
+  })
+
+  it('never shows the first sorter under the second while the second loads', async () => {
+    const westsidePipeline = deferred<Response>()
+    serveMetro({ 'GET /api/organizations/metro/branches/westside/pipeline-status': () => westsidePipeline.promise })
+    const user = userEvent.setup()
+
+    renderApp('/organizations/metro/sorters/central')
+    await heading('Central Library AMH')
+    await waitFor(() => expect(figure('Check-ins today')).toHaveTextContent(/^100$/))
+    await user.click(link('Metro Library System'))
+    await user.click(link('Westside AMH'))
+
+    await heading('Westside AMH')
+    expect(await screen.findByText('Loading live data…')).toBeInTheDocument()
+    expect(main()).not.toHaveTextContent(/100|Central Library AMH|Kept at/)
+
+    westsidePipeline.resolve(jsonResponse(200, { timezone: 'America/Chicago', state: 'ok', last_reported_at: null }))
+    await waitFor(() => expect(figure('Check-ins today')).toHaveTextContent(/^40$/))
+  })
+
+  it('says when several collectors report for the site, and that their figures are combined', async () => {
+    serveMetro({
+      'GET /api/organizations/metro': () =>
+        jsonResponse(200, { ...METRO_DETAIL, sorters: [sorter('central', 'Central Library AMH', 'Central Library', { collector_count: 2 })] }),
+    })
+
+    renderApp('/organizations/metro/sorters/central')
+    await heading('Central Library AMH')
+
+    expect(screen.getByRole('note')).toHaveTextContent(
+      '2 collectors report for this site. Their figures are combined here and cannot be shown separately.',
+    )
+    // One sorter, one dashboard: the second collector is not a second place to go.
+    expect(linkNames()).toEqual(['Organizations', 'Metro Library System'])
+  })
+
+  it('says a sorter is being set up, and that its data is not available yet, without calling it missing', async () => {
+    serveMetro({
+      'GET /api/organizations/metro': () =>
+        jsonResponse(200, { ...METRO_DETAIL, sorters: [sorter('north', 'North Sorter', 'North', { status: 'provisioning' })] }),
+      'GET /api/organizations/metro/branches/north/pipeline-status': () =>
+        jsonResponse(404, { code: 'tenant_not_found', message: 'Organization or branch not found.' }),
+    })
+
+    renderApp('/organizations/metro/sorters/north')
+    await heading('North Sorter')
+
+    expect(main()).toHaveTextContent('Live activity for this sorter, at North · Being set up')
+    expect(await screen.findByText('Live dashboard data is not available for this sorter yet.')).toHaveRole('note')
+    expect(screen.queryByRole('heading', { name: 'Page not found' })).not.toBeInTheDocument()
+  })
+
+  it.each(['north', 'Central', 'central%20', 'library-express', 'no-such-sorter'])(
+    'shows the not-found page for %j, which is not one of the organization’s sorters, and asks for no live data',
+    async (sorterSlug) => {
+      const fetchMock = serveMetro()
+
+      renderApp(`/organizations/metro/sorters/${sorterSlug}`)
+
+      await heading('Page not found')
+      expect(main()).toHaveTextContent(NOT_FOUND_TEXT)
+      expect(main()).not.toHaveTextContent(/Metro|Central|North/)
+      expect(liveRequests(fetchMock)).toEqual([])
+    },
+  )
+
+  it('does not find one organization’s sorter under another organization', async () => {
+    const fetchMock = serveMetro()
+
+    // Northbridge has a sorter called "central" too. Metro's "westside" is not Northbridge's.
+    renderApp('/organizations/northbridge/sorters/westside')
+
+    await heading('Page not found')
+    expect(liveRequests(fetchMock)).toEqual([])
+    expect(requestedUrls(fetchMock)).toEqual(['/api/auth/session', '/api/organizations/northbridge'])
+  })
+
+  it('reads a suspended organization’s sorter as usual, with the notice', async () => {
+    serve()
+
+    renderApp('/organizations/riverside/sorters/main')
+    await heading('Riverside Main AMH')
+
+    expect(screen.getByRole('note')).toHaveTextContent('currently suspended')
+    await waitFor(() => expect(figure('Check-ins today')).toHaveTextContent(/^120$/))
+  })
+
+  it('shows the not-found page for a sorter of an organization the user cannot see', async () => {
+    const fetchMock = serveMetro({ 'GET /api/organizations/metro': () => jsonResponse(404, ORGANIZATION_NOT_FOUND) })
+
+    renderApp('/organizations/metro/sorters/central')
+
+    await heading('Page not found')
+    expect(main()).not.toHaveTextContent(/Metro|Central/)
+    expect(liveRequests(fetchMock)).toEqual([])
+  })
+})
+
+describe('the address a sorter used to have', () => {
+  it('redirects a branch address to the sorter hosted at that branch, replacing it in history', async () => {
+    const fetchMock = serveMetro()
+    const user = userEvent.setup()
+
+    renderApp('/organizations')
+    await user.click(await within(main()).findByRole('link', { name: 'Metro Library System' }))
+    await heading('Metro Library System')
+    // An old bookmark, followed from the organization page.
+    const view = renderApp('/organizations/metro/branches/westside')
+    await within(view.container).findByRole('heading', { level: 2, name: 'Westside AMH' })
+
+    expect(within(view.container).getByTestId('address')).toHaveTextContent('/organizations/metro/sorters/westside')
+    expect(liveRequests(fetchMock).every((url) => url.includes('/branches/westside/'))).toBe(true)
+  })
+
+  it('lands on the sorter page itself: one dashboard, at the sorter address', async () => {
+    const fetchMock = serveMetro()
+
+    renderApp('/organizations/metro/branches/central')
+
+    await heading('Central Library AMH')
+    expect(address()).toBe('/organizations/metro/sorters/central')
+    await waitFor(() => expect(figure('Check-ins today')).toHaveTextContent(/^100$/))
+    expect(liveRequests(fetchMock)).toHaveLength(6)
+    // The redirect took no focus: nobody asked to be moved.
+    expect(document.body).toHaveFocus()
+  })
+
+  it('goes back past the redirect, not into it', async () => {
+    serveMetro()
+    const user = userEvent.setup()
+
+    renderApp('/organizations/metro')
+    await heading('Metro Library System')
+    await user.click(link('Central Library AMH'))
+    await heading('Central Library AMH')
+    await user.click(screen.getByRole('button', { name: 'browser-back' }))
+    await heading('Metro Library System')
+    expect(address()).toBe('/organizations/metro')
+
+    await user.click(screen.getByRole('button', { name: 'browser-forward' }))
+    await heading('Central Library AMH')
+    expect(address()).toBe('/organizations/metro/sorters/central')
+  })
+
+  it.each([
+    ['a branch with no sorter', 'north'],
+    ['a branch that does not exist', 'no-such-branch'],
+    ['a routing destination that is not a branch', 'library-express'],
+  ])('shows the not-found page for %s, and asks for no live data', async (_label, branchSlug) => {
+    const fetchMock = serveMetro()
+
+    renderApp(`/organizations/metro/branches/${branchSlug}`)
+
+    await heading('Page not found')
+    expect(address()).toBe(`/organizations/metro/branches/${branchSlug}`)
+    expect(main()).toHaveTextContent(NOT_FOUND_TEXT)
+    expect(main()).not.toHaveTextContent(/Metro|North/)
+    expect(liveRequests(fetchMock)).toEqual([])
+  })
+
+  it('redirects by host branch even when the sorter’s slug is something else', async () => {
+    serveMetro({
+      'GET /api/organizations/metro': () =>
+        jsonResponse(200, {
+          ...METRO_DETAIL,
+          sorters: [{ slug: 'amh-1', name: 'Central Library AMH', host_branch: { slug: 'central', name: 'Central Library' }, status: 'active', collector_count: 1 }],
+        }),
+    })
+
+    renderApp('/organizations/metro/branches/central')
+
+    await heading('Central Library AMH')
+    expect(address()).toBe('/organizations/metro/sorters/amh-1')
+    await waitFor(() => expect(figure('Check-ins today')).toHaveTextContent(/^100$/))
+  })
+})
+
+describe('signing in and out around a sorter address', () => {
+  it('restores a sorter address opened directly, once the session is restored', async () => {
+    const session = deferred<Response>()
+    serveMetro({ [SESSION]: () => session.promise })
+
+    renderApp('/organizations/metro/sorters/westside')
+    expect(screen.getByRole('status')).toHaveTextContent('Checking your session')
+    session.resolve(jsonResponse(200, ALICE))
+
+    await heading('Westside AMH')
+    expect(address()).toBe('/organizations/metro/sorters/westside')
+  })
+
+  it('returns to the sorter address after signing in', async () => {
+    serveMetro({
+      [SESSION]: () => jsonResponse(401, NOT_AUTHENTICATED),
+      'POST /api/auth/login': () => jsonResponse(200, ALICE),
+    })
+    const user = userEvent.setup()
+
+    renderApp('/organizations/metro/sorters/central')
+    await screen.findByRole('button', { name: 'Sign in' })
+    await user.type(screen.getByLabelText('Email'), 'alice@example.test')
+    await user.type(screen.getByLabelText('Password'), 'pw{Enter}')
+
+    await heading('Central Library AMH')
+    expect(address()).toBe('/organizations/metro/sorters/central')
+  })
+
+  it('keeps the sorter address when the session expires', async () => {
+    serveMetro({ 'GET /api/organizations/metro/branches/central/pipeline-status': () => jsonResponse(401, NOT_AUTHENTICATED) })
+
+    renderApp('/organizations/metro/sorters/central')
+
+    await screen.findByRole('button', { name: 'Sign in' })
+    expect(address()).toBe('/organizations/metro/sorters/central')
+    expect(screen.queryByText('Central Library AMH')).not.toBeInTheDocument()
+  })
+
+  it('leaves a sorter address for / on a successful sign-out', async () => {
+    serveMetro({ 'POST /api/auth/logout': () => noContent() })
+    const user = userEvent.setup()
+
+    renderApp('/organizations/metro/sorters/central')
+    await heading('Central Library AMH')
+    await user.click(screen.getByRole('button', { name: 'Sign out' }))
+
+    await screen.findByRole('button', { name: 'Sign in' })
+    expect(address()).toBe('/')
   })
 })

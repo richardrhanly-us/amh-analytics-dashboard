@@ -136,7 +136,7 @@ describe('scope of this block', () => {
     expect(offenders(/customer_id|branch_id|organization_id|tenant_id|org_id|\.id\b/)).toEqual([])
     const paths = shipped.find(([path]) => path === '../router/paths.ts')?.[1] ?? ''
     expect(paths).toMatch(/encodeURIComponent\(orgSlug\)/)
-    expect(paths).toMatch(/encodeURIComponent\(branchSlug\)/)
+    expect(paths).toMatch(/encodeURIComponent\(sorterSlug\)/)
     expect(paths).not.toMatch(/\d/)
   })
 
@@ -215,7 +215,30 @@ describe('how the dashboard is drawn', () => {
   it('treats a destination as an outcome, never as a place to go: no routing card links anywhere', () => {
     const liveToday = shipped.find(([path]) => path === '../liveToday/LiveToday.tsx')?.[1] ?? ''
     expect(liveToday).not.toMatch(/<Link\b|<a\b|href=|branchPath|useNavigate/)
-    expect(offenders(/installation/i)).toEqual([])
+    // No installation-level address or attribution: a sorter is addressed by its site, never by a machine id.
+    expect(offenders(/installation_?id|installations?\//i)).toEqual([])
+  })
+
+  it('lists sorting machines from the sorters the API returns, never from branches or destinations', () => {
+    const pages = shipped.filter(([path]) => path.startsWith('../pages/') || path.startsWith('../router/'))
+    // Nothing that draws a page or builds an address reads the organization's branch list.
+    expect(pages.filter(([, text]) => /organization\.branches|\.branches\.|BranchSummary/.test(text)).map(([path]) => path)).toEqual([])
+    expect(pages.filter(([, text]) => /organization\.sorters/.test(text)).map(([path]) => path).sort()).toEqual([
+      '../pages/LegacyBranchRedirect.tsx',
+      '../pages/OrganizationPage.tsx',
+      '../pages/SorterPage.tsx',
+    ])
+    // One dashboard page, at the sorter address; the old branch address only redirects to it.
+    const router = shipped.find(([path]) => path === '../router/AppRouter.tsx')?.[1] ?? ''
+    expect(router.match(/<Route path="[^"]*"/g)).toEqual([
+      '<Route path="organizations"',
+      '<Route path="organizations/:orgSlug"',
+      '<Route path="sorters/:sorterSlug"',
+      '<Route path="branches/:branchSlug"',
+      '<Route path="*"',
+    ])
+    expect(offenders(/<LiveToday\s/).sort()).toEqual(['../pages/SorterPage.tsx'])
+    expect(allSources['../pages/BranchPage.tsx']).toBeUndefined()
   })
 
   it('groups today as three named groups without adding landmarks', () => {

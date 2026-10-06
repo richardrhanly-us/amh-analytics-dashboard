@@ -36,6 +36,37 @@ class BranchSummary(_ResponseModel):
     is_primary: bool
 
 
+class SorterHostBranch(_ResponseModel):
+    """The branch a sorter is installed at. Where the machine is -- not what it sorts for."""
+
+    slug: str
+    name: str
+
+
+# "retired" is deliberately not a value: a retired machine is never returned at all.
+SorterStatus = Literal["active", "provisioning", "inactive"]
+
+
+class SorterSummary(_ResponseModel):
+    """One SortView sorter site of the organization (services.sorter_inventory_service).
+
+    `slug` identifies it within the organization and is what its dashboard's
+    reads are addressed by; today it is the host branch's slug. `name` is the
+    machine's registered name. `collector_count` is how many collectors can
+    report for the site: above one, their figures are combined and cannot be
+    separated.
+
+    No installation id, hostname, collector version or credential has a field
+    here. A place a sorter merely routes items TO is not a sorter and is never
+    in this list."""
+
+    slug: str
+    name: str
+    host_branch: SorterHostBranch
+    status: SorterStatus
+    collector_count: int
+
+
 class SubscriptionSummary(_ResponseModel):
     plan_code: str
     plan_name: str
@@ -49,5 +80,6 @@ class FeatureEntitlement(_ResponseModel):
 
 class OrganizationDetail(OrganizationSummary):
     branches: list[BranchSummary]
+    sorters: list[SorterSummary]
     subscription: SubscriptionSummary | None
     entitlements: dict[str, FeatureEntitlement]

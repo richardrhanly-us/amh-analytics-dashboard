@@ -1,11 +1,30 @@
 import { Link, useOutletContext } from 'react-router'
 
-import type { OrganizationDetail } from '../api/organizations.ts'
+import type { OrganizationDetail, SorterSummary } from '../api/organizations.ts'
 import { Breadcrumb } from '../components/Breadcrumb.tsx'
 import { PageHeading } from '../components/PageHeading.tsx'
-import { branchPath, ORGANIZATIONS_PATH } from '../router/paths.ts'
+import { ORGANIZATIONS_PATH, sorterPath } from '../router/paths.ts'
+import { sorterStatusLabel } from './labels.ts'
 
-/** /organizations/:orgSlug -- the organization and its branches to choose from. */
+function SorterRow({ orgSlug, sorter }: { orgSlug: string; sorter: SorterSummary }) {
+  // Where the machine is, then anything about its state worth saying. Words, not colour.
+  const details = [sorter.host_branch.name, sorterStatusLabel(sorter.status)].filter((detail) => detail !== null)
+  return (
+    <li>
+      <Link className="nav-list-link" to={sorterPath(orgSlug, sorter.slug)}>
+        {sorter.name}
+      </Link>
+      <span className="nav-list-meta">{details.join(' · ')}</span>
+    </li>
+  )
+}
+
+/**
+ * /organizations/:orgSlug -- the organization and the sorting machines it
+ * runs SortView on. Only the sorters the API returns are listed: a branch
+ * with no sorter, and a place a sorter routes items to, are not machines and
+ * are not here.
+ */
 export function OrganizationPage() {
   const organization = useOutletContext<OrganizationDetail>()
 
@@ -15,18 +34,13 @@ export function OrganizationPage() {
 
       <PageHeading>{organization.name}</PageHeading>
 
-      <h3 id="branches-heading">Branches</h3>
-      {organization.branches.length === 0 ? (
-        <p>This organization has no active branches.</p>
+      <h3 id="sorters-heading">Sorting machines</h3>
+      {organization.sorters.length === 0 ? (
+        <p>No sorting machines are registered for this organization yet.</p>
       ) : (
-        <ul className="nav-list" aria-labelledby="branches-heading">
-          {organization.branches.map((branch) => (
-            <li key={branch.slug}>
-              <Link className="nav-list-link" to={branchPath(organization.slug, branch.slug)}>
-                {branch.name}
-              </Link>
-              {branch.is_primary && <span className="nav-list-meta">Primary branch</span>}
-            </li>
+        <ul className="nav-list" aria-labelledby="sorters-heading">
+          {organization.sorters.map((sorter) => (
+            <SorterRow key={sorter.slug} orgSlug={organization.slug} sorter={sorter} />
           ))}
         </ul>
       )}

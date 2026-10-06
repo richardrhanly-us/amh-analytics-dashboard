@@ -2929,3 +2929,53 @@ def test_checkins_by_destination_is_isolated_by_tenant_and_by_site_with_each_sit
 
     for response in (tenant_a, b_main, b_north):
         assert "CANARY" not in str(response) and "branch_1" not in str(response)
+
+
+# --- An organization's sorter sites, read as the runtime role ---
+#
+# services.sorter_inventory_service against real tables: real foreign keys
+# from collector_installations to organizations and branches, a real BOOLEAN
+# is_primary to order by, and the runtime role's own SELECT on
+# collector_installations (granted above, as in production's baseline).
+# The table is not under row level security: the statement's own filter on
+# the organization's slug is what scopes the read.
+
+def _install_collector(conn, organization_id: int, branch_id: int, name: str, status: str = "active") -> None:
+    conn.execute(text("""
+        INSERT INTO collector_installations (organization_id, branch_id, name, hostname, collector_version, status)
+        VALUES (:o, :b, :n, 'CANARY-HOST-01', '9.9.9-canary', :s)
+    """), {"o": organization_id, "b": branch_id, "n": name, "s": status})
+
+
+def test_sorter_sites_are_one_per_host_branch_isolated_by_organization_and_carry_no_machine_detail(
+    owner_engine, runtime_engine, monkeypatch
+):
+    from services import sorter_inventory_service
+    from services.sorter_inventory_service import SorterSite, list_sorter_sites
+
+    _seed_members(owner_engine, runtime_engine)     # adds tenant B's second branch, "north"
+    with owner_engine.begin() as conn:
+        conn.execute(text("TRUNCATE collector_installations RESTART IDENTITY CASCADE"))
+        _install_collector(conn, 1, BRANCH_A, "Tenant A Main AMH")
+        _install_collector(conn, 1, BRANCH_A, "Tenant A retired unit", status="retired")
+        # Tenant B: two collectors at its main branch (one site), and one being set up at north.
+        _install_collector(conn, 2, BRANCH_B, "Tenant B AMH 1")
+        _install_collector(conn, 2, BRANCH_B, "Tenant B AMH 2")
+        _install_collector(conn, 2, BRANCH_B_NORTH, "Tenant B North AMH", status="provisioning")
+    monkeypatch.setattr(sorter_inventory_service, "get_engine", lambda: runtime_engine)
+
+    tenant_a = list_sorter_sites("tenant-a")
+    tenant_b = list_sorter_sites("tenant-b")
+
+    assert tenant_a == [
+        SorterSite(slug="main", name="Tenant A Main AMH", host_branch_slug="main", host_branch_name="Main",
+                   status="active", collector_count=1),
+    ]
+    assert sorted(tenant_b, key=lambda site: site.slug) == [
+        SorterSite(slug="main", name="Tenant B AMH 1", host_branch_slug="main", host_branch_name="Main",
+                   status="active", collector_count=2),
+        SorterSite(slug="north", name="Tenant B North AMH", host_branch_slug="north", host_branch_name="North",
+                   status="provisioning", collector_count=1),
+    ]
+    assert list_sorter_sites("no-such-tenant") == []
+    assert "CANARY" not in repr(tenant_a + tenant_b) and "9.9.9" not in repr(tenant_a + tenant_b)
