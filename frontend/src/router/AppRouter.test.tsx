@@ -961,7 +961,7 @@ describe('a sorter page', () => {
     const routing = screen.getByRole('group', { name: 'Routing' })
     expect(within(routing).getByText('Westside', { selector: 'dt' })).toBeInTheDocument()
     expect(within(routing).queryByRole('link')).not.toBeInTheDocument()
-    expect(linkNames()).toEqual(['Organizations', 'Metro Library System'])
+    expect(linkNames()).toEqual(['Organizations', 'Metro Library System', 'Live Today', 'Reports'])
   })
 
   it('never shows the first sorter under the second while the second loads', async () => {
@@ -996,7 +996,7 @@ describe('a sorter page', () => {
       '2 collectors report for this site. Their figures are combined here and cannot be shown separately.',
     )
     // One sorter, one dashboard: the second collector is not a second place to go.
-    expect(linkNames()).toEqual(['Organizations', 'Metro Library System'])
+    expect(linkNames()).toEqual(['Organizations', 'Metro Library System', 'Live Today', 'Reports'])
   })
 
   it('says a sorter is being set up, and that its data is not available yet, without calling it missing', async () => {

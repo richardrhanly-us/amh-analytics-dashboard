@@ -111,7 +111,8 @@ describe('the structure of a page', () => {
 
     expect(screen.getAllByRole('banner')).toHaveLength(1)
     expect(screen.getAllByRole('main')).toHaveLength(1)
-    expect(screen.getAllByRole('navigation')).toHaveLength(1)
+    // The breadcrumb, and the sorter's own two views.
+    expect(screen.getAllByRole('navigation').map((nav) => nav.getAttribute('aria-label'))).toEqual(['Breadcrumb', 'Sorter views'])
     // The dashboard's four parts are the only named regions; the page itself is <main>.
     expect(screen.getAllByRole('region').map((region) => region.getAttribute('aria-labelledby'))).toEqual([
       'pipeline-heading',
@@ -203,6 +204,8 @@ describe('controls', () => {
       'button: Sign out',
       'a: Organizations',
       'a: Northbridge Library',
+      'a: Live Today',
+      'a: Reports',
       'button: Refresh',
       'button: Pause automatic refresh',
       'button: Show hourly table',
@@ -337,7 +340,7 @@ describe('focus when the page changes', () => {
     await dashboard()
 
     await user.tab()
-    expect(screen.getByRole('button', { name: 'Refresh' })).toHaveFocus()
+    expect(link('Live Today')).toHaveFocus()
     await user.tab({ shift: true })
     expect(link('Northbridge Library')).toHaveFocus()
   })

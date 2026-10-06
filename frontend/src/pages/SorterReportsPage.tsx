@@ -1,26 +1,26 @@
 import { useOutletContext } from 'react-router'
 
-import { LiveToday } from '../liveToday/LiveToday.tsx'
+import { SorterReports } from '../reports/SorterReports.tsx'
 import { sorterStatusLabel } from './labels.ts'
 import type { SorterContext } from './SorterLayout.tsx'
 
 /**
- * /organizations/:orgSlug/sorters/:sorterSlug -- a sorter's Live Today
- * dashboard.
+ * /organizations/:orgSlug/sorters/:sorterSlug/reports -- a sorter's reports
+ * over a range of days.
  *
- * The dashboard's reads are addressed by the sorter's HOST BRANCH: that is
- * the scope its collector uploads under, and the only one the operational API
- * takes. Nothing the person sees depends on that.
+ * Like Live Today, the reports are read by the sorter's HOST BRANCH, the
+ * scope the operational API takes. The person sees the sorter.
  */
-export function SorterPage() {
+export function SorterReportsPage() {
   const { organization, sorter } = useOutletContext<SorterContext>()
   const status = sorterStatusLabel(sorter.status)
 
   return (
     <>
-      {/* Everything this sorter processed, wherever it sent it -- not the returns that belong to one branch. */}
+      <h3 id="reports-heading">Reports</h3>
+      {/* Processing events of this one sorter -- not distinct items, and not the returns that belong to one branch. */}
       <p className="page-context">
-        Live activity for this sorter, at {sorter.host_branch.name}
+        What this sorter processed, at {sorter.host_branch.name}
         {status !== null && ` · ${status}`}
       </p>
       {sorter.collector_count > 1 && (
@@ -29,8 +29,8 @@ export function SorterPage() {
           shown separately.
         </p>
       )}
-      {/* Keyed by sorter, so another sorter starts as a new dashboard: running, and with nothing carried over. */}
-      <LiveToday
+      {/* Keyed by sorter, so another sorter starts as a new set of reports, with nothing carried over. */}
+      <SorterReports
         key={`${organization.slug}/${sorter.slug}`}
         orgSlug={organization.slug}
         branchSlug={sorter.host_branch.slug}

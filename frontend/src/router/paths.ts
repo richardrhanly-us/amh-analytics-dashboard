@@ -12,3 +12,7 @@ export function organizationPath(orgSlug: string): string {
 export function sorterPath(orgSlug: string, sorterSlug: string): string {
   return `${organizationPath(orgSlug)}/sorters/${encodeURIComponent(sorterSlug)}`
 }
+
+export function sorterReportsPath(orgSlug: string, sorterSlug: string): string {
+  return `${sorterPath(orgSlug, sorterSlug)}/reports`
+}
