@@ -12,16 +12,24 @@
  * Nothing else a server (or a proxy in front of it) returns reaches the UI.
  */
 
-/** A failed API call. `status` is the HTTP status, or null when no response arrived at all. */
+/**
+ * A failed API call. `status` is the HTTP status, or null when no response arrived at all.
+ *
+ * `body` is the JSON the API sent with the failure, if any, exactly as parsed and unchecked. It is there for the
+ * one caller that knows what else its endpoint puts beside `code` and `message`, and must be checked by that
+ * caller before any of it is used. It is never shown as it is.
+ */
 export class ApiError extends Error {
   readonly status: number | null
   readonly code: string
+  readonly body: unknown
 
-  constructor(status: number | null, code: string, message: string) {
+  constructor(status: number | null, code: string, message: string, body?: unknown) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
+    this.body = body
   }
 }
 
@@ -47,7 +55,7 @@ const MESSAGES = {
 // The API's own messages are one short sentence. Anything longer is not one of them.
 const MAX_SERVER_MESSAGE_LENGTH = 200
 
-export type ApiMethod = 'GET' | 'POST'
+export type ApiMethod = 'GET' | 'POST' | 'PUT'
 
 export interface ApiRequestOptions {
   method?: ApiMethod
@@ -105,7 +113,7 @@ function errorFor(status: number, body: unknown): ApiError {
       message !== '' &&
       message.length <= MAX_SERVER_MESSAGE_LENGTH
     ) {
-      return new ApiError(status, code, message)
+      return new ApiError(status, code, message, body)
     }
     // A validation failure: {code: "validation_error", detail: [...]}. The detail names fields and is not shown.
     if (Array.isArray(body.detail)) {

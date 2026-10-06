@@ -24,6 +24,15 @@
   --chart-bar: light-dark(#1d4ed8, #93c5fd);
   --chart-band: light-dark(#e5e7eb, #374151);
   --placeholder: light-dark(#e5e7eb, #374151);
+
+  /*
+   * The page is a dashboard: it uses most of a desktop window, up to --shell-width (1,440 pixels at the usual text
+   * size), with --shell-gutter either side. Sentences do not stretch with it: explanatory text stops at
+   * --prose-width, a comfortable line.
+   */
+  --shell-width: 90rem;
+  --shell-gutter: 2rem;
+  --prose-width: 46rem;
 }
 
 body {
@@ -34,10 +43,10 @@ body {
 
 .app {
   box-sizing: border-box;
-  max-width: 64rem;
+  max-width: var(--shell-width);
   min-height: 100vh;
   margin: 0 auto;
-  padding: 2rem 1.5rem 3rem;
+  padding: 2rem var(--shell-gutter) 3rem;
 }
 
 .app-header {
@@ -105,6 +114,17 @@ h2:focus-visible {
 
 .quiet {
   color: var(--muted);
+}
+
+/* Explanations, caveats and help: the panel they are in may be wide, a line of reading is not. */
+.quiet,
+.notice,
+.page-context,
+.chart-summary,
+.range-help,
+.estimate-caveat,
+.field-help {
+  max-width: var(--prose-width);
 }
 
 .inline-icon {
@@ -355,9 +375,14 @@ button[aria-disabled='true'] {
  * As many cards to a row as fit: six across on a desktop, two on a phone. auto-fill keeps every group's cards
  * on the same columns, so a group of two is not stretched to the width of a group of five.
  */
+/*
+ * A row of cards. Each is at least wide enough for an ordinary figure or word at the size a figure is set in --
+ * a four-digit count, a percentage, the longest weekday -- so none is broken in the middle; where a row has no
+ * room for another card that wide, the card goes to the next row whole. Never wider than a narrow screen.
+ */
 .metrics {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 11.5rem), 1fr));
   gap: 0.75rem;
   margin: 0;
 }
@@ -746,6 +771,79 @@ button[aria-disabled='true'] {
 
 .page-links {
   margin: -0.5rem 0 1rem;
+}
+
+/*
+ * Efficiency. An estimate's caveat is ordinary text beside the figure it is about -- never a tooltip. The two
+ * forms sit side by side where there is room and stack where there is not.
+ *
+ * Its cards hold amounts of money and hours, which are longer than a count: each is wide enough for a figure such
+ * as $1,234,567.89 on one line. Where there is not that much room a card takes the whole row -- cards wrap whole,
+ * a figure is not split.
+ */
+.metrics-wide {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
+}
+
+.estimate-caveat {
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.assumptions-panel {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+/* Two forms of short fields: side by side, and no wider than that needs however wide the page is. */
+.assumptions-forms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: 1.5rem;
+  max-width: 64rem;
+  margin-top: 0.75rem;
+}
+
+.assumptions-form h6 {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+}
+
+.assumptions-form p {
+  margin: 0 0 0.375rem;
+}
+
+.field-help {
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+
+/* Says what is wrong in words; the heavier edge only sets it apart. */
+.field-problem {
+  margin-top: 0.25rem;
+  padding-left: 0.5rem;
+  border-left: 3px solid var(--danger);
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.field input[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.assumptions-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+}
+
+.assumptions-saved {
+  color: var(--muted);
 }
 
 /* A destination's share of check-ins, drawn under its name. The figure itself is in the row. */

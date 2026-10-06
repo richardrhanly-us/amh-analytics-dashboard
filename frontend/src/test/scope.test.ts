@@ -108,6 +108,8 @@ describe('scope of this block', () => {
       '/api/organizations/${segment(orgSlug)}/branches/${segment(branchSlug)}',
       // The organization's three range reports, built in the one module that reads them.
       '/api/organizations/${segment(orgSlug)}/reports/${kind}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}',
+      // An organization's Efficiency defaults, read and replaced by the one module that knows them (api/efficiency.ts).
+      '/api/organizations/${segment(orgSlug)}/settings/efficiency',
     ])
     expect(offenders(/\/reports\/\$\{kind\}/).sort()).toEqual(['../api/organizationReports.ts', '../api/reports.ts'])
 
@@ -143,13 +145,37 @@ describe('scope of this block', () => {
     expect(paths).not.toMatch(/\d/)
   })
 
-  it('offers reports and a date range, and still no exports, efficiency figures or administration', () => {
-    // Dates are chosen in one place: the report range control.
+  it('offers reports, a date range and Efficiency assumptions, and still no exports or administration', () => {
+    // Dates are chosen in two places: the report range control, and a sorter's in-service date.
     expect(offenders(/type="date"/)).toEqual(['../reports/DateRangeControl.tsx'])
+    expect(offenders(/'date' : 'text'/)).toEqual(['../reports/EfficiencyAssumptionsPanel.tsx'])
     expect(offenders(/datetime-local|<select|download=|text\/csv|Blob\(|createObjectURL|\.pdf/)).toEqual([])
     expect(offenders(/\b(Historical|Export|Administration|Settings|Reset password|Change password)\b(?! dashboard data)/)).toEqual([])
-    // Not in this app yet: return on investment, staff-time estimates, and anything that diagnoses or advises.
-    expect(offenders(/\bROI\b|return on investment|staff[- ]time|labor value|hours saved|payback/i)).toEqual([])
+    // Efficiency is shown as an ESTIMATE under assumptions -- a manual-workload equivalent and a labor-value
+    // equivalent -- and never as time or money anyone is known to have been spared. None of these words is in the
+    // app, in any form a person could read:
+    expect(
+      offenders(
+        /\bROI\b|return on investment|payback|break[- ]?even|hours saved|labor savings|payroll savings|budget savings|net savings|cost savings|\bFTEs?\b|staff[- ]time equivalent|labor value|measured productivity|staff productivity/i,
+      ),
+    ).toEqual([])
+    // The API also works out a net figure. Setting an estimate against a cost is not something this app shows yet:
+    // the field is read and checked where it arrives (api/efficiency.ts) and appears nowhere a person reads.
+    expect(offenders(/net operational value|net value/i)).toEqual([])
+    expect(offenders(/net_operational_value/)).toEqual(['../api/efficiency.ts'])
+    // Nothing is annualized, projected or dated from installation.
+    expect(offenders(/annualiz|run[- ]rate|since[- ]install|useful life|amortiz/i)).toEqual([])
+    const efficiencySources = shipped
+      .filter(([path]) => /efficiency/i.test(path))
+      .map(([, text]) => text)
+      .join('\n')
+    expect(efficiencySources).toMatch(/Estimated manual-workload equivalent/)
+    expect(efficiencySources).toMatch(/Estimated labor-value equivalent/)
+    expect(efficiencySources).toMatch(/Manual processing rate assumption/)
+    expect(efficiencySources).toMatch(/Recurring cost for this period/)
+    // The app supplies no manual rate or labor rate of its own: the old dashboard's figures are nowhere in it.
+    expect(efficiencySources).not.toMatch(/\b45(\.0)?\b|17\.56|\b130\b|8400|118003/)
+    // Anything that diagnoses or advises is still not in this app.
     expect(offenders(/top issues|recommended attention|correlat|caused by|exception bin|estimated holds/i)).toEqual([])
   })
 })
@@ -171,7 +197,15 @@ describe('how the dashboard is drawn', () => {
   })
 
   it('lays out with grid and flex that reflow, never a fixed desktop width', () => {
-    expect(css).toMatch(/\.metrics \{[^}]*grid-template-columns: repeat\(auto-fill, minmax\([\d.]+rem, 1fr\)\)/)
+    // Cards wrap whole: each has a least width (never more than the screen's), and a row takes as many as fit.
+    expect(css).toMatch(/\.metrics \{[^}]*grid-template-columns: repeat\(auto-fill, minmax\(min\(100%, 11\.5rem\), 1fr\)\)/)
+    // One shell width for every page -- a dashboard's, with gutters -- and a line of reading that does not grow with it.
+    expect(css).toMatch(/--shell-width: 90rem;/)
+    expect(css).toMatch(/\.app \{[^}]*max-width: var\(--shell-width\);[^}]*margin: 0 auto;[^}]*padding: 2rem var\(--shell-gutter\) 3rem;/)
+    expect(css.match(/var\(--shell-width\)/g)).toHaveLength(1)
+    expect(css).toMatch(/\.quiet,[^{]*\.estimate-caveat,[^{]*\{\s*max-width: var\(--prose-width\);/)
+    // Cards that hold money are wide enough for it, and never wider than a narrow screen.
+    expect(css).toMatch(/\.metrics-wide \{\s*grid-template-columns: repeat\(auto-fill, minmax\(min\(100%, [\d.]+rem\), 1fr\)\);/)
     expect(css).toMatch(/\.live-controls \{[^}]*flex-wrap: wrap/)
     expect(css).toMatch(/\.live-buttons \{[^}]*flex-wrap: wrap/)
     expect(css).toMatch(/\.breadcrumb ol \{[^}]*flex-wrap: wrap/)

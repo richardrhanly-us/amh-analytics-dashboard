@@ -3,13 +3,24 @@ import { useState } from 'react'
 import { LoadFailure } from '../components/LoadFailure.tsx'
 import { DateRangeControl, RangeShown } from './DateRangeControl.tsx'
 import { DEFAULT_PRESET_DAYS, lastDays, type DateRange } from './dateRange.ts'
+import { EfficiencySection } from './EfficiencySection.tsx'
 import { OverviewSection, ReliabilitySection, RoutingSection, VolumeSection } from './ReportSections.tsx'
 import { useProductDay, useSorterReports } from './useSorterReports.ts'
 
 const UNAVAILABLE = 'Reports are not available for this sorter yet.'
 
-/** The four reports for one range. Keyed by range from outside, so a new range starts with nothing carried over. */
-function Reports({ orgSlug, branchSlug, range }: { orgSlug: string; branchSlug: string; range: DateRange }) {
+interface Sorter {
+  orgSlug: string
+  branchSlug: string
+  /** The person may see the sorter's Efficiency report: a fifth section, read on its own. */
+  efficiency: boolean
+}
+
+/**
+ * The reports for one range. Keyed by range from outside, so a new range starts with nothing carried over.
+ * `today` is the product's date.
+ */
+function Reports({ orgSlug, branchSlug, efficiency, range, today }: Sorter & { range: DateRange; today: string }) {
   const reports = useSorterReports(orgSlug, branchSlug, range)
 
   if (reports.unavailable) {
@@ -27,32 +38,35 @@ function Reports({ orgSlug, branchSlug, range }: { orgSlug: string; branchSlug: 
       <VolumeSection read={reports.volume} />
       <RoutingSection read={reports.routing} />
       <ReliabilitySection read={reports.reliability} />
+      {/* Not asked for at all unless the person may see it. Whatever becomes of it, the four above are untouched. */}
+      {efficiency && <EfficiencySection orgSlug={orgSlug} branchSlug={branchSlug} range={range} today={today} />}
     </div>
   )
 }
 
-function ReportsForDay({ orgSlug, branchSlug, timeZone, today }: { orgSlug: string; branchSlug: string; timeZone: string; today: string }) {
+function ReportsForDay({ orgSlug, branchSlug, efficiency, timeZone, today }: Sorter & { timeZone: string; today: string }) {
   const [range, setRange] = useState<DateRange>(() => lastDays(DEFAULT_PRESET_DAYS, today))
 
   return (
     <>
       <DateRangeControl range={range} today={today} onChange={setRange} />
       <RangeShown range={range} today={today} timeZone={timeZone} />
-      <Reports key={`${range.from}/${range.to}`} orgSlug={orgSlug} branchSlug={branchSlug} range={range} />
+      <Reports key={`${range.from}/${range.to}`} orgSlug={orgSlug} branchSlug={branchSlug} efficiency={efficiency} range={range} today={today} />
     </>
   )
 }
 
 /**
  * The reports of one sorter the user can see: Overview, Volume & capacity,
- * Routing and Reliability, over a range of days the person chooses.
+ * Routing and Reliability -- and, for the organization's owners and admins,
+ * Efficiency -- over a range of days the person chooses.
  * `branchSlug` is the sorter's host branch: the scope the API reads by.
  *
  * The product's zone, and its date today, are read first: a range is made
  * of the product's calendar dates and may not go past its today, so nothing
  * can be asked for until both are known.
  */
-export function SorterReports({ orgSlug, branchSlug }: { orgSlug: string; branchSlug: string }) {
+export function SorterReports({ orgSlug, branchSlug, efficiency }: Sorter) {
   const { day, retry } = useProductDay(orgSlug, branchSlug)
 
   switch (day.status) {
@@ -67,6 +81,6 @@ export function SorterReports({ orgSlug, branchSlug }: { orgSlug: string; branch
     case 'error':
       return <LoadFailure message={day.message} onRetry={retry} />
     case 'ready':
-      return <ReportsForDay orgSlug={orgSlug} branchSlug={branchSlug} timeZone={day.timeZone} today={day.today} />
+      return <ReportsForDay orgSlug={orgSlug} branchSlug={branchSlug} efficiency={efficiency} timeZone={day.timeZone} today={day.today} />
   }
 }

@@ -1,6 +1,7 @@
 import { useOutletContext } from 'react-router'
 
 import { SorterReports } from '../reports/SorterReports.tsx'
+import { canSeeEfficiency } from '../reports/useEfficiency.ts'
 import { sorterStatusLabel } from './labels.ts'
 import type { SorterContext } from './SorterLayout.tsx'
 
@@ -34,6 +35,7 @@ export function SorterReportsPage() {
         key={`${organization.slug}/${sorter.slug}`}
         orgSlug={organization.slug}
         branchSlug={sorter.host_branch.slug}
+        efficiency={canSeeEfficiency(organization.role)}
       />
     </>
   )
