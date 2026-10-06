@@ -26,7 +26,7 @@ import { renderApp } from './test/render.tsx'
 
 type Routes = Parameters<typeof serveApi>[0]
 
-const CENTRAL = '/organizations/northbridge/branches/central'
+const CENTRAL = '/organizations/northbridge/sorters/central'
 const PIPELINE = 'GET /api/organizations/northbridge/branches/central/pipeline-status'
 
 function serve(overrides: Routes = {}): FetchMock {
@@ -79,7 +79,7 @@ describe('the structure of a page', () => {
 
     expect(screen.getAllByRole('heading').map((heading) => `${heading.tagName} ${heading.textContent}`)).toEqual([
       'H1 SortView',
-      'H2 Central Branch',
+      'H2 Central Library AMH',
       'H3 Pipeline',
       'H3 Today',
       'H4 Operations',
@@ -92,7 +92,7 @@ describe('the structure of a page', () => {
 
   it.each([
     ['/organizations', ['H1 SortView', 'H2 Organizations']],
-    ['/organizations/northbridge', ['H1 SortView', 'H2 Northbridge Library', 'H3 Branches']],
+    ['/organizations/northbridge', ['H1 SortView', 'H2 Northbridge Library', 'H3 Sorting machines']],
     ['/nowhere', ['H1 SortView', 'H2 Page not found']],
   ])('keeps the same heading order at %s', async (path, headings) => {
     serve()
@@ -131,12 +131,12 @@ describe('the structure of a page', () => {
     const breadcrumb = screen.getByRole('navigation', { name: 'Breadcrumb' })
     expect(main()).toContainElement(breadcrumb)
     const steps = within(breadcrumb).getAllByRole('listitem')
-    expect(steps.map((step) => step.textContent)).toEqual(['Organizations', 'Northbridge Library', 'Central Branch'])
+    expect(steps.map((step) => step.textContent)).toEqual(['Organizations', 'Northbridge Library', 'Central Library AMH'])
     expect(within(breadcrumb).getAllByRole('link').map((step) => step.getAttribute('href'))).toEqual([
       '/organizations',
       '/organizations/northbridge',
     ])
-    const current = within(steps[2]).getByText('Central Branch')
+    const current = within(steps[2]).getByText('Central Library AMH')
     expect(current).toHaveAttribute('aria-current', 'page')
     expect(current.tagName).toBe('SPAN')
   })
@@ -146,8 +146,8 @@ describe('the structure of a page', () => {
     const user = userEvent.setup()
 
     renderApp(CENTRAL)
-    await pageHeading('Central Branch')
-    expect(document.title).toBe('Central Branch – SortView')
+    await pageHeading('Central Library AMH')
+    expect(document.title).toBe('Central Library AMH – SortView')
 
     await user.click(link('Northbridge Library'))
     await pageHeading('Northbridge Library')
@@ -157,7 +157,7 @@ describe('the structure of a page', () => {
   it('titles a missing page without naming what was asked for', async () => {
     serve()
 
-    renderApp('/organizations/northbridge/branches/secret-annex')
+    renderApp('/organizations/northbridge/sorters/secret-annex')
     await pageHeading('Page not found')
 
     expect(document.title).toBe('Page not found – SortView')
@@ -270,8 +270,8 @@ describe('focus when the page changes', () => {
 
     expect(await pageHeading('Northbridge Library')).toHaveFocus()
 
-    await user.click(link('Central Branch'))
-    expect(await pageHeading('Central Branch')).toHaveFocus()
+    await user.click(link('Central Library AMH'))
+    expect(await pageHeading('Central Library AMH')).toHaveFocus()
 
     await user.click(link('Organizations'))
     expect(await pageHeading('Organizations')).toHaveFocus()
@@ -310,8 +310,8 @@ describe('focus when the page changes', () => {
     renderApp('/organizations')
     await user.click(await within(main()).findByRole('link', { name: 'Northbridge Library' }))
     await pageHeading('Northbridge Library')
-    await user.click(link('East Side Branch'))
-    await pageHeading('East Side Branch')
+    await user.click(link('East Side AMH'))
+    await pageHeading('East Side AMH')
 
     await user.click(screen.getByRole('button', { name: 'browser-back' }))
     expect(await pageHeading('Northbridge Library')).toHaveFocus()
@@ -332,8 +332,8 @@ describe('focus when the page changes', () => {
 
     renderApp('/organizations/northbridge')
     await pageHeading('Northbridge Library')
-    await user.click(link('Central Branch'))
-    expect(await pageHeading('Central Branch')).toHaveFocus()
+    await user.click(link('Central Library AMH'))
+    expect(await pageHeading('Central Library AMH')).toHaveFocus()
     await dashboard()
 
     await user.tab()
@@ -417,7 +417,7 @@ describe('focus when signing in and out', () => {
 
     expect(await screen.findByRole('alert')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Sign out' })).toHaveFocus()
-    expect(screen.getByRole('heading', { level: 2, name: 'Central Branch' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'Central Library AMH' })).toBeInTheDocument()
     expect(address()).toBe(CENTRAL)
   })
 

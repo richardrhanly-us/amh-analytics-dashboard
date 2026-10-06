@@ -211,3 +211,92 @@ describe('getOrganization', () => {
     await expect(getOrganization('northbridge')).rejects.toMatchObject(UNEXPECTED)
   })
 })
+
+describe('the sorters of an organization', () => {
+  const read = () => getOrganization('northbridge')
+  /** Answers with Northbridge's detail, its sorters replaced, and reads it. */
+  function withSorters(sorters: unknown) {
+    stubFetch().mockResolvedValue(jsonResponse(200, { ...NORTHBRIDGE_DETAIL, sorters }))
+    return read()
+  }
+  const central = NORTHBRIDGE_DETAIL.sorters[0]
+
+  it('returns each sorter exactly as sent, in the order sent, apart from the branches', async () => {
+    stubFetch().mockResolvedValue(jsonResponse(200, NORTHBRIDGE_DETAIL))
+
+    const detail = await read()
+
+    expect(detail.sorters).toStrictEqual([
+      { slug: 'central', name: 'Central Library AMH', host_branch: { slug: 'central', name: 'Central Branch' }, status: 'active', collector_count: 1 },
+      { slug: 'east-side', name: 'East Side AMH', host_branch: { slug: 'east-side', name: 'East Side Branch' }, status: 'active', collector_count: 1 },
+    ])
+    // Three branches, two sorters: a branch is not made a sorter, and a sorter is not made from a branch.
+    expect(detail.branches.map((branch) => branch.slug)).toEqual(['central', 'east-side', 'westside'])
+  })
+
+  it('accepts an organization with no sorters', async () => {
+    expect((await withSorters([])).sorters).toEqual([])
+  })
+
+  it.each(['active', 'provisioning', 'inactive'])('accepts the status %s', async (status) => {
+    expect((await withSorters([{ ...central, status }])).sorters[0].status).toBe(status)
+  })
+
+  it('accepts a site with no reporting collector, and one with several', async () => {
+    const detail = await withSorters([
+      { ...central, collector_count: 0, status: 'inactive' },
+      { ...NORTHBRIDGE_DETAIL.sorters[1], collector_count: 3 },
+    ])
+
+    expect(detail.sorters.map((sorter) => sorter.collector_count)).toEqual([0, 3])
+  })
+
+  it('accepts a sorter whose slug is not its host branch’s', async () => {
+    const detail = await withSorters([{ ...central, slug: 'amh-1' }])
+
+    expect(detail.sorters[0]).toMatchObject({ slug: 'amh-1', host_branch: { slug: 'central' } })
+  })
+
+  it('drops fields the contract does not have, such as a hostname or an id', async () => {
+    const detail = await withSorters([
+      {
+        ...central,
+        id: 41,
+        installation_id: 41,
+        hostname: 'NBPL-AMH-PC',
+        collector_version: '1.0.13',
+        agent_token: 'secret',
+        host_branch: { ...central.host_branch, id: 7, operational_branch_id: 7 },
+      },
+    ])
+
+    expect(detail.sorters).toStrictEqual([central])
+    expect(JSON.stringify(detail)).not.toMatch(/hostname|NBPL-AMH-PC|1\.0\.13|secret|installation_id|operational_branch_id|41/)
+  })
+
+  it.each<[string, unknown]>([
+    ['a missing sorters field', undefined],
+    ['sorters that are not a list', { central }],
+    ['null', null],
+    ['a sorter that is not an object', ['central']],
+    ['an empty slug', [{ ...central, slug: '' }]],
+    ['a slug that is not text', [{ ...central, slug: 7 }]],
+    ['a blank name', [{ ...central, name: '  ' }]],
+    ['a name that is not text', [{ ...central, name: null }]],
+    ['a missing host branch', [{ ...central, host_branch: undefined }]],
+    ['a host branch that is text', [{ ...central, host_branch: 'central' }]],
+    ['a host branch with no slug', [{ ...central, host_branch: { slug: '', name: 'Central Branch' } }]],
+    ['a host branch with no name', [{ ...central, host_branch: { slug: 'central', name: '' } }]],
+    ['the status retired', [{ ...central, status: 'retired' }]],
+    ['a status in another case', [{ ...central, status: 'Active' }]],
+    ['a missing status', [{ ...central, status: undefined }]],
+    ['a negative collector count', [{ ...central, collector_count: -1 }]],
+    ['a fractional collector count', [{ ...central, collector_count: 1.5 }]],
+    ['a collector count as text', [{ ...central, collector_count: '1' }]],
+    ['a missing collector count', [{ ...central, collector_count: undefined }]],
+    ['two sorters with one slug', [central, { ...central, host_branch: { slug: 'east-side', name: 'East Side Branch' } }]],
+    ['two sorters at one host branch', [central, { ...central, slug: 'amh-2', name: 'AMH 2' }]],
+  ])('rejects %s as an unexpected response', async (_label, sorters) => {
+    await expect(withSorters(sorters)).rejects.toMatchObject(UNEXPECTED)
+  })
+})

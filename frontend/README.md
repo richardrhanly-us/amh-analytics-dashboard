@@ -3,12 +3,12 @@
 The SortView customer web app: a React + TypeScript single-page app built
 with Vite. It is a static SPA. There is no server-side rendering.
 
-**Status: Block F5.5, Live Today routing.** The app restores a session,
+**Status: Block F5.6, sorter navigation.** The app restores a session,
 signs in and signs out against the customer API (`/api/auth/*`), lists the
-signed-in user's organizations, lets them choose a branch, and shows that
-branch's Live Today dashboard. It is not deployed anywhere yet: there is no
-production hosting for this frontend. Nothing in this directory is used by
-the Python backend, the Streamlit app or the collector.
+signed-in user's organizations, lists each organization's sorting machines,
+and shows a sorter's Live Today dashboard. It is not deployed anywhere yet:
+there is no production hosting for this frontend. Nothing in this directory
+is used by the Python backend, the Streamlit app or the collector.
 
 ## Routes
 
@@ -20,24 +20,45 @@ signing in lands on the page that was asked for.
 | --- | --- |
 | `/` | Redirects to `/organizations` |
 | `/organizations` | The user's organizations (`GET /api/organizations`) |
-| `/organizations/:orgSlug` | One organization and its branches (`GET /api/organizations/{org_slug}`) |
-| `/organizations/:orgSlug/branches/:branchSlug` | The selected branch and its Live Today dashboard |
+| `/organizations/:orgSlug` | One organization and its sorting machines (`GET /api/organizations/{org_slug}`) |
+| `/organizations/:orgSlug/sorters/:sorterSlug` | One sorter and its Live Today dashboard |
+| `/organizations/:orgSlug/branches/:branchSlug` | The address a sorter used to have: redirects to the sorter hosted at that branch, or is not found |
 | anything else | Not found |
 
-Organizations and branches appear in addresses by slug only. The API decides
-what a user can see: an organization it does not return, and a branch that is
+Organizations and sorters appear in addresses by slug only. The API decides
+what a user can see: an organization it does not return, and a sorter that is
 not in the organization it returns, both get the same "not found" page as an
 unknown address. A `401` from the API returns the app to the sign-in form.
 
-**A branch address is a sorter site.** Operationally, a branch here is the
-scope one sorter's collector uploads under. Its dashboard covers everything
-that sorter processed, including items it routed on to other places. Those
-places are routing destinations configured for the site -- outcomes of this
-one sorter -- not separate sorters, and they have no dashboards of their own.
+## Sorting machines, host branches and destinations
+
+Three things that are easy to confuse, and are kept apart:
+
+- **A sorter** is a machine the organization runs SortView on. The
+  organization page lists the `sorters` the API returns, which come from
+  registered collector installations (retired ones excluded). It never lists
+  branches as such, and never makes a sorter out of a routing destination.
+- **A host branch** is where a sorter is. It is shown beside the sorter's
+  name, and it is the scope the dashboard's reads are addressed by
+  (`/api/organizations/{org}/branches/{host branch}/...`). A branch with no
+  sorter has no dashboard.
+- **A routing destination** is somewhere a sorter sends items. Destinations
+  are configured per sorter and appear only inside that sorter's Routing
+  figures. A place can be a destination of one sorter and the host of another;
+  the two are unrelated here.
+
+**Current limit: one separable sorter per host branch.** Events, pipeline
+status and the routing configuration are stored per (organization, branch),
+so the API returns one sorter entry per host branch and the sorter's slug is
+its host branch's slug. An organization with sorters at several branches is
+fully supported. Two machines at the *same* branch are shown as one sorter
+whose figures are combined (`collector_count` above 1, and the page says so);
+telling them apart needs per-installation attribution of events, which is
+deferred.
 
 ## Live Today
 
-The branch page shows, for today: the pipeline's last reported state and when
+The sorter page shows, for today: the pipeline's last reported state and when
 it reported, and the day's figures in three groups: **Operations** (check-ins,
 current hour, busiest hour), **Routing** (total in transit and one figure for
 each destination configured for the site) and **Rejects** (total and rate),
@@ -72,7 +93,7 @@ followed by check-ins by hour and the reject reasons that occurred.
   Refresh button. Pause stops the timer only; Refresh still works while
   paused. A refresh after midnight in the product zone moves to the new day.
   A browser tab in the background does not refresh until it is visible again.
-- **A branch with no live data.** If the API answers `404` for a branch the
+- **A sorter with no live data.** If the API answers `404` for a sorter the
   organization lists, the page says live data is not available for it yet.
 - **Failures.** A section that cannot be loaded says so and the rest stay
   visible. Network failures and `5xx` answers are retried twice; nothing else

@@ -1,5 +1,5 @@
 /**
- * The app's addresses. An organization and a branch appear in one by slug --
+ * The app's addresses. An organization and a sorter appear in one by slug --
  * the only identifier the API gives the browser for either.
  */
 
@@ -9,6 +9,6 @@ export function organizationPath(orgSlug: string): string {
   return `${ORGANIZATIONS_PATH}/${encodeURIComponent(orgSlug)}`
 }
 
-export function branchPath(orgSlug: string, branchSlug: string): string {
-  return `${organizationPath(orgSlug)}/branches/${encodeURIComponent(branchSlug)}`
+export function sorterPath(orgSlug: string, sorterSlug: string): string {
+  return `${organizationPath(orgSlug)}/sorters/${encodeURIComponent(sorterSlug)}`
 }

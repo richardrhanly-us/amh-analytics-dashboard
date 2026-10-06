@@ -1,8 +1,9 @@
 import { ApiError, apiRequest, unexpectedResponse } from './client.ts'
 
 /**
- * The organizations and branches the signed-in user may reach, exactly as the
- * API describes them. Both are identified by slug only: the API returns no
+ * The organizations, their sorting machines and their branches that the
+ * signed-in user may reach, exactly as the API describes them. Each is
+ * identified by slug only: the API returns no
  * database or operational id, and nothing here invents one.
  *
  * The API leaves out anything the user cannot reach, so a response is the
@@ -31,6 +32,28 @@ export interface BranchSummary {
   is_primary: boolean
 }
 
+/** "retired" is never returned: a retired machine is not listed at all. */
+export const SORTER_STATUSES = ['active', 'provisioning', 'inactive'] as const
+export type SorterStatus = (typeof SORTER_STATUSES)[number]
+
+/**
+ * One sorting machine the organization runs SortView on -- a registered
+ * installation, never a branch that merely exists or a place items are routed
+ * to. More exactly it is a sorter SITE: the API gives one entry per host
+ * branch, because that is the finest scope its figures can be separated by.
+ */
+export interface SorterSummary {
+  /** Identifies the sorter within its organization, and is what its address is built from. */
+  slug: string
+  /** The machine's registered name. */
+  name: string
+  /** Where the machine is. Its dashboard's reads are addressed by this branch's slug. */
+  host_branch: { slug: string; name: string }
+  status: SorterStatus
+  /** How many collectors can report for the site. Above one, their figures are combined and inseparable. */
+  collector_count: number
+}
+
 export interface SubscriptionSummary {
   plan_code: string
   plan_name: string
@@ -43,8 +66,10 @@ export interface FeatureEntitlement {
 }
 
 export interface OrganizationDetail extends OrganizationSummary {
-  /** The organization's active branches, primary first. */
+  /** The organization's active branches, primary first. Locations: not every branch has a sorter. */
   branches: BranchSummary[]
+  /** The organization's sorting machines. No two share a slug, and no two share a host branch. */
+  sorters: SorterSummary[]
   subscription: SubscriptionSummary | null
   /** Keyed by feature key. */
   entitlements: Record<string, FeatureEntitlement>
@@ -98,6 +123,48 @@ function parseBranch(value: unknown): BranchSummary {
   return { slug: slug(branchSlug), name: text(name), is_primary }
 }
 
+/** A name a person will read and follow as a link: it has to say something. */
+function displayName(value: unknown): string {
+  if (text(value).trim() === '') {
+    throw unexpectedResponse(200)
+  }
+  return value as string
+}
+
+function parseSorter(value: unknown): SorterSummary {
+  const { slug: sorterSlug, name, host_branch, status, collector_count } = record(value)
+  const host = record(host_branch)
+  if (
+    !SORTER_STATUSES.includes(status as SorterStatus) ||
+    typeof collector_count !== 'number' ||
+    !Number.isInteger(collector_count) ||
+    collector_count < 0
+  ) {
+    throw unexpectedResponse(200)
+  }
+  return {
+    slug: slug(sorterSlug),
+    name: displayName(name),
+    host_branch: { slug: slug(host.slug), name: displayName(host.name) },
+    status: status as SorterStatus,
+    collector_count,
+  }
+}
+
+/**
+ * The sorters of one organization. Two with one slug could not be told apart
+ * in an address, and two at one host branch would be two dashboards of the
+ * very same figures: neither is a list this app can show truthfully.
+ */
+function parseSorters(value: unknown): SorterSummary[] {
+  const sorters = list(value, parseSorter)
+  const distinct = (keys: string[]) => new Set(keys).size === keys.length
+  if (!distinct(sorters.map((sorter) => sorter.slug)) || !distinct(sorters.map((sorter) => sorter.host_branch.slug))) {
+    throw unexpectedResponse(200)
+  }
+  return sorters
+}
+
 function parseSubscription(value: unknown): SubscriptionSummary | null {
   if (value === null) {
     return null
@@ -115,10 +182,11 @@ function parseEntitlement(value: unknown): FeatureEntitlement {
 }
 
 function parseDetail(value: unknown): OrganizationDetail {
-  const { branches, subscription, entitlements } = record(value)
+  const { branches, sorters, subscription, entitlements } = record(value)
   return {
     ...parseSummary(value),
     branches: list(branches, parseBranch),
+    sorters: parseSorters(sorters),
     subscription: parseSubscription(subscription),
     entitlements: Object.fromEntries(
       Object.entries(record(entitlements)).map(([featureKey, feature]) => [featureKey, parseEntitlement(feature)]),

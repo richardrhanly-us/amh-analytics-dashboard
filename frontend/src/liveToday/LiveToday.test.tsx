@@ -26,7 +26,7 @@ import {
 import { renderApp } from '../test/render.tsx'
 import { REFRESH_INTERVAL_MS } from './useLiveToday.ts'
 
-const CENTRAL = '/organizations/northbridge/branches/central'
+const CENTRAL = '/organizations/northbridge/sorters/central'
 const API = livePath('northbridge', 'central')
 const PIPELINE = `GET ${API}/pipeline-status`
 const CHECKIN_COUNT = `GET ${API}/checkins/count?date=*`
@@ -40,7 +40,7 @@ const NOW = '2026-10-05T18:50:00Z'
 const TODAY = '2026-10-05'
 
 const SERVER_ERROR = () => jsonResponse(500, { code: 'internal_error', message: 'Internal server error.' })
-const UNAVAILABLE = 'Live dashboard data is not available for this branch yet.'
+const UNAVAILABLE = 'Live dashboard data is not available for this sorter yet.'
 
 const hoursWith = (counts: Record<number, number>) => Array.from({ length: 24 }, (_, hour) => counts[hour] ?? 0)
 /** The icon drawn for each pipeline state, as the tests come across them. */
@@ -545,7 +545,7 @@ describe('changing branch', () => {
     await loaded()
     expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
     await person.click(within(main()).getByRole('link', { name: 'Northbridge Library' }))
-    await person.click(await within(main()).findByRole('link', { name: 'East Side Branch' }))
+    await person.click(await within(main()).findByRole('link', { name: 'East Side AMH' }))
 
     expect(await screen.findByText('Loading live data…')).toBeInTheDocument()
     expect(main()).not.toHaveTextContent(/120|11 AM–12 PM|Item not found/)
@@ -568,7 +568,7 @@ describe('changing branch', () => {
     await loaded()
     await person.click(screen.getByRole('button', { name: 'Pause automatic refresh' }))
     await person.click(within(main()).getByRole('link', { name: 'Northbridge Library' }))
-    await person.click(await within(main()).findByRole('link', { name: 'East Side Branch' }))
+    await person.click(await within(main()).findByRole('link', { name: 'East Side AMH' }))
     await loaded()
 
     expect(screen.getByRole('button', { name: 'Pause automatic refresh' })).toBeInTheDocument()
@@ -582,7 +582,7 @@ describe('changing branch', () => {
     renderApp(CENTRAL)
     await loaded()
     await person.click(within(main()).getByRole('link', { name: 'Northbridge Library' }))
-    await screen.findByRole('heading', { level: 3, name: 'Branches' })
+    await screen.findByRole('heading', { level: 3, name: 'Sorting machines' })
     await pass(REFRESH_INTERVAL_MS * 2)
 
     expect(liveRequests(fetchMock)).toHaveLength(6)
@@ -597,7 +597,7 @@ describe('changing branch', () => {
     await loaded()
     await person.click(within(main()).getByRole('link', { name: 'Northbridge Library' }))
     fixture = live({ hours: hoursWith({ 13: 300 }) })
-    await person.click(await within(main()).findByRole('link', { name: 'Central Branch' }))
+    await person.click(await within(main()).findByRole('link', { name: 'Central Library AMH' }))
     await loaded()
 
     expect(metric('Check-ins today')).toHaveTextContent(/^300$/)
@@ -610,7 +610,7 @@ describe('a suspended organization', () => {
     const fetchMock = serve()
     const person = user()
 
-    renderApp('/organizations/riverside/branches/main')
+    renderApp('/organizations/riverside/sorters/main')
     await loaded()
 
     expect(screen.getByText(/currently suspended/)).toBeInTheDocument()
@@ -628,7 +628,7 @@ describe('a branch with no live data (404)', () => {
     renderApp(CENTRAL, { retries: true })
 
     expect(await screen.findByText(UNAVAILABLE)).toHaveRole('note')
-    expect(screen.getByRole('heading', { level: 2, name: 'Central Branch' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'Central Library AMH' })).toBeInTheDocument()
     expect(within(main()).getByRole('link', { name: 'Northbridge Library' })).toBeInTheDocument()
     expect(main()).not.toHaveTextContent(/Page not found|not found|mapp|operational|tenant/i)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
@@ -643,18 +643,18 @@ describe('a branch with no live data (404)', () => {
     renderApp(CENTRAL)
 
     expect(await screen.findByText(UNAVAILABLE)).toBeInTheDocument()
-    expect(screen.getByRole('heading', { level: 2, name: 'Central Branch' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'Central Library AMH' })).toBeInTheDocument()
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
   })
 
   it('keeps the suspended notice and the page around it', async () => {
     serve({ [`GET ${livePath('riverside', 'main')}/pipeline-status`]: () => jsonResponse(404, TENANT_NOT_FOUND) })
 
-    renderApp('/organizations/riverside/branches/main')
+    renderApp('/organizations/riverside/sorters/main')
 
     expect(await screen.findByText(UNAVAILABLE)).toBeInTheDocument()
     expect(screen.getByText(/currently suspended/)).toBeInTheDocument()
-    expect(screen.getByRole('heading', { level: 2, name: 'Riverside Main' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'Riverside Main AMH' })).toBeInTheDocument()
   })
 })
 
@@ -740,7 +740,7 @@ describe('failures', () => {
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).not.toMatch(/Traceback|customer_id|41|Failed to fetch|stale|Central Time|60 per|\[object|loc/)
     expect(alert.textContent?.length).toBeLessThan(120)
-    expect(screen.getByRole('heading', { level: 2, name: 'Central Branch' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'Central Library AMH' })).toBeInTheDocument()
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
     expect(main()).not.toHaveTextContent(UNAVAILABLE)
 
@@ -1073,7 +1073,7 @@ describe('the first load', () => {
     const outline = document.querySelector('.skeleton') as HTMLElement
     expect(outline).toHaveAttribute('aria-hidden', 'true')
     expect(outline.textContent).toBe('')
-    expect(screen.getByRole('heading', { level: 2, name: 'Central Branch' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'Central Library AMH' })).toBeInTheDocument()
     expect(within(main()).getByRole('link', { name: 'Northbridge Library' })).toBeInTheDocument()
     expect(main().textContent).not.toMatch(/\d/)
     expect(screen.queryByRole('term')).not.toBeInTheDocument()
@@ -1318,8 +1318,8 @@ describe('today in three groups', () => {
     renderApp(CENTRAL)
     await loaded()
 
-    const heading = screen.getByRole('heading', { level: 2, name: 'Central Branch' })
-    expect(heading.nextElementSibling).toHaveTextContent(/^Live activity for this sorter site$/)
+    const heading = screen.getByRole('heading', { level: 2, name: 'Central Library AMH' })
+    expect(heading.nextElementSibling).toHaveTextContent(/^Live activity for this sorter, at Central Branch$/)
     expect(screen.getByRole('group', { name: 'Routing' })).toHaveTextContent('Where this sorter sent today’s check-ins.')
     expect(main()).not.toHaveTextContent(/installation|machine|Tech Logic|UltraSort/i)
   })
@@ -1458,7 +1458,7 @@ describe('routing', () => {
     await loaded()
     await shown()
 
-    expect(routing()).toHaveTextContent('No transit destinations are configured for this sorter site.')
+    expect(routing()).toHaveTextContent('No transit destinations are configured for this sorter.')
     expect(routing()).toHaveTextContent('Kept at Main: 118. Other routing: 2.')
     expect(within(routing()).queryByRole('term')).not.toBeInTheDocument()
   })
@@ -1627,7 +1627,7 @@ describe('the routing read', () => {
     await loaded()
     await waitFor(() => expect(metric('Harbor Depot')).toHaveTextContent(/^7$/))
     await person.click(within(main()).getByRole('link', { name: 'Northbridge Library' }))
-    await person.click(await within(main()).findByRole('link', { name: 'East Side Branch' }))
+    await person.click(await within(main()).findByRole('link', { name: 'East Side AMH' }))
     await waitFor(() => expect(metric('Check-ins today')).toHaveTextContent(/^7$/))
 
     expect(metric('Total transit')).toHaveTextContent(/^Loading…$/)
@@ -1747,7 +1747,7 @@ describe('the routing read', () => {
     renderApp(CENTRAL, { retries: true })
 
     expect(await screen.findByText(UNAVAILABLE)).toHaveRole('note')
-    expect(screen.getByRole('heading', { level: 2, name: 'Central Branch' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'Central Library AMH' })).toBeInTheDocument()
     expect(main()).not.toHaveTextContent(/Page not found|destination|Routing|Westside/i)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(screen.queryByRole('img')).not.toBeInTheDocument()

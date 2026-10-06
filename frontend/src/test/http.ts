@@ -87,9 +87,15 @@ export const RIVERSIDE = { slug: 'riverside', name: 'Riverside Library', role: '
 
 export const NORTHBRIDGE_DETAIL = {
   ...NORTHBRIDGE,
+  // Three branches, two sorters: Westside is a place items are routed to, with no machine of its own.
   branches: [
     { slug: 'central', name: 'Central Branch', is_primary: true },
     { slug: 'east-side', name: 'East Side Branch', is_primary: false },
+    { slug: 'westside', name: 'Westside', is_primary: false },
+  ],
+  sorters: [
+    { slug: 'central', name: 'Central Library AMH', host_branch: { slug: 'central', name: 'Central Branch' }, status: 'active', collector_count: 1 },
+    { slug: 'east-side', name: 'East Side AMH', host_branch: { slug: 'east-side', name: 'East Side Branch' }, status: 'active', collector_count: 1 },
   ],
   subscription: { plan_code: 'standard', plan_name: 'Standard', status: 'active' },
   entitlements: {
@@ -101,6 +107,9 @@ export const NORTHBRIDGE_DETAIL = {
 export const RIVERSIDE_DETAIL = {
   ...RIVERSIDE,
   branches: [{ slug: 'main', name: 'Riverside Main', is_primary: true }],
+  sorters: [
+    { slug: 'main', name: 'Riverside Main AMH', host_branch: { slug: 'main', name: 'Riverside Main' }, status: 'active', collector_count: 1 },
+  ],
   subscription: null,
   entitlements: {},
 }
