@@ -643,4 +643,6 @@ def test_only_the_operational_and_report_routes_use_the_tenant_scope():
 
     # Reports R2 added the second: the sorter-site range reports, which resolve
     # and scope a request exactly as the single-day reads do.
-    assert users == ["operational_routes.py", "report_routes.py"]
+    # Reports R4 added the third: the organization reports, which resolve and open one sorter site at a time
+    # through this module and never a scope of their own (tests/test_customer_api_organization_reports.py).
+    assert users == ["operational_routes.py", "organization_report_routes.py", "report_routes.py"]

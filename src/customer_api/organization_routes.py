@@ -49,6 +49,26 @@ def _visible_access_mode(org_slug: str) -> str | None:
     return mode if mode in _VISIBLE_ACCESS_MODES else None
 
 
+def require_organization_member(org_slug: str, user: CurrentUser) -> dict[str, Any]:
+    """The authenticated user, once it is established that they may see the
+    organization in the path: they are a member of it, and it is visible
+    ("full" or "read_only" -- a suspended organization stays readable). Any
+    other case is the one organization_not_found 404, exactly as for the
+    organization detail below.
+
+    For routes about an organization as a whole. It makes no role or
+    entitlement decision and opens no operational scope: a route that reads
+    operational data still resolves, site by site, each scope it reads. A
+    database failure propagates and is answered as a server error, never as
+    "not found"."""
+    # get_user_memberships already leaves out cancelled organizations.
+    if not any(m["organization_slug"] == org_slug for m in access_service.get_user_memberships(user["id"])):
+        raise _organization_not_found()
+    if _visible_access_mode(org_slug) is None:
+        raise _organization_not_found()
+    return user
+
+
 def create_organization_router() -> APIRouter:
     router = APIRouter(prefix="/organizations", route_class=CustomerApiRoute)
 
