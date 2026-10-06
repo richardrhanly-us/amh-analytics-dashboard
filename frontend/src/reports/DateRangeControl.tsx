@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 
-import { lastDays, MAX_RANGE_DAYS, presetOf, PRESETS, rangeProblem, rangeProblemText, type DateRange } from './dateRange.ts'
+import { daysInRange, lastDays, MAX_RANGE_DAYS, presetOf, PRESETS, rangeProblem, rangeProblemText, type DateRange } from './dateRange.ts'
 import { formatDate } from './derive.ts'
 
 /**
@@ -105,5 +105,17 @@ export function DateRangeControl({
         </p>
       )}
     </div>
+  )
+}
+
+/** What the figures below are for. It changes only when a range is applied, never while one is being typed. */
+export function RangeShown({ range, today, timeZone }: { range: DateRange; today: string; timeZone: string }) {
+  const length = daysInRange(range)
+  return (
+    <p className="range-shown">
+      Showing {formatDate(range.from)} to {formatDate(range.to)}: {length} {length === 1 ? 'day' : 'days'}, in{' '}
+      {timeZone} time.
+      {range.to === today && ' This range includes today, which is not over yet: its figures will still rise.'}
+    </p>
   )
 }

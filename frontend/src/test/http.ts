@@ -369,3 +369,156 @@ export function reportRoutes(orgSlug: string, branchSlug: string, report: Report
     [`${base}/reports/reliability?from=*&to=*`]: answer('reliability'),
   }
 }
+
+// --- organization range reports ----------------------------------------------------------------------------------------
+
+/** One sorter of an organization, for its organization's reports: what the organization lists, and what it did. */
+export interface OrganizationSorterFixture {
+  slug: string
+  name: string
+  host_branch: { slug: string; name: string }
+  status: string
+  collector_count: number
+  /** What it reports -- or null for a sorter that is registered but has no data to read. */
+  report: ReportFixture | null
+}
+
+/**
+ * What an organization's three range reports answer for `sorters` over `from`..`to`: each sorter's own figures
+ * (reportBody), added up the way the API adds them. `today` flags a range that reaches it.
+ */
+export const organizationReportBody = {
+  overview: (sorters: OrganizationSorterFixture[], from: string, to: string, today = REPORT.today) => {
+    const dates = datesBetween(from, to)
+    const read = sorters.map((sorter) => (sorter.report === null ? null : reportBody.overview(sorter.report, from, to)))
+    const total = (pick: (overview: ReturnType<typeof reportBody.overview>) => number) =>
+      sum(read.map((overview) => (overview === null ? 0 : pick(overview))))
+    return {
+      range: { from, to, days: dates.length, timezone: REPORT.timezone, includes_today: to >= today },
+      totals: {
+        checkin_count: total((overview) => overview.checkin_count),
+        home_count: total((overview) => overview.home_count),
+        transit_count: total((overview) => overview.transit_count),
+        other_count: total((overview) => overview.other_count),
+        reject_count: total((overview) => overview.reject_count),
+      },
+      sorters: sorters.map((sorter, index) => {
+        const overview = read[index]
+        return {
+          slug: sorter.slug,
+          name: sorter.name,
+          host_branch: sorter.host_branch,
+          status: sorter.status,
+          collector_count: sorter.collector_count,
+          available: overview !== null,
+          checkin_count: overview?.checkin_count ?? 0,
+          active_days: overview?.active_days ?? 0,
+          transit_count: overview?.transit_count ?? 0,
+          reject_count: overview?.reject_count ?? 0,
+        }
+      }),
+      days: dates.map((date, index) => ({
+        date,
+        checkin_count: total((overview) => overview.days[index].checkin_count),
+        reject_count: total((overview) => overview.days[index].reject_count),
+      })),
+    }
+  },
+  routingNetwork: (sorters: OrganizationSorterFixture[], from: string, to: string, today = REPORT.today) => {
+    const sources = sorters.flatMap((sorter) => {
+      if (sorter.report === null) {
+        return []
+      }
+      const routing = reportBody.routing(sorter.report, from, to)
+      return [
+        {
+          sorter: { slug: sorter.slug, name: sorter.name, host_branch: sorter.host_branch },
+          checkin_count: routing.checkin_count,
+          home: routing.home,
+          transit_count: routing.transit_count,
+          other_count: routing.other_count,
+          transit: routing.transit,
+        },
+      ]
+    })
+    // One entry per key, in the order the keys are first met, labelled as the first source labels it.
+    const destinations: Array<{ key: string; label: string; checkin_count: number; source_count: number }> = []
+    for (const routed of sources.flatMap((source) => source.transit)) {
+      const entry = destinations.find((candidate) => candidate.key === routed.key)
+      if (entry === undefined) {
+        destinations.push({ key: routed.key, label: routed.label, checkin_count: routed.checkin_count, source_count: 1 })
+      } else {
+        entry.checkin_count += routed.checkin_count
+        entry.source_count += 1
+      }
+    }
+    return {
+      range: { from, to, days: datesBetween(from, to).length, timezone: REPORT.timezone, includes_today: to >= today },
+      totals: {
+        checkin_count: sum(sources.map((source) => source.checkin_count)),
+        transit_count: sum(sources.map((source) => source.transit_count)),
+      },
+      sources,
+      destinations,
+    }
+  },
+  reliability: (sorters: OrganizationSorterFixture[], from: string, to: string, today = REPORT.today) => {
+    const dates = datesBetween(from, to)
+    const read = sorters.map((sorter) => (sorter.report === null ? null : reportBody.reliability(sorter.report, from, to)))
+    const total = (pick: (reliability: ReturnType<typeof reportBody.reliability>) => number) =>
+      sum(read.map((reliability) => (reliability === null ? 0 : pick(reliability))))
+    return {
+      range: { from, to, days: dates.length, timezone: REPORT.timezone, includes_today: to >= today },
+      totals: {
+        checkin_count: total((reliability) => reliability.checkin_count),
+        reject_count: total((reliability) => reliability.reject_count),
+        reasons: REASON_CODES.map((reason, slot) => ({ reason, reject_count: total((reliability) => reliability.reasons[slot].reject_count) })),
+      },
+      sorters: sorters.map((sorter, index) => ({
+        sorter: { slug: sorter.slug, name: sorter.name, host_branch: sorter.host_branch },
+        available: read[index] !== null,
+        checkin_count: read[index]?.checkin_count ?? 0,
+        reject_count: read[index]?.reject_count ?? 0,
+        reasons: read[index]?.reasons ?? REASON_CODES.map((reason) => ({ reason, reject_count: 0 })),
+      })),
+      days: dates.map((date, index) => ({
+        date,
+        checkin_count: total((reliability) => reliability.days[index].checkin_count),
+        reject_count: total((reliability) => reliability.days[index].reject_count),
+      })),
+    }
+  },
+}
+
+export function organizationReportsPath(orgSlug: string): string {
+  return `/api/organizations/${orgSlug}/reports`
+}
+
+/**
+ * Routes for one organization's reports page: the three range reports, and each sorter's pipeline status (which
+ * names the product's zone) -- a 404 for a sorter with no data to read. `sorters` may be a function, to answer
+ * differently over time.
+ */
+export function organizationReportRoutes(
+  orgSlug: string,
+  sorters: OrganizationSorterFixture[] | (() => OrganizationSorterFixture[]),
+): ApiRoutes {
+  const base = `GET ${organizationReportsPath(orgSlug)}`
+  const now = () => (typeof sorters === 'function' ? sorters() : sorters)
+  const answer = (kind: keyof typeof organizationReportBody) => (url: string) =>
+    jsonResponse(200, organizationReportBody[kind](now(), ...rangeIn(url)))
+  return {
+    ...Object.fromEntries(
+      now().map((sorter) => [
+        `GET ${livePath(orgSlug, sorter.host_branch.slug)}/pipeline-status`,
+        () =>
+          sorter.report === null
+            ? jsonResponse(404, TENANT_NOT_FOUND)
+            : jsonResponse(200, { timezone: sorter.report.timezone, state: 'ok', last_reported_at: null }),
+      ]),
+    ),
+    [`${base}/overview?from=*&to=*`]: answer('overview'),
+    [`${base}/routing-network?from=*&to=*`]: answer('routingNetwork'),
+    [`${base}/reliability?from=*&to=*`]: answer('reliability'),
+  }
+}

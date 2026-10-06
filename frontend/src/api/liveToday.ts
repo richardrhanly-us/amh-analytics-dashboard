@@ -154,7 +154,7 @@ function entries(value: unknown, length: number): Record<string, unknown>[] {
 }
 
 /** One path segment. "." and ".." are path navigation to a browser, so no request is made for them. */
-function segment(slug: string): string {
+export function segment(slug: string): string {
   if (slug === '' || slug === '.' || slug === '..') {
     throw new ApiError(404, 'tenant_not_found', 'Organization or branch not found.')
   }

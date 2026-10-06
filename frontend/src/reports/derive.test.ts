@@ -270,3 +270,61 @@ describe('how figures are written', () => {
     expect(NOT_AVAILABLE).toBe('Not available')
   })
 })
+
+describe('an organization’s figures', () => {
+  // Two sorters: a busy one that rejects little, and a quiet one that rejects a lot.
+  const SORTERS = [
+    { checkin_count: 760, transit_count: 114, reject_count: 38 },
+    { checkin_count: 350, transit_count: 105, reject_count: 35 },
+  ]
+  const total = (pick: (sorter: (typeof SORTERS)[number]) => number) => SORTERS.reduce((sum, sorter) => sum + pick(sorter), 0)
+  const checkins = total((sorter) => sorter.checkin_count)
+
+  it('makes the organization’s reject rate from its summed counts', () => {
+    const rate = percentOf(total((sorter) => sorter.reject_count), checkins) as number
+
+    expect(rate).toBeCloseTo((73 / 1110) * 100, 10)
+    expect(formatPercent(rate)).toBe('6.6%')
+  })
+
+  it('is not the average of the sorters’ own rates', () => {
+    const rates = SORTERS.map((sorter) => percentOf(sorter.reject_count, sorter.checkin_count) as number)
+    const averaged = average(rates[0] + rates[1], rates.length) as number
+
+    expect(rates.map(formatPercent)).toEqual(['5.0%', '10.0%'])
+    expect(formatPercent(averaged)).toBe('7.5%')
+    expect(formatPercent(percentOf(total((sorter) => sorter.reject_count), checkins) as number)).not.toBe(formatPercent(averaged))
+  })
+
+  it('makes the organization’s transit rate the same way', () => {
+    expect(formatPercent(percentOf(total((sorter) => sorter.transit_count), checkins) as number)).toBe('19.7%')
+    expect(SORTERS.map((sorter) => formatPercent(percentOf(sorter.transit_count, sorter.checkin_count) as number))).toEqual(['15.0%', '30.0%'])
+  })
+
+  it('gives each sorter a share of the organization’s check-ins, and the shares make the whole', () => {
+    const shares = SORTERS.map((sorter) => percentOf(sorter.checkin_count, checkins) as number)
+
+    expect(shares.map(formatPercent)).toEqual(['68.5%', '31.5%'])
+    expect(shares[0] + shares[1]).toBeCloseTo(100, 10)
+  })
+
+  it('gives a single sorter the whole of it, and the organization that sorter’s own rate', () => {
+    const [only] = SORTERS
+
+    expect(percentOf(only.checkin_count, only.checkin_count)).toBe(100)
+    expect(percentOf(only.reject_count, only.checkin_count)).toBe(5)
+  })
+
+  it('averages over every calendar day of the range', () => {
+    expect(formatAverage(average(checkins, 7) as number)).toBe('159')
+  })
+
+  it('has no rate, share or average without a denominator: never 0% and never NaN', () => {
+    // An organization that processed nothing, a sorter that processed nothing, and a sorter that could not be read.
+    expect(percentOf(0, 0)).toBeNull()
+    expect(percentOf(3, 0)).toBeNull()
+    expect(average(0, 0)).toBeNull()
+    // A sorter with nothing, in an organization with something, has a real share: none of it.
+    expect(percentOf(0, checkins)).toBe(0)
+  })
+})

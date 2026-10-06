@@ -5,6 +5,7 @@ import { LegacyBranchRedirect } from '../pages/LegacyBranchRedirect.tsx'
 import { NotFoundPage } from '../pages/NotFoundPage.tsx'
 import { OrganizationLayout } from '../pages/OrganizationLayout.tsx'
 import { OrganizationPage } from '../pages/OrganizationPage.tsx'
+import { OrganizationReportsPage } from '../pages/OrganizationReportsPage.tsx'
 import { OrganizationsPage } from '../pages/OrganizationsPage.tsx'
 import { SorterLayout } from '../pages/SorterLayout.tsx'
 import { SorterPage } from '../pages/SorterPage.tsx'
@@ -29,6 +30,8 @@ export function AppRouter() {
         <Route path="organizations" element={<OrganizationsPage />} />
         <Route path="organizations/:orgSlug" element={<OrganizationLayout />}>
           <Route index element={<OrganizationPage />} />
+          {/* The organization's own reports: every sorter together. A sorter's reports are under that sorter. */}
+          <Route path="reports" element={<OrganizationReportsPage />} />
           <Route path="sorters/:sorterSlug" element={<SorterLayout />}>
             <Route index element={<SorterPage />} />
             <Route path="reports" element={<SorterReportsPage />} />

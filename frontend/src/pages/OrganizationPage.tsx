@@ -3,7 +3,7 @@ import { Link, useOutletContext } from 'react-router'
 import type { OrganizationDetail, SorterSummary } from '../api/organizations.ts'
 import { Breadcrumb } from '../components/Breadcrumb.tsx'
 import { PageHeading } from '../components/PageHeading.tsx'
-import { ORGANIZATIONS_PATH, sorterPath } from '../router/paths.ts'
+import { ORGANIZATIONS_PATH, organizationReportsPath, sorterPath } from '../router/paths.ts'
 import { sorterStatusLabel } from './labels.ts'
 
 function SorterRow({ orgSlug, sorter }: { orgSlug: string; sorter: SorterSummary }) {
@@ -33,6 +33,11 @@ export function OrganizationPage() {
       <Breadcrumb trail={[{ to: ORGANIZATIONS_PATH, label: 'Organizations' }]} current={organization.name} />
 
       <PageHeading>{organization.name}</PageHeading>
+
+      {/* The organization's own reports -- every machine together. Each machine's reports are under that machine. */}
+      <p className="page-links">
+        <Link to={organizationReportsPath(organization.slug)}>Organization Reports</Link>
+      </p>
 
       <h3 id="sorters-heading">Sorting machines</h3>
       {organization.sorters.length === 0 ? (

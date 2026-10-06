@@ -730,6 +730,24 @@ button[aria-disabled='true'] {
   overflow-wrap: anywhere;
 }
 
+/*
+ * A table with more columns than a narrow page has room for scrolls sideways inside its own box, so the page
+ * itself never does. Its cells stay on one line: a name broken into letters could not be read.
+ */
+.table-scroll {
+  overflow-x: auto;
+}
+
+.table-scroll .data-table th,
+.table-scroll .data-table td {
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
+.page-links {
+  margin: -0.5rem 0 1rem;
+}
+
 /* A destination's share of check-ins, drawn under its name. The figure itself is in the row. */
 .share-bar {
   display: block;

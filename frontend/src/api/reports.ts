@@ -87,7 +87,7 @@ export type ReportKind = (typeof REPORT_KINDS)[number]
 const MS_PER_DAY = 86_400_000
 
 /** A real calendar date's day number, or null. A calendar date has no zone: this is arithmetic, not a clock. */
-function dayNumber(date: unknown): number | null {
+export function dayNumber(date: unknown): number | null {
   if (typeof date !== 'string' || !CALENDAR_DATE.test(date)) {
     return null
   }
@@ -97,23 +97,23 @@ function dayNumber(date: unknown): number | null {
   return new Date(utc).toISOString().slice(0, 10) === date ? utc / MS_PER_DAY : null
 }
 
-function list(value: unknown, length: number): Record<string, unknown>[] {
+export function list(value: unknown, length: number): Record<string, unknown>[] {
   if (!Array.isArray(value) || value.length !== length) {
     throw unexpectedResponse(200)
   }
   return value.map(record)
 }
 
-const sum = (values: number[]) => values.reduce((total, value) => total + value, 0)
+export const sum = (values: number[]) => values.reduce((total, value) => total + value, 0)
 
-function agrees(...pairs: Array<[number, number]>): void {
+export function agrees(...pairs: Array<[number, number]>): void {
   if (pairs.some(([part, whole]) => part !== whole)) {
     throw unexpectedResponse(200)
   }
 }
 
 /** The range every report repeats. It must be the range that was asked for, and its own arithmetic must hold. */
-function range(body: Record<string, unknown>, from: string, to: string): ReportRange {
+export function range(body: Record<string, unknown>, from: string, to: string): ReportRange {
   const value = record(body.range)
   const first = dayNumber(from)
   const last = dayNumber(to)
@@ -131,13 +131,23 @@ function range(body: Record<string, unknown>, from: string, to: string): ReportR
 }
 
 /** One entry per date of the range, in order, each parsed by `parse`. */
-function days<T>(value: unknown, reportRange: ReportRange, parse: (entry: Record<string, unknown>) => T): Array<T & { date: string }> {
+export function days<T>(value: unknown, reportRange: ReportRange, parse: (entry: Record<string, unknown>) => T): Array<T & { date: string }> {
   const first = dayNumber(reportRange.from) as number
   return list(value, reportRange.days).map((entry, index) => {
     if (dayNumber(entry.date) !== first + index) {
       throw unexpectedResponse(200)
     }
     return { date: entry.date as string, ...parse(entry) }
+  })
+}
+
+/** Exactly the eight known codes, in their fixed order: a code this app does not know is not shown as one. */
+export function reasons(value: unknown): Array<{ reason: RejectReason; reject_count: number }> {
+  return list(value, REJECT_REASONS.length).map((entry, index) => {
+    if (entry.reason !== REJECT_REASONS[index]) {
+      throw unexpectedResponse(200)
+    }
+    return { reason: REJECT_REASONS[index], reject_count: count(entry.reject_count) }
   })
 }
 
@@ -279,13 +289,7 @@ export async function getReliabilityReport(
     range: reportRange,
     checkin_count: count(body.checkin_count),
     reject_count: count(body.reject_count),
-    reasons: list(body.reasons, REJECT_REASONS.length).map((entry, index) => {
-      // Exactly the eight known codes, in their fixed order: a code this app does not know is not shown as one.
-      if (entry.reason !== REJECT_REASONS[index]) {
-        throw unexpectedResponse(200)
-      }
-      return { reason: REJECT_REASONS[index], reject_count: count(entry.reject_count) }
-    }),
+    reasons: reasons(body.reasons),
     days: days(body.days, reportRange, (entry) => ({
       checkin_count: count(entry.checkin_count),
       reject_count: count(entry.reject_count),

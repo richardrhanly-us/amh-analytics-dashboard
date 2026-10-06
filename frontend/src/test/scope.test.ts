@@ -106,7 +106,10 @@ describe('scope of this block', () => {
       '/api/organizations',
       '/api/organizations/${encodeURIComponent(orgSlug)}',
       '/api/organizations/${segment(orgSlug)}/branches/${segment(branchSlug)}',
+      // The organization's three range reports, built in the one module that reads them.
+      '/api/organizations/${segment(orgSlug)}/reports/${kind}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}',
     ])
+    expect(offenders(/\/reports\/\$\{kind\}/).sort()).toEqual(['../api/organizationReports.ts', '../api/reports.ts'])
 
     // Under a branch: exactly the six Live Today reads, each named once, in the one module that makes them.
     const endpoints = shipped.flatMap(([path, text]) =>
@@ -175,8 +178,12 @@ describe('how the dashboard is drawn', () => {
     // No length in pixels except hairlines and the 1px box that hides text from sight.
     const pixels = (css.match(/\b\d+(\.\d+)?px\b/g) ?? []).filter((length) => !['1px', '3px', '2px'].includes(length))
     expect(pixels).toEqual([])
-    // No element is given a width, or a least width, that a narrow screen could not hold.
-    expect(css).not.toMatch(/^\s*min-width:\s*[1-9]|^\s*width:\s*\d{2,}(rem|em|px)|overflow-x:\s*(scroll|auto)/m)
+    // No element is given a width, or a least width, that a narrow screen could not hold. One box may scroll
+    // sideways: the one a wide table sits in, so that the page itself never has to.
+    expect(css.match(/overflow-x:/g)).toHaveLength(1)
+    expect(css).toMatch(/\.table-scroll \{\s*overflow-x: auto;\s*\}/)
+    const withoutTableScroll = css.replace(/\.table-scroll \{[^}]*\}/, '')
+    expect(withoutTableScroll).not.toMatch(/^\s*min-width:\s*[1-9]|^\s*width:\s*\d{2,}(rem|em|px)|overflow-x:\s*(scroll|auto)/m)
     expect(css).not.toMatch(/\b\d+vw\b/)
   })
 
@@ -240,6 +247,8 @@ describe('how the dashboard is drawn', () => {
     expect(router.match(/<Route path="[^"]*"/g)).toEqual([
       '<Route path="organizations"',
       '<Route path="organizations/:orgSlug"',
+      // The organization's own reports, beside its sorters and under none of them.
+      '<Route path="reports"',
       '<Route path="sorters/:sorterSlug"',
       '<Route path="reports"',
       '<Route path="branches/:branchSlug"',
@@ -248,6 +257,7 @@ describe('how the dashboard is drawn', () => {
     expect(offenders(/<LiveToday\s/).sort()).toEqual(['../pages/SorterPage.tsx'])
     // One reports page too, under the same sorter address.
     expect(offenders(/<SorterReports\s/).sort()).toEqual(['../pages/SorterReportsPage.tsx'])
+    expect(offenders(/<OrganizationReports\s/).sort()).toEqual(['../pages/OrganizationReportsPage.tsx'])
     expect(allSources['../pages/BranchPage.tsx']).toBeUndefined()
   })
 
