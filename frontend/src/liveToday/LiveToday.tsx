@@ -53,6 +53,11 @@ function Controls({ live }: { live: LiveTodayData }) {
 
   return (
     <div className="live-controls">
+      {/* What kind of page this is, at a glance: figures that are still moving -- or, while paused, are not. */}
+      <p className={live.paused ? 'live-badge live-badge-paused' : 'live-badge'}>
+        <span className="live-badge-mark" aria-hidden="true" />
+        {live.paused ? 'Paused' : 'Live'}
+      </p>
       <div className="live-buttons">
         <button
           type="button"
@@ -124,7 +129,7 @@ function routed(part: number, total: number): Figure {
 /** One named group of figures within today's summary. A group, not a landmark: the page has enough of those. */
 function SummaryGroup({ name, heading, children }: { name: string; heading: string; children: ReactNode }) {
   return (
-    <div className="summary-group" role="group" aria-labelledby={`${name}-heading`}>
+    <div className={`summary-group summary-group-${name}`} role="group" aria-labelledby={`${name}-heading`}>
       <h4 id={`${name}-heading`}>{heading}</h4>
       {children}
     </div>
@@ -175,54 +180,59 @@ function Today({ live }: { live: LiveTodayData }) {
 
   return (
     <section aria-labelledby="today-heading">
-      <h3 id="today-heading">Today</h3>
-      {dateText !== null && live.timeZone !== null && (
-        <p className="live-date">
-          {dateText} ({live.timeZone})
-        </p>
-      )}
-      <SummaryGroup name="operations" heading="Operations">
-        <dl className="metrics">
-          <MetricCard label="Check-ins today" {...figure(checkinCount, (data) => count(data.checkin_count))} />
-          <MetricCard
-            label="Current hour"
-            {...figure(checkinsByHour, (data) =>
-              currentHour === null
-                ? { tone: 'empty', text: 'Not available' }
-                : { ...count(checkinsInHour(data.hours, currentHour)), note: formatHourRange(currentHour) },
-            )}
-          />
-          <MetricCard
-            label="Busiest hour"
-            {...figure(checkinsByHour, (data) => {
-              const busiest = busiestHour(data.hours)
-              return busiest === null
-                ? { tone: 'empty', text: 'No check-ins yet' }
-                : { ...count(busiest.checkin_count), note: formatHourRange(busiest.hour) }
-            })}
-          />
-        </dl>
-      </SummaryGroup>
-      <SummaryGroup name="routing" heading="Routing">
-        <p className="summary-caption">Where this sorter sent today&rsquo;s check-ins.</p>
-        <Routing routing={checkinsByDestination} />
-      </SummaryGroup>
-      <SummaryGroup name="rejects" heading="Rejects">
-        <dl className="metrics">
-          <MetricCard label="Rejects today" {...figure(rejectCount, (data) => count(data.reject_count))} />
-          <MetricCard
-            label="Reject rate"
-            {...figure(rejectCount, (rejects) =>
-              figure(checkinCount, (checkins) => {
-                const rate = rejectRate(rejects.reject_count, checkins.checkin_count)
-                return rate === null
-                  ? { tone: 'empty', text: 'Not available', note: 'No check-ins yet' }
-                  : { tone: 'value', text: formatRate(rate) }
-              }),
-            )}
-          />
-        </dl>
-      </SummaryGroup>
+      <div className="today-heading">
+        <h3 id="today-heading">Today</h3>
+        {dateText !== null && live.timeZone !== null && (
+          <p className="live-date">
+            {dateText} ({live.timeZone})
+          </p>
+        )}
+      </div>
+      {/* Three zones, each its own band. In reading order here; a wide screen sets Rejects beside Operations. */}
+      <div className="summary-zones">
+        <SummaryGroup name="operations" heading="Operations">
+          <dl className="metrics">
+            <MetricCard label="Check-ins today" {...figure(checkinCount, (data) => count(data.checkin_count))} />
+            <MetricCard
+              label="Current hour"
+              {...figure(checkinsByHour, (data) =>
+                currentHour === null
+                  ? { tone: 'empty', text: 'Not available' }
+                  : { ...count(checkinsInHour(data.hours, currentHour)), note: formatHourRange(currentHour) },
+              )}
+            />
+            <MetricCard
+              label="Busiest hour"
+              {...figure(checkinsByHour, (data) => {
+                const busiest = busiestHour(data.hours)
+                return busiest === null
+                  ? { tone: 'empty', text: 'No check-ins yet' }
+                  : { ...count(busiest.checkin_count), note: formatHourRange(busiest.hour) }
+              })}
+            />
+          </dl>
+        </SummaryGroup>
+        <SummaryGroup name="routing" heading="Routing">
+          <p className="summary-caption">Where this sorter sent today&rsquo;s check-ins.</p>
+          <Routing routing={checkinsByDestination} />
+        </SummaryGroup>
+        <SummaryGroup name="rejects" heading="Rejects">
+          <dl className="metrics">
+            <MetricCard label="Rejects today" {...figure(rejectCount, (data) => count(data.reject_count))} />
+            <MetricCard
+              label="Reject rate"
+              {...figure(rejectCount, (rejects) =>
+                figure(checkinCount, (checkins) => {
+                  const rate = rejectRate(rejects.reject_count, checkins.checkin_count)
+                  return rate === null
+                    ? { tone: 'empty', text: 'Not available', note: 'No check-ins yet' }
+                    : { tone: 'value', text: formatRate(rate) }
+                }),
+              )}
+            />
+          </dl>
+        </SummaryGroup>
+      </div>
     </section>
   )
 }
@@ -312,9 +322,12 @@ export function LiveToday({ orgSlug, branchSlug }: { orgSlug: string; branchSlug
 
   return (
     <div className="live-today">
-      <Controls live={live} />
-      <ErrorMessage message={problem(live)} />
-      <PipelinePanel pipeline={live.pipeline.data} />
+      {/* The top of the dashboard: that this is live, when it was last updated, and the pipeline's state. */}
+      <div className="live-hero">
+        <Controls live={live} />
+        <ErrorMessage message={problem(live)} />
+        <PipelinePanel pipeline={live.pipeline.data} />
+      </div>
       <Today live={live} />
       <div className="live-detail">
         <HourlyCheckins checkinsByHour={live.checkinsByHour} currentHour={live.currentHour} timeZone={live.timeZone} />

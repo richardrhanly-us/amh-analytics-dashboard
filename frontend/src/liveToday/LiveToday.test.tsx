@@ -1777,3 +1777,70 @@ describe('the routing read', () => {
     expect(screen.queryByText('Westside')).not.toBeInTheDocument()
   })
 })
+
+describe('the dashboard at a glance', () => {
+  it('says it is live, in a word, and says it is paused while it is', async () => {
+    serve()
+    const person = user()
+    renderApp(CENTRAL)
+    await loaded()
+
+    const badge = document.querySelector('.live-badge') as HTMLElement
+    expect(badge).toHaveTextContent(/^Live$/)
+    expect(badge).not.toHaveClass('live-badge-paused')
+    // The mark beside the word is decoration: the word is what says it.
+    expect(badge.querySelector('.live-badge-mark')).toHaveAttribute('aria-hidden', 'true')
+
+    await person.click(screen.getByRole('button', { name: 'Pause automatic refresh' }))
+    expect(badge).toHaveTextContent(/^Paused$/)
+    expect(badge).toHaveClass('live-badge-paused')
+
+    await person.click(screen.getByRole('button', { name: 'Resume automatic refresh' }))
+    expect(badge).toHaveTextContent(/^Live$/)
+  })
+
+  it('puts the controls and the pipeline together at the top, with any problem between them', async () => {
+    serve({ [REJECT_COUNT]: SERVER_ERROR })
+    renderApp(CENTRAL)
+    await loaded()
+
+    const hero = document.querySelector('.live-hero') as HTMLElement
+    expect(Array.from(hero.children).map((child) => child.className.split(' ')[0])).toEqual(['live-controls', 'error-message', 'panel'])
+    expect(within(hero).getByRole('alert')).toHaveTextContent('Some live data could not be loaded.')
+    expect(within(hero).getByRole('region', { name: 'Pipeline' })).toBeInTheDocument()
+    expect(within(hero).getByRole('button', { name: 'Refresh' })).toBeInTheDocument()
+    // It comes before today's figures.
+    expect(hero.compareDocumentPosition(screen.getByRole('region', { name: 'Today' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it.each(['ok', 'degraded', 'failed', 'unknown'])('marks the pipeline panel for the state %s, and still says the state in a word', async (state) => {
+    serve({}, live({ state }))
+    renderApp(CENTRAL)
+    await loaded()
+
+    const panel = screen.getByRole('region', { name: 'Pipeline' })
+    expect(panel).toHaveClass('pipeline-panel', `pipeline-panel-${state}`)
+    expect(panel.querySelector('.pipeline-state-label')).toHaveTextContent({ ok: 'OK', degraded: 'Degraded', failed: 'Failed', unknown: 'Unknown' }[state] as string)
+  })
+
+  it('sets today out as three named zones, in reading order, each a group with its own heading', async () => {
+    serve()
+    renderApp(CENTRAL)
+    await loaded()
+
+    const zones = Array.from(document.querySelectorAll('.summary-zones > .summary-group'))
+    expect(zones.map((zone) => zone.className)).toEqual([
+      'summary-group summary-group-operations',
+      'summary-group summary-group-routing',
+      'summary-group summary-group-rejects',
+    ])
+    expect(zones.map((zone) => [zone.getAttribute('role'), zone.querySelector('h4')?.textContent])).toEqual([
+      ['group', 'Operations'],
+      ['group', 'Routing'],
+      ['group', 'Rejects'],
+    ])
+    const heading = document.querySelector('.today-heading') as HTMLElement
+    expect(within(heading).getByRole('heading', { level: 3, name: 'Today' })).toBeInTheDocument()
+    expect(heading).toHaveTextContent('Monday, October 5, 2026 (America/Chicago)')
+  })
+})
