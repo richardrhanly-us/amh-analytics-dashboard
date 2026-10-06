@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import type { OverviewReport, ReliabilityReport, RoutingReport, VolumeReport } from '../api/reports.ts'
 import { reasonLabel, topRejectReasons } from '../liveToday/metrics.ts'
-import { MetricCard, type Figure } from '../liveToday/MetricCard.tsx'
+import { MetricCard } from '../liveToday/MetricCard.tsx'
 import { SectionPlaceholder } from '../liveToday/SectionPlaceholder.tsx'
 import { formatHour, formatHourRange } from '../time/productTime.ts'
 import { ChartFigure } from './ChartFigure.tsx'
@@ -23,13 +23,8 @@ import {
   percentOf,
   weekdayAverages,
 } from './derive.ts'
+import { count, days, derived, rejectNote, transitNote } from './figures.ts'
 import type { ReportRead } from './useSorterReports.ts'
-
-const days = (count: number) => `${formatCount(count)} ${count === 1 ? 'day' : 'days'}`
-const count = (value: number, note?: string): Figure => ({ tone: 'value', text: formatCount(value), note })
-/** A figure that needs a denominator: shown as words when there is none. */
-const derived = (value: number | null, format: (value: number) => string, note?: string, noneNote?: string): Figure =>
-  value === null ? { tone: 'empty', text: NOT_AVAILABLE, note: noneNote } : { tone: 'value', text: format(value), note }
 
 const NO_CHECKINS = 'No check-ins in this range'
 
@@ -43,7 +38,7 @@ const NO_CHECKINS = 'No check-ins in this range'
  * pressed it keeps their place; when the report then arrives the button is
  * gone, and focus moves to the section's heading.
  */
-function ReportSection<T>({
+export function ReportSection<T>({
   name,
   heading,
   read,
@@ -142,9 +137,6 @@ export function OverviewSection({ read }: { read: ReportRead<OverviewReport> }) 
     </ReportSection>
   )
 }
-
-const transitNote = (rate: number | null) => (rate === null ? 'Transit rate not available' : `${formatPercent(rate)} of check-ins`)
-const rejectNote = (rate: number | null) => (rate === null ? 'Reject rate not available' : `${formatPercent(rate)} reject rate`)
 
 export function VolumeSection({ read }: { read: ReportRead<VolumeReport> }) {
   return (

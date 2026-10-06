@@ -455,7 +455,7 @@ describe('an organization page', () => {
 
     expect(screen.getByText('No sorting machines are registered for this organization yet.')).toBeInTheDocument()
     expect(within(main()).getByRole('heading', { level: 3, name: 'Sorting machines' })).toBeInTheDocument()
-    expect(linkNames()).toEqual(['Organizations'])
+    expect(linkNames()).toEqual(['Organizations', 'Organization Reports'])
     expect(main()).not.toHaveTextContent(/Central Branch|East Side Branch|Westside/)
   })
 
@@ -563,7 +563,7 @@ describe('an organization page', () => {
 
     expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('Riverside Library')
     expect(main()).not.toHaveTextContent(/Northbridge|Central Library AMH/)
-    expect(linkNames()).toEqual(['Organizations', 'Riverside Main AMH'])
+    expect(linkNames()).toEqual(['Organizations', 'Organization Reports', 'Riverside Main AMH'])
   })
 
   it('shows the loading state, not the previous organization, the moment the address changes', async () => {
@@ -804,7 +804,7 @@ describe('the sorting machines of an organization', () => {
     // Westside is one of the organization's branches, and somewhere items are routed to. It has no machine.
     expect(NORTHBRIDGE_DETAIL.branches.map((branch) => branch.name)).toContain('Westside')
     expect(main()).not.toHaveTextContent('Westside')
-    expect(linkNames()).toEqual(['Organizations', 'Central Library AMH', 'East Side AMH'])
+    expect(linkNames()).toEqual(['Organizations', 'Organization Reports', 'Central Library AMH', 'East Side AMH'])
   })
 
   it('shows an organization with one sorter as a list of one, not straight to its dashboard', async () => {
@@ -854,7 +854,7 @@ describe('the sorting machines of an organization', () => {
     expect(central).toHaveTextContent(/^Central Library AMHCentral Library$/)
     expect(westside).toHaveTextContent(/^Westside AMHWestside · Being set up$/)
     expect(north).toHaveTextContent(/^North SorterNorth · Inactive$/)
-    expect(linkNames()).toEqual(['Organizations', 'Central Library AMH', 'Westside AMH', 'North Sorter'])
+    expect(linkNames()).toEqual(['Organizations', 'Organization Reports', 'Central Library AMH', 'Westside AMH', 'North Sorter'])
     expect(main()).not.toHaveTextContent(/provisioning|collector_count/)
   })
 

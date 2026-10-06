@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 
 import { isApiError } from '../api/client.ts'
-import { getPipelineStatus } from '../api/liveToday.ts'
+import { getPipelineStatus, type PipelineStatus } from '../api/liveToday.ts'
 import {
   getOverviewReport,
   getReliabilityReport,
@@ -39,11 +39,15 @@ export type ProductDay =
   | { status: 'error'; message: string }
 
 export function useProductDay(orgSlug: string, branchSlug: string): { day: ProductDay; retry: () => void } {
-  const query = useQuery({
-    queryKey: ['reports', orgSlug, branchSlug, 'product-day'],
-    queryFn: ({ signal }) => getPipelineStatus(orgSlug, branchSlug, signal),
-    gcTime: 0,
-  })
+  return useProductDayFrom(['reports', orgSlug, branchSlug, 'product-day'], (signal) => getPipelineStatus(orgSlug, branchSlug, signal))
+}
+
+/** The product's calendar, from whichever pipeline status `load` reads. `queryKey` says whose it is. */
+export function useProductDayFrom(
+  queryKey: readonly string[],
+  load: (signal: AbortSignal) => Promise<PipelineStatus>,
+): { day: ProductDay; retry: () => void } {
+  const query = useQuery({ queryKey, queryFn: ({ signal }) => load(signal), gcTime: 0 })
   const retry = () => void query.refetch({ cancelRefetch: false })
 
   if (query.data !== undefined) {
@@ -86,11 +90,14 @@ export interface ReportRead<T> {
 type Load<T> = (orgSlug: string, branchSlug: string, from: string, to: string, signal?: AbortSignal) => Promise<T>
 
 function useReport<T>(kind: ReportKind, load: Load<T>, orgSlug: string, branchSlug: string, range: DateRange): ReportRead<T> {
-  const query = useQuery({
-    queryKey: ['reports', orgSlug, branchSlug, kind, range.from, range.to],
-    queryFn: ({ signal }) => load(orgSlug, branchSlug, range.from, range.to, signal),
-    gcTime: 0,
-  })
+  return useReportQuery(['reports', orgSlug, branchSlug, kind, range.from, range.to], (signal) =>
+    load(orgSlug, branchSlug, range.from, range.to, signal),
+  )
+}
+
+/** One report read under `queryKey`, which must name everything the answer depends on: whose it is, which report, which range. */
+export function useReportQuery<T>(queryKey: readonly string[], load: (signal: AbortSignal) => Promise<T>): ReportRead<T> {
+  const query = useQuery({ queryKey, queryFn: ({ signal }) => load(signal), gcTime: 0 })
 
   let section: ReportSection<T>
   if (query.isFetching && query.data === undefined) {

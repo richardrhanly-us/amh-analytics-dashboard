@@ -1,9 +1,8 @@
 import { useState } from 'react'
 
 import { LoadFailure } from '../components/LoadFailure.tsx'
-import { DateRangeControl } from './DateRangeControl.tsx'
-import { DEFAULT_PRESET_DAYS, daysInRange, lastDays, type DateRange } from './dateRange.ts'
-import { formatDate } from './derive.ts'
+import { DateRangeControl, RangeShown } from './DateRangeControl.tsx'
+import { DEFAULT_PRESET_DAYS, lastDays, type DateRange } from './dateRange.ts'
 import { OverviewSection, ReliabilitySection, RoutingSection, VolumeSection } from './ReportSections.tsx'
 import { useProductDay, useSorterReports } from './useSorterReports.ts'
 
@@ -34,17 +33,11 @@ function Reports({ orgSlug, branchSlug, range }: { orgSlug: string; branchSlug: 
 
 function ReportsForDay({ orgSlug, branchSlug, timeZone, today }: { orgSlug: string; branchSlug: string; timeZone: string; today: string }) {
   const [range, setRange] = useState<DateRange>(() => lastDays(DEFAULT_PRESET_DAYS, today))
-  const length = daysInRange(range)
 
   return (
     <>
       <DateRangeControl range={range} today={today} onChange={setRange} />
-      {/* What the figures below are for. It changes only when a range is applied, never while one is being typed. */}
-      <p className="range-shown">
-        Showing {formatDate(range.from)} to {formatDate(range.to)}: {length} {length === 1 ? 'day' : 'days'}, in{' '}
-        {timeZone} time.
-        {range.to === today && ' This range includes today, which is not over yet: its figures will still rise.'}
-      </p>
+      <RangeShown range={range} today={today} timeZone={timeZone} />
       <Reports key={`${range.from}/${range.to}`} orgSlug={orgSlug} branchSlug={branchSlug} range={range} />
     </>
   )

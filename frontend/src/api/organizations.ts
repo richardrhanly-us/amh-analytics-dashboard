@@ -131,9 +131,19 @@ function displayName(value: unknown): string {
   return value as string
 }
 
-function parseSorter(value: unknown): SorterSummary {
-  const { slug: sorterSlug, name, host_branch, status, collector_count } = record(value)
+/** Which sorter an entry is about: its slug, its name and where it is. */
+export function parseSorterIdentity(value: unknown): Pick<SorterSummary, 'slug' | 'name' | 'host_branch'> {
+  const { slug: sorterSlug, name, host_branch } = record(value)
   const host = record(host_branch)
+  return {
+    slug: slug(sorterSlug),
+    name: displayName(name),
+    host_branch: { slug: slug(host.slug), name: displayName(host.name) },
+  }
+}
+
+export function parseSorter(value: unknown): SorterSummary {
+  const { status, collector_count } = record(value)
   if (
     !SORTER_STATUSES.includes(status as SorterStatus) ||
     typeof collector_count !== 'number' ||
@@ -142,13 +152,7 @@ function parseSorter(value: unknown): SorterSummary {
   ) {
     throw unexpectedResponse(200)
   }
-  return {
-    slug: slug(sorterSlug),
-    name: displayName(name),
-    host_branch: { slug: slug(host.slug), name: displayName(host.name) },
-    status: status as SorterStatus,
-    collector_count,
-  }
+  return { ...parseSorterIdentity(value), status: status as SorterStatus, collector_count }
 }
 
 /**
