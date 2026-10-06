@@ -1095,12 +1095,13 @@ def test_the_branch_routes_are_exactly_the_seven_operational_endpoints_and_the_f
                      "reports/overview", "reports/reliability", "reports/routing", "reports/volume"]
 
 
-def test_the_customer_api_has_exactly_sixteen_routes_all_get_except_login_and_logout():
+def test_the_customer_api_has_exactly_nineteen_routes_all_get_except_login_and_logout():
     customer = sorted((method, route.path) for route in main.customer_router.routes for method in route.methods)
 
-    assert len(customer) == 16
+    # Reports R4 added three: the organization-level reports (customer_api.organization_report_routes).
+    assert len(customer) == 19
     assert [path for method, path in customer if method == "POST"] == ["/api/auth/login", "/api/auth/logout"]
-    assert sum(1 for method, _ in customer if method == "GET") == 14
+    assert sum(1 for method, _ in customer if method == "GET") == 17
     assert ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/pipeline-status") in customer
 
 

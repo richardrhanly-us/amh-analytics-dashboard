@@ -1,6 +1,8 @@
 """The tenant scope of a customer request that reads operational data.
 
-Two pieces, used together by a route:
+Two pieces, used together by a route (a route that reads several sorter
+sites of one organization uses resolve_site_tenant, the same resolution
+without the 404, in place of the first):
 
     tenant = require_resolved_tenant(...)            # a FastAPI dependency
     with open_customer_tenant_connection(tenant) as conn:
@@ -92,6 +94,15 @@ def require_resolved_tenant(
     if tenant is None:
         raise _tenant_not_found()
     return tenant
+
+
+def resolve_site_tenant(user_id: int, org_slug: str, branch_slug: str) -> ResolvedOperationalTenant | None:
+    """The operational tenant behind one of an organization's sorter sites
+    (named by its host branch), for this user -- or None where
+    require_resolved_tenant would answer 404. For a caller that reads several
+    sites of one organization and must decide for itself what a site that
+    does not resolve means; the rules, and the resolver, are the same."""
+    return resolve_operational_tenant(user_id, org_slug, branch_slug)
 
 
 def _verify_tenant_context(conn: Connection, tenant: ResolvedOperationalTenant) -> None:

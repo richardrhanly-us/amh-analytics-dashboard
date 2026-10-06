@@ -3138,3 +3138,313 @@ def test_range_reports_are_isolated_by_tenant_and_refuse_what_the_single_day_rea
         assert _report_of(reports_api, "no-such-session", "tenant-a", "main", report, "2026-06-08", "2026-06-12").status_code == 401
         assert _report_of(reports_api, SESSION_A, "tenant-a", "main", report, "2026-06-12", "2026-06-08").status_code == 422
         assert _report_of(reports_api, SESSION_A, "tenant-a", "main", report, "2026-06-19", "2026-06-21").status_code == 422
+
+
+# --- GET /api/organizations/{org}/reports/{overview,routing-network,reliability}, end to end, as the runtime role ---
+#
+# The organization reports against real tables and real row level security.
+# What is proved here and nowhere else: that an organization's report is read
+# ONE SORTER SITE AT A TIME, each on a connection whose policies show that
+# site's rows and no other's -- so even a statement with no WHERE clause, run
+# while a report is being built, sees one site -- and that the sum of those
+# reads is exactly the sorter-site reports added up, whatever the database
+# session's time zone.
+
+ORGANIZATION_REPORT_PATH = "/api/organizations/{org}/reports/{report}"
+ORGANIZATION_REPORTS = ("overview", "routing-network", "reliability")
+
+
+@pytest.fixture
+def organization_reports_api(reports_api, owner_engine):
+    """The reports fixture's rows, plus what makes tenant B an organization with TWO sorter sites:
+
+        tenant A   one sorter, at main (crosses its cutover on 10 June)
+        tenant B   main: two collectors, one site. Legacy only: nine check-ins to Westside and one reject a day.
+                   north: one collector. Cut over at 12:00 local on 10 June, with rows in BOTH tables on every
+                   day, so the rows on the wrong side of the cutover must count for nothing:
+
+                       check-ins by day (8-12 June)   3, 3, 5, 2, 2  = 15     home 6, Harbor Depot 6, other 3
+                       rejects by day                 1, 1, 2, 1, 1  = 6
+    """
+    with owner_engine.begin() as conn:
+        conn.execute(text("TRUNCATE collector_installations RESTART IDENTITY CASCADE"))
+        _install_collector(conn, 1, BRANCH_A, "Tenant A Main AMH")
+        _install_collector(conn, 2, BRANCH_B, "Tenant B AMH 1")
+        _install_collector(conn, 2, BRANCH_B, "Tenant B AMH 2")
+        _install_collector(conn, 2, BRANCH_B_NORTH, "Tenant B North AMH")
+        _set_cutover(conn, CUSTOMER_B, BRANCH_B_NORTH, "2026-06-10 17:00:00+00")
+        for day in range(8, 13):
+            for number, (clock, destination) in enumerate(
+                (("09:00:00", "North"), ("09:00:01", "North"), ("09:30:00", "Harbor Depot"))
+            ):
+                _routed_v1_checkin(conn, CUSTOMER_B, BRANCH_B_NORTH, f"2026-06-{day:02d} {clock}", f"bn-{day}-{number}", destination)
+            _routed_v2_checkin(conn, CUSTOMER_B, BRANCH_B_NORTH, f"2026-06-{day:02d} 18:00:00+00", "harbor_depot")
+            _routed_v2_checkin(conn, CUSTOMER_B, BRANCH_B_NORTH, f"2026-06-{day:02d} 19:00:00+00", "westside")
+            _v1_reject(conn, CUSTOMER_B, BRANCH_B_NORTH, f"2026-06-{day:02d} 09:00:00", f"bnr-{day}", "Item not found")
+            _v2_reject(conn, CUSTOMER_B, BRANCH_B_NORTH, f"2026-06-{day:02d} 18:00:00+00", "rfid_collision")
+    return reports_api
+
+
+def _organization_report_of(client, session, org, report: str, first: str = "2026-06-08", last: str = "2026-06-12"):
+    return client.get(
+        ORGANIZATION_REPORT_PATH.format(org=org, report=report),
+        params={"from": first, "to": last},
+        headers={"Cookie": f"__Host-sortview_api_session={session}"},
+    )
+
+
+def _organization_reports(client, session, org) -> dict:
+    reports = {}
+    for report in ORGANIZATION_REPORTS:
+        response = _organization_report_of(client, session, org, report)
+        assert response.status_code == 200, response.text
+        reports[report] = response.json()
+        assert reports[report]["range"] == {
+            "from": "2026-06-08", "to": "2026-06-12", "days": 5, "timezone": "America/Chicago", "includes_today": False,
+        }
+    return reports
+
+
+def _assert_organization_reports_are_its_site_reports_added_up(client, session, org, branches: list[str]) -> dict:
+    """Reads the three organization reports and checks every figure against the sorter-site reports of
+    `branches`, read through their own endpoints on the same server. Returns the organization reports."""
+    reports = _organization_reports(client, session, org)
+    sites: dict[str, dict] = {}
+    for branch in branches:
+        sites[branch] = {}
+        for report in ("overview", "routing", "reliability"):
+            response = _report_of(client, session, org, branch, report, "2026-06-08", "2026-06-12")
+            assert response.status_code == 200, response.text
+            sites[branch][report] = response.json()
+
+    overview, network, reliability = (reports[report] for report in ORGANIZATION_REPORTS)
+
+    assert sorted(sorter["slug"] for sorter in overview["sorters"]) == sorted(branches)
+    for sorter in overview["sorters"]:
+        site = sites[sorter["slug"]]["overview"]
+        assert sorter["available"] is True
+        for figure in ("checkin_count", "active_days", "transit_count", "reject_count"):
+            assert sorter[figure] == site[figure], (sorter["slug"], figure)
+    for total in ("checkin_count", "home_count", "transit_count", "other_count", "reject_count"):
+        assert overview["totals"][total] == sum(site["overview"][total] for site in sites.values()), total
+    for index, day in enumerate(overview["days"]):
+        assert day["checkin_count"] == sum(site["overview"]["days"][index]["checkin_count"] for site in sites.values())
+        assert day["reject_count"] == sum(site["overview"]["days"][index]["reject_count"] for site in sites.values())
+    totals = overview["totals"]
+    assert totals["home_count"] + totals["transit_count"] + totals["other_count"] == totals["checkin_count"]
+
+    assert sorted(source["sorter"]["slug"] for source in network["sources"]) == sorted(branches)
+    for source in network["sources"]:
+        site = sites[source["sorter"]["slug"]]["routing"]
+        for figure in ("checkin_count", "home", "transit", "transit_count", "other_count"):
+            assert source[figure] == site[figure], (source["sorter"]["slug"], figure)
+    assert network["totals"] == {"checkin_count": totals["checkin_count"], "transit_count": totals["transit_count"]}
+    assert sum(destination["checkin_count"] for destination in network["destinations"]) == totals["transit_count"]
+
+    for sorter in reliability["sorters"]:
+        site = sites[sorter["sorter"]["slug"]]["reliability"]
+        for figure in ("checkin_count", "reject_count", "reasons"):
+            assert sorter[figure] == site[figure], (sorter["sorter"]["slug"], figure)
+    for index, reason in enumerate(reliability["totals"]["reasons"]):
+        assert reason["reject_count"] == sum(site["reliability"]["reasons"][index]["reject_count"] for site in sites.values())
+    assert sum(reason["reject_count"] for reason in reliability["totals"]["reasons"]) == reliability["totals"]["reject_count"]
+    assert reliability["days"] == overview["days"]
+    return reports
+
+
+# Every field the three organization reports may have, at any depth. None of them holds an identifier.
+_ORGANIZATION_REPORT_FIELDS = frozenset({
+    "range", "from", "to", "days", "timezone", "includes_today", "totals", "sorters", "sources", "destinations",
+    "sorter", "slug", "name", "host_branch", "status", "collector_count", "available", "active_days",
+    "checkin_count", "home_count", "transit_count", "other_count", "reject_count", "source_count",
+    "home", "transit", "key", "label", "reasons", "reason", "date",
+})
+# The fields that say what something is called or when it was. Everything else is a count or a flag.
+_ORGANIZATION_REPORT_TEXT_FIELDS = frozenset({"from", "to", "timezone", "slug", "name", "status", "key", "label", "reason", "date"})
+
+
+def _fields_and_values(value, field: str = ""):
+    """(field, value) for every scalar anywhere in a JSON value, under the name of the field that holds it,
+    and (field, None) for every field that holds an object or a list."""
+    if isinstance(value, dict):
+        for name, item in value.items():
+            if isinstance(item, (dict, list)):
+                yield name, None
+            yield from _fields_and_values(item, name)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _fields_and_values(item, field)
+    else:
+        yield field, value
+
+
+def _assert_no_operational_id_is_exposed(answer: dict) -> None:
+    """No operational id of either tenant is anywhere in `answer`.
+
+    An id is a short number -- 101, 202, 11, 22, 23 -- so looking for its digits in the serialized answer
+    proves nothing: "202" is in every date of 2026. The answer is walked instead:
+
+      * it has no field but the approved ones, and none of those is an identifier;
+      * no text value IS an id (a slug, name, key or label equal to one);
+      * no number sits anywhere but in a count of rows, days or collectors -- so a number that happened
+        to equal an id could only ever be a count of rows, never an id that was returned.
+    """
+    ids = {CUSTOMER_A, CUSTOMER_B, BRANCH_A, BRANCH_B, BRANCH_B_NORTH}
+    seen = list(_fields_and_values(answer))
+    assert seen, "the answer is empty"
+
+    for field, value in seen:
+        assert field in _ORGANIZATION_REPORT_FIELDS, field
+        for forbidden in ("customer", "tenant", "organization", "branch_id", "_id", "installation"):
+            assert forbidden not in field, field
+        if value is None or isinstance(value, bool):
+            continue
+        if isinstance(value, str):
+            assert field in _ORGANIZATION_REPORT_TEXT_FIELDS, (field, value)
+            assert value.strip() not in {str(identifier) for identifier in ids}, (field, value)
+        else:
+            assert isinstance(value, int), (field, value)
+            assert field in ("days", "active_days") or field.endswith("_count"), (field, value)
+    # The two customer ids in particular are larger than any count this fixture can produce, so here they
+    # can be ruled out as exact values too.
+    numbers = {value for _field, value in seen if isinstance(value, int) and not isinstance(value, bool)}
+    assert not numbers & {CUSTOMER_A, CUSTOMER_B}, numbers & {CUSTOMER_A, CUSTOMER_B}
+
+
+def test_organization_reports_are_the_site_reports_added_up_on_a_real_server(organization_reports_api):
+    one_sorter = _assert_organization_reports_are_its_site_reports_added_up(
+        organization_reports_api, SESSION_A, "tenant-a", ["main"])
+    two_sorters = _assert_organization_reports_are_its_site_reports_added_up(
+        organization_reports_api, SESSION_B, "tenant-b", ["main", "north"])
+
+    # Tenant A: its one sorter's own answer (see the range-report tests above).
+    assert (one_sorter["overview"]["totals"]["checkin_count"], one_sorter["overview"]["totals"]["reject_count"]) == (23, 11)
+
+    # Tenant B: main's 45 and north's 15. Two collectors at main are one sorter, counted once.
+    overview = two_sorters["overview"]
+    assert overview["totals"] == {"checkin_count": 60, "home_count": 6, "transit_count": 51, "other_count": 3, "reject_count": 11}
+    by_slug = {sorter["slug"]: sorter for sorter in overview["sorters"]}
+    assert (by_slug["main"]["checkin_count"], by_slug["main"]["collector_count"], by_slug["main"]["name"]) == (45, 2, "Tenant B AMH 1")
+    assert (by_slug["north"]["checkin_count"], by_slug["north"]["reject_count"], by_slug["north"]["active_days"]) == (15, 6, 5)
+    # North, either side of its cutover: no row counted twice, and none moved to another day.
+    assert [day["checkin_count"] for day in overview["days"]] == [9 + 3, 9 + 3, 9 + 5, 9 + 2, 9 + 2]
+    assert [day["reject_count"] for day in overview["days"]] == [1 + 1, 1 + 1, 1 + 2, 1 + 1, 1 + 1]
+
+    # Westside is configured at main only. North's rows stored as "westside" are north's "other": equal text
+    # on another site's rows is not that site's destination.
+    destinations = {entry["key"]: entry for entry in two_sorters["routing-network"]["destinations"]}
+    assert destinations["westside"] == {"key": "westside", "label": "Westside", "checkin_count": 45, "source_count": 1}
+    assert destinations["harbor_depot"] == {"key": "harbor_depot", "label": "Harbor Depot", "checkin_count": 6, "source_count": 1}
+    assert set(destinations) == {"westside", "harbor_depot"}
+
+    for answer in (*one_sorter.values(), *two_sorters.values()):
+        # Distinctive text: nowhere in the answer, in any form.
+        for leaked in ("CANARY", "branch_1", "Item not found", "9.9.9"):
+            assert leaked not in str(answer), leaked
+        _assert_no_operational_id_is_exposed(answer)
+
+
+def test_organization_reports_read_one_site_at_a_time_and_rls_shows_each_read_only_that_site(
+    organization_reports_api, monkeypatch
+):
+    from contextlib import contextmanager
+
+    from customer_api import organization_report_routes
+
+    real_open = tenant_scope.open_customer_tenant_connection
+    seen = []
+
+    @contextmanager
+    def probing_open(tenant):
+        with real_open(tenant) as conn:
+            # Deliberately unscoped: no WHERE clause at all. Only the policies decide what these see.
+            seen.append((
+                tenant.org_slug, tenant.branch_slug,
+                conn.execute(text("SELECT COUNT(*) FROM checkins")).scalar_one(),
+                conn.execute(text("SELECT COUNT(*) FROM checkin_events")).scalar_one(),
+                conn.execute(text("SELECT COUNT(DISTINCT (customer_id, branch_id)) FROM checkins")).scalar_one(),
+            ))
+            yield conn
+
+    monkeypatch.setattr(organization_report_routes, "open_customer_tenant_connection", probing_open)
+
+    for report in ORGANIZATION_REPORTS:
+        seen.clear()
+        assert _organization_report_of(organization_reports_api, SESSION_B, "tenant-b", report).status_code == 200
+
+        # Two sites, opened one after the other. Each connection holds exactly one (customer, branch) and
+        # exactly that site's rows: main's 63 legacy rows (9 a day, 7-13 June), north's 15 legacy and 10 current.
+        # Never the rows the sites of the two tenants hold together, and never tenant A's.
+        assert sorted(seen) == [("tenant-b", "main", 63, 0, 1), ("tenant-b", "north", 15, 10, 1)], report
+
+    seen.clear()
+    assert _organization_report_of(organization_reports_api, SESSION_A, "tenant-a", "overview").status_code == 200
+    assert seen == [("tenant-a", "main", 35, 28, 1)]
+
+
+def test_organization_reports_are_isolated_by_organization_and_refuse_what_the_organization_detail_refuses(
+    organization_reports_api,
+):
+    not_found = {"code": "organization_not_found", "message": "Organization not found."}
+
+    for report in ORGANIZATION_REPORTS:
+        for session, org in ((SESSION_A, "tenant-b"), (SESSION_B, "tenant-a"), (SESSION_A, "no-such-tenant")):
+            crossed = _organization_report_of(organization_reports_api, session, org, report)
+            assert (crossed.status_code, crossed.json()) == (404, not_found)
+        assert _organization_report_of(organization_reports_api, "no-such-session", "tenant-a", report).status_code == 401
+        assert _organization_report_of(
+            organization_reports_api, SESSION_A, "tenant-a", report, "2026-06-12", "2026-06-08").status_code == 422
+        assert _organization_report_of(
+            organization_reports_api, SESSION_A, "tenant-a", report, "2026-06-19", "2026-06-21").status_code == 422
+
+    tenant_a = _organization_report_of(organization_reports_api, SESSION_A, "tenant-a", "overview").json()
+    tenant_b = _organization_report_of(organization_reports_api, SESSION_B, "tenant-b", "overview").json()
+    assert tenant_a["totals"]["checkin_count"] == 23 and tenant_b["totals"]["checkin_count"] == 60
+
+
+def test_a_sorter_at_an_unmapped_branch_is_not_available_and_a_cancelled_organization_is_not_found(
+    organization_reports_api, owner_engine
+):
+    with owner_engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO branches (id, organization_id, slug, name, status, operational_branch_id) "
+            "VALUES (24, 2, 'annex', 'Annex', 'active', NULL)"
+        ))
+        _install_collector(conn, 2, 24, "Tenant B Annex AMH", status="provisioning")
+
+    overview = _organization_report_of(organization_reports_api, SESSION_B, "tenant-b", "overview").json()
+    annex = next(sorter for sorter in overview["sorters"] if sorter["slug"] == "annex")
+
+    assert annex["available"] is False
+    assert (annex["checkin_count"], annex["active_days"], annex["transit_count"], annex["reject_count"]) == (0, 0, 0, 0)
+    assert overview["totals"]["checkin_count"] == 60
+    network = _organization_report_of(organization_reports_api, SESSION_B, "tenant-b", "routing-network").json()
+    assert sorted(source["sorter"]["slug"] for source in network["sources"]) == ["main", "north"]
+
+    with owner_engine.begin() as conn:
+        conn.execute(text("UPDATE organizations SET status = 'suspended' WHERE id = 2"))
+    suspended = _organization_report_of(organization_reports_api, SESSION_B, "tenant-b", "overview")
+    assert suspended.json()["totals"]["checkin_count"] == 60
+
+    with owner_engine.begin() as conn:
+        conn.execute(text("UPDATE organizations SET status = 'cancelled' WHERE id = 2"))
+    for report in ORGANIZATION_REPORTS:
+        assert _organization_report_of(organization_reports_api, SESSION_B, "tenant-b", report).status_code == 404
+
+
+def test_organization_reports_do_not_depend_on_the_database_session_time_zone(
+    organization_reports_api, runtime_engine, monkeypatch
+):
+    answers = []
+    for zone in ("UTC", "Asia/Tokyo", "America/Los_Angeles", "Asia/Kolkata"):
+        shifted = create_engine(runtime_engine.url, hide_parameters=True, connect_args={"options": f"-c timezone={zone}"})
+        monkeypatch.setattr(database, "_engine", shifted)
+        try:
+            answers.append(_assert_organization_reports_are_its_site_reports_added_up(
+                organization_reports_api, SESSION_B, "tenant-b", ["main", "north"]))
+        finally:
+            shifted.dispose()
+
+    assert all(answer == answers[0] for answer in answers)
+    assert answers[0]["overview"]["totals"]["checkin_count"] == 60
+    assert [day["checkin_count"] for day in answers[0]["overview"]["days"]] == [12, 12, 14, 11, 11]
