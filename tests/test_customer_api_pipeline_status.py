@@ -1085,31 +1085,34 @@ def test_the_dated_metric_routes_still_require_their_date_and_do_not_read_a_stat
     assert operational.log == []
 
 
-def test_the_branch_routes_are_exactly_the_seven_operational_endpoints_the_four_reports_and_the_efficiency_settings():
+def test_the_branch_routes_are_exactly_the_seven_operational_endpoints_the_five_reports_and_the_efficiency_settings():
     paths = sorted(r.path.split("/branches/{branch_slug}/")[1] for r in main.app.routes
                    if "/branches/{branch_slug}/" in getattr(r, "path", ""))
 
     assert paths == ["checkins/by-destination", "checkins/by-hour", "checkins/count", "ingest-status", "pipeline-status", "rejects/by-reason",
                      "rejects/count",
                      # The range reports (customer_api.report_routes) are under the same site prefix.
+                     # ... and so is the Efficiency report (customer_api.efficiency_report_routes, Reports R6C).
+                     "reports/efficiency",
                      "reports/overview", "reports/reliability", "reports/routing", "reports/volume",
                      # Reports R6B: a sorter site's Efficiency settings, read (GET) and replaced (PUT).
                      "settings/efficiency", "settings/efficiency"]
 
 
-def test_the_customer_api_has_exactly_twenty_three_routes_all_get_except_login_logout_and_the_two_settings_puts():
+def test_the_customer_api_has_exactly_twenty_four_routes_all_get_except_login_logout_and_the_two_settings_puts():
     customer = sorted((method, route.path) for route in main.customer_router.routes for method in route.methods)
 
     # Reports R4 added three: the organization-level reports (customer_api.organization_report_routes).
     # Reports R6B added four: Efficiency settings, read and replaced, for an organization and for a sorter site
     # (customer_api.efficiency_settings_routes). The two PUTs are the only routes that change stored data.
-    assert len(customer) == 23
+    # Reports R6C added one: a sorter site's Efficiency report (customer_api.efficiency_report_routes), a GET.
+    assert len(customer) == 24
     assert [path for method, path in customer if method == "POST"] == ["/api/auth/login", "/api/auth/logout"]
     assert [path for method, path in customer if method == "PUT"] == [
         "/api/organizations/{org_slug}/branches/{branch_slug}/settings/efficiency",
         "/api/organizations/{org_slug}/settings/efficiency",
     ]
-    assert sum(1 for method, _ in customer if method == "GET") == 19
+    assert sum(1 for method, _ in customer if method == "GET") == 20
     assert ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/pipeline-status") in customer
 
 
