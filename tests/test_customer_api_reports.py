@@ -1110,6 +1110,9 @@ def test_the_response_models_have_exactly_the_approved_fields_and_refuse_any_oth
         "VolumeReportResponse": ["range", "checkin_count", "days", "hours"],
         "RoutingDay": ["date", "checkin_count", "home_count", "transit_counts", "other_count"],
         "RoutingReportResponse": ["range", "checkin_count", "home", "transit", "transit_count", "other_count", "days"],
+        # Reports R7A: Bin Volume (tests/test_customer_api_bin_volume_report.py).
+        "BinVolumeBin": ["key", "checkin_count", "hours"],
+        "BinVolumeReportResponse": ["range", "checkin_count", "known_bin_count", "unknown_bin_count", "bins"],
         "ReliabilityReason": ["reason", "reject_count"],
         "ReliabilityDay": ["date", "checkin_count", "reject_count"],
         "ReliabilityReportResponse": ["range", "checkin_count", "reject_count", "reasons", "days"],

@@ -3448,3 +3448,153 @@ def test_organization_reports_do_not_depend_on_the_database_session_time_zone(
     assert all(answer == answers[0] for answer in answers)
     assert answers[0]["overview"]["totals"]["checkin_count"] == 60
     assert [day["checkin_count"] for day in answers[0]["overview"]["days"]] == [12, 12, 14, 11, 11]
+
+
+# --- GET .../reports/bins?from=&to=, end to end, as the runtime role ---
+#
+# Bin Volume against real tables: a real nullable TEXT `bin` on the legacy
+# table and a real NOT NULL one on the current table, grouped by the server,
+# with many FILTER columns a statement, under real row level security. What
+# is proved here and nowhere else: that the report's total is EXACTLY the
+# overview's and the volume report's on a real server, that one bin stored
+# two ways is one bin across a real cutover, and that the database session's
+# time zone cannot move a row between hours, days or eras.
+
+def _binned_v1_checkin(conn, customer_id, branch_id, local_wall_clock: str, barcode: str, stored_bin) -> None:
+    conn.execute(text("""
+        INSERT INTO checkins (customer_id, branch_id, event_time, title, barcode, destination, bin, source_file)
+        VALUES (:c, :b, CAST(:t AS timestamp), 'title', :barcode, 'Main', :bin, 'rls_test.csv')
+    """), {"c": customer_id, "b": branch_id, "t": local_wall_clock, "barcode": barcode, "bin": stored_bin})
+
+
+def _binned_v2_checkin(conn, customer_id, branch_id, instant: str, stored_bin: str) -> None:
+    event_key = hashlib.sha256(f"{customer_id}:{branch_id}:{instant}:{secrets.token_hex(8)}".encode()).hexdigest()
+    conn.execute(text("""
+        INSERT INTO checkin_events (customer_id, branch_id, key_id, event_key, event_time, destination, bin)
+        VALUES (:c, :b, :k, :ek, CAST(:t AS timestamptz), 'main', :bin)
+    """), {"c": customer_id, "b": branch_id, "k": KEY_A, "ek": event_key, "t": instant, "bin": stored_bin})
+
+
+@pytest.fixture
+def bins_api(reports_api, owner_engine):
+    """The reports fixture's rows -- every one of which has no usable bin ("bin1" in the legacy table, "unknown"
+    in the current one) -- plus, on each of 8-12 June, rows that do. Tenant A is cut over at 12:00 local on
+    10 June, so a row counts only on its own table's side of that instant:
+
+        legacy   "04" 09:15 · "0" 10:00 · NULL 10:30     counted on the 8th, 9th and 10th
+                 "10" 13:00                              counted on the 8th and 9th (on the 10th it is after the cutover)
+        current  "2" 15:00Z (10:00 local)                counted on the 11th and 12th (on the 10th it is before it)
+                 "4" 18:00Z (13:00 local) · "unknown" 19:00Z     counted on the 10th, 11th and 12th
+
+        bin 0: 3 (10:00) · bin 2: 2 (10:00) · bin 4: 3 (09:00) + 3 (13:00) · bin 10: 2 (13:00)     known 13
+        unknown: 3 + 3 of these, and all 23 of the reports fixture's                                unknown 29
+
+    Tenant B's main site (no cutover) gets a bin of its own, and tenant A's bin numbers on far more rows.
+    """
+    with owner_engine.begin() as conn:
+        for day in range(8, 13):
+            stamp = f"2026-06-{day:02d}"
+            _binned_v1_checkin(conn, CUSTOMER_A, BRANCH_A, f"{stamp} 09:15:00", f"bin-a-{day}-1", "04")
+            _binned_v1_checkin(conn, CUSTOMER_A, BRANCH_A, f"{stamp} 10:00:00", f"bin-a-{day}-2", "0")
+            _binned_v1_checkin(conn, CUSTOMER_A, BRANCH_A, f"{stamp} 10:30:00", f"bin-a-{day}-3", None)
+            _binned_v1_checkin(conn, CUSTOMER_A, BRANCH_A, f"{stamp} 13:00:00", f"bin-a-{day}-4", "10")
+            _binned_v2_checkin(conn, CUSTOMER_A, BRANCH_A, f"{stamp} 15:00:00+00", "2")
+            _binned_v2_checkin(conn, CUSTOMER_A, BRANCH_A, f"{stamp} 18:00:00+00", "4")
+            _binned_v2_checkin(conn, CUSTOMER_A, BRANCH_A, f"{stamp} 19:00:00+00", "unknown")
+            _binned_v1_checkin(conn, CUSTOMER_B, BRANCH_B, f"{stamp} 09:00:00", f"bin-b-{day}-1", "99")
+            for number in range(6):
+                _binned_v1_checkin(conn, CUSTOMER_B, BRANCH_B, f"{stamp} 10:00:00", f"bin-b-{day}-4-{number}", "4")
+    return reports_api
+
+
+def _bins_of(client, session, org, branch, first: str = "2026-06-08", last: str = "2026-06-12"):
+    return _report_of(client, session, org, branch, "bins", first, last)
+
+
+def _bin_hours(**counts: int) -> list[int]:
+    hours = [0] * 24
+    for name, count in counts.items():
+        hours[int(name[1:])] = count
+    return hours
+
+
+def _checked_bins(client, session, org, branch) -> dict:
+    """The answer for 8-12 June, after checking its shape, its invariants, and that its total is exactly the
+    overview's and the volume report's for the same range on the same server."""
+    response = _bins_of(client, session, org, branch)
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    assert list(body) == ["range", "checkin_count", "known_bin_count", "unknown_bin_count", "bins"]
+    assert body["range"] == {
+        "from": "2026-06-08", "to": "2026-06-12", "days": 5, "timezone": "America/Chicago", "includes_today": False,
+    }
+    assert body["known_bin_count"] + body["unknown_bin_count"] == body["checkin_count"]
+    assert sum(entry["checkin_count"] for entry in body["bins"]) == body["known_bin_count"]
+    for entry in body["bins"]:
+        assert list(entry) == ["key", "checkin_count", "hours"]
+        assert len(entry["hours"]) == 24 and sum(entry["hours"]) == entry["checkin_count"] > 0
+    keys = [entry["key"] for entry in body["bins"]]
+    assert keys == sorted(keys, key=int) and len(set(keys)) == len(keys)
+
+    overview = _report_of(client, session, org, branch, "overview", "2026-06-08", "2026-06-12").json()
+    volume = _report_of(client, session, org, branch, "volume", "2026-06-08", "2026-06-12").json()
+    assert body["checkin_count"] == overview["checkin_count"] == volume["checkin_count"]
+    assert body["range"] == overview["range"] == volume["range"]
+    return body
+
+
+def test_bin_volume_across_a_cutover_on_a_real_server_matches_the_overview_and_volume_reports(bins_api):
+    body = _checked_bins(bins_api, SESSION_A, "tenant-a", "main")
+
+    assert (body["checkin_count"], body["known_bin_count"], body["unknown_bin_count"]) == (42, 13, 29)
+    # "04" in the legacy table and "4" in the current one are bin 4; NULL and "unknown" are both unknown.
+    assert body["bins"] == [
+        {"key": "0", "checkin_count": 3, "hours": _bin_hours(h10=3)},
+        {"key": "2", "checkin_count": 2, "hours": _bin_hours(h10=2)},
+        {"key": "4", "checkin_count": 6, "hours": _bin_hours(h9=3, h13=3)},
+        {"key": "10", "checkin_count": 2, "hours": _bin_hours(h13=2)},
+    ]
+    for leaked in ("CANARY", "bin1", "rls_test", "title"):
+        assert leaked not in str(body["bins"]), leaked
+
+
+def test_bin_volume_is_isolated_by_tenant_and_refuses_what_the_other_reports_refuse(bins_api):
+    tenant_a = _checked_bins(bins_api, SESSION_A, "tenant-a", "main")
+    tenant_b = _checked_bins(bins_api, SESSION_B, "tenant-b", "main")
+
+    # Tenant B logged thirty check-ins in ITS bin 4. None of them is in tenant A's bin 4, and tenant A's
+    # bins 0, 2 and 10 are not in tenant B's answer.
+    assert {entry["key"]: entry["checkin_count"] for entry in tenant_a["bins"]} == {"0": 3, "2": 2, "4": 6, "10": 2}
+    assert {entry["key"]: entry["checkin_count"] for entry in tenant_b["bins"]} == {"4": 30, "99": 5}
+    assert (tenant_b["checkin_count"], tenant_b["unknown_bin_count"]) == (80, 45)
+
+    crossed = _bins_of(bins_api, SESSION_A, "tenant-b", "main")
+    assert (crossed.status_code, crossed.json()) == (404, TENANT_NOT_FOUND)
+    assert _bins_of(bins_api, SESSION_B, "tenant-a", "main").status_code == 404
+    assert _bins_of(bins_api, "no-such-session", "tenant-a", "main").status_code == 401
+    assert _bins_of(bins_api, SESSION_A, "tenant-a", "main", "2026-06-12", "2026-06-08").status_code == 422
+    assert _bins_of(bins_api, SESSION_A, "tenant-a", "main", "2026-06-19", "2026-06-21").status_code == 422
+
+
+def test_bin_volume_does_not_depend_on_the_database_session_time_zone(bins_api, runtime_engine, monkeypatch):
+    answers = []
+    for zone in ("UTC", "Asia/Tokyo", "America/Los_Angeles", "Asia/Kolkata"):
+        shifted = create_engine(runtime_engine.url, hide_parameters=True, connect_args={"options": f"-c timezone={zone}"})
+        monkeypatch.setattr(database, "_engine", shifted)
+        try:
+            answers.append(_checked_bins(bins_api, SESSION_A, "tenant-a", "main"))
+        finally:
+            shifted.dispose()
+
+    assert all(answer == answers[0] for answer in answers)
+    assert (answers[0]["checkin_count"], answers[0]["known_bin_count"]) == (42, 13)
+    assert [entry["key"] for entry in answers[0]["bins"]] == ["0", "2", "4", "10"]
+
+
+def test_bin_volume_for_a_range_with_no_check_ins_is_zeros_and_no_bins(bins_api):
+    response = _bins_of(bins_api, SESSION_A, "tenant-a", "main", "2026-05-01", "2026-05-07")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["checkin_count"], body["known_bin_count"], body["unknown_bin_count"], body["bins"]) == (0, 0, 0, [])

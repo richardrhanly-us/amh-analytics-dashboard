@@ -4,6 +4,7 @@
     GET .../reports/volume?from=...&to=...
     GET .../reports/routing?from=...&to=...
     GET .../reports/reliability?from=...&to=...
+    GET .../reports/bins?from=...&to=...
 
 Each is nested under one organization and one branch, named by slug, exactly
 like the single-day reads in customer_api.operational_routes, and follows the
@@ -40,6 +41,8 @@ from customer_api.errors import NO_STORE_HEADERS, CustomerApiRoute
 from customer_api.operational_routes import ResolvedTenant, _calendar_date
 from customer_api.operational_schemas import RoutingDestination, RoutingHome
 from customer_api.report_schemas import (
+    BinVolumeBin,
+    BinVolumeReportResponse,
     OverviewDay,
     OverviewReportResponse,
     ReliabilityDay,
@@ -56,6 +59,7 @@ from customer_api.tenant_scope import open_customer_tenant_connection
 from services.operational_report_service import (
     LocalRange,
     ReportRangeError,
+    get_bin_volume_report,
     get_overview_report,
     get_reliability_report,
     get_routing_report,
@@ -220,6 +224,23 @@ def create_report_router() -> APIRouter:
             days=[
                 ReliabilityDay(date=day, checkin_count=checkins, reject_count=rejects)
                 for day, checkins, rejects in zip(dates, report.checkin_days, report.rejects.day_counts, strict=True)
+            ],
+        ))
+
+    @router.get("/bins")
+    def get_site_bin_volume_report(tenant: ResolvedTenant, requested: Range) -> Response:
+        with open_customer_tenant_connection(tenant) as conn:
+            report = get_bin_volume_report(conn, tenant, report_window(conn, tenant, requested.local_range))
+
+        # The connection is closed. Bin numbers and counts only: only bins that were observed, in numeric order.
+        return _json(BinVolumeReportResponse(
+            range=requested.response(),
+            checkin_count=report.checkin_count,
+            known_bin_count=report.known_count,
+            unknown_bin_count=report.unknown_count,
+            bins=[
+                BinVolumeBin(key=counts.key, checkin_count=counts.checkin_count, hours=list(counts.hour_counts))
+                for counts in report.bins
             ],
         ))
 
