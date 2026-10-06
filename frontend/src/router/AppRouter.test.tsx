@@ -610,7 +610,7 @@ describe('a branch page', () => {
     await heading('Central Branch')
     await screen.findByRole('heading', { level: 3, name: 'Top reject reasons' })
 
-    expect(liveRequests(fetchMock)).toHaveLength(5)
+    expect(liveRequests(fetchMock)).toHaveLength(6)
     expect(liveRequests(fetchMock).every((url) => url.startsWith('/api/organizations/northbridge/branches/central/'))).toBe(true)
     // The hourly chart is the one image; there is still no picker, tab strip or gauge.
     for (const role of ['combobox', 'tab', 'tablist', 'progressbar', 'meter']) {

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { callOf, jsonResponse, LIVE, liveBody, NOT_AUTHENTICATED, stubFetch, TENANT_NOT_FOUND } from '../test/http.ts'
 import {
   getCheckinCount,
+  getCheckinsByDestination,
   getCheckinsByHour,
   getPipelineStatus,
   getRejectCount,
@@ -17,7 +18,7 @@ const UNEXPECTED = { code: 'unexpected_response' }
 
 type Reader = (org: string, branch: string, signal?: AbortSignal) => Promise<unknown>
 
-/** Each of the five reads: how to call it, the URL it must use and a body it must accept. */
+/** Each of the six reads: how to call it, the URL it must use and a body it must accept. */
 const READS: Array<[name: string, read: Reader, url: string, body: unknown]> = [
   ['pipeline-status', (o, b, s) => getPipelineStatus(o, b, s), `${BASE}/pipeline-status`, liveBody.pipeline(LIVE)],
   [
@@ -31,6 +32,12 @@ const READS: Array<[name: string, read: Reader, url: string, body: unknown]> = [
     (o, b, s) => getCheckinsByHour(o, b, DATE, s),
     `${BASE}/checkins/by-hour?date=2026-10-05`,
     liveBody.checkinsByHour(LIVE, DATE),
+  ],
+  [
+    'checkins/by-destination',
+    (o, b, s) => getCheckinsByDestination(o, b, DATE, s),
+    `${BASE}/checkins/by-destination?date=2026-10-05`,
+    liveBody.checkinsByDestination(LIVE, DATE),
   ],
   [
     'rejects/count',
@@ -127,7 +134,7 @@ describe.each(READS)('%s', (_name, read, url, body) => {
 })
 
 describe('the date', () => {
-  const dated = [getCheckinCount, getCheckinsByHour, getRejectCount, getRejectsByReason]
+  const dated = [getCheckinCount, getCheckinsByHour, getCheckinsByDestination, getRejectCount, getRejectsByReason]
 
   it.each(['2026-10-5', '10/05/2026', '2026-10-05T00:00:00', '', 'today', '2026-10-05&x=1'])(
     'must be YYYY-MM-DD: %j is refused before anything is sent',
@@ -285,5 +292,110 @@ describe('rejects/by-reason', () => {
     fetchMock.mockResolvedValue(jsonResponse(200, withReasons(reasons)))
 
     await expect(getRejectsByReason('northbridge', 'central', DATE)).rejects.toMatchObject(UNEXPECTED)
+  })
+})
+
+describe('checkins/by-destination', () => {
+  const valid = liveBody.checkinsByDestination(LIVE, DATE)
+  const read = () => getCheckinsByDestination('northbridge', 'central', DATE)
+  /** Answers with `valid` changed by `change`, and reads it. */
+  function reading(change: (body: Record<string, unknown>) => unknown) {
+    const body = JSON.parse(JSON.stringify(valid)) as Record<string, unknown>
+    const replacement = change(body)
+    stubFetch().mockResolvedValue(jsonResponse(200, replacement === undefined ? body : replacement))
+    return read()
+  }
+  const transitOf = (body: Record<string, unknown>) => body.transit as Array<Record<string, unknown>>
+
+  it('returns home, each destination in the order given, and the totals', async () => {
+    stubFetch().mockResolvedValue(jsonResponse(200, valid))
+
+    expect(await read()).toStrictEqual({
+      date: DATE,
+      timezone: 'America/Chicago',
+      checkin_count: 120,
+      home: { label: 'Main', checkin_count: 106 },
+      transit: [
+        { key: 'westside', label: 'Westside', checkin_count: 12 },
+        { key: 'library_express', label: 'Library Express', checkin_count: 2 },
+      ],
+      transit_count: 14,
+      other_count: 0,
+    })
+  })
+
+  it('accepts a site with no destinations, and a day with no check-ins', async () => {
+    const none = { date: DATE, timezone: 'America/Chicago', checkin_count: 4, home: { label: 'Hilltop', checkin_count: 3 }, transit: [], transit_count: 0, other_count: 1 }
+    stubFetch().mockResolvedValue(jsonResponse(200, none))
+    expect(await read()).toStrictEqual(none)
+
+    const quiet = liveBody.checkinsByDestination({ ...LIVE, hours: LIVE.hours.map(() => 0) }, DATE)
+    stubFetch().mockResolvedValue(jsonResponse(200, quiet))
+    expect((await read()).transit.map((entry) => entry.checkin_count)).toEqual([0, 0])
+  })
+
+  it('accepts many destinations, long labels and keys that start with a digit', async () => {
+    const transit = Array.from({ length: 40 }, (_, index) => ({ key: `${index}th_street`, label: `${index}th Street Neighborhood Library and Learning Annex`, checkin_count: index }))
+    const total = transit.reduce((sum, entry) => sum + entry.checkin_count, 0)
+    const many = { ...valid, checkin_count: total + 5, home: { label: 'Main', checkin_count: 5 }, transit, transit_count: total }
+    stubFetch().mockResolvedValue(jsonResponse(200, many))
+
+    expect((await read()).transit).toHaveLength(40)
+  })
+
+  it('drops fields the contract does not have, at every level', async () => {
+    const result = await reading((body) => {
+      body.customer_id = 41
+      body.percent_transit = 11.7
+      ;(body.home as Record<string, unknown>).branch_id = 7
+      transitOf(body)[0].raw_destination = 'WESTSIDE BRANCH'
+      transitOf(body)[0].barcode = '31234000123456'
+    })
+
+    expect(result).toStrictEqual(valid)
+    expect(JSON.stringify(result)).not.toMatch(/customer_id|branch_id|percent|raw_destination|barcode|41|31234/)
+  })
+
+  it.each<[string, (body: Record<string, unknown>) => unknown]>([
+    ['a negative count', (body) => void (body.other_count = -1)],
+    ['a negative destination count', (body) => void (transitOf(body)[0].checkin_count = -12)],
+    ['a fractional count', (body) => void (body.checkin_count = 120.5)],
+    ['a count as text', (body) => void (body.transit_count = '14')],
+    ['a missing total', (body) => void delete body.checkin_count],
+    ['a missing home', (body) => void delete body.home],
+    ['a home that is a number', (body) => void (body.home = 106)],
+    ['a home with no label', (body) => void ((body.home as Record<string, unknown>).label = '')],
+    ['a home label that is not text', (body) => void ((body.home as Record<string, unknown>).label = 7)],
+    ['transit that is not a list', (body) => void (body.transit = { westside: 12 })],
+    ['a missing transit list', (body) => void delete body.transit],
+    ['a destination that is not an object', (body) => void (body.transit = ['westside'])],
+    ['a destination with no key', (body) => void delete transitOf(body)[0].key],
+    ['a key with a space', (body) => void (transitOf(body)[0].key = 'west side')],
+    ['a key in upper case', (body) => void (transitOf(body)[0].key = 'Westside')],
+    ['an empty key', (body) => void (transitOf(body)[0].key = '')],
+    ['a key that is a path', (body) => void (transitOf(body)[0].key = '../admin')],
+    ['a blank label', (body) => void (transitOf(body)[0].label = '   ')],
+    ['a label that is not text', (body) => void (transitOf(body)[0].label = null)],
+    ['a label of absurd length', (body) => void (transitOf(body)[0].label = 'x'.repeat(201))],
+    ['two destinations with one key', (body) => void (transitOf(body)[1].key = 'westside')],
+    ['a transit total that is not the sum of its destinations', (body) => void (body.transit_count = 15)],
+    ['parts that do not add up to the total', (body) => void (body.checkin_count = 121)],
+    ['a home count that breaks the total', (body) => void ((body.home as Record<string, unknown>).checkin_count = 0)],
+    ['an other count that breaks the total', (body) => void (body.other_count = 3)],
+    ['another date', (body) => void (body.date = '2026-10-04')],
+    ['a zone that is not an IANA zone', (body) => void (body.timezone = 'Central Time')],
+    ['a missing zone', (body) => void delete body.timezone],
+    ['an empty zone', (body) => void (body.timezone = '')],
+    ['a list', () => [valid]],
+    ['null', () => null],
+  ])('rejects %s as an unexpected response', async (_label, change) => {
+    await expect(reading(change)).rejects.toMatchObject(UNEXPECTED)
+  })
+
+  it('does not change the answer it was given', async () => {
+    const result = await reading(() => undefined)
+
+    result.transit[0].checkin_count = 999
+    expect(valid.transit[0].checkin_count).toBe(12)
   })
 })

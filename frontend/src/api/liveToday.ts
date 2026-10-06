@@ -58,6 +58,34 @@ export interface CheckinsByHour {
   hours: CheckinHourCount[]
 }
 
+/** Check-ins the sorter routed to one of the site's configured destinations. */
+export interface RoutingDestinationCount {
+  /** Identifies the destination: a lower-case slug, unique within one answer. */
+  key: string
+  /** What the site calls the destination, as configured. */
+  label: string
+  checkin_count: number
+}
+
+/**
+ * One day's check-ins by where the sorter routed them. A destination is a
+ * routing outcome of this sorter site -- not a site or a sorter of its own.
+ */
+export interface CheckinsByDestination {
+  date: string
+  timezone: string
+  /** Every check-in of the day: `home.checkin_count + transit_count + other_count`. */
+  checkin_count: number
+  /** Kept at the site itself. */
+  home: { label: string; checkin_count: number }
+  /** The site's configured destinations, in configured order, zero where there were none. */
+  transit: RoutingDestinationCount[]
+  /** The sum of `transit`. */
+  transit_count: number
+  /** Neither home nor a configured destination. */
+  other_count: number
+}
+
 export interface RejectCount {
   date: string
   timezone: string
@@ -77,6 +105,8 @@ export interface RejectsByReason {
 }
 
 const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/
+const DESTINATION_KEY = /^[a-z0-9][a-z0-9_]{0,63}$/
+const LABEL_MAX_LENGTH = 200
 
 function record(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -94,6 +124,14 @@ function count(value: unknown): number {
 
 function timezone(value: unknown): string {
   if (!isValidTimeZone(value)) {
+    throw unexpectedResponse(200)
+  }
+  return value
+}
+
+/** A configured label: text with something in it, and not absurdly long. */
+function label(value: unknown): string {
+  if (typeof value !== 'string' || value.trim() === '' || value.length > LABEL_MAX_LENGTH) {
     throw unexpectedResponse(200)
   }
   return value
@@ -173,6 +211,45 @@ export async function getCheckinsByHour(
     return { hour: index, checkin_count: count(entry.checkin_count) }
   })
   return { ...day(body, date), hours }
+}
+
+/** GET .../checkins/by-destination?date=YYYY-MM-DD */
+export async function getCheckinsByDestination(
+  orgSlug: string,
+  branchSlug: string,
+  date: string,
+  signal?: AbortSignal,
+): Promise<CheckinsByDestination> {
+  const body = record(await apiRequest(datedPath(orgSlug, branchSlug, 'checkins/by-destination', date), { signal }))
+  const home = record(body.home)
+  if (!Array.isArray(body.transit)) {
+    throw unexpectedResponse(200)
+  }
+  const transit = body.transit.map(record).map((entry) => {
+    if (typeof entry.key !== 'string' || !DESTINATION_KEY.test(entry.key)) {
+      throw unexpectedResponse(200)
+    }
+    return { key: entry.key, label: label(entry.label), checkin_count: count(entry.checkin_count) }
+  })
+  const answer = {
+    ...day(body, date),
+    checkin_count: count(body.checkin_count),
+    home: { label: label(home.label), checkin_count: count(home.checkin_count) },
+    transit,
+    transit_count: count(body.transit_count),
+    other_count: count(body.other_count),
+  }
+  // Two destinations with one key could not be told apart, and figures that do not add up cannot all be shown
+  // as true: either way the answer is used whole or not at all.
+  const transitTotal = transit.reduce((total, entry) => total + entry.checkin_count, 0)
+  if (
+    new Set(transit.map((entry) => entry.key)).size !== transit.length ||
+    transitTotal !== answer.transit_count ||
+    answer.home.checkin_count + answer.transit_count + answer.other_count !== answer.checkin_count
+  ) {
+    throw unexpectedResponse(200)
+  }
+  return answer
 }
 
 /** GET .../rejects/count?date=YYYY-MM-DD */

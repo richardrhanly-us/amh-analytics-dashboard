@@ -118,13 +118,21 @@ export const REASON_CODES = [
   'unknown',
 ]
 
-/** What a branch's five Live Today reads answer. `hours` is 24 check-in counts; `reasons` is 8 reject counts. */
+/** One configured transit destination and how many of the day's check-ins went to it. */
+export type RoutedTo = [key: string, label: string, checkinCount: number]
+
+/**
+ * What a branch's six Live Today reads answer. `hours` is 24 check-in counts; `reasons` is 8 reject counts.
+ * `routing` says where the check-ins went; left out, a tenth go to Westside and a fiftieth to Library Express
+ * (rounded down), so a fixture with any number of check-ins -- none included -- still adds up.
+ */
 export interface LiveFixture {
   timezone: string
   state: string
   last_reported_at: string | null
   hours: number[]
   reasons: number[]
+  routing?: { home?: string; transit: RoutedTo[]; other?: number }
 }
 
 const hoursWith = (counts: Record<number, number>) => Array.from({ length: 24 }, (_, hour) => counts[hour] ?? 0)
@@ -150,6 +158,26 @@ export const liveBody = {
     timezone: live.timezone,
     hours: live.hours.map((checkin_count, hour) => ({ hour, checkin_count })),
   }),
+  checkinsByDestination: (live: LiveFixture, date: string | null) => {
+    const total = sum(live.hours)
+    const routing = live.routing ?? {
+      transit: [
+        ['westside', 'Westside', Math.floor(total / 10)],
+        ['library_express', 'Library Express', Math.floor(total / 50)],
+      ] as RoutedTo[],
+    }
+    const transitCount = sum(routing.transit.map(([, , checkinCount]) => checkinCount))
+    const other = routing.other ?? 0
+    return {
+      date,
+      timezone: live.timezone,
+      checkin_count: total,
+      home: { label: routing.home ?? 'Main', checkin_count: total - transitCount - other },
+      transit: routing.transit.map(([key, label, checkin_count]) => ({ key, label, checkin_count })),
+      transit_count: transitCount,
+      other_count: other,
+    }
+  },
   rejectCount: (live: LiveFixture, date: string | null) => ({ date, timezone: live.timezone, reject_count: sum(live.reasons) }),
   rejectsByReason: (live: LiveFixture, date: string | null) => ({
     date,
@@ -162,7 +190,7 @@ export function livePath(orgSlug: string, branchSlug: string): string {
   return `/api/organizations/${orgSlug}/branches/${branchSlug}`
 }
 
-/** Routes for one branch's five Live Today reads. `live` may be a function, to answer differently over time. */
+/** Routes for one branch's six Live Today reads. `live` may be a function, to answer differently over time. */
 export function liveRoutes(orgSlug: string, branchSlug: string, live: LiveFixture | (() => LiveFixture) = LIVE): ApiRoutes {
   const base = `GET ${livePath(orgSlug, branchSlug)}`
   const now = () => (typeof live === 'function' ? live() : live)
@@ -170,6 +198,7 @@ export function liveRoutes(orgSlug: string, branchSlug: string, live: LiveFixtur
     [`${base}/pipeline-status`]: () => jsonResponse(200, liveBody.pipeline(now())),
     [`${base}/checkins/count?date=*`]: (url) => jsonResponse(200, liveBody.checkinCount(now(), dateOf(url))),
     [`${base}/checkins/by-hour?date=*`]: (url) => jsonResponse(200, liveBody.checkinsByHour(now(), dateOf(url))),
+    [`${base}/checkins/by-destination?date=*`]: (url) => jsonResponse(200, liveBody.checkinsByDestination(now(), dateOf(url))),
     [`${base}/rejects/count?date=*`]: (url) => jsonResponse(200, liveBody.rejectCount(now(), dateOf(url))),
     [`${base}/rejects/by-reason?date=*`]: (url) => jsonResponse(200, liveBody.rejectsByReason(now(), dateOf(url))),
   }

@@ -3,7 +3,7 @@
 The SortView customer web app: a React + TypeScript single-page app built
 with Vite. It is a static SPA. There is no server-side rendering.
 
-**Status: Block F5, Live Today presentation.** The app restores a session,
+**Status: Block F5.5, Live Today routing.** The app restores a session,
 signs in and signs out against the customer API (`/api/auth/*`), lists the
 signed-in user's organizations, lets them choose a branch, and shows that
 branch's Live Today dashboard. It is not deployed anywhere yet: there is no
@@ -29,11 +29,26 @@ what a user can see: an organization it does not return, and a branch that is
 not in the organization it returns, both get the same "not found" page as an
 unknown address. A `401` from the API returns the app to the sign-in form.
 
+**A branch address is a sorter site.** Operationally, a branch here is the
+scope one sorter's collector uploads under. Its dashboard covers everything
+that sorter processed, including items it routed on to other places. Those
+places are routing destinations configured for the site -- outcomes of this
+one sorter -- not separate sorters, and they have no dashboards of their own.
+
 ## Live Today
 
 The branch page shows, for today: the pipeline's last reported state and when
-it reported, check-ins (total, current hour, busiest hour, and by hour),
-rejects (total and rate) and the reject reasons that occurred.
+it reported, and the day's figures in three groups: **Operations** (check-ins,
+current hour, busiest hour), **Routing** (total in transit and one figure for
+each destination configured for the site) and **Rejects** (total and rate),
+followed by check-ins by hour and the reject reasons that occurred.
+
+- **Routing.** `GET .../checkins/by-destination?date=` returns the day's
+  check-ins as home, each configured destination in configured order (zero
+  included) and everything else. The three always add up to the day's
+  check-ins. Percentages are worked out in the browser, as a share of the
+  day's check-ins. Destination names come only from the API: none is written
+  into this app.
 
 - **Hourly chart.** Check-ins by hour are drawn as a bar chart: plain SVG
   rendered by React, with no chart library. It stretches to its container, so
@@ -51,7 +66,7 @@ rejects (total and rate) and the reject reasons that occurred.
 
 - **"Today" is the product's day, not the browser's.** Pipeline status is read
   first and names the product time zone; the date and current hour are worked
-  out in that zone and the four dated reads are made for that date. If
+  out in that zone and the five dated reads are made for that date. If
   pipeline status cannot be read, no date is guessed and nothing else is asked.
 - **Refresh.** Everything refreshes together every 3 minutes, and from the
   Refresh button. Pause stops the timer only; Refresh still works while

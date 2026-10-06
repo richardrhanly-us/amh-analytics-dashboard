@@ -33,6 +33,7 @@ from customer_api.errors import NO_STORE_HEADERS, CustomerApiRoute
 from customer_api.operational_schemas import (
     CheckinCountResponse,
     CheckinHourCount,
+    CheckinsByDestinationResponse,
     CheckinsByHourResponse,
     IngestStatusFields,
     IngestStatusResponse,
@@ -40,6 +41,8 @@ from customer_api.operational_schemas import (
     RejectCountResponse,
     RejectReasonCount,
     RejectsByReasonResponse,
+    RoutingDestination,
+    RoutingHome,
 )
 from customer_api.tenant_scope import (
     ResolvedOperationalTenant,
@@ -48,6 +51,7 @@ from customer_api.tenant_scope import (
 )
 from services.operational_metrics_service import (
     get_checkin_count,
+    get_checkin_counts_by_destination,
     get_checkin_counts_by_hour,
     get_reject_count,
     get_reject_counts_by_reason,
@@ -55,6 +59,7 @@ from services.operational_metrics_service import (
 from services.operational_read_service import get_latest_ingest_status
 from services.pipeline_status_service import get_pipeline_status
 from services.reject_reason import REJECT_REASONS
+from services.routing_config_service import get_routing_config
 
 ResolvedTenant = Annotated[ResolvedOperationalTenant, Depends(require_resolved_tenant)]
 
@@ -156,6 +161,35 @@ def create_operational_router() -> APIRouter:
             date=local_date,
             timezone=zone.key,
             hours=[CheckinHourCount(hour=hour, checkin_count=count) for hour, count in enumerate(hourly.counts)],
+        )
+        return JSONResponse(content=body.model_dump(mode="json"), headers=NO_STORE_HEADERS)
+
+    @router.get("/checkins/by-destination")
+    def get_checkins_by_destination(tenant: ResolvedTenant, local_date: LocalDate) -> Response:
+        # The same day, in the same zone, as /checkins/count.
+        zone = settings.product_timezone()
+
+        with open_customer_tenant_connection(tenant) as conn:
+            # Which destinations this sorter site has is its own configuration,
+            # read for the resolved tenant on the same scoped connection.
+            routing = get_routing_config(conn, tenant)
+            counts = get_checkin_counts_by_destination(conn, tenant, local_date=local_date, zone=zone, routing=routing)
+
+        # The connection is closed. Home, each configured destination in its
+        # configured order, and everything else: counts and configured labels
+        # only. No stored destination value is returned, and which era a
+        # check-in came from is not disclosed.
+        body = CheckinsByDestinationResponse(
+            date=local_date,
+            timezone=zone.key,
+            checkin_count=counts.total,
+            home=RoutingHome(label=routing.home_label, checkin_count=counts.home_count),
+            transit=[
+                RoutingDestination(key=destination.key, label=destination.label, checkin_count=checkin_count)
+                for destination, checkin_count in zip(routing.transit, counts.transit_counts, strict=True)
+            ],
+            transit_count=counts.transit_count,
+            other_count=counts.other_count,
         )
         return JSONResponse(content=body.model_dump(mode="json"), headers=NO_STORE_HEADERS)
 

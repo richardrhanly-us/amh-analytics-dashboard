@@ -50,6 +50,7 @@ from services.reject_reason import (
     classify_legacy_reject_message,
     reason_for_error_class,
 )
+from services.routing_destination import RoutingConfig, destination_key
 from services.tenant_resolution_service import ResolvedOperationalTenant
 
 logger = logging.getLogger("sortview.operational_metrics")
@@ -768,4 +769,166 @@ def get_reject_counts_by_reason(
         v1_counts=tuple(v1_counts),
         v2_counts=tuple(v2_counts),
         unexpected_class_rows=unexpected_class_rows,
+    )
+
+
+# =====================================================================================================================
+# Check-in counts for each destination of one local day
+# =====================================================================================================================
+#
+# The same check-ins as get_checkin_count, by where the sorter routed them:
+# kept at the site (home), sent to one of the site's configured destinations
+# (transit), or anything else (other). Which destinations a site has is its
+# own configuration (services.routing_destination), given by the caller;
+# nothing here names one.
+#
+# The two tables store a destination differently -- a label in the legacy
+# table, a slug in the current one. Each stored value is read only as the key
+# of a group, turned into the one destination key both eras share
+# (routing_destination.destination_key), counted, and dropped: it is never
+# returned, logged or put in an error.
+
+@dataclass(frozen=True, slots=True)
+class CheckinDestinationCounts:
+    """Check-ins on one local calendar day, by destination.
+
+    `transit_counts` has exactly one entry per destination of the routing
+    configuration the counts were made with, in its order, zero where there
+    were none. Every stored check-in of the day is in exactly one of
+    `home_count`, `transit_counts` and `other_count`, so
+
+        home_count + sum(transit_counts) + other_count == total
+
+    and `total` is the day's CheckinCount.total. `other_count` is everything
+    that is neither home nor a configured destination: a destination the
+    site has not configured, one with no usable value, or none at all.
+
+    v1_total / v2_total are for this service's own tests and diagnostics, as
+    in CheckinCount.
+    """
+
+    total: int
+    home_count: int
+    transit_counts: tuple[int, ...]
+    other_count: int
+    v1_total: int
+    v2_total: int
+
+    @property
+    def transit_count(self) -> int:
+        return sum(self.transit_counts)
+
+
+# One statement per era: the WHERE clause is the day count's, unchanged -- the
+# tenant, then the part of the day the era owns, bound with the same stated
+# types -- so a row is counted here exactly when it is counted there. The only
+# thing added is the grouping, by the one column that says where the item
+# went. Nothing is joined, de-duplicated, ordered, cast or converted by the
+# database, and no column that identifies an item or an event is read.
+_V1_CHECKIN_DESTINATION_COUNT_SQL = text("""
+    SELECT destination, COUNT(*)
+    FROM checkins
+    WHERE customer_id = :customer_id
+      AND branch_id = :branch_id
+      AND event_time >= :start_local
+      AND event_time < :end_local
+    GROUP BY destination
+""").bindparams(
+    bindparam("start_local", type_=DateTime(timezone=False)),
+    bindparam("end_local", type_=DateTime(timezone=False)),
+)
+
+_V2_CHECKIN_DESTINATION_COUNT_SQL = text("""
+    SELECT destination, COUNT(*)
+    FROM checkin_events
+    WHERE customer_id = :customer_id
+      AND branch_id = :branch_id
+      AND event_time >= :start_utc
+      AND event_time < :end_utc
+    GROUP BY destination
+""").bindparams(
+    bindparam("start_utc", type_=DateTime(timezone=True)),
+    bindparam("end_utc", type_=DateTime(timezone=True)),
+)
+
+
+def get_checkin_counts_by_destination(
+    conn: Connection,
+    tenant: ResolvedOperationalTenant,
+    *,
+    local_date: date,
+    zone: ZoneInfo,
+    routing: RoutingConfig,
+) -> CheckinDestinationCounts:
+    """How many check-ins the tenant's sorter site had on `local_date`, a
+    calendar day in `zone`, for home, for each destination in `routing`, and
+    for everything else.
+
+    The eras share the day exactly as in get_checkin_count: with no effective
+    cutover the site is v1 only and `checkin_events` is not read at all; with
+    one, v1 owns the part of the day strictly before it and v2 the part at or
+    after it, and a part that is empty is not queried. Every stored row is
+    counted once, in exactly one place, so the counts add up to
+    get_checkin_count's total.
+
+    `conn` must already carry the tenant's RLS context. At most three
+    statements run -- the cutover lookup, then one per era that owns part of
+    the day. If any of them fails the error propagates: the counts of one era
+    are never returned as if they were the whole.
+    """
+    day = local_day_bounds(local_date, zone)
+    cutover_at = get_effective_cutover(conn, tenant)
+
+    v1_end_local = day.v1_end_local
+    v2_start_utc = None
+    if cutover_at is not None:
+        boundary = cutover_boundary(cutover_at, zone)
+        v1_end_local = min(day.v1_end_local, boundary.cutover_local_naive)
+        v2_start_utc = max(day.v2_start_utc, boundary.cutover_utc)
+
+    tenant_ids = {"customer_id": tenant.operational_customer_id, "branch_id": tenant.operational_branch_id}
+
+    transit_slot = {destination.key: slot for slot, destination in enumerate(routing.transit)}
+    home_count = 0
+    transit_counts = [0] * len(routing.transit)
+    other_count = 0
+
+    def count_groups(grouped) -> int:
+        """Adds one era's groups to the counts and returns that era's total."""
+        nonlocal home_count, other_count
+        era_total = 0
+        # One row per distinct stored destination, a NULL one included.
+        for destination, row_count in grouped:
+            row_count = int(row_count)
+            era_total += row_count
+            key = destination_key(destination)
+            if key in routing.home_keys:
+                home_count += row_count
+            elif key in transit_slot:
+                transit_counts[transit_slot[key]] += row_count
+            else:
+                other_count += row_count
+        return era_total
+
+    v1_total = 0
+    if day.v1_start_local < v1_end_local:
+        v1_total = count_groups(conn.execute(
+            _V1_CHECKIN_DESTINATION_COUNT_SQL,
+            {**tenant_ids, "start_local": day.v1_start_local, "end_local": v1_end_local},
+        ))
+
+    v2_total = 0
+    if v2_start_utc is not None and v2_start_utc < day.v2_end_utc:
+        v2_total = count_groups(conn.execute(
+            _V2_CHECKIN_DESTINATION_COUNT_SQL,
+            {**tenant_ids, "start_utc": v2_start_utc, "end_utc": day.v2_end_utc},
+        ))
+
+    return CheckinDestinationCounts(
+        total=v1_total + v2_total,
+        home_count=home_count,
+        transit_counts=tuple(transit_counts),
+        other_count=other_count,
+        v1_total=v1_total,
+        v2_total=v2_total,
     )

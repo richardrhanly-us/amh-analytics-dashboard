@@ -2733,3 +2733,199 @@ def test_pipeline_status_answers_with_what_the_real_report_endpoint_just_stored(
 
     # Tenant B posted nothing and sees nothing of it.
     assert _status_of(pipeline_api, SESSION_B, "tenant-b", "main") == ("unknown", None)
+
+
+# --- GET .../checkins/by-destination?date=YYYY-MM-DD, end to end, as the runtime role ---
+#
+# The same real pieces as the count tests above, plus the two that are new:
+# the settings read (organization_settings / branch_settings hold real JSONB,
+# and neither is under row level security, so the statement's own filter is
+# what scopes it) and the grouped statements over a real TEXT destination in
+# each check-in table. Every answer is also checked against the count
+# endpoint for the same day, on the same server.
+#
+# The runtime role is given SELECT on the two settings tables here. That is
+# the production role's observed baseline (scripts/runtime_role_privileges.py)
+# and nothing this endpoint adds: it is granted in this section only because
+# no earlier test in this file read those tables.
+
+CHECKINS_BY_DESTINATION_PATH = "/api/organizations/{org}/branches/{branch}/checkins/by-destination"
+
+
+def _routed_v1_checkin(conn, customer_id, branch_id, local_wall_clock: str, barcode: str, destination) -> None:
+    conn.execute(text("""
+        INSERT INTO checkins (customer_id, branch_id, event_time, title, barcode, destination, bin, source_file)
+        VALUES (:c, :b, CAST(:t AS timestamp), 'title', :barcode, :d, 'bin1', 'rls_test.csv')
+    """), {"c": customer_id, "b": branch_id, "t": local_wall_clock, "barcode": barcode, "d": destination})
+
+
+def _routed_v2_checkin(conn, customer_id, branch_id, instant: str, destination: str) -> None:
+    event_key = hashlib.sha256(f"{customer_id}:{branch_id}:{instant}:{secrets.token_hex(8)}".encode()).hexdigest()
+    conn.execute(text("""
+        INSERT INTO checkin_events (customer_id, branch_id, key_id, event_key, event_time, destination, bin)
+        VALUES (:c, :b, :k, :ek, CAST(:t AS timestamptz), :d, 'unknown')
+    """), {"c": customer_id, "b": branch_id, "k": KEY_A, "ek": event_key, "t": instant, "d": destination})
+
+
+def _transit_settings(home: str, *labels: str) -> str:
+    import json
+
+    return json.dumps({
+        "security": {"admin_lock_hash": "CANARY-settings-secret"},
+        "transit": {
+            "home_branch_label": home,
+            # The free-form keys are deliberately useless: a destination is matched by its label.
+            "destinations": [{"key": f"branch_{n}", "label": label, "enabled": True} for n, label in enumerate(labels, 1)],
+        },
+    })
+
+
+@pytest.fixture
+def routing_api(checkin_api, owner_engine, runtime_engine):
+    """Tenant A routes to Westside and Library Express; tenant B's organization routes to Westside only, and its
+    north site overrides that with a destination of its own."""
+    role = runtime_engine.url.username
+    with owner_engine.begin() as conn:
+        conn.execute(text(f"GRANT SELECT ON TABLE public.organization_settings, public.branch_settings TO {role}"))  # nosec B608
+        conn.execute(text("TRUNCATE organization_settings, branch_settings RESTART IDENTITY"))
+        conn.execute(text("TRUNCATE v2_cutovers RESTART IDENTITY"))
+        for org_id, document in ((1, _transit_settings("Main", "Westside", "Library Express")),
+                                 (2, _transit_settings("Main", "Westside"))):
+            conn.execute(
+                text("INSERT INTO organization_settings (organization_id, settings_json) VALUES (:o, CAST(:s AS jsonb))"),
+                {"o": org_id, "s": document},
+            )
+        conn.execute(
+            text("INSERT INTO branch_settings (branch_id, settings_json) VALUES (:b, CAST(:s AS jsonb))"),
+            {"b": BRANCH_B_NORTH, "s": _transit_settings("North", "Harbor Depot")},
+        )
+    return checkin_api
+
+
+def _checkins_by_destination(client, session, org, branch, day: str):
+    return client.get(
+        CHECKINS_BY_DESTINATION_PATH.format(org=org, branch=branch),
+        params={"date": day},
+        headers={"Cookie": f"__Host-sortview_api_session={session}"},
+    )
+
+
+def _routing_of(client, session, org, branch, day: str) -> dict:
+    """The answer for `day`, after checking it is the approved shape, that every check-in is in exactly one place,
+    and that its total is what the count endpoint says for the same day."""
+    response = _checkins_by_destination(client, session, org, branch, day)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert list(body) == ["date", "timezone", "checkin_count", "home", "transit", "transit_count", "other_count"]
+    assert (body["date"], body["timezone"]) == (day, "America/Chicago")
+    assert all(list(entry) == ["key", "label", "checkin_count"] for entry in body["transit"])
+    assert body["transit_count"] == sum(entry["checkin_count"] for entry in body["transit"])
+    assert body["home"]["checkin_count"] + body["transit_count"] + body["other_count"] == body["checkin_count"]
+    assert body["checkin_count"] == _count_of(client, session, org, branch, day)
+    return body
+
+
+def _transit_of(body: dict) -> dict[str, int]:
+    return {entry["key"]: entry["checkin_count"] for entry in body["transit"]}
+
+
+def test_checkins_by_destination_for_a_v1_only_site_classifies_its_stored_labels(owner_engine, routing_api):
+    with owner_engine.begin() as conn:
+        for number, destination in enumerate(
+            ["Main", "Main", "1", "LOCAL", "Westside", "WESTSIDE", "Library Express", "No Agency Destination",
+             "Northgate Annex", "", None]
+        ):
+            _routed_v1_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 09:00:00", f"a-{number}", destination)
+        _routed_v1_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-09 23:59:59", "a-day-before", "Westside")
+        _routed_v1_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-11 00:00:00", "a-day-after", "Westside")
+        # v2 rows for tenant A on that day, but NO cutover: they are not part of its history.
+        _routed_v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 15:00:00+00", "westside")
+        for number in range(7):
+            _routed_v1_checkin(conn, CUSTOMER_B, BRANCH_B, "2026-06-10 09:00:00", f"b-{number}", "Westside")
+
+    body = _routing_of(routing_api, SESSION_A, "tenant-a", "main", "2026-06-10")
+
+    assert body["checkin_count"] == 11
+    assert body["home"] == {"label": "Main", "checkin_count": 4}
+    assert body["transit"] == [
+        {"key": "westside", "label": "Westside", "checkin_count": 2},
+        {"key": "library_express", "label": "Library Express", "checkin_count": 1},
+    ]
+    assert body["other_count"] == 4
+
+
+def test_checkins_by_destination_across_a_cutover_keeps_one_destination_one_destination(owner_engine, routing_api):
+    with owner_engine.begin() as conn:
+        _set_cutover(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 17:00:00+00")          # 12:00 local
+        _routed_v1_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 09:00:00", "a1", "Library Express")      # counts
+        _routed_v1_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 11:59:59", "a2", "Main")                 # counts
+        _routed_v1_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 12:00:00", "a3", "Library Express")      # v2 owns it
+        _routed_v1_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 20:30:00", "a4", "Westside")             # v2 owns it
+        _routed_v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 16:59:59+00", "library_express")         # before
+        _routed_v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 17:00:00+00", "library_express")         # counts
+        _routed_v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 12:30:00-05", "westside")                # counts
+        _routed_v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-11 04:59:59+00", "main")                    # counts
+        _routed_v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-11 04:59:59+00", "unknown")                 # counts
+        _routed_v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-11 05:00:00+00", "westside")                # next day
+
+    body = _routing_of(routing_api, SESSION_A, "tenant-a", "main", "2026-06-10")
+
+    assert body["checkin_count"] == 6
+    assert body["home"]["checkin_count"] == 2
+    assert _transit_of(body) == {"westside": 1, "library_express": 2}
+    assert body["other_count"] == 1
+    # The days either side are each read from one era alone.
+    assert _routing_of(routing_api, SESSION_A, "tenant-a", "main", "2026-06-09")["checkin_count"] == 0
+    after = _routing_of(routing_api, SESSION_A, "tenant-a", "main", "2026-06-11")
+    assert (after["checkin_count"], _transit_of(after)) == (1, {"westside": 1, "library_express": 0})
+
+
+def test_checkins_by_destination_does_not_depend_on_the_database_session_time_zone(owner_engine, routing_api, runtime_engine, monkeypatch):
+    with owner_engine.begin() as conn:
+        _set_cutover(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 17:00:00+00")
+        _routed_v1_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 00:30:00", "a1", "Westside")
+        _routed_v2_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-11 04:30:00+00", "westside")
+
+    answers = []
+    for zone in ("UTC", "Asia/Tokyo", "America/Los_Angeles"):
+        shifted = create_engine(runtime_engine.url, hide_parameters=True, connect_args={"options": f"-c timezone={zone}"})
+        monkeypatch.setattr(database, "_engine", shifted)
+        try:
+            answers.append(_transit_of(_routing_of(routing_api, SESSION_A, "tenant-a", "main", "2026-06-10")))
+        finally:
+            shifted.dispose()
+
+    assert answers == [{"westside": 2, "library_express": 0}] * 3
+
+
+def test_checkins_by_destination_is_isolated_by_tenant_and_by_site_with_each_sites_own_settings(owner_engine, routing_api):
+    with owner_engine.begin() as conn:
+        _routed_v1_checkin(conn, CUSTOMER_A, BRANCH_A, "2026-06-10 09:00:00", "a1", "Westside")
+        for number in range(3):
+            _routed_v1_checkin(conn, CUSTOMER_B, BRANCH_B, "2026-06-10 09:00:00", f"b-main-{number}", "Westside")
+        _routed_v1_checkin(conn, CUSTOMER_B, BRANCH_B, "2026-06-10 09:00:00", "b-main-le", "Library Express")
+        for number in range(5):
+            _routed_v1_checkin(conn, CUSTOMER_B, BRANCH_B_NORTH, "2026-06-10 09:00:00", f"b-north-{number}", "Harbor Depot")
+        _routed_v1_checkin(conn, CUSTOMER_B, BRANCH_B_NORTH, "2026-06-10 09:00:00", "b-north-home", "North")
+        _routed_v1_checkin(conn, CUSTOMER_B, BRANCH_B_NORTH, "2026-06-10 09:00:00", "b-north-ws", "Westside")
+
+    tenant_a = _routing_of(routing_api, SESSION_A, "tenant-a", "main", "2026-06-10")
+    b_main = _routing_of(routing_api, SESSION_B, "tenant-b", "main", "2026-06-10")
+    b_north = _routing_of(routing_api, SESSION_B, "tenant-b", "north", "2026-06-10")
+
+    assert (tenant_a["checkin_count"], _transit_of(tenant_a)) == (1, {"westside": 1, "library_express": 0})
+    # Tenant B's organization has one destination: Library Express is not one of its, so it is "other".
+    assert (b_main["checkin_count"], _transit_of(b_main), b_main["other_count"]) == (4, {"westside": 3}, 1)
+    # Its north site's own settings replace the organization's.
+    assert b_north["home"] == {"label": "North", "checkin_count": 1}
+    assert b_north["transit"] == [{"key": "harbor_depot", "label": "Harbor Depot", "checkin_count": 5}]
+    assert b_north["other_count"] == 1
+
+    # A member of one tenant cannot read the other's, and learns nothing from asking.
+    crossed = _checkins_by_destination(routing_api, SESSION_A, "tenant-b", "north", "2026-06-10")
+    assert crossed.status_code == 404
+    assert crossed.json() == {"code": "tenant_not_found", "message": "Organization or branch not found."}
+    assert _checkins_by_destination(routing_api, "no-such-session", "tenant-a", "main", "2026-06-10").status_code == 401
+
+    for response in (tenant_a, b_main, b_north):
+        assert "CANARY" not in str(response) and "branch_1" not in str(response)

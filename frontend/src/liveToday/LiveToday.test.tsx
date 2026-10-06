@@ -18,6 +18,7 @@ import {
   NOT_AUTHENTICATED,
   requestedUrls,
   RIVERSIDE_DETAIL,
+  type RoutedTo,
   serveApi,
   TENANT_NOT_FOUND,
   textResponse,
@@ -30,6 +31,7 @@ const API = livePath('northbridge', 'central')
 const PIPELINE = `GET ${API}/pipeline-status`
 const CHECKIN_COUNT = `GET ${API}/checkins/count?date=*`
 const BY_HOUR = `GET ${API}/checkins/by-hour?date=*`
+const BY_DESTINATION = `GET ${API}/checkins/by-destination?date=*`
 const REJECT_COUNT = `GET ${API}/rejects/count?date=*`
 const BY_REASON = `GET ${API}/rejects/by-reason?date=*`
 
@@ -136,6 +138,7 @@ describe('the order things are asked in', () => {
     pipeline.resolve(jsonResponse(200, liveBody.pipeline(LIVE)))
     await loaded()
     expect(endpoints(liveRequests(fetchMock)).sort()).toEqual([
+      'checkins/by-destination',
       'checkins/by-hour',
       'checkins/count',
       'pipeline-status',
@@ -145,15 +148,16 @@ describe('the order things are asked in', () => {
     expect(liveRequests(fetchMock)[0]).toBe(`${API}/pipeline-status`)
   })
 
-  it('asks all four dated reads for the same date, exactly once each', async () => {
+  it('asks all five dated reads for the same date, exactly once each', async () => {
     const fetchMock = serve()
 
     renderApp(CENTRAL)
     await loaded()
 
-    expect(liveRequests(fetchMock)).toHaveLength(5)
-    expect(datesAsked(fetchMock)).toEqual([TODAY, TODAY, TODAY, TODAY])
+    expect(liveRequests(fetchMock)).toHaveLength(6)
+    expect(datesAsked(fetchMock)).toEqual([TODAY, TODAY, TODAY, TODAY, TODAY])
     expect(liveRequests(fetchMock).slice(1).sort()).toEqual([
+      `${API}/checkins/by-destination?date=${TODAY}`,
       `${API}/checkins/by-hour?date=${TODAY}`,
       `${API}/checkins/count?date=${TODAY}`,
       `${API}/rejects/by-reason?date=${TODAY}`,
@@ -173,7 +177,7 @@ describe('the order things are asked in', () => {
     renderApp(CENTRAL)
     await loaded()
 
-    expect(datesAsked(fetchMock)).toEqual([date, date, date, date])
+    expect(datesAsked(fetchMock)).toEqual([date, date, date, date, date])
     expect(main()).toHaveTextContent(`${dateText} (${timezone})`)
     expect(note('Current hour')).toBe(hourRange)
     expect(screen.getByText(/^Busiest hour: .* Hours are in /)).toHaveTextContent(`Hours are in ${timezone} time.`)
@@ -261,6 +265,9 @@ describe('the figures', () => {
       'Check-ins today',
       'Current hour',
       'Busiest hour',
+      'Total transit',
+      'Westside',
+      'Library Express',
       'Rejects today',
       'Reject rate',
     ])
@@ -369,15 +376,15 @@ describe('refreshing', () => {
     expect(main()).toHaveTextContent('Refreshes automatically every 3 minutes.')
 
     await pass(REFRESH_INTERVAL_MS - 5000)
-    expect(liveRequests(fetchMock)).toHaveLength(5)
+    expect(liveRequests(fetchMock)).toHaveLength(6)
 
     fixture = live({ state: 'degraded', hours: hoursWith({ 9: 20, 10: 25, 11: 40, 12: 18, 13: 30 }), reasons: [3, 0, 1, 0, 0, 2, 0, 4] })
     await pass(10_000)
-    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(10))
+    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(12))
 
-    const second = liveRequests(fetchMock).slice(5)
+    const second = liveRequests(fetchMock).slice(6)
     expect(second[0]).toBe(`${API}/pipeline-status`)
-    expect(endpoints(second.slice(1)).sort()).toEqual(['checkins/by-hour', 'checkins/count', 'rejects/by-reason', 'rejects/count'])
+    expect(endpoints(second.slice(1)).sort()).toEqual(['checkins/by-destination', 'checkins/by-hour', 'checkins/count', 'rejects/by-reason', 'rejects/count'])
     await waitFor(() => expect(metric('Check-ins today')).toHaveTextContent(/^133$/))
     expect(metric('Status')).toHaveTextContent(/^Degraded$/)
     expect(metric('Current hour')).toHaveTextContent(/^30$/)
@@ -392,7 +399,7 @@ describe('refreshing', () => {
     await loaded()
     await pass(REFRESH_INTERVAL_MS * 3 + 5000)
 
-    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(20))
+    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(24))
   })
 
   it('stops refreshing by itself while paused, and says so', async () => {
@@ -406,7 +413,7 @@ describe('refreshing', () => {
     expect(main()).toHaveTextContent('Automatic refresh is paused.')
     expect(screen.getByRole('button', { name: 'Resume automatic refresh' })).toBeInTheDocument()
     await pass(REFRESH_INTERVAL_MS * 3)
-    expect(liveRequests(fetchMock)).toHaveLength(5)
+    expect(liveRequests(fetchMock)).toHaveLength(6)
     expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
   })
 
@@ -422,13 +429,13 @@ describe('refreshing', () => {
     await person.click(refreshButton())
 
     await waitFor(() => expect(metric('Check-ins today')).toHaveTextContent(/^200$/))
-    const second = liveRequests(fetchMock).slice(5)
+    const second = liveRequests(fetchMock).slice(6)
     expect(second[0]).toBe(`${API}/pipeline-status`)
-    expect(endpoints(second).sort()).toEqual(['checkins/by-hour', 'checkins/count', 'pipeline-status', 'rejects/by-reason', 'rejects/count'])
+    expect(endpoints(second).sort()).toEqual(['checkins/by-destination', 'checkins/by-hour', 'checkins/count', 'pipeline-status', 'rejects/by-reason', 'rejects/count'])
     expect(main()).toHaveTextContent('Automatic refresh is paused.')
 
     await pass(REFRESH_INTERVAL_MS * 2)
-    expect(liveRequests(fetchMock)).toHaveLength(10)
+    expect(liveRequests(fetchMock)).toHaveLength(12)
   })
 
   it('refreshes from the button while running too', async () => {
@@ -439,7 +446,7 @@ describe('refreshing', () => {
     await loaded()
     await person.click(refreshButton())
 
-    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(10))
+    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(12))
     expect(main()).toHaveTextContent('Refreshes automatically every 3 minutes.')
   })
 
@@ -451,13 +458,13 @@ describe('refreshing', () => {
     await loaded()
     await person.click(screen.getByRole('button', { name: 'Pause automatic refresh' }))
     await pass(REFRESH_INTERVAL_MS * 2)
-    expect(liveRequests(fetchMock)).toHaveLength(5)
+    expect(liveRequests(fetchMock)).toHaveLength(6)
 
     await person.click(screen.getByRole('button', { name: 'Resume automatic refresh' }))
     expect(main()).toHaveTextContent('Refreshes automatically every 3 minutes.')
     await pass(REFRESH_INTERVAL_MS + 5000)
 
-    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(10))
+    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(12))
   })
 
   it('shows that it is refreshing and starts no second refresh on top of the first', async () => {
@@ -474,12 +481,12 @@ describe('refreshing', () => {
     await person.click(busy)
     await person.click(busy)
     await pass(1000)
-    expect(liveRequests(fetchMock)).toHaveLength(6)
+    expect(liveRequests(fetchMock)).toHaveLength(7)
     // What was already loaded stays on screen while the refresh runs.
     expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
 
     slow.resolve(jsonResponse(200, liveBody.pipeline(LIVE)))
-    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(10))
+    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(12))
     await waitFor(() => expect(refreshButton()).not.toHaveAttribute('aria-disabled', 'true'))
   })
 
@@ -499,14 +506,14 @@ describe('refreshing', () => {
 
     renderApp(CENTRAL)
     await loaded()
-    expect(datesAsked(fetchMock)).toEqual(['2026-10-05', '2026-10-05', '2026-10-05', '2026-10-05'])
+    expect(datesAsked(fetchMock)).toEqual(['2026-10-05', '2026-10-05', '2026-10-05', '2026-10-05', '2026-10-05'])
     expect(main()).toHaveTextContent('Monday, October 5, 2026')
     expect(note('Current hour')).toBe('11 PM–12 AM')
 
     await pass(REFRESH_INTERVAL_MS + 5000)
 
-    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(10))
-    expect(datesAsked(fetchMock).slice(4)).toEqual(['2026-10-06', '2026-10-06', '2026-10-06', '2026-10-06'])
+    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(12))
+    expect(datesAsked(fetchMock).slice(5)).toEqual(['2026-10-06', '2026-10-06', '2026-10-06', '2026-10-06', '2026-10-06'])
     await waitFor(() => expect(main()).toHaveTextContent('Tuesday, October 6, 2026'))
     expect(main()).not.toHaveTextContent('Monday, October 5, 2026')
     await waitFor(() => expect(note('Current hour')).toBe('12–1 AM'))
@@ -523,7 +530,7 @@ describe('refreshing', () => {
     await pass(60_000)
     await person.click(refreshButton())
 
-    await waitFor(() => expect(datesAsked(fetchMock).slice(4)).toEqual(['2026-10-06', '2026-10-06', '2026-10-06', '2026-10-06']))
+    await waitFor(() => expect(datesAsked(fetchMock).slice(5)).toEqual(['2026-10-06', '2026-10-06', '2026-10-06', '2026-10-06', '2026-10-06']))
     await waitFor(() => expect(main()).toHaveTextContent('Tuesday, October 6, 2026'))
   })
 })
@@ -549,8 +556,8 @@ describe('changing branch', () => {
     expect(metric('Busiest hour')).toHaveTextContent(/^7$/)
     expect(note('Busiest hour')).toBe('8–9 AM')
     const east = liveRequests(fetchMock).filter((url) => url.includes('/east-side/'))
-    expect(east).toHaveLength(5)
-    expect(liveRequests(fetchMock).filter((url) => url.includes('/central/'))).toHaveLength(5)
+    expect(east).toHaveLength(6)
+    expect(liveRequests(fetchMock).filter((url) => url.includes('/central/'))).toHaveLength(6)
   })
 
   it('starts the other branch running even if the first was paused', async () => {
@@ -578,7 +585,7 @@ describe('changing branch', () => {
     await screen.findByRole('heading', { level: 3, name: 'Branches' })
     await pass(REFRESH_INTERVAL_MS * 2)
 
-    expect(liveRequests(fetchMock)).toHaveLength(5)
+    expect(liveRequests(fetchMock)).toHaveLength(6)
   })
 
   it('loads a branch afresh when its page is opened again', async () => {
@@ -594,7 +601,7 @@ describe('changing branch', () => {
     await loaded()
 
     expect(metric('Check-ins today')).toHaveTextContent(/^300$/)
-    expect(liveRequests(fetchMock)).toHaveLength(10)
+    expect(liveRequests(fetchMock)).toHaveLength(12)
   })
 })
 
@@ -610,7 +617,7 @@ describe('a suspended organization', () => {
     expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
     expect(screen.getByRole('button', { name: 'Pause automatic refresh' })).not.toHaveAttribute('aria-disabled', 'true')
     await person.click(refreshButton())
-    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(10))
+    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(12))
   })
 })
 
@@ -667,6 +674,7 @@ describe('an expired session (401)', () => {
   it.each([
     ['checkins/count', CHECKIN_COUNT],
     ['checkins/by-hour', BY_HOUR],
+    ['checkins/by-destination', BY_DESTINATION],
     ['rejects/count', REJECT_COUNT],
     ['rejects/by-reason', BY_REASON],
   ])('returns to the sign-in form when %s is answered 401, and asks nothing more', async (_name, route) => {
@@ -679,7 +687,7 @@ describe('an expired session (401)', () => {
     const asked = liveRequests(fetchMock).length
     await pass(REFRESH_INTERVAL_MS * 2)
     expect(liveRequests(fetchMock)).toHaveLength(asked)
-    expect(asked).toBeLessThanOrEqual(5)
+    expect(asked).toBeLessThanOrEqual(6)
   })
 
   it('returns to the sign-in form when a later refresh is answered 401', async () => {
@@ -741,7 +749,7 @@ describe('failures', () => {
     await loaded()
     expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(liveRequests(fetchMock)).toHaveLength(6)
+    expect(liveRequests(fetchMock)).toHaveLength(7)
   })
 
   it('keeps the sections that loaded when one read fails, and says which could not load', async () => {
@@ -774,7 +782,8 @@ describe('failures', () => {
     expect(note('Current hour')).toBeNull()
     expect(metric('Busiest hour')).toHaveTextContent('Could not load')
     expect(metric('Reject rate')).toHaveTextContent('Could not load')
-    expect(main()).not.toHaveTextContent(/NaN|Infinity|%/)
+    expect(metric('Reject rate')).not.toHaveTextContent('%')
+    expect(main()).not.toHaveTextContent(/NaN|Infinity/)
     expect(screen.queryByRole('img')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Show hourly table' })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 3, name: 'Hourly check-ins' }).parentElement).toHaveTextContent('Could not load.')
@@ -833,7 +842,7 @@ describe('retries', () => {
     await loaded()
 
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(liveRequests(fetchMock)).toHaveLength(6)
+    expect(liveRequests(fetchMock)).toHaveLength(7)
   })
 
   it.each([
@@ -1158,7 +1167,7 @@ describe('what is said aloud', () => {
     await pass(REFRESH_INTERVAL_MS + 5000)
     await waitFor(() => expect(metric('Check-ins today')).toHaveTextContent(/^300$/))
     await pass(REFRESH_INTERVAL_MS)
-    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(15))
+    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(18))
 
     expect(announcer()).toBeEmptyDOMElement()
     // Nothing that changes with a refresh sits in a live region: not the figures, not the time of the update.
@@ -1233,7 +1242,7 @@ describe('trying again after pipeline status could not be read', () => {
     slow.resolve(jsonResponse(200, liveBody.pipeline(LIVE)))
     await loaded()
     expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
-    expect(liveRequests(fetchMock)).toHaveLength(6)
+    expect(liveRequests(fetchMock)).toHaveLength(7)
   })
 
   it('starts one retry from the keyboard, however often the key is pressed', async () => {
@@ -1253,7 +1262,7 @@ describe('trying again after pipeline status could not be read', () => {
 
     slow.resolve(jsonResponse(200, liveBody.pipeline(LIVE)))
     await loaded()
-    expect(liveRequests(fetchMock)).toHaveLength(6)
+    expect(liveRequests(fetchMock)).toHaveLength(7)
   })
 
   it('offers Try again once more, and asks once more, when the retry fails too', async () => {
@@ -1269,5 +1278,496 @@ describe('trying again after pipeline status could not be read', () => {
     expect(again).not.toHaveAttribute('aria-disabled', 'true')
     await person.click(again)
     await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(3))
+  })
+})
+
+describe('today in three groups', () => {
+  /** The labels of the figures in one named group, in order. */
+  const figuresIn = (name: string) =>
+    within(screen.getByRole('group', { name }))
+      .getAllByRole('term')
+      .map((term) => term.textContent)
+
+  it('groups the figures as Operations, Routing and Rejects, in that order', async () => {
+    serve()
+
+    renderApp(CENTRAL)
+    await loaded()
+    await screen.findByText('Westside', { selector: 'dt' })
+
+    const today = screen.getByRole('region', { name: 'Today' })
+    expect(within(today).getAllByRole('group').map((group) => group.getAttribute('aria-labelledby'))).toEqual([
+      'operations-heading',
+      'routing-heading',
+      'rejects-heading',
+    ])
+    expect(within(today).getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent)).toEqual([
+      'Operations',
+      'Routing',
+      'Rejects',
+    ])
+    expect(figuresIn('Operations')).toEqual(['Check-ins today', 'Current hour', 'Busiest hour'])
+    expect(figuresIn('Routing')).toEqual(['Total transit', 'Westside', 'Library Express'])
+    expect(figuresIn('Rejects')).toEqual(['Rejects today', 'Reject rate'])
+    expect(today).toHaveTextContent('Monday, October 5, 2026 (America/Chicago)')
+  })
+
+  it('says what the page is: this sorter site, not everything that belongs to the branch', async () => {
+    serve()
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    const heading = screen.getByRole('heading', { level: 2, name: 'Central Branch' })
+    expect(heading.nextElementSibling).toHaveTextContent(/^Live activity for this sorter site$/)
+    expect(screen.getByRole('group', { name: 'Routing' })).toHaveTextContent('Where this sorter sent today’s check-ins.')
+    expect(main()).not.toHaveTextContent(/installation|machine|Tech Logic|UltraSort/i)
+  })
+
+  it('keeps the meanings of the operations and rejects figures', async () => {
+    serve()
+
+    renderApp(CENTRAL)
+    await loaded()
+    await screen.findByText('Westside', { selector: 'dt' })
+
+    expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
+    expect(metric('Current hour')).toHaveTextContent(/^17$/)
+    expect(note('Current hour')).toBe('1–2 PM')
+    expect(metric('Busiest hour')).toHaveTextContent(/^40$/)
+    expect(note('Busiest hour')).toBe('11 AM–12 PM')
+    expect(metric('Rejects today')).toHaveTextContent(/^6$/)
+    expect(metric('Reject rate')).toHaveTextContent(/^5\.0%$/)
+  })
+
+  it('takes the current hour from the clock, not from the latest hour with activity', async () => {
+    // 3:10 PM: the last check-in was in the 1 PM hour, and the current hour is still the 3 PM one.
+    vi.setSystemTime(new Date('2026-10-05T20:10:00Z'))
+    serve()
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    expect(note('Current hour')).toBe('3–4 PM')
+    expect(metric('Current hour')).toHaveTextContent(/^0$/)
+  })
+})
+
+describe('routing', () => {
+  const routing = () => screen.getByRole('group', { name: 'Routing' })
+  const routed = (transit: RoutedTo[], changes: Partial<NonNullable<LiveFixture['routing']>> = {}) =>
+    live({ routing: { transit, ...changes } })
+  /** Waits until the routing figures are on the page. */
+  const shown = () => waitFor(() => expect(routing()).toHaveTextContent(/Kept at /))
+
+  it('shows the total in transit and one figure for each configured destination, each with its share of today', async () => {
+    serve({}, routed([['westside', 'Westside', 13], ['library_express', 'Library Express', 2]]))
+
+    renderApp(CENTRAL)
+    await loaded()
+    await shown()
+
+    expect(metric('Total transit')).toHaveTextContent(/^15$/)
+    expect(note('Total transit')).toBe('12.5% of today')
+    expect(metric('Westside')).toHaveTextContent(/^13$/)
+    expect(note('Westside')).toBe('10.8% of today')
+    expect(metric('Library Express')).toHaveTextContent(/^2$/)
+    expect(note('Library Express')).toBe('1.7% of today')
+  })
+
+  it('accounts for the rest: what was kept at home, in words under the figures', async () => {
+    serve({}, routed([['westside', 'Westside', 13]], { home: 'Central' }))
+
+    renderApp(CENTRAL)
+    await loaded()
+    await shown()
+
+    expect(routing()).toHaveTextContent('Kept at Central: 107.')
+    // Home is not a transit destination and is not given a card.
+    expect(within(routing()).queryByText('Central', { selector: 'dt' })).not.toBeInTheDocument()
+    expect(routing()).not.toHaveTextContent(/Other routing/)
+  })
+
+  it('shows a destination with no check-ins today, at zero', async () => {
+    serve({}, routed([['westside', 'Westside', 9], ['library_express', 'Library Express', 0]]))
+
+    renderApp(CENTRAL)
+    await loaded()
+    await shown()
+
+    expect(metric('Library Express')).toHaveTextContent(/^0$/)
+    expect(note('Library Express')).toBe('0.0% of today')
+  })
+
+  it('shows whatever destinations the site has, in the order given, however many', async () => {
+    const stops: RoutedTo[] = Array.from({ length: 12 }, (_, index) => [`stop_${index + 1}`, `Stop ${index + 1}`, index])
+    serve({}, routed(stops))
+
+    renderApp(CENTRAL)
+    await loaded()
+    await shown()
+
+    const labels = within(routing()).getAllByRole('term').map((term) => term.textContent)
+    expect(labels).toEqual(['Total transit', ...stops.map(([, label]) => label)])
+    expect(metric('Total transit')).toHaveTextContent(/^66$/)
+    expect(metric('Stop 12')).toHaveTextContent(/^11$/)
+    expect(main()).not.toHaveTextContent(/Westside|Library Express/)
+  })
+
+  it('shows a long destination name whole', async () => {
+    const long = 'Bartholomew-Featherstonehaugh Memorial Neighborhood Library and Community Learning Annex (East Riverside)'
+    serve({}, routed([['annex', long, 4]]))
+
+    renderApp(CENTRAL)
+    await loaded()
+    await shown()
+
+    expect(screen.getByText(long, { selector: 'dt' })).toBeVisible()
+    expect(metric(long)).toHaveTextContent(/^4$/)
+  })
+
+  it('shows check-ins that went neither home nor to a configured destination, plainly and without alarm', async () => {
+    serve({}, routed([['westside', 'Westside', 13]], { other: 3 }))
+
+    renderApp(CENTRAL)
+    await loaded()
+    await shown()
+
+    expect(routing()).toHaveTextContent('Kept at Main: 104. Other routing: 3.')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(routing().querySelector('.metric-failed')).toBeNull()
+  })
+
+  it('shows every figure adding up to the day’s check-ins', async () => {
+    serve({}, routed([['westside', 'Westside', 13], ['library_express', 'Library Express', 2]], { other: 5 }))
+
+    renderApp(CENTRAL)
+    await loaded()
+    await shown()
+
+    // 100 kept + 15 in transit + 5 other = the 120 check-ins in Operations.
+    expect(routing()).toHaveTextContent('Kept at Main: 100. Other routing: 5.')
+    expect(metric('Total transit')).toHaveTextContent(/^15$/)
+    expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
+  })
+
+  it('says so when the site has no destinations configured, and still accounts for the day', async () => {
+    serve({}, routed([], { other: 2 }))
+
+    renderApp(CENTRAL)
+    await loaded()
+    await shown()
+
+    expect(routing()).toHaveTextContent('No transit destinations are configured for this sorter site.')
+    expect(routing()).toHaveTextContent('Kept at Main: 118. Other routing: 2.')
+    expect(within(routing()).queryByRole('term')).not.toBeInTheDocument()
+  })
+
+  it('shows zeros and no percentage on a day with no check-ins', async () => {
+    serve({}, live({ hours: hoursWith({}), reasons: [0, 0, 0, 0, 0, 0, 0, 0] }))
+
+    renderApp(CENTRAL)
+    await loaded()
+    await shown()
+
+    expect(metric('Total transit')).toHaveTextContent(/^0$/)
+    expect(note('Total transit')).toBe('No check-ins yet')
+    expect(metric('Westside')).toHaveTextContent(/^0$/)
+    expect(note('Westside')).toBe('No check-ins yet')
+    expect(routing()).toHaveTextContent('Kept at Main: 0.')
+    expect(main()).not.toHaveTextContent(/NaN|Infinity|%/)
+  })
+
+  it('writes large figures with separators and a share to one decimal place', async () => {
+    serve({}, live({ hours: hoursWith({ 10: 1_250_000, 11: 67 }), routing: { transit: [['westside', 'Westside', 137_000]], other: 1 } }))
+
+    renderApp(CENTRAL)
+    await loaded()
+    await shown()
+
+    expect(metric('Westside')).toHaveTextContent(/^137,000$/)
+    expect(note('Westside')).toBe('11.0% of today')
+    expect(routing()).toHaveTextContent('Kept at Main: 1,113,066. Other routing: 1.')
+  })
+
+  it('makes no destination a link, a button or anything else that could be followed', async () => {
+    serve()
+
+    renderApp(CENTRAL)
+    await loaded()
+    await shown()
+
+    for (const role of ['link', 'button', 'tab', 'menuitem', 'img']) {
+      expect(within(routing()).queryByRole(role)).not.toBeInTheDocument()
+    }
+    expect(routing().querySelectorAll('a, button, [tabindex], [onclick], [href]')).toHaveLength(0)
+    // The only links on the page are still the two in the breadcrumb.
+    expect(within(main()).getAllByRole('link').map((link) => link.textContent)).toEqual(['Organizations', 'Northbridge Library'])
+  })
+
+  it('adds no live region: routing figures are read when reached, not announced', async () => {
+    let fixture = LIVE
+    const fetchMock = serve({}, () => fixture)
+
+    renderApp(CENTRAL)
+    await loaded()
+    await shown()
+    fixture = routed([['westside', 'Westside', 40]])
+    await pass(REFRESH_INTERVAL_MS + 5000)
+    await waitFor(() => expect(metric('Westside')).toHaveTextContent(/^40$/))
+
+    expect(liveRequests(fetchMock)).toHaveLength(12)
+    expect(routing().closest('[role="status"], [role="alert"], [aria-live]')).toBeNull()
+    expect(routing().querySelector('[role="status"], [role="alert"], [aria-live]')).toBeNull()
+    expect(screen.getByRole('status')).toBeEmptyDOMElement()
+  })
+
+  it('leaves the chart, the pipeline panel and the reject reasons as they were', async () => {
+    serve()
+
+    renderApp(CENTRAL)
+    await loaded()
+    await shown()
+
+    expect(barHeights().slice(9, 14)).toEqual([50, 62.5, 100, 45, 42.5])
+    expect(chart()).toHaveAccessibleDescription(
+      'Busiest hour: 11 AM–12 PM, 40 check-ins. Current hour: 1–2 PM, 17 check-ins. Hours are in America/Chicago time.',
+    )
+    expect(metric('Status')).toHaveTextContent(/^OK$/)
+    expect(metric('Last reported')).toHaveTextContent(/Oct 5, 2026, 1:45\sPM CDT/)
+    expect(rows('Top reject reasons')).toEqual([
+      ['Item not found', '3'],
+      ['Communication error', '2'],
+      ['RFID collision', '1'],
+    ])
+  })
+})
+
+describe('the routing read', () => {
+  const routing = () => screen.getByRole('group', { name: 'Routing' })
+
+  it('waits for pipeline status like every other dated read, and asks for the same date', async () => {
+    const pipeline = deferred<Response>()
+    const fetchMock = serve({ [PIPELINE]: () => pipeline.promise })
+
+    renderApp(CENTRAL)
+    await screen.findByText('Loading live data…')
+    await pass(1000)
+    expect(liveRequests(fetchMock)).toEqual([`${API}/pipeline-status`])
+
+    pipeline.resolve(jsonResponse(200, liveBody.pipeline(LIVE)))
+    await loaded()
+
+    expect(liveRequests(fetchMock)).toContain(`${API}/checkins/by-destination?date=${TODAY}`)
+    expect(liveRequests(fetchMock).filter((url) => url.includes('/checkins/by-destination'))).toHaveLength(1)
+  })
+
+  it('asks for the product’s date, not this machine’s', async () => {
+    // 9:30 PM Monday in Chicago is already Tuesday in Tokyo.
+    vi.setSystemTime(new Date('2026-10-06T02:30:00Z'))
+    const fetchMock = serve({}, live({ timezone: 'Asia/Tokyo' }))
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    expect(liveRequests(fetchMock)).toContain(`${API}/checkins/by-destination?date=2026-10-06`)
+  })
+
+  it('is refreshed by the timer, by the button, and by the button while paused', async () => {
+    const fetchMock = serve()
+    const person = user()
+    const asked = () => liveRequests(fetchMock).filter((url) => url.includes('/checkins/by-destination')).length
+
+    renderApp(CENTRAL)
+    await loaded()
+    expect(asked()).toBe(1)
+
+    await pass(REFRESH_INTERVAL_MS + 5000)
+    await waitFor(() => expect(asked()).toBe(2))
+
+    await person.click(refreshButton())
+    await waitFor(() => expect(asked()).toBe(3))
+    await waitFor(() => expect(refreshButton()).not.toHaveAttribute('aria-disabled', 'true'))
+
+    await person.click(screen.getByRole('button', { name: 'Pause automatic refresh' }))
+    await pass(REFRESH_INTERVAL_MS * 2)
+    expect(asked()).toBe(3)
+    await person.click(refreshButton())
+    await waitFor(() => expect(asked()).toBe(4))
+    // Six reads each time: the first load and three refreshes.
+    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(24))
+  })
+
+  it('moves to the new day with the rest on the first refresh after midnight', async () => {
+    vi.setSystemTime(new Date('2026-10-06T04:58:00Z'))      // 11:58 PM Monday in Chicago
+    const fetchMock = serve()
+
+    renderApp(CENTRAL)
+    await loaded()
+    await pass(REFRESH_INTERVAL_MS + 5000)
+
+    await waitFor(() => expect(liveRequests(fetchMock)).toContain(`${API}/checkins/by-destination?date=2026-10-06`))
+    expect(liveRequests(fetchMock).filter((url) => url.includes('/checkins/by-destination'))).toEqual([
+      `${API}/checkins/by-destination?date=2026-10-05`,
+      `${API}/checkins/by-destination?date=2026-10-06`,
+    ])
+  })
+
+  it('starts clean on another branch, never showing the first branch’s destinations under it', async () => {
+    const eastRouting = deferred<Response>()
+    serve(
+      {
+        [`GET ${livePath('northbridge', 'east-side')}/checkins/by-destination?date=*`]: () => eastRouting.promise,
+      },
+      live({ routing: { transit: [['harbor_depot', 'Harbor Depot', 7]] } }),
+    )
+    const person = user()
+
+    renderApp(CENTRAL)
+    await loaded()
+    await waitFor(() => expect(metric('Harbor Depot')).toHaveTextContent(/^7$/))
+    await person.click(within(main()).getByRole('link', { name: 'Northbridge Library' }))
+    await person.click(await within(main()).findByRole('link', { name: 'East Side Branch' }))
+    await waitFor(() => expect(metric('Check-ins today')).toHaveTextContent(/^7$/))
+
+    expect(metric('Total transit')).toHaveTextContent(/^Loading…$/)
+    expect(main()).not.toHaveTextContent(/Harbor Depot|Kept at/)
+
+    eastRouting.resolve(jsonResponse(200, liveBody.checkinsByDestination(live({ hours: hoursWith({ 8: 7 }), routing: { transit: [['uptown', 'Uptown', 1]] } }), TODAY)))
+    await waitFor(() => expect(metric('Uptown')).toHaveTextContent(/^1$/))
+    expect(main()).not.toHaveTextContent(/Harbor Depot/)
+  })
+
+  it('shows Loading, and no figure, until it answers', async () => {
+    const slow = deferred<Response>()
+    serve({ [BY_DESTINATION]: () => slow.promise })
+
+    renderApp(CENTRAL)
+    await waitFor(() => expect(metric('Check-ins today')).toHaveTextContent(/^120$/))
+
+    expect(within(routing()).getAllByRole('term').map((term) => term.textContent)).toEqual(['Total transit'])
+    expect(metric('Total transit')).toHaveTextContent(/^Loading…$/)
+    expect(routing()).not.toHaveTextContent(/\d|Kept at|%/)
+    expect(metric('Rejects today')).toHaveTextContent(/^6$/)
+
+    slow.resolve(jsonResponse(200, liveBody.checkinsByDestination(LIVE, TODAY)))
+    await waitFor(() => expect(metric('Westside')).toHaveTextContent(/^12$/))
+  })
+
+  it.each([
+    ['a server error', SERVER_ERROR],
+    ['a crash page', () => textResponse(502, 'Traceback: customer_id=41 branch_id=7')],
+    ['a network failure', () => Promise.reject(networkFailure())],
+    ['a malformed answer', () => jsonResponse(200, { ...liveBody.checkinsByDestination(LIVE, TODAY), transit_count: 99 })],
+    ['a rate limit', () => jsonResponse(429, { error: 'Rate limit exceeded: 60 per 1 minute' })],
+  ])('says Routing could not load after %s, and keeps everything else', async (_label, fail) => {
+    serve({ [BY_DESTINATION]: fail })
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/^Some live data could not be loaded\. Use Refresh to try again\.$/)
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(metric('Total transit')).toHaveTextContent(/^Could not load$/)
+    expect(routing()).not.toHaveTextContent(/\d|Traceback|customer_id|Failed to fetch|Rate limit|Kept at|%/)
+    expect(within(routing()).getAllByRole('term')).toHaveLength(1)
+    // Operations, Rejects, the chart and the reasons are untouched.
+    expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
+    expect(metric('Current hour')).toHaveTextContent(/^17$/)
+    expect(metric('Rejects today')).toHaveTextContent(/^6$/)
+    expect(metric('Reject rate')).toHaveTextContent(/^5\.0%$/)
+    expect(barHeights()).toHaveLength(24)
+    expect(rows('Top reject reasons')).toHaveLength(3)
+    expect(main()).not.toHaveTextContent(UNAVAILABLE)
+  })
+
+  it('recovers on the next refresh', async () => {
+    serve({ [BY_DESTINATION]: inTurn(SERVER_ERROR, (url) => jsonResponse(200, liveBody.checkinsByDestination(LIVE, new URL(url, 'http://t.invalid').searchParams.get('date')))) })
+    const person = user()
+
+    renderApp(CENTRAL)
+    await loaded()
+    await screen.findByRole('alert')
+    await person.click(refreshButton())
+
+    await waitFor(() => expect(metric('Westside')).toHaveTextContent(/^12$/))
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+  })
+
+  it('keeps the last good routing figures, and says so, when its refresh fails', async () => {
+    serve({ [BY_DESTINATION]: inTurn((url) => jsonResponse(200, liveBody.checkinsByDestination(LIVE, new URL(url, 'http://t.invalid').searchParams.get('date'))), SERVER_ERROR) })
+    const person = user()
+
+    renderApp(CENTRAL)
+    await loaded()
+    await waitFor(() => expect(metric('Westside')).toHaveTextContent(/^12$/))
+    await person.click(refreshButton())
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The latest refresh failed. Some of what is shown may be out of date.')
+    expect(metric('Westside')).toHaveTextContent(/^12$/)
+    expect(metric('Total transit')).toHaveTextContent(/^14$/)
+    expect(routing()).toHaveTextContent('Kept at Main: 106.')
+  })
+
+  it('tries a failing routing read three times in all, and a malformed one once', async () => {
+    const asked = (fetchMock: FetchMock) => liveRequests(fetchMock).filter((url) => url.includes('/checkins/by-destination')).length
+
+    const failing = serve({ [BY_DESTINATION]: SERVER_ERROR })
+    const first = renderApp(CENTRAL, { retries: true })
+    await screen.findByRole('alert')
+    expect(asked(failing)).toBe(3)
+    first.unmount()
+
+    const malformed = serve({ [BY_DESTINATION]: () => jsonResponse(200, { transit: 'none' }) })
+    renderApp(CENTRAL, { retries: true })
+    await screen.findByRole('alert')
+    await pass(10_000)
+    expect(asked(malformed)).toBe(1)
+  })
+
+  it('gets past a routing failure that clears up, without showing an error', async () => {
+    const fetchMock = serve({
+      [BY_DESTINATION]: inTurn(
+        () => Promise.reject(networkFailure()),
+        (url) => jsonResponse(200, liveBody.checkinsByDestination(LIVE, new URL(url, 'http://t.invalid').searchParams.get('date'))),
+      ),
+    })
+
+    renderApp(CENTRAL, { retries: true })
+    await loaded()
+    await waitFor(() => expect(metric('Westside')).toHaveTextContent(/^12$/))
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(liveRequests(fetchMock)).toHaveLength(7)
+  })
+
+  it('treats a 404 from routing as it treats one from any read: live data is not available for this branch', async () => {
+    serve({ [BY_DESTINATION]: () => jsonResponse(404, TENANT_NOT_FOUND) })
+
+    renderApp(CENTRAL, { retries: true })
+
+    expect(await screen.findByText(UNAVAILABLE)).toHaveRole('note')
+    expect(screen.getByRole('heading', { level: 2, name: 'Central Branch' })).toBeInTheDocument()
+    expect(main()).not.toHaveTextContent(/Page not found|destination|Routing|Westside/i)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+  })
+
+  it('returns to the sign-in form at the same address when a later routing refresh is answered 401', async () => {
+    serve({
+      [BY_DESTINATION]: inTurn(
+        (url) => jsonResponse(200, liveBody.checkinsByDestination(LIVE, new URL(url, 'http://t.invalid').searchParams.get('date'))),
+        () => jsonResponse(401, NOT_AUTHENTICATED),
+      ),
+    })
+    const person = user()
+
+    renderApp(CENTRAL)
+    await loaded()
+    await person.click(refreshButton())
+
+    expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument()
+    expect(screen.getByTestId('address')).toHaveTextContent(CENTRAL)
+    expect(screen.queryByText('Westside')).not.toBeInTheDocument()
   })
 })

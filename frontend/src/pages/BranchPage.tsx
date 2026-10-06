@@ -9,7 +9,9 @@ import { NotFoundPage } from './NotFoundPage.tsx'
 
 /**
  * /organizations/:orgSlug/branches/:branchSlug -- the selected branch and its
- * Live Today dashboard. The branch is whichever one of the organization's
+ * Live Today dashboard. Operationally a branch here is a sorter site: the
+ * dashboard covers everything that site's sorter processed, including items
+ * it routed on to other destinations. The branch is whichever one of the organization's
  * returned branches has this slug; if none does the page is the same "not
  * found" as for anything else the user cannot see, and no live data is asked
  * for.
@@ -34,6 +36,8 @@ export function BranchPage() {
       />
 
       <PageHeading>{branch.name}</PageHeading>
+      {/* A branch page is the dashboard of the sorter at that site: everything it processed, wherever it went. */}
+      <p className="page-context">Live activity for this sorter site</p>
       {/* Keyed by branch, so another branch starts as a new dashboard: running, and with nothing carried over. */}
       <LiveToday key={`${organization.slug}/${branch.slug}`} orgSlug={organization.slug} branchSlug={branch.slug} />
     </>
