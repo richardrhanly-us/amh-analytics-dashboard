@@ -74,6 +74,52 @@ class UserAlreadyExistsError(ValueError):
 #
 #***************************************************************
 
+_LOG_AUTH_EVENT_SQL = """
+    INSERT INTO auth_audit_log (
+        user_id,
+        email,
+        event_type,
+        is_success,
+        message,
+        metadata
+    )
+    VALUES (
+        :user_id,
+        :email,
+        :event_type,
+        :is_success,
+        :message,
+        CAST(:metadata AS jsonb)
+    )
+"""
+
+
+def log_auth_event_with_connection(
+    conn: Any,
+    event_type: str,
+    is_success: bool,
+    user_id: int | None = None,
+    email: str | None = None,
+    message: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Writes one audit row on a connection the CALLER owns, so that the
+    record of a change commits -- or is rolled back -- together with the
+    change itself. Same row as log_auth_event writes."""
+    # Normalize the email address and store metadata as JSON text.
+    conn.execute(
+        text(_LOG_AUTH_EVENT_SQL),
+        {
+            "user_id": user_id,
+            "email": email.strip().lower() if email else None,
+            "event_type": event_type,
+            "is_success": is_success,
+            "message": message,
+            "metadata": "{}" if metadata is None else __import__("json").dumps(metadata),
+        },
+    )
+
+
 def log_auth_event(
     event_type: str,
     is_success: bool,
@@ -82,39 +128,17 @@ def log_auth_event(
     message: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> None:
-    # Build the insert statement for the authentication audit log.
-    sql = text("""
-        INSERT INTO auth_audit_log (
-            user_id,
-            email,
-            event_type,
-            is_success,
-            message,
-            metadata
-        )
-        VALUES (
-            :user_id,
-            :email,
-            :event_type,
-            :is_success,
-            :message,
-            CAST(:metadata AS jsonb)
-        )
-    """)
-
-    # Normalize the email address and store metadata as JSON text.
+    # One audit row, in a transaction of its own.
     engine = get_engine()
     with engine.begin() as conn:
-        conn.execute(
-            sql,
-            {
-                "user_id": user_id,
-                "email": email.strip().lower() if email else None,
-                "event_type": event_type,
-                "is_success": is_success,
-                "message": message,
-                "metadata": "{}" if metadata is None else __import__("json").dumps(metadata),
-            },
+        log_auth_event_with_connection(
+            conn,
+            event_type=event_type,
+            is_success=is_success,
+            user_id=user_id,
+            email=email,
+            message=message,
+            metadata=metadata,
         )
 
 
@@ -956,6 +980,68 @@ def change_password(
 #
 #***************************************************************
 
+_CREATE_USER_SQL = """
+    INSERT INTO app_users (
+        email,
+        full_name,
+        password_hash,
+        is_active,
+        failed_login_attempts,
+        locked_until
+    )
+    VALUES (
+        :email,
+        :full_name,
+        :password_hash,
+        TRUE,
+        0,
+        NULL
+    )
+    ON CONFLICT DO NOTHING
+    RETURNING id, email, full_name, is_active, created_at
+"""
+
+
+def create_user_with_connection(conn: Any, email: str, password: str, full_name: str = "") -> dict[str, Any] | None:
+    """Creates the user on a connection the CALLER owns, so that the new
+    account commits -- or is rolled back -- together with whatever else the
+    caller's transaction does (its first membership, for one). The same row,
+    the same password hashing and the same "user_create_success" audit event
+    as create_user, which is this function in a transaction of its own.
+
+    Returns None -- having written NOTHING and recorded nothing -- when an
+    account with this email already exists. That includes one being created
+    by another transaction at this very moment: the INSERT waits for that
+    transaction, and if it commits, ON CONFLICT DO NOTHING leaves its row
+    exactly as it is instead of failing on the unique constraint (which
+    would abort the caller's transaction). The existing account's password,
+    name and active state are never touched here."""
+    row = conn.execute(
+        text(_CREATE_USER_SQL),
+        {
+            "email": email.strip().lower(),
+            "full_name": full_name.strip(),
+            "password_hash": generate_password_hash(password),
+        },
+    ).mappings().first()
+
+    if row is None:
+        return None
+
+    created_user = dict(row)
+
+    log_auth_event_with_connection(
+        conn,
+        event_type="user_create_success",
+        is_success=True,
+        user_id=created_user["id"],
+        email=created_user["email"],
+        message="User created successfully.",
+    )
+
+    return created_user
+
+
 def create_user(email: str, password: str, full_name: str = "") -> dict[str, Any]:
     # Normalize email before checking for duplicates or inserting the user.
     normalized_email = email.strip().lower()
@@ -971,50 +1057,15 @@ def create_user(email: str, password: str, full_name: str = "") -> dict[str, Any
         )
         raise UserAlreadyExistsError()
 
-    # Insert the new user with an active status and hashed password.
-    sql = text("""
-        INSERT INTO app_users (
-            email,
-            full_name,
-            password_hash,
-            is_active,
-            failed_login_attempts,
-            locked_until
-        )
-        VALUES (
-            :email,
-            :full_name,
-            :password_hash,
-            TRUE,
-            0,
-            NULL
-        )
-        RETURNING id, email, full_name, is_active, created_at
-    """)
-
+    # Insert the new user with an active status and hashed password, and
+    # record it, in one transaction.
     engine = get_engine()
     with engine.begin() as conn:
-        row = conn.execute(
-            sql,
-            {
-                "email": normalized_email,
-                "full_name": full_name.strip(),
-                "password_hash": generate_password_hash(password),
-            },
-        ).mappings().first()
+        created_user = create_user_with_connection(conn, normalized_email, password, full_name)
 
-    if row is None:
-        raise RuntimeError("User insert did not return a row")
-
-    created_user = dict(row)
-
-    log_auth_event(
-        event_type="user_create_success",
-        is_success=True,
-        user_id=created_user["id"],
-        email=created_user["email"],
-        message="User created successfully.",
-    )
+    if created_user is None:
+        # Created by someone else between the check above and the insert.
+        raise UserAlreadyExistsError()
 
     return created_user
 

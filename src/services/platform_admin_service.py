@@ -273,6 +273,7 @@ _OFFBOARD_REVOKE_SESSIONS_SQL = """
           JOIN app_users u
             ON u.id = m.user_id
           WHERE m.organization_id = :organization_id
+            AND m.removed_at IS NULL
             AND u.is_platform_admin = FALSE
             AND NOT EXISTS (
                 SELECT 1
@@ -280,6 +281,7 @@ _OFFBOARD_REVOKE_SESSIONS_SQL = """
                 JOIN organizations o2
                   ON o2.id = m2.organization_id
                 WHERE m2.user_id = m.user_id
+                  AND m2.removed_at IS NULL
                   AND o2.status <> 'cancelled'
             )
       )

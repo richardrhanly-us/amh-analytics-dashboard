@@ -53,13 +53,15 @@ from database import get_engine
 #***************************************************************
 
 def get_org_role_for_user(user_id: int, org_slug: str) -> str | None:
-    # Build the query used to find the user's role for the organization.
+    # Build the query used to find the user's role for the organization. A membership that was removed
+    # (memberships.removed_at) gives no role at all: the role left on its row is history.
     sql = text("""
         SELECT m.role
         FROM memberships m
         JOIN organizations o
           ON o.id = m.organization_id
         WHERE m.user_id = :user_id
+          AND m.removed_at IS NULL
           AND o.slug = :org_slug
         LIMIT 1
     """)

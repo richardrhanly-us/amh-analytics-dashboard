@@ -74,7 +74,7 @@ _DDL = [
     """CREATE TABLE app_users (
         id INTEGER PRIMARY KEY, email TEXT, full_name TEXT, is_active BOOLEAN NOT NULL DEFAULT 1,
         is_platform_admin BOOLEAN NOT NULL DEFAULT 0)""",
-    "CREATE TABLE memberships (id INTEGER PRIMARY KEY AUTOINCREMENT, organization_id INTEGER, user_id INTEGER, role TEXT)",
+    "CREATE TABLE memberships (id INTEGER PRIMARY KEY AUTOINCREMENT, organization_id INTEGER, user_id INTEGER, role TEXT, removed_at TEXT)",
     """CREATE TABLE auth_sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, token_hash TEXT NOT NULL UNIQUE,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP, expires_at TEXT NOT NULL, revoked_at TEXT, last_seen_at TEXT)""",
@@ -377,6 +377,29 @@ def test_a_multi_organization_user_keeps_the_other_organization_but_cannot_reach
     assert [m["organization_slug"] for m in access_service.get_user_memberships(2)] == ["lib-b"]
     assert access_service.get_org_access_mode("lib-a") == "blocked"
     assert access_service.get_org_access_mode("lib-b") == "full"
+
+
+def test_an_organization_the_user_was_removed_from_is_not_one_they_are_left_with(world):
+    # R8C: user 2 was removed from lib-b (memberships.removed_at). When lib-a is cancelled they have nowhere left.
+    _run(world, "UPDATE memberships SET removed_at = '2026-01-01 00:00:00+00:00' WHERE organization_id = 2 AND user_id = 2")
+    token = _session(2)
+
+    _offboard()
+
+    assert session_service.validate_session(token) is None
+    assert access_service.get_user_memberships(2) == []
+
+
+def test_someone_already_removed_from_the_cancelled_organization_is_not_one_of_its_members(world):
+    # User 2 was removed from lib-a before it was cancelled, and still belongs to lib-b: the cutoff is not about them.
+    _run(world, "UPDATE memberships SET removed_at = '2026-01-01 00:00:00+00:00' WHERE organization_id = 1 AND user_id = 2")
+    token = _session(2)
+
+    result = _offboard()
+
+    assert session_service.validate_session(token) is not None
+    assert result["counts"]["sessions_revoked"] == 0
+    assert [m["organization_slug"] for m in access_service.get_user_memberships(2)] == ["lib-b"]
 
 
 def test_a_suspended_other_organization_still_counts_as_usable(world):

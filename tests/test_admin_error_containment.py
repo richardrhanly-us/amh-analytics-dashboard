@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from membership_db import MembershipDatabase, record_audit
 from sqlalchemy.exc import DataError
 from streamlit.testing.v1 import AppTest
 
@@ -329,22 +330,29 @@ def test_settings_page_still_saves_settings_when_nothing_fails(monkeypatch):
 # 2. Admin Users page + user_admin_service
 # =====================================================================================================================
 
-DUPLICATE_USER_MESSAGE = "A user with that email already exists."
 USER_CREATE_FAILED_MESSAGE = ("The user could not be created. Please check the details and try again. "
                               "If this keeps happening, contact SortView support.")
 
 
 def _patch_users_page(monkeypatch, *, create_user):
+    """The page over a real (in-memory) database in which the signed-in admin owns the organization: the service
+    reads who is acting from it, so nothing about the service itself is replaced but the account creation."""
+    import services.streamlit_entitlement_adapter as entitlement_adapter
     import services.user_admin_service as user_admin
     from services import auth_service
 
     _patch_admin_preamble(monkeypatch)
-    monkeypatch.setattr(user_admin, "list_org_users", lambda org_slug: [])
+    # The page offers roles by the signed-in person's own role, and offers nothing to someone without one.
+    monkeypatch.setattr(entitlement_adapter, "build_entitlement_context", lambda user_id, org_slug: {"role": "owner"})
+    db = MembershipDatabase()
+    db.organization(1, "acme")
+    db.user(1, "admin@example.invalid")
+    db.member(1, 1, "owner")
     monkeypatch.setattr(user_admin, "list_recent_org_auth_events", lambda org_slug, limit=25: [])
-    monkeypatch.setattr(user_admin, "_get_org_row", lambda org_slug: {"id": 1, "slug": org_slug, "name": "Acme"})
-    monkeypatch.setattr(user_admin, "get_engine", lambda: _Engine())
-    monkeypatch.setattr(auth_service, "get_user_by_email", lambda email: None)
-    monkeypatch.setattr(auth_service, "create_user", create_user)
+    monkeypatch.setattr(user_admin, "get_engine", lambda: db.engine)
+    monkeypatch.setattr(auth_service, "log_auth_event_with_connection", record_audit)
+    monkeypatch.setattr(auth_service, "create_user_with_connection", create_user)
+    return db
 
 
 def _submit_new_user(at: AppTest) -> None:
@@ -357,7 +365,7 @@ def _submit_new_user(at: AppTest) -> None:
 
 def test_users_page_does_not_relay_an_arbitrary_value_error_from_user_creation(monkeypatch, caplog):
     # Before: `except ValueError as e: message = str(e)` -- whatever a lower layer's ValueError said reached the page.
-    _patch_users_page(monkeypatch, create_user=lambda **_kwargs: (_ for _ in ()).throw(ValueError(str(backend_error()))))
+    _patch_users_page(monkeypatch, create_user=lambda _conn, **_kwargs: (_ for _ in ()).throw(ValueError(str(backend_error()))))
 
     with caplog.at_level(logging.DEBUG, logger="sortview.user_admin"):
         at = _run(USERS_PAGE, session=ADMIN_SESSION)
@@ -371,19 +379,21 @@ def test_users_page_does_not_relay_an_arbitrary_value_error_from_user_creation(m
     assert "Traceback" not in caplog.text and all(r.exc_info is None for r in caplog.records)
 
 
-def test_users_page_still_tells_the_admin_a_duplicate_email_exists(monkeypatch):
-    from services import auth_service
+def test_users_page_adds_an_existing_account_without_saying_that_it_existed(monkeypatch):
+    # R8C: an address that already has an account -- in some other organization -- is added like any other, and the
+    # page says the same thing it says for a brand-new one. No account is created and nothing about it is changed.
+    def must_not_create(_conn, **_kwargs):
+        raise AssertionError("an existing account must not be created again")
 
-    def duplicate(**_kwargs):
-        raise auth_service.UserAlreadyExistsError()
-
-    _patch_users_page(monkeypatch, create_user=duplicate)
+    db = _patch_users_page(monkeypatch, create_user=must_not_create)
+    db.user(7, "pat@example.invalid")
 
     at = _run(USERS_PAGE, session=ADMIN_SESSION)
     _submit_new_user(at)
 
-    assert not at.exception
-    assert [e.value for e in at.error] == [DUPLICATE_USER_MESSAGE]
+    assert not at.exception and not at.error
+    assert db.active_role(1, 7) == "owner"  # the form's first choice, for an owner
+    assert "already exists" not in _rendered(at)
 
 
 def test_the_real_create_user_still_raises_a_value_error_for_a_duplicate_email(monkeypatch):
@@ -401,20 +411,19 @@ def test_the_real_create_user_still_raises_a_value_error_for_a_duplicate_email(m
 def test_users_page_still_creates_a_user_when_nothing_fails(monkeypatch):
     created = []
 
-    def create_user(**kwargs):
+    def create_user(_conn, **kwargs):
         created.append(kwargs)
         return {"id": 9, "email": kwargs["email"]}
 
-    from services import auth_service
-
-    _patch_users_page(monkeypatch, create_user=create_user)
-    monkeypatch.setattr(auth_service, "log_auth_event", lambda **_kwargs: None)
+    db = _patch_users_page(monkeypatch, create_user=create_user)
 
     at = _run(USERS_PAGE, session=ADMIN_SESSION)
     _submit_new_user(at)
 
     assert not at.error and not at.exception
     assert [(c["email"], c["full_name"]) for c in created] == [("pat@example.invalid", "Pat Example")]
+    assert db.active_role(1, 9) == "owner"
+    assert [(e["event_type"], e["metadata"]["org_slug"]) for e in db.audit()] == [("membership_added", "acme")]
 
 
 # =====================================================================================================================
@@ -924,9 +933,15 @@ def test_settings_have_no_error_key_when_the_database_load_succeeds(settings_ser
 GUARDED_FILES = (SETTINGS_PAGE, USERS_PAGE, PROVISION_PAGE, MANAGE_PAGE, SETTINGS_SERVICE, USER_ADMIN_SERVICE)
 
 
+# Exceptions that carry no text of their own: only a fixed, stable code that names one of a module's own messages.
+# Reading that one attribute in their own handler is as safe as reading EnrollmentError's `.reason`.
+FIXED_CODE_ATTRIBUTES = {"EnrollmentError": "reason", "_Refused": "code", "MembershipPolicyError": "code"}
+
+
 def _unsafe_exception_uses(source: str) -> list[str]:
     """Every place an `except ... as NAME` variable (or logger.exception / exc_info / traceback) is used other than
-    handing it to log_safe_exception -- the only sanctioned use -- or reading EnrollmentError's fixed `.reason`."""
+    handing it to log_safe_exception -- the only sanctioned use -- or reading the fixed code of one of the
+    exceptions in FIXED_CODE_ATTRIBUTES (EnrollmentError's `.reason`, a membership refusal's `.code`)."""
     tree = ast.parse(source)
     findings: list[str] = []
 
@@ -935,8 +950,8 @@ def _unsafe_exception_uses(source: str) -> list[str]:
         for node in ast.walk(handler):
             if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "log_safe_exception" and node.args:
                 allowed.add(id(node.args[-1]))
-            if (isinstance(node, ast.Attribute) and node.attr == "reason" and isinstance(node.value, ast.Name)
-                    and getattr(handler.type, "id", "") == "EnrollmentError"):
+            if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                    and node.attr == FIXED_CODE_ATTRIBUTES.get(getattr(handler.type, "id", ""))):
                 allowed.add(id(node.value))
         findings += [
             f"line {n.lineno}: `{handler.name}` used outside log_safe_exception"
@@ -968,12 +983,19 @@ def test_no_handler_in_the_admin_and_settings_modules_can_expose_exception_text(
     "try:\n    x()\nexcept Exception as exc:\n    logger.error('failed', exc_info=True)",
     "import traceback",
     "try:\n    x()\nexcept Exception as exc:\n    log_safe_exception(logger, 'failed', exc)\n    st.error(str(exc))",
-], ids=["fstring", "type-and-message", "str-return", "state", "logger-exception", "exc-info", "traceback", "mixed"])
+    # A fixed code is readable only on the exceptions known to carry one, and only that attribute of them.
+    "try:\n    x()\nexcept ValueError as e:\n    return refused(e.code)",
+    "try:\n    x()\nexcept _Refused as e:\n    return refused(str(e))",
+    "try:\n    x()\nexcept MembershipPolicyError as e:\n    return refused(e.args)",
+], ids=["fstring", "type-and-message", "str-return", "state", "logger-exception", "exc-info", "traceback", "mixed",
+        "code-of-any-exception", "refusal-text", "policy-error-args"])
 def test_control_the_structural_guard_flags_each_unsafe_pattern(source):
     assert _unsafe_exception_uses(source) != []
 
 
 def test_control_the_structural_guard_allows_the_safe_pattern():
     safe = ("try:\n    x()\nexcept Exception as exc:\n    log_safe_exception(logger, 'failed', exc)\n    st.error(MESSAGE)\n"
-            "try:\n    y()\nexcept EnrollmentError as e:\n    st.error(f'refused: {e.reason}')")
+            "try:\n    y()\nexcept EnrollmentError as e:\n    st.error(f'refused: {e.reason}')\n"
+            "try:\n    z()\nexcept MembershipPolicyError as e:\n    return refused(e.code)\n"
+            "try:\n    z()\nexcept _Refused as e:\n    return refused(e.code)")
     assert _unsafe_exception_uses(safe) == []

@@ -106,7 +106,7 @@ _SAAS = (
         "CREATE TABLE branches (id INTEGER PRIMARY KEY, organization_id INTEGER, slug TEXT, status TEXT, "
         "operational_branch_id INTEGER)"
     ),
-    "CREATE TABLE memberships (id INTEGER PRIMARY KEY, organization_id INTEGER, user_id INTEGER, role TEXT)",
+    "CREATE TABLE memberships (id INTEGER PRIMARY KEY, organization_id INTEGER, user_id INTEGER, role TEXT, removed_at TEXT)",
     "INSERT INTO app_users (id, email, is_active) VALUES (1, 'alice@example.invalid', 1)",
     (
         f"INSERT INTO organizations (id, slug, status, operational_customer_id) VALUES "

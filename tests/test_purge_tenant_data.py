@@ -44,7 +44,7 @@ _DDL = [
     "CREATE TABLE branch_settings (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER)",
     "CREATE TABLE organization_settings (id INTEGER PRIMARY KEY AUTOINCREMENT, organization_id INTEGER)",
     "CREATE TABLE subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, organization_id INTEGER, status TEXT)",
-    "CREATE TABLE memberships (id INTEGER PRIMARY KEY AUTOINCREMENT, organization_id INTEGER, user_id INTEGER)",
+    "CREATE TABLE memberships (id INTEGER PRIMARY KEY AUTOINCREMENT, organization_id INTEGER, user_id INTEGER, removed_at TEXT)",
     "CREATE TABLE collector_installations (id INTEGER PRIMARY KEY, organization_id INTEGER, branch_id INTEGER, status TEXT)",
     """CREATE TABLE collector_enrollment_codes (
         id INTEGER PRIMARY KEY AUTOINCREMENT, installation_id INTEGER, used_at TEXT, revoked_at TEXT)""",
