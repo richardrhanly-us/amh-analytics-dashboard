@@ -68,6 +68,12 @@ CUSTOMER_ROUTES = {
     ("POST", "/api/auth/login"),
     ("POST", "/api/auth/logout"),
     ("GET", "/api/auth/session"),
+    # R8A: the signed-in user's own account, and password reset (customer_api.account_routes).
+    ("GET", "/api/account"),
+    ("PUT", "/api/account/profile"),
+    ("POST", "/api/account/change-password"),
+    ("POST", "/api/auth/password-reset/request"),
+    ("POST", "/api/auth/password-reset/complete"),
     ("GET", "/api/organizations"),
     ("GET", "/api/organizations/{org_slug}"),
     ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/ingest-status"),

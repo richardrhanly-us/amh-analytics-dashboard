@@ -39,6 +39,8 @@ MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
 
 PASSWORD_RESET_MINUTES = 30
+# app_users.full_name is TEXT with no limit of its own. This is the longest name a person may give themselves.
+PROFILE_NAME_MAX_LENGTH = 120
 PASSWORD_RESET_TOKEN_BYTES = 32
 
 
@@ -1015,3 +1017,107 @@ def create_user(email: str, password: str, full_name: str = "") -> dict[str, Any
     )
 
     return created_user
+
+
+#***************************************************************
+#
+#  Function:     get_account_profile
+#
+#  Description: Returns what an active user may see about their own
+#               account: their email, their name and when they last
+#               signed in and last changed their password. Nothing
+#               else is selected -- no password hash, no lockout
+#               counters, no flags.
+#
+#  Parameters:  user_id - Internal user ID of the signed-in user.
+#
+#  Returns:     dict[str, Any] | None - The profile, or None when there
+#                                       is no such active user.
+#
+#***************************************************************
+
+_ACCOUNT_PROFILE_COLUMNS = "email, full_name, last_login_at, last_password_changed_at"
+
+
+def get_account_profile(user_id: int) -> dict[str, Any] | None:
+    sql = text(f"""
+        SELECT {_ACCOUNT_PROFILE_COLUMNS}
+        FROM app_users
+        WHERE id = :user_id
+          AND is_active = TRUE
+        LIMIT 1
+    """)  # nosec B608 - a module constant, never request input
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(sql, {"user_id": user_id}).mappings().first()
+        return dict(row) if row else None
+
+
+#***************************************************************
+#
+#  Function:     update_profile_name
+#
+#  Description: Changes an active user's own name. The name is
+#               trimmed; it must not be empty, longer than
+#               PROFILE_NAME_MAX_LENGTH, or contain a control
+#               character. Nothing else about the account -- the email
+#               in particular -- can be changed here. A change is
+#               recorded in the authentication audit log, without the
+#               old or the new name.
+#
+#  Parameters:  user_id - Internal user ID of the signed-in user.
+#               full_name - The name the user wants shown.
+#
+#  Returns:     dict[str, Any] - ok flag and status code; on success
+#                                the profile as it now is.
+#
+#***************************************************************
+
+def update_profile_name(user_id: int, full_name: str) -> dict[str, Any]:
+    name = full_name.strip() if isinstance(full_name, str) else ""
+
+    if not name:
+        return {"ok": False, "code": "name_required", "message": "Enter your name."}
+
+    if len(name) > PROFILE_NAME_MAX_LENGTH:
+        return {
+            "ok": False,
+            "code": "name_too_long",
+            "message": f"Your name must be {PROFILE_NAME_MAX_LENGTH} characters or fewer.",
+        }
+
+    # A name is one line of ordinary text: no line break, tab or other control character.
+    if any(not character.isprintable() for character in name):
+        return {"ok": False, "code": "name_invalid", "message": "Your name contains characters that cannot be used."}
+
+    # Only a real change is written (and audited). The user is named by id alone: no other row can match.
+    update_sql = text(f"""
+        UPDATE app_users
+        SET full_name = :full_name
+        WHERE id = :user_id
+          AND is_active = TRUE
+          AND full_name IS DISTINCT FROM :full_name
+        RETURNING {_ACCOUNT_PROFILE_COLUMNS}
+    """)  # nosec B608 - a module constant, never request input
+
+    engine = get_engine()
+    with engine.begin() as conn:
+        changed = conn.execute(update_sql, {"user_id": user_id, "full_name": name}).mappings().first()
+
+    if changed is None:
+        # Already that name -- or no such active user.
+        profile = get_account_profile(user_id)
+        if profile is None:
+            return {"ok": False, "code": "user_not_found", "message": "User account could not be found."}
+        return {"ok": True, "code": "profile_unchanged", "profile": profile}
+
+    profile = dict(changed)
+    log_auth_event(
+        event_type="profile_name_updated",
+        is_success=True,
+        user_id=user_id,
+        email=profile["email"],
+        message="Profile name updated.",
+    )
+    return {"ok": True, "code": "profile_updated", "profile": profile}

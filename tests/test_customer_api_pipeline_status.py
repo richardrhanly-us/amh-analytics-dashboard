@@ -1101,7 +1101,7 @@ def test_the_branch_routes_are_exactly_the_seven_operational_endpoints_the_six_r
                      "settings/efficiency", "settings/efficiency"]
 
 
-def test_the_customer_api_has_exactly_twenty_five_routes_all_get_except_login_logout_and_the_two_settings_puts():
+def test_the_customer_api_has_exactly_thirty_routes_and_every_one_that_is_not_a_get_is_named_here():
     customer = sorted((method, route.path) for route in main.customer_router.routes for method in route.methods)
 
     # Reports R4 added three: the organization-level reports (customer_api.organization_report_routes).
@@ -1109,13 +1109,22 @@ def test_the_customer_api_has_exactly_twenty_five_routes_all_get_except_login_lo
     # (customer_api.efficiency_settings_routes). The two PUTs are the only routes that change stored data.
     # Reports R6C added one: a sorter site's Efficiency report (customer_api.efficiency_report_routes), a GET.
     # Reports R7A added one: a sorter site's Bin Volume report (customer_api.report_routes), a GET.
-    assert len(customer) == 25
-    assert [path for method, path in customer if method == "POST"] == ["/api/auth/login", "/api/auth/logout"]
+    # R8A added five: the signed-in user's own account (a GET, a PUT and a POST) and password reset (two POSTs),
+    # in customer_api.account_routes. Every one of the four that is not a GET requires an allowed Origin.
+    assert len(customer) == 30
+    assert [path for method, path in customer if method == "POST"] == [
+        "/api/account/change-password",
+        "/api/auth/login",
+        "/api/auth/logout",
+        "/api/auth/password-reset/complete",
+        "/api/auth/password-reset/request",
+    ]
     assert [path for method, path in customer if method == "PUT"] == [
+        "/api/account/profile",
         "/api/organizations/{org_slug}/branches/{branch_slug}/settings/efficiency",
         "/api/organizations/{org_slug}/settings/efficiency",
     ]
-    assert sum(1 for method, _ in customer if method == "GET") == 21
+    assert sum(1 for method, _ in customer if method == "GET") == 22
     assert ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/pipeline-status") in customer
 
 
