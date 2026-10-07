@@ -228,6 +228,8 @@ export function liveRoutes(orgSlug: string, branchSlug: string, live: LiveFixtur
  *   rejects(date)    that day's rejects. All of a day's rejects have the reason `reasonOn(date)`.
  *   transit          each destination gets `share` of the day's check-ins, rounded down; `other` likewise; the
  *                    rest stay home.
+ *   bins             each sort bin gets `share` of the day's check-ins, rounded down; whatever is left has no
+ *                    recognized bin. A bin's check-ins are split between the two hours as the day's are.
  */
 export interface ReportFixture {
   timezone: string
@@ -240,6 +242,8 @@ export interface ReportFixture {
   home: string
   transit: Array<[key: string, label: string, share: number]>
   other: number
+  /** Sort bins, in numeric order of key. A bin with no check-ins in a range is left out of that range's answer. */
+  bins: Array<[key: string, share: number]>
 }
 
 const DAY_MS = 86_400_000
@@ -253,7 +257,8 @@ export function datesBetween(from: string, to: string): string[] {
 /**
  * A sorter with a weekly rhythm: 100 check-ins on a Monday, 20 more each day to 180 on a Friday, 60 on a
  * Saturday and none on a Sunday; one reject for every 20 check-ins. A tenth goes to Westside and a twentieth to
- * Library Express. Today is Monday 5 October 2026.
+ * Library Express. Four sort bins -- 0, 1, 2 and 10 -- take a fifth, three tenths, a quarter and a fifth; the
+ * remaining twentieth has no recognized bin. Today is Monday 5 October 2026.
  */
 export const REPORT: ReportFixture = {
   timezone: 'America/Chicago',
@@ -268,6 +273,12 @@ export const REPORT: ReportFixture = {
     ['library_express', 'Library Express', 0.05],
   ],
   other: 0,
+  bins: [
+    ['0', 0.2],
+    ['1', 0.3],
+    ['2', 0.25],
+    ['10', 0.2],
+  ],
 }
 
 function rangeOf(report: ReportFixture, from: string, to: string) {
@@ -329,6 +340,26 @@ export const reportBody = {
       })),
     }
   },
+  bins: (report: ReportFixture, from: string, to: string) => {
+    const days = datesBetween(from, to).map((date) => report.checkins(date))
+    const total = sum(days)
+    const bins = report.bins
+      .map(([key, share]) => {
+        const byDay = days.map((checkins) => Math.floor(checkins * share))
+        const early = sum(byDay.map((count) => Math.floor(count / 2)))
+        return {
+          key,
+          checkin_count: sum(byDay),
+          hours: Array.from({ length: 24 }, (_, hour) =>
+            hour === report.hours[0] ? early : hour === report.hours[1] ? sum(byDay) - early : 0,
+          ),
+        }
+      })
+      // Only bins that were observed.
+      .filter((bin) => bin.checkin_count > 0)
+    const known = sum(bins.map((bin) => bin.checkin_count))
+    return { range: rangeOf(report, from, to), checkin_count: total, known_bin_count: known, unknown_bin_count: total - known, bins }
+  },
   reliability: (report: ReportFixture, from: string, to: string) => {
     const days = datesBetween(from, to).map((date) => ({
       date,
@@ -366,6 +397,7 @@ export function reportRoutes(orgSlug: string, branchSlug: string, report: Report
     [`${base}/reports/overview?from=*&to=*`]: answer('overview'),
     [`${base}/reports/volume?from=*&to=*`]: answer('volume'),
     [`${base}/reports/routing?from=*&to=*`]: answer('routing'),
+    [`${base}/reports/bins?from=*&to=*`]: answer('bins'),
     [`${base}/reports/reliability?from=*&to=*`]: answer('reliability'),
   }
 }

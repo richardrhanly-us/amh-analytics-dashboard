@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 
 import { BarChart, type Bar } from './BarChart.tsx'
 
@@ -31,6 +31,34 @@ export function ChartFigure({
   columns: readonly string[]
   rows: ReadonlyArray<readonly string[]>
 }) {
+  return (
+    <Figure name={name} heading={heading} summary={summary} columns={columns} rows={rows}>
+      {(summaryName) => <BarChart label={chartLabel} describedBy={summaryName} bars={bars} emptyText={emptyText} />}
+    </Figure>
+  )
+}
+
+/**
+ * The frame every chart here has: a heading, the sentence that says what the
+ * chart shows, the chart itself -- whatever `children` draws, given the id
+ * of that sentence to be described by -- and a button that shows the same
+ * figures as a table.
+ */
+export function Figure({
+  name,
+  heading,
+  summary,
+  columns,
+  rows,
+  children,
+}: {
+  name: string
+  heading: string
+  summary: string
+  columns: readonly string[]
+  rows: ReadonlyArray<readonly string[]>
+  children: (summaryName: string) => ReactNode
+}) {
   const [tableShown, setTableShown] = useState(false)
   const headingName = `${name}-heading`
   const summaryName = `${name}-summary`
@@ -42,7 +70,7 @@ export function ChartFigure({
       <p className="chart-summary" id={summaryName}>
         {summary}
       </p>
-      <BarChart label={chartLabel} describedBy={summaryName} bars={bars} emptyText={emptyText} />
+      {children(summaryName)}
       <button
         type="button"
         className="button-secondary"

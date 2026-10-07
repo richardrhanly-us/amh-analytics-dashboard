@@ -177,6 +177,16 @@ describe('scope of this block', () => {
     expect(efficiencySources).not.toMatch(/\b45(\.0)?\b|17\.56|\b130\b|8400|118003/)
     // Anything that diagnoses or advises is still not in this app.
     expect(offenders(/top issues|recommended attention|correlat|caused by|exception bin|estimated holds/i)).toEqual([])
+    // Bin volume (Reports R7B) counts check-ins by bin and says nothing more about a bin: it is not called
+    // utilization or routing, and no bin is an overflow, an exception or a place for holds.
+    expect(offenders(/bin utili[sz]ation|bin routing|bin_utili|overflow bin|estimated hold|hold shelf/i)).toEqual([])
+    const binVolume = shipped.find(([path]) => path === '../reports/BinVolumeSection.tsx')?.[1] ?? ''
+    expect(binVolume).toMatch(/heading="Bin volume"/)
+    // A bin's label is made in one place, from its key alone; no bin number is written into the section.
+    expect(binVolume).toMatch(/const binLabel = \(bin: BinVolumeBin\) => `Bin \$\{bin\.key\}`/)
+    expect(binVolume).not.toMatch(/key === ['"]\d|=== 7\b|length === 7|Bin [0-9]/)
+    // It is every member's report, and a bin is not a destination or a measure of fullness.
+    expect(binVolume).not.toMatch(/admin|owner|capacity|destination|exception|overflow/i)
   })
 })
 

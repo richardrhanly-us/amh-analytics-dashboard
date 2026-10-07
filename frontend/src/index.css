@@ -1159,3 +1159,146 @@ button[aria-disabled='true'] {
     gap: 0.75rem 1.5rem;
   }
 }
+
+/*
+ * Bin volume. What the section is, in a sentence or two under its heading, at a reading width; and words in place
+ * of the figures when a range has none to show.
+ */
+.section-intro {
+  max-width: var(--prose-width);
+  margin: 0 0 0.375rem;
+}
+
+.section-intro.quiet {
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+}
+
+.report-empty {
+  max-width: var(--prose-width);
+  margin: 1rem 0 0;
+}
+
+.report-section .metrics + .notice {
+  margin: 1rem 0 0;
+}
+
+/*
+ * A bar for each observed bin, sideways: its name, the bar, its count and share. Every bin keeps its own label
+ * however many there are. The name and figure columns are as wide as the widest of each, so the bars all start
+ * and end on the same lines and can be compared. With many bins the rows are set in two columns where the panel
+ * is wide enough for two, reading down the first and then the second, so twenty bins are ten rows tall.
+ */
+.bin-bars {
+  container-type: inline-size;
+  max-width: 64rem;
+  margin: 0.75rem 0;
+}
+
+.bin-bar {
+  display: grid;
+  grid-template-columns: 4.75rem minmax(2rem, 1fr) 4.25rem 3.25rem;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.25rem 0;
+  break-inside: avoid;
+}
+
+.bin-bar-name {
+  white-space: nowrap;
+}
+
+.bin-bar-track {
+  display: block;
+  height: 0.875rem;
+  border-radius: 0.1875rem;
+  background: var(--chart-band);
+}
+
+.bin-bar-track span {
+  display: block;
+  height: 100%;
+  border-radius: 0.1875rem;
+  background: var(--chart-bar);
+}
+
+.bin-bar-value,
+.bin-bar-share {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.bin-bar-share {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+@media (min-width: 64rem) {
+  .bin-bars-many {
+    max-width: none;
+    columns: 2;
+    column-gap: 3rem;
+  }
+}
+
+/* On a narrow screen the share is left to the table: the name, the bar and the count are what fit. */
+@media (max-width: 30rem) {
+  .bin-bar {
+    grid-template-columns: 4.5rem minmax(1.5rem, 1fr) 3.75rem;
+    gap: 0.5rem;
+  }
+
+  .bin-bar-share {
+    display: none;
+  }
+}
+
+/*
+ * Bin by hour: 26 columns. Figures are set a little smaller and closer than in other tables so that a wide
+ * screen shows all of them at once; on anything narrower the box scrolls sideways and the bin's name stays put.
+ */
+.bin-hours {
+  font-size: 0.875rem;
+}
+
+.table-scroll .bin-hours th,
+.table-scroll .bin-hours td {
+  padding: 0.3125rem 0.3125rem;
+}
+
+.table-scroll .bin-hours tbody th,
+.table-scroll .bin-hours thead th:first-child {
+  padding-right: 0.75rem;
+}
+
+.bin-hours thead th {
+  text-align: right;
+}
+
+.bin-hours thead th:first-child,
+.bin-hours tbody th {
+  position: sticky;
+  left: 0;
+  background: var(--surface);
+  text-align: left;
+}
+
+/*
+ * Every cell is its number. Behind the number, an hour with volume has a tint that deepens with the count -- the
+ * busiest hour of the table the deepest -- so the shape of each bin's day can be seen at a glance. The tint only
+ * repeats what the figure says and is never strong enough to dim it. Zero is written as 0, quieter, with no tint.
+ */
+.bin-hours td[style] {
+  background: color-mix(in srgb, var(--chart-bar) calc(var(--heat) * 26%), transparent);
+}
+
+.bin-hours .cell-zero {
+  color: var(--muted);
+}
+
+.bin-hours .cell-total,
+.bin-hours thead th:last-child {
+  border-left: 1px solid var(--line);
+  font-weight: 600;
+}
