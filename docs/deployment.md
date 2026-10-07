@@ -177,16 +177,19 @@ scheduled task environment for the agent, CI secrets for the pipeline.
 | `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS` | backend | required for browser login | empty = every state-changing `/api` request is refused (comma-separated exact origins, e.g. `https://app.example.com`) |
 | `SORTVIEW_CUSTOMER_COOKIE_SECURE` | backend | optional | `true` (only the exact value `false` turns `Secure` off, for local HTTP development) |
 | `SORTVIEW_LOGIN_RATE_LIMIT` | backend | optional | `10/minute` (per client address, `POST /api/auth/login`) |
+| `SORTVIEW_CUSTOMER_APP_URL` | backend | required for password reset from the customer app | -- (the origin people open the customer app at, e.g. `https://app.example.com`: no path, and it must be one of `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS`. Reset emails requested through `/api` link to `<this>/reset-password#token=...` -- the token is in the URL fragment, which browsers do not send to a server, so it is not in access logs or `Referer` headers. Unset or not allowed = `POST /api/auth/password-reset/request` answers 503 for every address) |
+| `SORTVIEW_PASSWORD_ATTEMPT_RATE_LIMIT` | backend | optional | `10/minute` (per client address; `POST /api/account/change-password` and `POST /api/auth/password-reset/complete`, each its own bucket) |
+| `SORTVIEW_PASSWORD_RESET_REQUEST_RATE_LIMIT` | backend | optional | `5/minute` (per client address, `POST /api/auth/password-reset/request`) |
 | `SORTVIEW_API_DOCS_ENABLED` | backend | optional | `false` (`/docs`, `/redoc` and `/openapi.json` are not served; set `true` for local development only) |
 | `SORTVIEW_DEMO_MODE_ENABLED` | dashboard | optional | `false` |
 | `SORTVIEW_GUEST_EMAIL` | dashboard | required if demo mode on | -- |
 | `SORTVIEW_GUEST_PASSWORD` | dashboard | required if demo mode on | -- |
-| `SORTVIEW_APP_URL` | dashboard | required for password reset | -- |
-| `SORTVIEW_SMTP_HOST` | dashboard | required for password reset | -- |
-| `SORTVIEW_SMTP_PORT` | dashboard | optional | `587` |
-| `SORTVIEW_SMTP_USERNAME` | dashboard | required for password reset | -- |
-| `SORTVIEW_SMTP_PASSWORD` | dashboard | required for password reset | -- |
-| `SORTVIEW_EMAIL_FROM` | dashboard | required for password reset | -- |
+| `SORTVIEW_APP_URL` | dashboard | required for password reset | -- (the dashboard's own address: reset emails requested IN THE DASHBOARD link to `<this>/?reset_token=...`. Not used by the backend) |
+| `SORTVIEW_SMTP_HOST` | dashboard, backend | required for password reset | -- (the backend needs the same four SMTP settings to send reset emails requested through `/api`; if any is missing there, the request endpoint answers 503) |
+| `SORTVIEW_SMTP_PORT` | dashboard, backend | optional | `587` |
+| `SORTVIEW_SMTP_USERNAME` | dashboard, backend | required for password reset | -- |
+| `SORTVIEW_SMTP_PASSWORD` | dashboard, backend | required for password reset | -- |
+| `SORTVIEW_EMAIL_FROM` | dashboard, backend | required for password reset | -- |
 | `SORTVIEW_ALLOW_FILE_FALLBACK` | dashboard | optional | `false` |
 | `SORTVIEW_CHECKINS_ORG_COLUMN` | dashboard | optional | `customer_id` |
 | `SORTVIEW_CHECKINS_BRANCH_COLUMN` | dashboard | optional | `branch_id` |

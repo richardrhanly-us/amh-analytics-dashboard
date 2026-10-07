@@ -9,7 +9,7 @@ them.
 from __future__ import annotations
 
 import os
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
 
 from limits import parse_many
@@ -93,15 +93,70 @@ def allowed_origins() -> frozenset[str]:
 DEFAULT_LOGIN_RATE_LIMIT = "10/minute"
 
 
-def login_rate_limit() -> str:
-    """SORTVIEW_LOGIN_RATE_LIMIT in slowapi format. A value that does not
-    parse falls back to the default instead of leaving login unlimited."""
-    value = os.getenv("SORTVIEW_LOGIN_RATE_LIMIT", DEFAULT_LOGIN_RATE_LIMIT).strip()
+def _rate_limit(variable: str, default: str) -> str:
+    value = os.getenv(variable, default).strip()
     try:
         parse_many(value)
     except ValueError:
-        return DEFAULT_LOGIN_RATE_LIMIT
+        return default
     return value
+
+
+def login_rate_limit() -> str:
+    """SORTVIEW_LOGIN_RATE_LIMIT in slowapi format. A value that does not
+    parse falls back to the default instead of leaving login unlimited."""
+    return _rate_limit("SORTVIEW_LOGIN_RATE_LIMIT", DEFAULT_LOGIN_RATE_LIMIT)
+
+
+# --- account rate limits ------------------------------------------------------------
+
+# Each of these takes a secret a caller could otherwise guess at without end: a current password, or a reset
+# token. Like login, each is limited per client address, in its own bucket.
+DEFAULT_PASSWORD_ATTEMPT_RATE_LIMIT = "10/minute"  # nosec B105 - a rate, not a password
+# Asking for a reset sends an email. Fewer of those: nobody needs more than a few a minute.
+DEFAULT_PASSWORD_RESET_REQUEST_RATE_LIMIT = "5/minute"  # nosec B105 - a rate, not a password
+
+
+def password_attempt_rate_limit() -> str:
+    """SORTVIEW_PASSWORD_ATTEMPT_RATE_LIMIT: changing a password, and completing
+    a reset. A value that does not parse falls back to the default."""
+    return _rate_limit("SORTVIEW_PASSWORD_ATTEMPT_RATE_LIMIT", DEFAULT_PASSWORD_ATTEMPT_RATE_LIMIT)
+
+
+def password_reset_request_rate_limit() -> str:
+    """SORTVIEW_PASSWORD_RESET_REQUEST_RATE_LIMIT: asking for a reset email. A
+    value that does not parse falls back to the default."""
+    return _rate_limit("SORTVIEW_PASSWORD_RESET_REQUEST_RATE_LIMIT", DEFAULT_PASSWORD_RESET_REQUEST_RATE_LIMIT)
+
+
+# --- where the customer application is ----------------------------------------------
+
+# The page of the customer (React) application that completes a password reset, and the name the token travels
+# under -- in the link's FRAGMENT (#token=...), not its query string. A browser never sends a fragment to a
+# server, so the token is not in the request for the page, in a web server's or proxy's access log, or in a
+# Referer header; the page reads it and submits it in the body of POST /api/auth/password-reset/complete.
+# The dashboard's own reset link (SORTVIEW_APP_URL/?reset_token=...) is a different address and is not built here.
+PASSWORD_RESET_PATH = "/reset-password"  # nosec B105 - a URL path
+PASSWORD_RESET_TOKEN_PARAMETER = "token"  # nosec B105 - a fragment parameter's name
+
+
+def customer_app_origin() -> str | None:
+    """SORTVIEW_CUSTOMER_APP_URL: the origin people open the customer
+    application at, for links sent by email. None unless it is a well-formed
+    origin AND one of the allowed browser origins -- a link is never built to
+    somewhere this API would then refuse requests from. Nothing is assumed
+    when it is unset: there is no default host."""
+    origin = canonical_origin(os.getenv("SORTVIEW_CUSTOMER_APP_URL", "").strip())
+    return origin if origin is not None and origin in allowed_origins() else None
+
+
+def password_reset_url(token: str) -> str | None:
+    """The link that completes a reset in the customer application, or None
+    when that application's address is not configured."""
+    origin = customer_app_origin()
+    if origin is None:
+        return None
+    return f"{origin}{PASSWORD_RESET_PATH}#{urlencode({PASSWORD_RESET_TOKEN_PARAMETER: token})}"
 
 
 # --- product time zone ---------------------------------------------------------------

@@ -10,6 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 from slowapi import Limiter
 
+from customer_api.account_routes import create_account_router
 from customer_api.auth_routes import create_auth_router
 from customer_api.efficiency_report_routes import create_efficiency_report_router
 from customer_api.efficiency_settings_routes import create_efficiency_settings_router
@@ -30,6 +31,7 @@ def create_customer_router(limiter: Limiter) -> APIRouter:
     """
     router = APIRouter(prefix=API_PREFIX, route_class=CustomerApiRoute)
     router.include_router(create_auth_router(limiter))
+    router.include_router(create_account_router(limiter))
     router.include_router(create_organization_router())
     router.include_router(create_operational_router())
     router.include_router(create_report_router())
