@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { LoadFailure } from '../components/LoadFailure.tsx'
 import { DateRangeControl, RangeShown } from './DateRangeControl.tsx'
 import { DEFAULT_PRESET_DAYS, lastDays, type DateRange } from './dateRange.ts'
+import { BinVolumeSection } from './BinVolumeSection.tsx'
 import { EfficiencySection } from './EfficiencySection.tsx'
 import { OverviewSection, ReliabilitySection, RoutingSection, VolumeSection } from './ReportSections.tsx'
 import { useProductDay, useSorterReports } from './useSorterReports.ts'
@@ -12,7 +13,7 @@ const UNAVAILABLE = 'Reports are not available for this sorter yet.'
 interface Sorter {
   orgSlug: string
   branchSlug: string
-  /** The person may see the sorter's Efficiency report: a fifth section, read on its own. */
+  /** The person may see the sorter's Efficiency report: a sixth section, read on its own. */
   efficiency: boolean
 }
 
@@ -37,8 +38,9 @@ function Reports({ orgSlug, branchSlug, efficiency, range, today }: Sorter & { r
       <OverviewSection read={reports.overview} />
       <VolumeSection read={reports.volume} />
       <RoutingSection read={reports.routing} />
+      <BinVolumeSection read={reports.bins} />
       <ReliabilitySection read={reports.reliability} />
-      {/* Not asked for at all unless the person may see it. Whatever becomes of it, the four above are untouched. */}
+      {/* Not asked for at all unless the person may see it. Whatever becomes of it, the five above are untouched. */}
       {efficiency && <EfficiencySection orgSlug={orgSlug} branchSlug={branchSlug} range={range} today={today} />}
     </div>
   )
@@ -58,8 +60,8 @@ function ReportsForDay({ orgSlug, branchSlug, efficiency, timeZone, today }: Sor
 
 /**
  * The reports of one sorter the user can see: Overview, Volume & capacity,
- * Routing and Reliability -- and, for the organization's owners and admins,
- * Efficiency -- over a range of days the person chooses.
+ * Routing, Bin volume and Reliability -- and, for the organization's owners
+ * and admins, Efficiency -- over a range of days the person chooses.
  * `branchSlug` is the sorter's host branch: the scope the API reads by.
  *
  * The product's zone, and its date today, are read first: a range is made

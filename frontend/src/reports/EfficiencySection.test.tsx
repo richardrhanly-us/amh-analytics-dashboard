@@ -126,7 +126,7 @@ afterEach(() => {
 // =====================================================================================================================
 
 describe('who sees Efficiency', () => {
-  it.each(['owner', 'admin'])('an %s sees it as the fifth section, after the four every member has', async (role) => {
+  it.each(['owner', 'admin'])('an %s sees it as the sixth section, after the five every member has', async (role) => {
     serve(efficiencyStore(), {}, role)
 
     await page()
@@ -135,6 +135,7 @@ describe('who sees Efficiency', () => {
       'report-overview-heading',
       'report-volume-heading',
       'report-routing-heading',
+      'report-bins-heading',
       'report-reliability-heading',
       'report-efficiency-heading',
     ])
@@ -150,7 +151,9 @@ describe('who sees Efficiency', () => {
     await pass(500)
 
     expect(screen.queryByRole('region', { name: 'Efficiency' })).not.toBeInTheDocument()
-    expect(screen.getAllByRole('region')).toHaveLength(4)
+    // The five every member has, Bin volume among them.
+    expect(screen.getAllByRole('region')).toHaveLength(5)
+    expect(screen.getByRole('region', { name: 'Bin volume' })).toBeInTheDocument()
     expect(main()).not.toHaveTextContent(/Efficiency|labor|assumption|\$/i)
     expect(efficiencyRequests()).toEqual([])
   })
@@ -164,8 +167,8 @@ describe('who sees Efficiency', () => {
     expect(efficiency()).not.toHaveTextContent(/\$|hours|assumption|Try again/)
     expect(within_().queryByRole('button')).not.toBeInTheDocument()
     expect(efficiencyRequests()).toHaveLength(1)
-    // The four reports every member has are untouched.
-    expect(screen.getAllByRole('region')).toHaveLength(5)
+    // The five reports every member has are untouched.
+    expect(screen.getAllByRole('region')).toHaveLength(6)
     expect(within(screen.getByRole('region', { name: 'Overview' })).getByText('3,140')).toBeInTheDocument()
     expect(screen.queryByText('Could not load.')).not.toBeInTheDocument()
   })
@@ -434,7 +437,7 @@ describe('when the Efficiency report cannot be loaded', () => {
     // Asked once: the same answer would come back however often it was asked.
     await pass(5000)
     expect(efficiencyRequests()).toHaveLength(1)
-    expect(screen.getAllByRole('region')).toHaveLength(5)
+    expect(screen.getAllByRole('region')).toHaveLength(6)
   })
 
   it('says it is not available when there is no such report for the sorter', async () => {
@@ -444,7 +447,7 @@ describe('when the Efficiency report cannot be loaded', () => {
 
     expect(within_().getByText('Efficiency is not available for this sorter yet.')).toBeInTheDocument()
     expect(within_().queryByRole('button')).not.toBeInTheDocument()
-    expect(screen.getAllByRole('region')).toHaveLength(5)
+    expect(screen.getAllByRole('region')).toHaveLength(6)
   })
 
   it('treats a malformed answer as a failure and shows none of it', async () => {

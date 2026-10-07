@@ -21,7 +21,9 @@ import {
  * THE API SENDS COUNTS AND NOTHING ELSE. Every figure is a whole number;
  * rates, averages and "busiest" are worked out from them (reports/derive.ts).
  * Every list is full length: one entry per date of the range, 24 hours, eight
- * reject reasons, every configured destination -- with zeros, never gaps.
+ * reject reasons, every configured destination -- with zeros, never gaps. The
+ * one list that is not is the bin report's `bins`: which bins a sorter has is
+ * not known, so it holds only the bins that were observed.
  *
  * Each response is checked against that shape, AND against its own
  * arithmetic, and is used whole or not at all: an answer whose parts do not
@@ -81,7 +83,36 @@ export interface ReliabilityReport {
   days: Array<{ date: string; checkin_count: number; reject_count: number }>
 }
 
-export const REPORT_KINDS = ['overview', 'volume', 'routing', 'reliability'] as const
+/** One sort bin that check-ins of the range were logged in. */
+export interface BinVolumeBin {
+  /** The bin's number as the sorter logs it, without leading zeros: "0", "4", "12". An identifier, not a count. */
+  key: string
+  checkin_count: number
+  /** Always 24, hours 0 to 23. Each count is the TOTAL for that wall-clock hour across the range. */
+  hours: number[]
+}
+
+/**
+ * Check-ins by the physical sort bin each was logged in. A bin is where an
+ * item went on the sorter: it says nothing of how full the bin was, where
+ * the item was routed, or what it was.
+ */
+export interface BinVolumeReport {
+  range: ReportRange
+  /** Every check-in of the range: `known_bin_count + unknown_bin_count`. */
+  checkin_count: number
+  known_bin_count: number
+  /** Check-ins whose logged bin was missing or was not a bin number. Not a bin, and not in `bins`. */
+  unknown_bin_count: number
+  /**
+   * Only the bins that were OBSERVED in the range, in numeric order. A bin
+   * that is not here had no check-ins in the range -- or does not exist:
+   * which bins a sorter has is not known, so a missing bin is not a zero.
+   */
+  bins: BinVolumeBin[]
+}
+
+export const REPORT_KINDS = ['overview', 'volume', 'routing', 'bins', 'reliability'] as const
 export type ReportKind = (typeof REPORT_KINDS)[number]
 
 const MS_PER_DAY = 86_400_000
@@ -299,6 +330,53 @@ export async function getReliabilityReport(
     [sum(report.reasons.map((reason) => reason.reject_count)), report.reject_count],
     [sum(report.days.map((day) => day.reject_count)), report.reject_count],
     [sum(report.days.map((day) => day.checkin_count)), report.checkin_count],
+  )
+  return report
+}
+
+// A bin's key: its number, one to four digits, with no leading zero. "04" and "Bin 4" are not keys.
+const BIN_KEY = /^(0|[1-9][0-9]{0,3})$/
+
+/** GET .../reports/bins?from=YYYY-MM-DD&to=YYYY-MM-DD */
+export async function getBinVolumeReport(
+  orgSlug: string,
+  branchSlug: string,
+  from: string,
+  to: string,
+  signal?: AbortSignal,
+): Promise<BinVolumeReport> {
+  const body = record(await apiRequest(reportPath(orgSlug, branchSlug, 'bins', from, to), { signal }))
+  const reportRange = range(body, from, to)
+  // Any number of bins, none included: how many a sorter has is not known here.
+  if (!Array.isArray(body.bins)) {
+    throw unexpectedResponse(200)
+  }
+  const bins = body.bins.map(record).map((entry) => {
+    if (typeof entry.key !== 'string' || !BIN_KEY.test(entry.key) || !Array.isArray(entry.hours) || entry.hours.length !== 24) {
+      throw unexpectedResponse(200)
+    }
+    const bin = { key: entry.key, checkin_count: count(entry.checkin_count), hours: entry.hours.map(count) }
+    // A bin is listed because something was logged in it: one with nothing is not an observed bin.
+    if (bin.checkin_count === 0) {
+      throw unexpectedResponse(200)
+    }
+    agrees([sum(bin.hours), bin.checkin_count])
+    return bin
+  })
+  // Each bin once, in the order of its number: 2 before 10.
+  if (bins.some((bin, index) => index > 0 && Number(bins[index - 1].key) >= Number(bin.key))) {
+    throw unexpectedResponse(200)
+  }
+  const report = {
+    range: reportRange,
+    checkin_count: count(body.checkin_count),
+    known_bin_count: count(body.known_bin_count),
+    unknown_bin_count: count(body.unknown_bin_count),
+    bins,
+  }
+  agrees(
+    [report.known_bin_count + report.unknown_bin_count, report.checkin_count],
+    [sum(bins.map((bin) => bin.checkin_count)), report.known_bin_count],
   )
   return report
 }

@@ -60,9 +60,10 @@ deferred.
 ## Reports
 
 A sorter has two views, linked from under its name: **Live Today** and
-**Reports**. Reports covers a range of days in four sections, each read from
-its own endpoint under the sorter's host branch
-(`.../reports/{overview|volume|routing|reliability}?from=&to=`):
+**Reports**. Reports covers a range of days in five sections every member
+sees, each read from its own endpoint under the sorter's host branch
+(`.../reports/{overview|volume|routing|bins|reliability}?from=&to=`), in this
+order:
 
 - **Overview**: check-ins, average per day, active days, transit, rejects,
   busiest day, and a daily chart.
@@ -70,10 +71,18 @@ its own endpoint under the sorter's host branch
   busiest day, weekday and hour, a typical week and a typical day.
 - **Routing**: home, each configured destination in the API's order, and
   "Other" when there is any; daily transit.
+- **Bin volume**: which physical sorter bins received check-ins. Known-bin
+  check-ins, bins observed, bin coverage (known over all check-ins), a bar for
+  each observed bin, and a bin-by-hour table. Only bins OBSERVED in the range
+  are listed: the sorter's configured bin inventory is not stored, so a
+  missing bin is not a zero. Check-ins with no recognized bin are a separate
+  count, never a bin. A bin is its number ("Bin 0", "Bin 12") and nothing
+  else: not how full it was, not a routing destination, not a kind of item.
 - **Reliability**: rejects, the reject rate, daily rejects and reasons, under
   the API's own classification.
 
-There are no organization-wide reports, and nothing about efficiency or cost.
+A sixth section, **Efficiency**, follows for the organization's owners and
+admins only.
 
 **The range.** Presets for the last 7, 30 and 90 days, or two dates. It opens
 on the last 30 days ending today. Dates are calendar dates in the product's

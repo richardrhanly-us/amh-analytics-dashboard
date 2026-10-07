@@ -3,10 +3,12 @@ import { useQuery } from '@tanstack/react-query'
 import { isApiError } from '../api/client.ts'
 import { getPipelineStatus, type PipelineStatus } from '../api/liveToday.ts'
 import {
+  getBinVolumeReport,
   getOverviewReport,
   getReliabilityReport,
   getRoutingReport,
   getVolumeReport,
+  type BinVolumeReport,
   type OverviewReport,
   type ReliabilityReport,
   type ReportKind,
@@ -124,26 +126,29 @@ export interface SorterReports {
   overview: ReportRead<OverviewReport>
   volume: ReportRead<VolumeReport>
   routing: ReportRead<RoutingReport>
+  bins: ReportRead<BinVolumeReport>
   reliability: ReportRead<ReliabilityReport>
   /** Any one of them was answered 404: there are no reports for this sorter. */
   unavailable: boolean
 }
 
 /**
- * The four reports of one sorter over one range, each read on its own: one
- * that fails says so in its own section and leaves the other three alone.
+ * The five reports of one sorter over one range, each read on its own: one
+ * that fails says so in its own section and leaves the other four alone.
  */
 export function useSorterReports(orgSlug: string, branchSlug: string, range: DateRange): SorterReports {
   const overview = useReport('overview', getOverviewReport, orgSlug, branchSlug, range)
   const volume = useReport('volume', getVolumeReport, orgSlug, branchSlug, range)
   const routing = useReport('routing', getRoutingReport, orgSlug, branchSlug, range)
+  const bins = useReport('bins', getBinVolumeReport, orgSlug, branchSlug, range)
   const reliability = useReport('reliability', getReliabilityReport, orgSlug, branchSlug, range)
 
   return {
     overview,
     volume,
     routing,
+    bins,
     reliability,
-    unavailable: [overview, volume, routing, reliability].some((read) => read.section.status === 'unavailable'),
+    unavailable: [overview, volume, routing, bins, reliability].some((read) => read.section.status === 'unavailable'),
   }
 }

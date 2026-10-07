@@ -31,11 +31,15 @@ const PIPELINE = `GET ${API}/pipeline-status`
 const OVERVIEW = `GET ${API}/reports/overview?from=*&to=*`
 const VOLUME = `GET ${API}/reports/volume?from=*&to=*`
 const ROUTING = `GET ${API}/reports/routing?from=*&to=*`
+const BINS = `GET ${API}/reports/bins?from=*&to=*`
 const RELIABILITY = `GET ${API}/reports/reliability?from=*&to=*`
+// The five reports every member sees, in the order they are shown. Bin volume's own content is tested in
+// BinVolumeSection.test.tsx; here it is one of the five that load, fail and try again each on its own.
 const KINDS = [
   ['overview', OVERVIEW, 'Overview'],
   ['volume', VOLUME, 'Volume & capacity'],
   ['routing', ROUTING, 'Routing'],
+  ['bins', BINS, 'Bin volume'],
   ['reliability', RELIABILITY, 'Reliability'],
 ] as const
 
@@ -183,6 +187,7 @@ describe('arriving at a sorter’s reports', () => {
     pipeline.resolve(jsonResponse(200, { timezone: 'America/Chicago', state: 'ok', last_reported_at: null }))
     await loaded()
     expect(reportRequests(fetchMock).sort()).toEqual([
+      `bins?${DEFAULT_RANGE}`,
       `overview?${DEFAULT_RANGE}`,
       `reliability?${DEFAULT_RANGE}`,
       `routing?${DEFAULT_RANGE}`,
@@ -231,7 +236,7 @@ describe('arriving at a sorter’s reports', () => {
     expect(shown()).toContain('in Pacific/Auckland time.')
   })
 
-  it('has four sections, in order, under the sorter and nothing else', async () => {
+  it('has five sections, in order, under the sorter and nothing else', async () => {
     serve()
 
     renderApp(CENTRAL_REPORTS)
@@ -243,6 +248,7 @@ describe('arriving at a sorter’s reports', () => {
       'Overview',
       'Volume & capacity',
       'Routing',
+      'Bin volume',
       'Reliability',
     ])
     expect(screen.getAllByRole('heading', { level: 5 }).map((heading) => heading.textContent)).toEqual([
@@ -251,6 +257,8 @@ describe('arriving at a sorter’s reports', () => {
       'Typical day',
       'Where check-ins went',
       'Daily transit',
+      'Check-ins by bin',
+      'Bin volume by hour',
       'Daily rejects',
       'Reject reasons',
     ])
@@ -409,7 +417,7 @@ describe('choosing a range', () => {
     await loaded()
 
     expect(reportRequests(fetchMock).sort()).toEqual(
-      ['overview', 'reliability', 'routing', 'volume'].map((kind) => `${kind}?from=2026-09-29&to=2026-10-05`),
+      ['bins', 'overview', 'reliability', 'routing', 'volume'].map((kind) => `${kind}?from=2026-09-29&to=2026-10-05`),
     )
     expect(preset('Last 7 days')).toHaveAttribute('aria-pressed', 'true')
     expect(preset('Last 30 days')).toHaveAttribute('aria-pressed', 'false')
@@ -769,12 +777,12 @@ describe('when a report cannot be loaded', () => {
     expect(requestsFor(fetchMock, 'routing')).toHaveLength(3)
   })
 
-  it('shows all four as failed, each with its own way to try again, when all four fail', async () => {
-    serve({ [OVERVIEW]: SERVER_ERROR, [VOLUME]: SERVER_ERROR, [ROUTING]: SERVER_ERROR, [RELIABILITY]: SERVER_ERROR })
+  it('shows all five as failed, each with its own way to try again, when all five fail', async () => {
+    serve({ [OVERVIEW]: SERVER_ERROR, [VOLUME]: SERVER_ERROR, [ROUTING]: SERVER_ERROR, [BINS]: SERVER_ERROR, [RELIABILITY]: SERVER_ERROR })
 
     renderApp(CENTRAL_REPORTS)
 
-    await waitFor(() => expect(screen.getAllByText('Could not load.')).toHaveLength(4))
+    await waitFor(() => expect(screen.getAllByText('Could not load.')).toHaveLength(5))
     expect(screen.getAllByRole('button', { name: /^Try again: / }).map((button) => button.textContent)).toEqual(
       KINDS.map(([, , heading]) => `Try again: ${heading}`),
     )
@@ -1028,6 +1036,7 @@ describe('reading the reports without seeing or pointing', () => {
       'Bar chart of average check-ins for each day of the week',
       'Bar chart of average check-ins in each hour of the day',
       'Bar chart of check-ins sent to transit destinations on each day of the range',
+      'Bar chart of check-ins in each observed bin',
       'Bar chart of rejects on each day of the range',
     ])
     for (const chart of charts) {
@@ -1035,7 +1044,8 @@ describe('reading the reports without seeing or pointing', () => {
       expect(summary?.textContent?.length).toBeGreaterThan(20)
       // The drawing itself offers nothing to focus on or hover over.
       expect(chart.querySelector('[tabindex], a, button, title')).toBeNull()
-      expect(chart.querySelector('svg')).toHaveAttribute('aria-hidden', 'true')
+      // What is drawn is for the eye only: the image's name and its sentence are what is read out.
+      expect(Array.from(chart.children).every((part) => part.getAttribute('aria-hidden') === 'true' || part.querySelector('svg[aria-hidden="true"]') !== null)).toBe(true)
     }
   })
 
@@ -1047,6 +1057,7 @@ describe('reading the reports without seeing or pointing', () => {
       'Show table: Typical week',
       'Show table: Typical day',
       'Show table: Daily transit',
+      'Show table: Check-ins by bin',
       'Show table: Daily rejects',
     ])
     const toggle = toggles[1]
@@ -1095,6 +1106,7 @@ describe('reading the reports without seeing or pointing', () => {
       'report-overview-heading',
       'report-volume-heading',
       'report-routing-heading',
+      'report-bins-heading',
       'report-reliability-heading',
     ])
     expect(screen.getByRole('table', { name: 'Where check-ins went' })).toBeInTheDocument()
@@ -1105,6 +1117,11 @@ describe('reading the reports without seeing or pointing', () => {
   it('has no element that depends on a pointer, and disables nothing', () => {
     expect(main().querySelectorAll('[title]')).toHaveLength(0)
     expect(main().querySelectorAll('[disabled]')).toHaveLength(0)
-    expect(main().querySelectorAll('[tabindex]:not([tabindex="-1"])')).toHaveLength(0)
+    // The one thing in the tab order that is not a control: the box the bin-by-hour table scrolls sideways in,
+    // which a keyboard has to be able to reach in order to scroll it.
+    const reachable = Array.from(main().querySelectorAll('[tabindex]:not([tabindex="-1"])'))
+    expect(reachable.map((element) => [element.className, element.getAttribute('role'), element.getAttribute('tabindex'), element.getAttribute('aria-labelledby')])).toEqual([
+      ['table-scroll', 'group', '0', 'bin-hours-heading'],
+    ])
   })
 })
