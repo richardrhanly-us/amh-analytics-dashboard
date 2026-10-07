@@ -14,11 +14,14 @@ is used by the Python backend, the Streamlit app or the collector.
 
 Routing is React Router in the browser, and exists only once signed in.
 Signed out, every address shows the sign-in form and keeps its place, so
-signing in lands on the page that was asked for.
+signing in lands on the page that was asked for. The one exception is
+`/reset-password`, which is shown to anyone, signed in or not.
 
 | Address | Page |
 | --- | --- |
 | `/` | Redirects to `/organizations` |
+| `/account` | My account: the signed-in user's name, email, activity and password (`GET /api/account`) |
+| `/reset-password` | Public. Sets a new password with the token from an emailed link (`/reset-password#token=...`) |
 | `/organizations` | The user's organizations (`GET /api/organizations`) |
 | `/organizations/:orgSlug` | One organization and its sorting machines (`GET /api/organizations/{org_slug}`) |
 | `/organizations/:orgSlug/sorters/:sorterSlug` | One sorter and its Live Today dashboard |
@@ -30,6 +33,35 @@ Organizations and sorters appear in addresses by slug only. The API decides
 what a user can see: an organization it does not return, and a sorter that is
 not in the organization it returns, both get the same "not found" page as an
 unknown address. A `401` from the API returns the app to the sign-in form.
+
+## Account and password reset
+
+**My account** (`/account`, linked from the header beside Sign out) belongs
+to the signed-in person and to no organization. The full name can be edited;
+the email address is shown and cannot be changed here. Last sign-in and last
+password change are shown in the browser's own time zone
+(`src/time/localTime.ts`), unlike a library's operating day, which never is.
+
+**Changing the password** ends every session of that user, this one included.
+The app does not wait for a `401` to find that out: on success it clears its
+own session state, goes to `/` and shows the sign-in form with "Password
+changed. Sign in again with your new password."
+
+**Forgot password?** on the sign-in form asks the API to email a reset link.
+Whatever the address, the app shows the same sentence and does not repeat the
+address, so it never reveals whether an account exists.
+
+**The reset link** carries its token in the URL fragment, which browsers do
+not send to servers. `/reset-password` reads the token as the page opens,
+removes it from the address at once (replacing the history entry, so Back
+does not restore it) and from then on holds it only in memory. It is sent
+once, in the body of `POST /api/auth/password-reset/complete`. It is never
+shown, stored, logged or put in a query string; a token that arrives in the
+query string is not read. Completing a reset signs nobody in, and because
+the API ends every session of that account, the app drops any session it held
+at once, without a request, and offers only the way to the sign-in form.
+
+Neither password form has a control to reveal what was typed.
 
 ## Sorting machines, host branches and destinations
 
@@ -204,6 +236,11 @@ origin. In development the Vite proxy provides that:
 
 2. Put `DEV_API_PROXY_TARGET=http://127.0.0.1:8000` in `frontend/.env.local`.
 3. Run `npm run dev` and open http://localhost:5173.
+
+To try password reset locally, the backend also needs
+`SORTVIEW_CUSTOMER_APP_URL=http://localhost:5173`, so that the link it emails
+opens this app, and its email settings; without them the request form reports
+that password reset is not available.
 
 The browser only ever requests `http://localhost:5173/api/...`. Do not point
 the proxy at production. Without a proxy target the app still loads, and

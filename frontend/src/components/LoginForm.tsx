@@ -1,11 +1,21 @@
 import { useState, type FormEvent } from 'react'
 
+import { ForgotPasswordForm } from '../account/ForgotPasswordForm.tsx'
+import type { SignedOutNotice } from '../auth/AuthContext.ts'
 import { useAuth } from '../auth/useAuth.ts'
+import { ArrivalHeading } from './ArrivalHeading.tsx'
 import { ErrorMessage } from './ErrorMessage.tsx'
 import { messageFor } from './errorText.ts'
 
+const NOTICES: Record<SignedOutNotice, string> = {
+  password_changed: 'Password changed. Sign in again with your new password.',
+}
+
 export function LoginForm() {
-  const { login } = useAuth()
+  const { login, state } = useAuth()
+  // "Forgot password?" shows the request form in this one's place, and "Back to sign in" brings this back.
+  const [forgot, setForgot] = useState(false)
+  const [returned, setReturned] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -34,9 +44,32 @@ export function LoginForm() {
     }
   }
 
+  if (forgot) {
+    return (
+      <ForgotPasswordForm
+        initialEmail={email.trim()}
+        onBack={() => {
+          setForgot(false)
+          setReturned(true)
+        }}
+      />
+    )
+  }
+
+  const notice = state.status === 'unauthenticated' ? state.notice : undefined
+
   return (
     <form className="auth-form" onSubmit={handleSubmit} aria-labelledby="login-heading">
-      <h2 id="login-heading">Sign in</h2>
+      <ArrivalHeading id="login-heading" arrive={returned}>
+        Sign in
+      </ArrivalHeading>
+
+      {/* Why the person is here, when this app signed them out itself. */}
+      {notice !== undefined && (
+        <p className="notice" role="status">
+          {NOTICES[notice]}
+        </p>
+      )}
 
       <ErrorMessage message={error} />
 
@@ -69,9 +102,23 @@ export function LoginForm() {
       </div>
 
       {/* Unavailable while signing in, but not `disabled`: a disabled button drops keyboard focus. */}
-      <button type="submit" aria-disabled={submitting}>
-        {submitting ? 'Signing in…' : 'Sign in'}
-      </button>
+      <div className="form-actions">
+        <button type="submit" aria-disabled={submitting}>
+          {submitting ? 'Signing in…' : 'Sign in'}
+        </button>
+        <button
+          type="button"
+          className="button-link"
+          onClick={() => {
+            // The password is not carried to the other form, or kept for the way back.
+            setPassword('')
+            setError(null)
+            setForgot(true)
+          }}
+        >
+          Forgot password?
+        </button>
+      </div>
     </form>
   )
 }

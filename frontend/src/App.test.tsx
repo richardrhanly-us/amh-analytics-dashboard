@@ -121,9 +121,11 @@ describe('the sign-in form', () => {
     expect(passwordInput()).toHaveAttribute('autocomplete', 'current-password')
   })
 
-  it('offers no reset link, remember-me box or sample credentials', async () => {
+  it('offers a way to reset a forgotten password, and no remember-me box or sample credentials', async () => {
     await renderSignedOut()
 
+    // A button that swaps this form for the request form -- not a link, and not the form's submit button.
+    expect(screen.getByRole('button', { name: 'Forgot password?' })).toHaveAttribute('type', 'button')
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
     expect(emailInput()).toHaveValue('')

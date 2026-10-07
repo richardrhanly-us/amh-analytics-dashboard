@@ -1,12 +1,15 @@
 import { QueryClientProvider, type QueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router'
 
+import { ResetPasswordPage } from './account/ResetPasswordPage.tsx'
 import { useAuth } from './auth/useAuth.ts'
 import { ErrorMessage } from './components/ErrorMessage.tsx'
 import { LoginForm } from './components/LoginForm.tsx'
 import { UserMenu } from './components/UserMenu.tsx'
 import { createQueryClient } from './query/queryClient.ts'
 import { AppRouter } from './router/AppRouter.tsx'
+import { RESET_PASSWORD_PATH } from './router/paths.ts'
 
 type QueryClientFactory = (onSessionExpired: () => void) => QueryClient
 
@@ -54,6 +57,10 @@ function AuthView({ createClient }: { createClient: QueryClientFactory }) {
 /** `createClient` exists for tests, which need a query client that does not wait between retries. */
 function App({ createClient = createQueryClient }: { createClient?: QueryClientFactory }) {
   const { state } = useAuth()
+  // The one page that does not wait for sign-in: someone following a password reset link cannot sign in, and
+  // the link must be read whether or not this browser happens to hold a session. It is shown in place of the
+  // session check, the sign-in form and the signed-in pages alike.
+  const resettingPassword = useLocation().pathname.replace(/\/+$/, '') === RESET_PASSWORD_PATH
   const main = useRef<HTMLElement>(null)
   const previousStatus = useRef(state.status)
 
@@ -65,10 +72,11 @@ function App({ createClient = createQueryClient }: { createClient?: QueryClientF
     previousStatus.current = state.status
     const signedIn = before === 'unauthenticated' && state.status === 'authenticated'
     const signedOut = before === 'authenticated' && state.status === 'unauthenticated'
-    if (signedIn || signedOut) {
+    // The reset page moves focus itself, to the heading that says what happened.
+    if ((signedIn || signedOut) && !resettingPassword) {
       main.current?.focus()
     }
-  }, [state.status])
+  }, [state.status, resettingPassword])
 
   return (
     <div className="app">
@@ -77,7 +85,7 @@ function App({ createClient = createQueryClient }: { createClient?: QueryClientF
         {state.status === 'authenticated' && <UserMenu user={state.user} />}
       </header>
       <main ref={main} tabIndex={-1}>
-        <AuthView createClient={createClient} />
+        {resettingPassword ? <ResetPasswordPage /> : <AuthView createClient={createClient} />}
       </main>
     </div>
   )

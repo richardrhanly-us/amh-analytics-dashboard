@@ -1,12 +1,18 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router'
+import { NavLink, useNavigate } from 'react-router'
 
 import type { User } from '../api/auth.ts'
 import { useAuth } from '../auth/useAuth.ts'
+import { ACCOUNT_PATH } from '../router/paths.ts'
 import { ErrorMessage } from './ErrorMessage.tsx'
 import { messageFor } from './errorText.ts'
 
-/** Who is signed in, and the way out. Shown in the header on every signed-in page. */
+/**
+ * Who is signed in, the way to their own account, and the way out. Shown in the header on every signed-in page.
+ *
+ * Two things, both always in view: a link and a button, in a navigation landmark of their own. There is
+ * nothing to open first and nothing hidden, so there is no menu state to keep or to get lost in.
+ */
 export function UserMenu({ user }: { user: User }) {
   const { logout } = useAuth()
   const navigate = useNavigate()
@@ -41,10 +47,13 @@ export function UserMenu({ user }: { user: User }) {
         <span className="identity-email">{user.email}</span>
       </p>
 
-      {/* Unavailable while signing out, but not `disabled`: a disabled button drops keyboard focus. */}
-      <button type="button" onClick={handleLogout} aria-disabled={signingOut}>
-        {signingOut ? 'Signing out…' : 'Sign out'}
-      </button>
+      <nav aria-label="Account" className="user-actions">
+        <NavLink to={ACCOUNT_PATH}>My account</NavLink>
+        {/* Unavailable while signing out, but not `disabled`: a disabled button drops keyboard focus. */}
+        <button type="button" className="button-secondary" onClick={handleLogout} aria-disabled={signingOut}>
+          {signingOut ? 'Signing out…' : 'Sign out'}
+        </button>
+      </nav>
 
       <ErrorMessage message={error} />
     </div>
