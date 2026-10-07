@@ -5,6 +5,15 @@
 
 export const ORGANIZATIONS_PATH = '/organizations'
 
+/** The signed-in person's own account. Under no organization: it is about the person. */
+export const ACCOUNT_PATH = '/account'
+
+/**
+ * Where an emailed password reset link leads. The one page that is shown signed out as well as signed in; the
+ * link's token is in its fragment ("#token=..."), never in this path.
+ */
+export const RESET_PASSWORD_PATH = '/reset-password'
+
 export function organizationPath(orgSlug: string): string {
   return `${ORGANIZATIONS_PATH}/${encodeURIComponent(orgSlug)}`
 }

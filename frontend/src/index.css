@@ -1302,3 +1302,93 @@ button[aria-disabled='true'] {
   border-left: 1px solid var(--line);
   font-weight: 600;
 }
+
+/*
+ * Account: the signed-in person's own page, the header's way to it, and the signed-out password forms.
+ *
+ * In the header: a link to the account and the way out, side by side under who is signed in.
+ */
+.user-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.5rem 1rem;
+}
+
+.user-actions a[aria-current='page'] {
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+/* A button that is, in the reading of the page, a link: it does something here and goes nowhere. */
+.button-link {
+  padding: 0.5rem 0;
+  border-color: transparent;
+  background: none;
+  color: var(--accent);
+  font-weight: 400;
+  text-decoration: underline;
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+}
+
+.form-saved {
+  margin: 0;
+  color: var(--muted);
+}
+
+/* The page is a short column of forms and facts, a comfortable width for typing, however wide the window. */
+.account {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+  max-width: 40rem;
+}
+
+.account .panel > h3 {
+  margin-bottom: 0.75rem;
+}
+
+.account-form > .quiet {
+  margin-top: 0;
+}
+
+.account-form .field input {
+  max-width: 24rem;
+}
+
+/* A name and its value, one under the other: what is known about the account and cannot be typed over. */
+.account-facts {
+  display: grid;
+  gap: 0.875rem;
+  margin: 0 0 1rem;
+}
+
+.account-facts:last-child {
+  margin-bottom: 0;
+}
+
+.account-facts dt {
+  font-weight: 600;
+}
+
+.account-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The signed-out forms: a link beside its sentence, and room under the last paragraph. */
+.auth-form > :last-child {
+  margin-bottom: 0;
+}
+
+.auth-form .notice {
+  margin-top: 0;
+}

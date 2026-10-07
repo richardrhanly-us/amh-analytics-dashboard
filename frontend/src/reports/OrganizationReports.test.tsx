@@ -202,8 +202,8 @@ describe('arriving at an organization’s reports', () => {
     expect(breadcrumb.getByRole('link', { name: 'Organizations' })).toHaveAttribute('href', '/organizations')
     expect(breadcrumb.getByRole('link', { name: 'Northbridge Library' })).toHaveAttribute('href', ORGANIZATION)
     expect(breadcrumb.getByText('Reports')).toHaveAttribute('aria-current', 'page')
-    // It is the organization's page: no sorter's views are offered on it.
-    expect(screen.getAllByRole('navigation').map((nav) => nav.getAttribute('aria-label'))).toEqual(['Breadcrumb'])
+    // It is the organization's page: no sorter's views are offered on it. ("Account" is the header's own.)
+    expect(screen.getAllByRole('navigation').map((nav) => nav.getAttribute('aria-label'))).toEqual(['Account', 'Breadcrumb'])
   })
 
   it('reads the product’s day from a sorter first, then asks for the three reports over the last 30 days', async () => {

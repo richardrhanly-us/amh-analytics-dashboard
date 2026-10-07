@@ -100,8 +100,14 @@ describe('scope of this block', () => {
 
     expect([...new Set(paths.map((path) => path.slice(1, -1)))].sort()).toEqual([
       '/api/',
+      // R8B: the signed-in person's own account, and password reset -- all in api/account.ts.
+      '/api/account',
+      '/api/account/change-password',
+      '/api/account/profile',
       '/api/auth/login',
       '/api/auth/logout',
+      '/api/auth/password-reset/complete',
+      '/api/auth/password-reset/request',
       '/api/auth/session',
       '/api/organizations',
       '/api/organizations/${encodeURIComponent(orgSlug)}',
@@ -150,7 +156,14 @@ describe('scope of this block', () => {
     expect(offenders(/type="date"/)).toEqual(['../reports/DateRangeControl.tsx'])
     expect(offenders(/'date' : 'text'/)).toEqual(['../reports/EfficiencyAssumptionsPanel.tsx'])
     expect(offenders(/datetime-local|<select|download=|text\/csv|Blob\(|createObjectURL|\.pdf/)).toEqual([])
-    expect(offenders(/\b(Historical|Export|Administration|Settings|Reset password|Change password)\b(?! dashboard data)/)).toEqual([])
+    expect(offenders(/\b(Historical|Export|Administration|Settings)\b(?! dashboard data)/)).toEqual([])
+    // R8B: a person can change and reset their OWN password, in the account pages and nowhere else. Nothing
+    // about anyone else's account, an organization's users, roles or settings is offered.
+    expect(offenders(/\b(Reset password|Change password)\b/).sort()).toEqual([
+      '../account/AccountPage.tsx',
+      '../account/ResetPasswordPage.tsx',
+    ])
+    expect(offenders(/invit|\bMFA\b|two-factor|authenticator|Users (&|and) access|change (your )?email|new email/i)).toEqual([])
     // Efficiency is shown as an ESTIMATE under assumptions -- a manual-workload equivalent and a labor-value
     // equivalent -- and never as time or money anyone is known to have been spared. None of these words is in the
     // app, in any form a person could read:
@@ -249,6 +262,8 @@ describe('how the dashboard is drawn', () => {
     expect(offenders(/tabIndex=\{\s*[1-9]|tabIndex="[1-9]|tabindex="[1-9]/)).toEqual([])
     expect(markup.filter(([, text]) => /tabIndex=\{-1\}/.test(text)).map(([path]) => path).sort()).toEqual([
       '../App.tsx',
+      // The heading of a view that replaces another at the same address: sign in / forgot password / reset result.
+      '../components/ArrivalHeading.tsx',
       '../components/PageHeading.tsx',
       // A report section's heading takes focus when its "Try again" succeeds and the button goes.
       '../reports/ReportSections.tsx',
@@ -289,6 +304,8 @@ describe('how the dashboard is drawn', () => {
     // One dashboard page, at the sorter address; the old branch address only redirects to it.
     const router = shipped.find(([path]) => path === '../router/AppRouter.tsx')?.[1] ?? ''
     expect(router.match(/<Route path="[^"]*"/g)).toEqual([
+      // R8B: the signed-in person's own account, beside the organizations and under none of them.
+      '<Route path="account"',
       '<Route path="organizations"',
       '<Route path="organizations/:orgSlug"',
       // The organization's own reports, beside its sorters and under none of them.

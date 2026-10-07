@@ -175,7 +175,7 @@ describe('the signed-in app', () => {
       await user.click(screen.getByRole('button', { name: 'Sign out' }))
 
       await screen.findByRole('button', { name: 'Sign in' })
-      expect(address()).toBe('/')
+      await waitFor(() => expect(address()).toBe('/'))
     },
   )
 
@@ -197,7 +197,9 @@ describe('the signed-in app', () => {
     expect(address()).toBe('/organizations')
     expect(screen.getByRole('banner')).toHaveTextContent('bob@example.test')
     // The organization was loaded once, for the first user, and not again for the second.
-    expect(organizationRequests(fetchMock)).toEqual(['/api/organizations/northbridge', '/api/organizations'])
+    await waitFor(() =>
+      expect(organizationRequests(fetchMock)).toEqual(['/api/organizations/northbridge', '/api/organizations']),
+    )
   })
 
   it.each([
@@ -919,7 +921,7 @@ describe('a sorter page', () => {
     const steps = within(within(main()).getByRole('navigation', { name: 'Breadcrumb' })).getAllByRole('listitem')
     expect(steps.map((step) => step.textContent)).toEqual(['Organizations', 'Metro Library System', 'Westside AMH'])
     expect(within(steps[2]).getByText('Westside AMH')).toHaveAttribute('aria-current', 'page')
-    expect(document.title).toBe('Westside AMH – SortView')
+    await waitFor(() => expect(document.title).toBe('Westside AMH – SortView'))
   })
 
   it('keeps two sorters of one organization apart: each has its own figures and its own routing', async () => {
@@ -1188,6 +1190,6 @@ describe('signing in and out around a sorter address', () => {
     await user.click(screen.getByRole('button', { name: 'Sign out' }))
 
     await screen.findByRole('button', { name: 'Sign in' })
-    expect(address()).toBe('/')
+    await waitFor(() => expect(address()).toBe('/'))
   })
 })

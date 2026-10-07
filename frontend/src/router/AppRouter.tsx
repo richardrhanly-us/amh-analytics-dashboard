@@ -1,6 +1,7 @@
 import { useRef } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router'
 
+import { AccountPage } from '../account/AccountPage.tsx'
 import { LegacyBranchRedirect } from '../pages/LegacyBranchRedirect.tsx'
 import { NotFoundPage } from '../pages/NotFoundPage.tsx'
 import { OrganizationLayout } from '../pages/OrganizationLayout.tsx'
@@ -27,6 +28,8 @@ export function AppRouter() {
     <PageArrivalContext value={introducedRef}>
       <Routes>
         <Route index element={<Navigate to={ORGANIZATIONS_PATH} replace />} />
+        {/* The signed-in person's own account. Beside the organizations, not under one. */}
+        <Route path="account" element={<AccountPage />} />
         <Route path="organizations" element={<OrganizationsPage />} />
         <Route path="organizations/:orgSlug" element={<OrganizationLayout />}>
           <Route index element={<OrganizationPage />} />

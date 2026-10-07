@@ -45,6 +45,12 @@ function serve(overrides: Routes = {}): FetchMock {
 const main = () => screen.getByRole('main')
 const address = () => screen.getByTestId('address').textContent
 const pageHeading = (name: string) => screen.findByRole('heading', { level: 2, name })
+/**
+ * Waits until the page's heading exists AND has focus. The heading moves focus to itself in an effect, which
+ * runs a moment after the heading is in the page, so the two are not true at the same instant.
+ */
+const focusOnPageHeading = (name: string) =>
+  waitFor(() => expect(screen.getByRole('heading', { level: 2, name })).toHaveFocus())
 const link = (name: string) => within(main()).getByRole('link', { name })
 /** Waits until the branch dashboard has loaded every section. */
 async function dashboard() {
@@ -111,8 +117,8 @@ describe('the structure of a page', () => {
 
     expect(screen.getAllByRole('banner')).toHaveLength(1)
     expect(screen.getAllByRole('main')).toHaveLength(1)
-    // The breadcrumb, and the sorter's own two views.
-    expect(screen.getAllByRole('navigation').map((nav) => nav.getAttribute('aria-label'))).toEqual(['Breadcrumb', 'Sorter views'])
+    // The header's two account actions, the breadcrumb, and the sorter's own two views.
+    expect(screen.getAllByRole('navigation').map((nav) => nav.getAttribute('aria-label'))).toEqual(['Account', 'Breadcrumb', 'Sorter views'])
     // The dashboard's four parts are the only named regions; the page itself is <main>.
     expect(screen.getAllByRole('region').map((region) => region.getAttribute('aria-labelledby'))).toEqual([
       'pipeline-heading',
@@ -148,11 +154,11 @@ describe('the structure of a page', () => {
 
     renderApp(CENTRAL)
     await pageHeading('Central Library AMH')
-    expect(document.title).toBe('Central Library AMH – SortView')
+    await waitFor(() => expect(document.title).toBe('Central Library AMH – SortView'))
 
     await user.click(link('Northbridge Library'))
     await pageHeading('Northbridge Library')
-    expect(document.title).toBe('Northbridge Library – SortView')
+    await waitFor(() => expect(document.title).toBe('Northbridge Library – SortView'))
   })
 
   it('titles a missing page without naming what was asked for', async () => {
@@ -161,7 +167,7 @@ describe('the structure of a page', () => {
     renderApp('/organizations/northbridge/sorters/secret-annex')
     await pageHeading('Page not found')
 
-    expect(document.title).toBe('Page not found – SortView')
+    await waitFor(() => expect(document.title).toBe('Page not found – SortView'))
   })
 })
 
@@ -201,6 +207,7 @@ describe('controls', () => {
     await dashboard()
 
     expect(await tabStops(user)).toEqual([
+      'a: My account',
       'button: Sign out',
       'a: Organizations',
       'a: Northbridge Library',
@@ -271,13 +278,13 @@ describe('focus when the page changes', () => {
     renderApp('/organizations')
     await user.click(await within(main()).findByRole('link', { name: 'Northbridge Library' }))
 
-    expect(await pageHeading('Northbridge Library')).toHaveFocus()
+    await focusOnPageHeading('Northbridge Library')
 
     await user.click(link('Central Library AMH'))
-    expect(await pageHeading('Central Library AMH')).toHaveFocus()
+    await focusOnPageHeading('Central Library AMH')
 
     await user.click(link('Organizations'))
-    expect(await pageHeading('Organizations')).toHaveFocus()
+    await focusOnPageHeading('Organizations')
   })
 
   it('moves focus to the heading once it exists, when the page has to load first', async () => {
@@ -293,7 +300,7 @@ describe('focus when the page changes', () => {
 
     slow.resolve(jsonResponse(200, NORTHBRIDGE_DETAIL))
 
-    expect(await pageHeading('Northbridge Library')).toHaveFocus()
+    await focusOnPageHeading('Northbridge Library')
   })
 
   it('moves focus to the not-found heading when a link leads nowhere the user can see', async () => {
@@ -303,7 +310,7 @@ describe('focus when the page changes', () => {
     renderApp('/organizations')
     await user.click(await within(main()).findByRole('link', { name: 'Riverside Library' }))
 
-    expect(await pageHeading('Page not found')).toHaveFocus()
+    await focusOnPageHeading('Page not found')
   })
 
   it('does the same for Back and Forward, which still go where they should', async () => {
@@ -317,15 +324,15 @@ describe('focus when the page changes', () => {
     await pageHeading('East Side AMH')
 
     await user.click(screen.getByRole('button', { name: 'browser-back' }))
-    expect(await pageHeading('Northbridge Library')).toHaveFocus()
+    await focusOnPageHeading('Northbridge Library')
     expect(address()).toBe('/organizations/northbridge')
 
     await user.click(screen.getByRole('button', { name: 'browser-back' }))
-    expect(await pageHeading('Organizations')).toHaveFocus()
+    await focusOnPageHeading('Organizations')
     expect(address()).toBe('/organizations')
 
     await user.click(screen.getByRole('button', { name: 'browser-forward' }))
-    expect(await pageHeading('Northbridge Library')).toHaveFocus()
+    await focusOnPageHeading('Northbridge Library')
     expect(address()).toBe('/organizations/northbridge')
   })
 
@@ -336,7 +343,7 @@ describe('focus when the page changes', () => {
     renderApp('/organizations/northbridge')
     await pageHeading('Northbridge Library')
     await user.click(link('Central Library AMH'))
-    expect(await pageHeading('Central Library AMH')).toHaveFocus()
+    await focusOnPageHeading('Central Library AMH')
     await dashboard()
 
     await user.tab()
@@ -391,7 +398,7 @@ describe('focus when signing in and out', () => {
     await user.type(screen.getByLabelText('Password'), 'pw{Enter}')
 
     await pageHeading('Organizations')
-    expect(main()).toHaveFocus()
+    await waitFor(() => expect(main()).toHaveFocus())
     await user.tab()
     expect(await within(main()).findByRole('link', { name: 'Northbridge Library' })).toHaveFocus()
   })
@@ -405,7 +412,7 @@ describe('focus when signing in and out', () => {
     await user.click(screen.getByRole('button', { name: 'Sign out' }))
 
     await screen.findByRole('button', { name: 'Sign in' })
-    expect(main()).toHaveFocus()
+    await waitFor(() => expect(main()).toHaveFocus())
     await user.tab()
     expect(screen.getByLabelText('Email')).toHaveFocus()
   })
@@ -441,7 +448,7 @@ describe('focus when signing in and out', () => {
 
     expect(await screen.findByRole('form', { name: 'Sign in' })).toBeInTheDocument()
     expect(address()).toBe(CENTRAL)
-    expect(main()).toHaveFocus()
+    await waitFor(() => expect(main()).toHaveFocus())
     expect(main()).toContainElement(screen.getByRole('form', { name: 'Sign in' }))
     await user.tab()
     expect(screen.getByLabelText('Email')).toHaveFocus()
