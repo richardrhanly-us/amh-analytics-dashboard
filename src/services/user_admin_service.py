@@ -2,6 +2,7 @@
 an account can be used at all.
 
     list_org_users(org_slug)                                              the organization's ACTIVE members
+    find_active_member_id(org_slug, email)                                one of them, by e-mail address
     add_organization_member(org_slug, email, password, full_name, role, actor_user_id=...)
     change_organization_member_role(org_slug, user_id, role, actor_user_id=...)
     remove_organization_member(org_slug, user_id, actor_user_id=...)
@@ -56,7 +57,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 from database import get_engine
 from services import auth_service, membership_policy, session_service
@@ -257,6 +258,37 @@ def list_org_users(org_slug: str) -> list[dict[str, Any]]:
     with engine.connect() as conn:
         rows = conn.execute(sql, {"org_slug": org_slug}).mappings().all()
         return [dict(row) for row in rows]
+
+
+_FIND_ACTIVE_MEMBER_SQL = """
+    SELECT u.id
+    FROM memberships m
+    JOIN organizations o
+      ON o.id = m.organization_id
+    JOIN app_users u
+      ON u.id = m.user_id
+    WHERE o.slug = :org_slug
+      AND m.removed_at IS NULL
+      AND lower(u.email) = :email
+    LIMIT 1
+"""
+
+
+def find_active_member_id(org_slug: str, email: str) -> int | None:
+    """The user id of the organization's ACTIVE member with this e-mail address (any letter case), or None.
+
+    None for an address with no account, one whose account belongs only to OTHER organizations, and one whose
+    membership of this organization was removed -- the same answer for all three, so it says nothing about anyone's
+    place anywhere else. It decides nothing: whoever is then acted on is checked again, by id, inside the
+    transaction that makes the change."""
+    normalized_email = email.strip().lower() if isinstance(email, str) else ""
+    if not normalized_email:
+        return None
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(text(_FIND_ACTIVE_MEMBER_SQL), {"org_slug": org_slug, "email": normalized_email}).first()
+        return int(row[0]) if row else None
 
 
 _FIND_ACCOUNT_SQL = """
@@ -468,32 +500,61 @@ def remove_organization_member(
     return {"ok": True, "message": "User removed from this organization."}
 
 
-def list_recent_org_auth_events(org_slug: str, limit: int = 25) -> list[dict[str, Any]]:
+# The changes to an organization's members, as the audit log names them.
+MEMBERSHIP_EVENT_TYPES: tuple[str, ...] = ("membership_added", "membership_role_updated", "membership_removed")
+
+_ORG_AUTH_EVENTS_SELECT = """
+    SELECT
+        aal.id,
+        aal.created_at,
+        aal.email,
+        aal.event_type,
+        aal.is_success,
+        aal.message,
+        aal.metadata
+    FROM auth_audit_log aal
+    WHERE aal.metadata ->> 'org_slug' = :org_slug
+"""
+_ORG_AUTH_EVENTS_OF_TYPES = """
+      AND aal.event_type IN :event_types
+"""
+_ORG_AUTH_EVENTS_NEWEST = """
+    ORDER BY aal.created_at DESC, aal.id DESC
+    LIMIT :limit
+"""
+
+
+def list_recent_org_auth_events(
+    org_slug: str,
+    limit: int = 25,
+    *,
+    event_types: tuple[str, ...] | None = None,
+) -> list[dict[str, Any]]:
     """The most recent audit events that happened IN this organization: the ones recorded with this
     organization's slug -- members added, removed and given roles.
 
     An event is not this organization's merely because it is about someone who is a member of it. A sign-in, a
     password change or reset, or anything done in another organization the person also belongs to, has no place
     here: none of it is attributed to this organization, and nothing is inferred from who its members are now.
+
+    With `event_types`, only events of those types -- and `limit` then counts THOSE: the kinds are selected by
+    the query, before it orders and limits, so newer events of other kinds cannot crowd them out. No types is no
+    events. Without it, every event attributed to the organization, as before.
     """
-    sql = text("""
-        SELECT
-            aal.id,
-            aal.created_at,
-            aal.email,
-            aal.event_type,
-            aal.is_success,
-            aal.message,
-            aal.metadata
-        FROM auth_audit_log aal
-        WHERE aal.metadata ->> 'org_slug' = :org_slug
-        ORDER BY aal.created_at DESC, aal.id DESC
-        LIMIT :limit
-    """)
+    parameters: dict[str, Any] = {"org_slug": org_slug, "limit": limit}
+    if event_types is None:
+        sql = text(_ORG_AUTH_EVENTS_SELECT + _ORG_AUTH_EVENTS_NEWEST)
+    elif not event_types:
+        return []
+    else:
+        sql = text(_ORG_AUTH_EVENTS_SELECT + _ORG_AUTH_EVENTS_OF_TYPES + _ORG_AUTH_EVENTS_NEWEST).bindparams(
+            bindparam("event_types", expanding=True)
+        )
+        parameters["event_types"] = list(event_types)
 
     engine = get_engine()
     with engine.connect() as conn:
-        rows = conn.execute(sql, {"org_slug": org_slug, "limit": limit}).mappings().all()
+        rows = conn.execute(sql, parameters).mappings().all()
         return [dict(row) for row in rows]
 
 
