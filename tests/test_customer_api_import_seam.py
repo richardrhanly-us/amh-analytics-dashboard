@@ -96,6 +96,12 @@ CUSTOMER_ROUTES = {
     ("PUT", "/api/organizations/{org_slug}/settings/efficiency"),
     ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/settings/efficiency"),
     ("PUT", "/api/organizations/{org_slug}/branches/{branch_slug}/settings/efficiency"),
+    # R8D: an organization's members (customer_api.member_routes).
+    ("GET", "/api/organizations/{org_slug}/members"),
+    ("POST", "/api/organizations/{org_slug}/members"),
+    ("PUT", "/api/organizations/{org_slug}/members/role"),
+    ("POST", "/api/organizations/{org_slug}/members/remove"),
+    ("GET", "/api/organizations/{org_slug}/members/activity"),
 }
 
 _PROBE = """

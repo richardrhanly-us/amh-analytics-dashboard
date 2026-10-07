@@ -556,6 +556,33 @@ def test_activity_does_not_follow_a_person_into_an_organization_they_join_later(
     assert [e["event_type"] for e in list_recent_org_auth_events("acme")] == ["membership_added"]
 
 
+def test_activity_of_given_kinds_is_selected_before_it_is_limited(db):
+    def log(event_type, **metadata):
+        with db.engine.begin() as conn:
+            record_audit(conn, event_type, True, user_id=VIEWER, email=_email(VIEWER), message=event_type, metadata=metadata)
+
+    for role in ("manager", "admin", "viewer"):                       # the oldest three: membership changes
+        assert change_organization_member_role("acme", VIEWER, role, actor_user_id=OWNER)["ok"]
+    for _ in range(10):                                               # ten newer events of another kind
+        log("user_status_updated", org_slug="acme")
+    log("membership_removed", org_slug="beta")                        # another organization's
+    log("membership_removed")                                         # attributed to no organization
+
+    kinds = user_admin_service.MEMBERSHIP_EVENT_TYPES
+    assert kinds == ("membership_added", "membership_role_updated", "membership_removed")
+
+    # Unfiltered, as the dashboard asks: the newest of everything attributed to acme.
+    assert {e["event_type"] for e in list_recent_org_auth_events("acme", limit=5)} == {"user_status_updated"}
+    # Of the membership kinds: the limit counts THOSE, newest first, and still only acme's.
+    filtered = list_recent_org_auth_events("acme", limit=2, event_types=kinds)
+    assert [e["event_type"] for e in filtered] == ["membership_role_updated"] * 2
+    assert ['"role": "viewer"' in e["metadata"] for e in filtered] == [True, False]
+    assert len(list_recent_org_auth_events("acme", limit=50, event_types=kinds)) == 3
+    assert list_recent_org_auth_events("acme", limit=50, event_types=("membership_removed",)) == []
+    assert list_recent_org_auth_events("acme", limit=50, event_types=()) == []
+    assert len(list_recent_org_auth_events("acme", limit=50)) == 13
+
+
 def test_activity_is_newest_first_and_limited(db):
     for role in ("manager", "admin", "viewer"):
         assert change_organization_member_role("acme", VIEWER, role, actor_user_id=OWNER)["ok"]

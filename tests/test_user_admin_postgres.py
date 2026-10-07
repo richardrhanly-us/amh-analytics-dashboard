@@ -280,6 +280,17 @@ def test_a_removed_member_is_refused_by_every_reader_that_decides_access_and_kee
     assert (resolved.operational_customer_id, resolved.operational_branch_id) == (BETA_CUSTOMER, BETA_MAIN)
 
 
+def test_the_member_lookup_finds_only_an_active_member_of_that_organization_by_address(db):
+    # R8D: how the customer API turns an address into the member to act on.
+    find = user_admin_service.find_active_member_id
+
+    assert find("acme", _email(BOTH)) == BOTH and find("beta", f"  {_email(BOTH).upper()} ") == BOTH
+    assert find("acme", _email(BETA_OWNER)) is None and find("gamma", _email(OWNER)) is None
+    assert find("acme", _email(STRANGER)) is None and find("acme", "nobody@example.invalid") is None
+    assert remove_organization_member("acme", BOTH, actor_user_id=OWNER)["ok"]
+    assert find("acme", _email(BOTH)) is None and find("beta", _email(BOTH)) == BOTH
+
+
 def test_adding_back_reuses_the_one_row_with_the_role_given_now(db):
     assert remove_organization_member("acme", SECOND, actor_user_id=OWNER)["ok"]
     membership_id = _membership(db, ACME, SECOND)[0]
@@ -521,6 +532,24 @@ def test_activity_is_selected_by_the_rows_own_metadata_and_never_leaks_across_or
     assert [(e["event_type"], e["metadata"]["org_slug"], e["metadata"]["role"]) for e in beta] == [("membership_role_updated", "beta", "admin")]
     assert list_recent_org_auth_events("gamma") == []
     assert len(_audit(db)) == 5  # all five were recorded; each organization is shown only its own one
+
+
+def test_membership_activity_is_filtered_by_kind_before_the_limit_is_applied(db):
+    from services import auth_service
+
+    kinds = user_admin_service.MEMBERSHIP_EVENT_TYPES
+    for role in ("manager", "admin", "viewer"):  # the oldest three events: membership changes in acme
+        assert change_organization_member_role("acme", VIEWER, role, actor_user_id=OWNER)["ok"]
+    for _ in range(12):                          # twelve NEWER events of another kind, also attributed to acme
+        auth_service.log_auth_event("user_status_updated", True, user_id=VIEWER, email=_email(VIEWER), metadata={"org_slug": "acme"})
+    assert change_organization_member_role("beta", BOTH, "admin", actor_user_id=BETA_OWNER)["ok"]
+
+    assert {e["event_type"] for e in list_recent_org_auth_events("acme", limit=10)} == {"user_status_updated"}  # unchanged default
+    filtered = list_recent_org_auth_events("acme", limit=10, event_types=kinds)
+    assert [(e["event_type"], e["metadata"]["org_slug"], e["metadata"]["role"]) for e in filtered] == [
+        ("membership_role_updated", "acme", "viewer"), ("membership_role_updated", "acme", "admin"), ("membership_role_updated", "acme", "manager")]
+    assert [e["metadata"]["role"] for e in list_recent_org_auth_events("acme", limit=2, event_types=kinds)] == ["viewer", "admin"]
+    assert list_recent_org_auth_events("acme", limit=10, event_types=()) == []
 
 
 # =====================================================================================================================
