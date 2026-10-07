@@ -87,6 +87,7 @@ _ORGANIZATION_SQL = text("""
     WHERE o.slug = :org_slug
       AND m.user_id = :user_id
       AND m.role IN ('owner', 'admin')
+      AND m.removed_at IS NULL
       AND (o.status IN ('active', 'trial') OR (o.status = 'suspended' AND :for_write = 0))
     LIMIT 2
 """)
@@ -109,6 +110,7 @@ _SORTER_SQL = text("""
     WHERE o.slug = :org_slug
       AND m.user_id = :user_id
       AND m.role IN ('owner', 'admin')
+      AND m.removed_at IS NULL
       AND (o.status IN ('active', 'trial') OR (o.status = 'suspended' AND :for_write = 0))
       AND b.slug = :branch_slug
       AND b.status = 'active'
@@ -133,6 +135,7 @@ _SET_ORGANIZATION_SQL = text("""
     WHERE o.slug = :org_slug
       AND m.user_id = :user_id
       AND m.role IN ('owner', 'admin')
+      AND m.removed_at IS NULL
       AND o.status IN ('active', 'trial')
     ON CONFLICT (organization_id) DO UPDATE
     SET settings_json = jsonb_set(organization_settings.settings_json, '{efficiency}', CAST(:block AS JSONB), true),
@@ -152,6 +155,7 @@ _CLEAR_ORGANIZATION_SQL = text("""
         WHERE o.slug = :org_slug
           AND m.user_id = :user_id
           AND m.role IN ('owner', 'admin')
+          AND m.removed_at IS NULL
           AND o.status IN ('active', 'trial')
     )
 """)
@@ -167,6 +171,7 @@ _SET_SORTER_SQL = text("""
     WHERE o.slug = :org_slug
       AND m.user_id = :user_id
       AND m.role IN ('owner', 'admin')
+      AND m.removed_at IS NULL
       AND o.status IN ('active', 'trial')
       AND b.slug = :branch_slug
       AND b.status = 'active'
@@ -196,6 +201,7 @@ _CLEAR_SORTER_SQL = text("""
         WHERE o.slug = :org_slug
           AND m.user_id = :user_id
           AND m.role IN ('owner', 'admin')
+          AND m.removed_at IS NULL
           AND o.status IN ('active', 'trial')
           AND b.slug = :branch_slug
           AND b.status = 'active'

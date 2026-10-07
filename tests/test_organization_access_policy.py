@@ -157,9 +157,11 @@ def test_users_page_blocks_whole_page_when_cancelled(monkeypatch):
 
 
 def test_users_page_renders_normally_when_full(monkeypatch):
+    import services.streamlit_entitlement_adapter as entitlement_adapter
     import services.user_admin_service as user_admin
 
     _patch_common(monkeypatch, access_mode="full")
+    monkeypatch.setattr(entitlement_adapter, "build_entitlement_context", lambda user_id, org_slug: {"role": "admin"})
     monkeypatch.setattr(user_admin, "list_org_users", lambda org_slug: [])
     monkeypatch.setattr(user_admin, "list_recent_org_auth_events", lambda org_slug, limit=25: [])
 

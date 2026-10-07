@@ -77,6 +77,7 @@ _RESOLVE_SQL = text("""
     JOIN branches b
       ON b.organization_id = o.id
     WHERE m.user_id = :user_id
+      AND m.removed_at IS NULL
       AND o.slug = :org_slug
       AND b.slug = :branch_slug
     LIMIT 2

@@ -6,6 +6,7 @@ import streamlit as st
 from services import auth_service
 from services.access_service import get_org_access_mode
 from services.app_ui_service import apply_page_chrome
+from services.membership_policy import assignable_roles
 from services.permission_service import can_manage_settings
 from services.privacy_hardening import install_streamlit_log_scrubber
 from services.sidebar_service import render_main_sidebar
@@ -15,12 +16,11 @@ from services.streamlit_access_adapter import (
 )
 from services.streamlit_entitlement_adapter import build_entitlement_context
 from services.user_admin_service import (
-    ALLOWED_MEMBERSHIP_ROLES,
-    create_or_add_org_user,
+    add_organization_member,
+    change_organization_member_role,
     list_org_users,
     list_recent_org_auth_events,
-    set_user_active,
-    update_org_user_role,
+    remove_organization_member,
 )
 
 # Keep an uncaught page exception's text out of Streamlit's own server log (see services/privacy_hardening.py).
@@ -112,7 +112,12 @@ entitlement_context = build_entitlement_context(
 
 show_admin_button = can_manage_settings(entitlement_context)
 
-if not show_admin_button:
+# The roles this person could give someone: an admin is not offered "owner", and someone who may not administer
+# members is offered nothing -- there is no fallback list. Only what is offered: the service decides for itself,
+# from the database, what the person acting may do, whatever a form sends it.
+role_choices = list(assignable_roles(entitlement_context.get("role")))
+
+if not show_admin_button or not role_choices:
     st.error("You do not have permission to manage users.")
     st.stop()
 
@@ -152,18 +157,17 @@ with st.form("add_user_form"):
     full_name = st.text_input("Full name")
     email = st.text_input("Email")
     password = st.text_input("Temporary password", type="password")
-    role = st.selectbox("Role", ALLOWED_MEMBERSHIP_ROLES)
+    role = st.selectbox("Role", role_choices)
     add_user_submitted = st.form_submit_button("Create or add user")
 
 if add_user_submitted:
-    result = create_or_add_org_user(
+    result = add_organization_member(
         org_slug=selected_org_slug,
         email=email,
         password=password,
         full_name=full_name,
         role=role,
         actor_user_id=auth_user["id"],
-        actor_email=auth_user.get("email"),
     )
     if result["ok"]:
         st.success(result["message"])
@@ -179,16 +183,15 @@ if users:
             options=[u["user_id"] for u in users],
             format_func=lambda uid: f'{user_map[uid]["email"]} ({user_map[uid]["role"]})',
         )
-        new_role = st.selectbox("New role", ALLOWED_MEMBERSHIP_ROLES)
+        new_role = st.selectbox("New role", role_choices)
         update_role_submitted = st.form_submit_button("Update role")
 
     if update_role_submitted:
-        result = update_org_user_role(
+        result = change_organization_member_role(
             org_slug=selected_org_slug,
             user_id=selected_role_user_id,
             role=new_role,
             actor_user_id=auth_user["id"],
-            actor_email=auth_user.get("email"),
         )
         if result["ok"]:
             st.success(result["message"])
@@ -196,24 +199,30 @@ if users:
         else:
             st.error(result["message"])
 
-st.subheader("Activate / deactivate user")
+# Takes the person out of THIS organization only. Their account, their password and any other organization they
+# belong to are untouched: switching a whole account off is a platform operation and is not offered here.
+st.subheader("Remove from organization")
 if users:
-    with st.form("activate_deactivate_form"):
-        selected_status_user_id = st.selectbox(
-            "User to update",
+    st.caption(
+        "Removes this person's access to this organization only. Their SortView account stays active, "
+        "and any other organization they belong to is not affected."
+    )
+    with st.form("remove_member_form"):
+        selected_remove_user_id = st.selectbox(
+            "User to remove",
             options=[u["user_id"] for u in users],
-            format_func=lambda uid: f'{user_map[uid]["email"]} (active={user_map[uid]["is_active"]})',
+            format_func=lambda uid: f'{user_map[uid]["email"]} ({user_map[uid]["role"]})',
         )
-        desired_status = st.selectbox("Set active status", [True, False])
-        update_status_submitted = st.form_submit_button("Update status")
+        remove_confirmed = st.checkbox("Remove this user from this organization")
+        remove_submitted = st.form_submit_button("Remove from organization")
 
-    if update_status_submitted:
-        result = set_user_active(
+    if remove_submitted and not remove_confirmed:
+        st.error("Tick the box to confirm before removing a user.")
+    elif remove_submitted:
+        result = remove_organization_member(
             org_slug=selected_org_slug,
-            user_id=selected_status_user_id,
-            is_active=desired_status,
+            user_id=selected_remove_user_id,
             actor_user_id=auth_user["id"],
-            actor_email=auth_user.get("email"),
         )
         if result["ok"]:
             st.success(result["message"])
@@ -221,10 +230,12 @@ if users:
         else:
             st.error(result["message"])
 
-st.subheader("Recent auth activity")
+# Only what happened IN this organization: members added, removed and given roles. Sign-ins and password changes
+# belong to the person's account, not to any one organization, and are not shown here.
+st.subheader("Recent user management activity")
 events = list_recent_org_auth_events(selected_org_slug, limit=25)
 if events:
     events_df = pd.DataFrame(events)
     st.dataframe(events_df, width="stretch", hide_index=True)
 else:
-    st.info("No auth activity found yet for this organization.")
+    st.info("No user management activity found yet for this organization.")

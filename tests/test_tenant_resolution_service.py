@@ -42,7 +42,7 @@ _DDL = (
         "CREATE TABLE branches (id INTEGER PRIMARY KEY, organization_id INTEGER, slug TEXT, name TEXT, "
         "is_primary BOOLEAN, status TEXT, operational_branch_id INTEGER)"
     ),
-    "CREATE TABLE memberships (id INTEGER PRIMARY KEY, organization_id INTEGER, user_id INTEGER, role TEXT)",
+    "CREATE TABLE memberships (id INTEGER PRIMARY KEY, organization_id INTEGER, user_id INTEGER, role TEXT, removed_at TEXT)",
 )
 
 # Org A ("acme") and Org B ("beta"). Alice belongs to A only, Bob to B only,
@@ -188,6 +188,35 @@ def test_a_removed_membership_stops_resolving(db):
     db.run("DELETE FROM memberships WHERE user_id = :u AND organization_id = 1", u=ALICE)
 
     assert resolve_operational_tenant(ALICE, "acme", "main") is None
+
+
+def test_a_membership_marked_removed_stops_resolving_on_the_next_call_though_its_row_remains(db):
+    # R8C: removal is memberships.removed_at, not a DELETE. The row -- and the role on it -- is still there.
+    assert resolve_operational_tenant(ALICE, "acme", "main") is not None
+
+    db.run("UPDATE memberships SET removed_at = '2026-01-01 00:00:00+00:00' WHERE user_id = :u AND organization_id = 1", u=ALICE)
+
+    assert resolve_operational_tenant(ALICE, "acme", "main") is None
+    assert resolve_operational_tenant(ALICE, "acme", "east") is None
+    assert access_service.user_can_access_org(ALICE, "acme") is False
+    assert access_service.get_user_memberships(ALICE) == []
+
+
+def test_removal_from_one_organization_leaves_the_other_resolving(db):
+    db.run("UPDATE memberships SET removed_at = '2026-01-01 00:00:00+00:00' WHERE user_id = :u AND organization_id = 1", u=CAROL)
+
+    assert resolve_operational_tenant(CAROL, "acme", "main") is None
+    assert _ids(resolve_operational_tenant(CAROL, "beta", "main")) == (BETA_CUSTOMER, BETA_MAIN)
+    assert [m["organization_slug"] for m in access_service.get_user_memberships(CAROL)] == ["beta"]
+
+
+def test_a_membership_given_back_resolves_again(db):
+    db.run("UPDATE memberships SET removed_at = '2026-01-01 00:00:00+00:00' WHERE user_id = :u AND organization_id = 1", u=ALICE)
+    assert resolve_operational_tenant(ALICE, "acme", "main") is None
+
+    db.run("UPDATE memberships SET removed_at = NULL WHERE user_id = :u AND organization_id = 1", u=ALICE)
+
+    assert _ids(resolve_operational_tenant(ALICE, "acme", "main")) == (ACME_CUSTOMER, ACME_MAIN)
 
 
 def test_an_inactive_user_does_not_resolve(db):

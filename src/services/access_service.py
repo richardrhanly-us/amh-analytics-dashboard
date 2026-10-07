@@ -108,6 +108,7 @@ def get_user_memberships(user_id: int) -> list[dict[str, Any]]:
         JOIN organizations o
           ON o.id = m.organization_id
         WHERE m.user_id = :user_id
+          AND m.removed_at IS NULL
           AND o.status != 'cancelled'
         ORDER BY o.name
     """)
@@ -142,6 +143,7 @@ def user_can_access_org(user_id: int, org_slug: str) -> bool:
         JOIN organizations o
           ON o.id = m.organization_id
         WHERE m.user_id = :user_id
+          AND m.removed_at IS NULL
           AND o.slug = :org_slug
         LIMIT 1
     """)
