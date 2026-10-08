@@ -15,6 +15,7 @@ import { SorterReportsPage } from '../pages/SorterReportsPage.tsx'
 import { BranchesPage } from '../settings/BranchesPage.tsx'
 import { EfficiencySettingsPage } from '../settings/EfficiencySettingsPage.tsx'
 import { GeneralPage } from '../settings/GeneralPage.tsx'
+import { RoutingPage } from '../settings/RoutingPage.tsx'
 import { SettingsLayout } from '../settings/SettingsLayout.tsx'
 import { PageArrivalContext } from './PageArrivalContext.ts'
 import { ORGANIZATIONS_PATH } from './paths.ts'
@@ -47,6 +48,7 @@ export function AppRouter() {
             <Route index element={<Navigate to="general" replace />} />
             <Route path="general" element={<GeneralPage />} />
             <Route path="branches" element={<BranchesPage />} />
+            <Route path="routing" element={<RoutingPage />} />
             <Route path="efficiency" element={<EfficiencySettingsPage />} />
           </Route>
           <Route path="sorters/:sorterSlug" element={<SorterLayout />}>

@@ -4,6 +4,7 @@ export const SETTINGS_NAME = 'Settings'
 /** The sections of the area, by the name each is shown under. */
 export const GENERAL_NAME = 'General'
 export const BRANCHES_NAME = 'Branches & Sorters'
+export const ROUTING_NAME = 'Routing'
 export const EFFICIENCY_NAME = 'Efficiency'
 
 /** Said to someone who opens the area and is not one of the people it is for. Nothing else is shown to them. */

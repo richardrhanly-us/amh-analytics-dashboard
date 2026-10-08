@@ -119,7 +119,10 @@ describe('scope of this block', () => {
       '/api/organizations/${segment(orgSlug)}/reports/${kind}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}',
       // An organization's Efficiency defaults, read and replaced by the one module that knows them (api/efficiency.ts).
       '/api/organizations/${segment(orgSlug)}/settings/efficiency',
+      // R8H: an organization's routing, read and replaced by the one module that knows it (api/routingSettings.ts).
+      '/api/organizations/${segment(orgSlug)}/settings/routing',
     ])
+    expect(offenders(/\/settings\/routing[`'"]/)).toEqual(['../api/routingSettings.ts'])
     expect(offenders(/\/api\/organizations\/[^'"`]*\/members/)).toEqual(['../api/members.ts'])
     expect(offenders(/\/reports\/\$\{kind\}/).sort()).toEqual(['../api/organizationReports.ts', '../api/reports.ts'])
 
@@ -171,8 +174,11 @@ describe('scope of this block', () => {
       '../settings/BranchesPage.tsx',
       '../settings/EfficiencySettingsPage.tsx',
       '../settings/GeneralPage.tsx',
+      // R8H: the organization's routing -- its page, and the one hook that reads and replaces it.
+      '../settings/RoutingPage.tsx',
       '../settings/SettingsLayout.tsx',
       '../settings/settingsText.ts',
+      '../settings/useRoutingSettings.ts',
     ])
     // Nothing in it names what the API keeps to itself about a machine, or what R8F leaves out of an organization.
     expect(
@@ -180,9 +186,25 @@ describe('scope of this block', () => {
         .filter(([, text]) => /hostname|installation|token|enroll|ingest|credential|password|secret|plan_|entitlement|subscription|timezone|contact/i.test(text))
         .map(([path]) => path),
     ).toEqual([])
-    // It asks the API for nothing of its own: what it shows is the organization already read, and the one
-    // Efficiency form that exists.
-    expect(settingsSources.filter(([, text]) => /apiRequest|useQuery|useMutation|['"`]\/api\//.test(text)).map(([path]) => path)).toEqual([])
+    // It asks the API for nothing of its own -- what it shows is the organization already read, and the one
+    // Efficiency form that exists -- except routing, which has one hook, and that hook goes through the one API
+    // module for it: no settings source names an API address or sends a request itself.
+    expect(settingsSources.filter(([, text]) => /useQuery|useMutation/.test(text)).map(([path]) => path)).toEqual(['../settings/useRoutingSettings.ts'])
+    expect(settingsSources.filter(([, text]) => /apiRequest|['"`]\/api\//.test(text)).map(([path]) => path)).toEqual([])
+    // R8H: routing is the organization's TRANSIT routing and nothing else. A destination is a label and whether it
+    // is enabled: it has no identifier of its own here, in what is read, typed or sent. Nothing of it is about a
+    // branch's own configuration, and nothing is about the internal lists, which are another thing altogether.
+    const routingSources = shipped.filter(([path]) => /routing/i.test(path) && (path.startsWith('../settings/') || path.startsWith('../api/')))
+    expect(routingSources.map(([path]) => path).sort()).toEqual([
+      '../api/routingSettings.ts',
+      '../settings/RoutingPage.tsx',
+      '../settings/useRoutingSettings.ts',
+    ])
+    expect(routingSources.filter(([, text]) => /internal|workflow|branch_services|collection_services|da_pattern/i.test(text)).map(([path]) => path)).toEqual([])
+    expect(routingSources.filter(([, text]) => /\bkey\b(?!=)|destination_key|\bslug:/.test(text)).map(([path]) => path)).toEqual([])
+    expect(routingSources.filter(([, text]) => /branch_settings|override|per-branch|branchSlug|collector/i.test(text)).map(([path]) => path)).toEqual([])
+    // Nothing is reordered by dragging, and nothing is moved up or down.
+    expect(routingSources.filter(([, text]) => /draggable|onDrag|onDrop|Move up|Move down/.test(text)).map(([path]) => path)).toEqual([])
     // General and the inventory are to be read: neither has a form, a field or a button.
     expect(
       settingsSources
@@ -369,6 +391,8 @@ describe('how the dashboard is drawn', () => {
       '<Route path="settings"',
       '<Route path="general"',
       '<Route path="branches"',
+      // R8H: the organization's routing, between its branches and its Efficiency defaults.
+      '<Route path="routing"',
       '<Route path="efficiency"',
       '<Route path="sorters/:sorterSlug"',
       '<Route path="reports"',
