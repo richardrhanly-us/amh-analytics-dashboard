@@ -491,7 +491,8 @@ describe('choosing a range', () => {
     ['reversed', '2026-10-01', '2026-09-01', 'The start date must be on or before the end date.'],
     ['ending after today', '2026-10-01', '2026-10-06', 'The end date cannot be after today.'],
     ['wholly in the future', '2026-11-01', '2026-11-05', 'The end date cannot be after today.'],
-    ['longer than 92 days', '2026-07-05', '2026-10-05', 'Choose a range of 92 days or fewer. That is the longest range available at present.'],
+    // R9D2: one report may cover up to 3,660 days (the API's engineering guard); 92 was the old limit.
+    ['longer than the longest report', '2016-09-27', '2026-10-05', 'A single report can cover up to 3,660 days. Choose a shorter range.'],
     ['with no start date', '', '2026-10-01', 'Enter both a start date and an end date.'],
     ['with no end date', '2026-09-01', '', 'Enter both a start date and an end date.'],
   ])('refuses a range %s, asks for nothing and keeps what is shown', async (_label, from, to, problem) => {
@@ -512,20 +513,33 @@ describe('choosing a range', () => {
     expect(screen.getByLabelText('To')).toHaveAttribute('aria-invalid', 'true')
   })
 
-  it('accepts exactly 92 days, and a refused range once it is corrected', async () => {
+  it('accepts exactly 3,660 days -- the longest report -- and a refused range once it is corrected', async () => {
+    const fetchMock = serve()
+    renderApp(CENTRAL_REPORTS)
+    await loaded()
+
+    applyDates('2016-09-27', '2026-10-05')                  // 3,661 days
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+    applyDates('2016-09-28', '2026-10-05')                  // 3,660 days
+    await loaded()
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('From')).toHaveAttribute('aria-invalid', 'false')
+    expect(shown()).toContain('3660 days')
+    expect(reportRequests(fetchMock).at(-1)).toMatch(/from=2016-09-28&to=2026-10-05$/)
+  })
+
+  it('accepts 93 days, which was refused before R9D2', async () => {
     const fetchMock = serve()
     renderApp(CENTRAL_REPORTS)
     await loaded()
 
     applyDates('2026-07-05', '2026-10-05')
-    expect(await screen.findByRole('alert')).toBeInTheDocument()
-    applyDates('2026-07-06', '2026-10-05')
     await loaded()
 
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(screen.getByLabelText('From')).toHaveAttribute('aria-invalid', 'false')
-    expect(shown()).toContain('92 days')
-    expect(reportRequests(fetchMock).at(-1)).toMatch(/from=2026-07-06&to=2026-10-05$/)
+    expect(shown()).toContain('93 days')
+    expect(reportRequests(fetchMock).at(-1)).toMatch(/from=2026-07-05&to=2026-10-05$/)
   })
 
   it('a preset clears a refused custom range', async () => {
@@ -549,12 +563,13 @@ describe('choosing a range', () => {
     renderApp(CENTRAL_REPORTS)
     await loaded()
 
-    expect(screen.getByText(/^Up to 92 days can be shown at a time at present\./)).toBeInTheDocument()
-    expect(main()).not.toHaveTextContent(/maximum|limit|never|always|only 92/i)
+    // The longest single report, not how much history there is: the plan's window is said separately, if it has one.
+    expect(screen.getByText(/^A single report can cover up to 3,660 days\./)).toBeInTheDocument()
+    expect(main()).not.toHaveTextContent(/maximum|limit|never|always|only 92|10 years|years of history/i)
     expect(screen.getByLabelText('From')).toHaveAttribute('max', TO)
     expect(screen.getByLabelText('To')).toHaveAttribute('max', TO)
     expect(screen.getByLabelText('To')).toHaveAttribute('min', FROM)
-    expect(screen.getByLabelText('From')).toHaveAccessibleDescription(/Up to 92 days/)
+    expect(screen.getByLabelText('From')).toHaveAccessibleDescription(/A single report can cover up to 3,660 days/)
   })
 })
 
@@ -1082,7 +1097,9 @@ describe('reading the reports without seeing or pointing', () => {
 
   it('labels the range controls', () => {
     const presets = screen.getByRole('group', { name: 'Date range presets' })
-    expect(within(presets).getAllByRole('button').map((button) => button.textContent)).toEqual(['Last 7 days', 'Last 30 days', 'Last 90 days'])
+    expect(within(presets).getAllByRole('button').map((button) => button.textContent)).toEqual([
+      'Last 7 days', 'Last 30 days', 'Last 90 days', 'Year to date',
+    ])
     const custom = screen.getByRole('form', { name: 'Custom date range' })
     expect(within(custom).getByLabelText('From')).toHaveAttribute('type', 'date')
     expect(within(custom).getByLabelText('To')).toHaveAttribute('type', 'date')

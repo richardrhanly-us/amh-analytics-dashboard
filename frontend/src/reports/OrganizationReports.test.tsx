@@ -331,7 +331,7 @@ describe('choosing a range', () => {
     ['', '2026-10-04', 'Enter both a start date and an end date.'],
     ['2026-10-04', '2026-09-28', 'The start date must be on or before the end date.'],
     ['2026-09-28', '2026-10-06', 'The end date cannot be after today.'],
-    ['2026-07-05', '2026-10-05', 'Choose a range of 92 days or fewer. That is the longest range available at present.'],
+    ['2016-09-27', '2026-10-05', 'A single report can cover up to 3,660 days. Choose a shorter range.'],     // 3,661 days: one more than the longest report (R9D2)
   ])('refuses the range %j to %j, asks nothing, and keeps the figures it had', async (from, to, problem) => {
     const fetchMock = serve()
     renderApp(REPORTS)

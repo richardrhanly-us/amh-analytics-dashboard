@@ -604,8 +604,12 @@ def test_ninety_two_days_is_accepted_and_ninety_three_is_refused(api, db):
     assert accepted["range"]["days"] == 92 and accepted["range"]["from"] == "2026-03-21"
     assert accepted["bins"] == [{"key": "1", "checkin_count": 3, "hours": _hours(h9=3)}]
 
+    # Reports R9D2: a request may now be longer, up to the 3,660-day engineering guard.
+    assert _totals(_bins(api, _range_of(93))) == {"1": 3, "9": 40}
+    assert _bins(api, _range_of(3660))["range"]["days"] == 3660
+
     db.log.clear()
-    refused = _get(api, _range_of(93))
+    refused = _get(api, _range_of(3661))
 
     assert refused.status_code == 422
     assert db.log == []

@@ -20,10 +20,11 @@ from __future__ import annotations
 import inspect
 import logging
 import re
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 import test_customer_api_organization_reports as organization_reports
+from fastapi.dependencies.utils import get_flat_dependant
 from test_customer_api_organization_reports import COOKIE, JUNE_8_TO_12, RANGE
 
 import main
@@ -46,13 +47,14 @@ class Plan:
 
     def __init__(self, monkeypatch):
         self.enabled = {"acme", "paused", "solo", "closed", "beta"}
+        self.history: int | None = 90
         self.lookups: list[tuple[int, str]] = []
         monkeypatch.setattr(entitlement_service, "build_entitlement_context", self.context)
 
     def context(self, user_id, org_slug):
         self.lookups.append((user_id, org_slug))
         on = org_slug in self.enabled
-        return {"role": "viewer", "subscription": None, "entitlements": {"internal_workflow": {"enabled": on, "limit_value": None}, "history_days": {"enabled": True, "limit_value": 90},
+        return {"role": "viewer", "subscription": None, "entitlements": {"internal_workflow": {"enabled": on, "limit_value": None}, "history_days": {"enabled": True, "limit_value": self.history},
                                                                     # Transit routing on throughout: only the holds feature varies here (R9C).
                                                                     "transits": {"enabled": True, "limit_value": None}}}
 
@@ -266,7 +268,7 @@ def test_the_route_is_exactly_one_get_that_takes_the_two_slugs_and_the_two_dates
     assert route.methods == {"GET"}
     assert route.path == "/api/organizations/{org_slug}/branches/{branch_slug}/reports/holds"
     assert sorted(param.name for param in route.dependant.path_params) == []  # the slugs are read by its dependencies
-    flat = {param.alias for dependency in route.dependant.dependencies for param in dependency.query_params}
+    flat = {param.alias for param in get_flat_dependant(route.dependant).query_params}
     assert flat == {"from", "to"}
     for method in ("post", "put", "patch", "delete"):
         assert getattr(organization_reports.TestClient(main.app), method)(HOLDS.format(org="acme", branch="main"), headers=COOKIE).status_code == 405
@@ -289,3 +291,59 @@ def test_the_handler_counts_nothing_itself_and_the_route_module_imports_no_dashb
     for unwanted in ("streamlit", "data_loader", "mixed_era_service", "settings_service"):
         assert unwanted not in service_imports, unwanted
     assert holds_report_routes.HOLDS_FEATURE == "internal_workflow"
+
+
+
+# =====================================================================================================================
+# Reports R9D2: the holds report keeps 92 days, whatever the plan's history allows
+# =====================================================================================================================
+
+HOLDS_TOO_LONG = {"code": "holds_range_too_long", "message": "Holds reporting is currently available for ranges up to 92 days."}
+
+
+def _days(count: int, ending: str = "2026-06-20") -> dict:
+    end = date.fromisoformat(ending)
+    return {"from": (end - timedelta(days=count - 1)).isoformat(), "to": end.isoformat()}
+
+
+def test_92_days_of_holds_are_counted_and_93_are_refused_before_anything_is_read(api, db, plan, counts):
+    plan.history = None                                     # the plan would allow any length: the 92 is the report's
+
+    assert _get(api, params=_days(92)).status_code == 200
+    assert len(counts.asked) == 1
+    for longer in (93, 365, 3660):
+        _refused(_get(api, params=_days(longer)), 422, HOLDS_TOO_LONG)
+    assert len(counts.asked) == 1                           # the service was never asked about a longer range
+
+
+def test_the_other_reports_take_the_same_long_range_under_the_same_plan(api, db, plan, counts):
+    plan.history = None
+
+    _refused(_get(api, params=_days(365)), 422, HOLDS_TOO_LONG)
+    for report in ("overview", "volume", "routing", "reliability"):
+        response = api.get(f"/api/organizations/acme/branches/main/reports/{report}", headers=COOKIE, params=_days(365))
+        assert response.status_code == 200, report
+
+
+def test_the_holds_length_comes_after_the_feature_and_every_rule_every_range_has(api, db, plan, counts):
+    # The feature first: a plan without the report is told so, whatever the range.
+    plan.enabled.discard("acme")
+    _refused(_get(api, params=_days(365)), 403, NOT_AVAILABLE)
+    plan.enabled.add("acme")
+    # Then the shared range: its order, the future, the plan's window ...
+    assert _get(api, params={"from": "2026-06-12", "to": "2026-06-08"}).json()["detail"][0]["type"] == "report_range_order"
+    plan.history = 30
+    assert _get(api, params=_days(93)).json()["code"] == "range_before_history"
+    # ... and only then the holds report's own length.
+    plan.history = 3650
+    _refused(_get(api, params=_days(93)), 422, HOLDS_TOO_LONG)
+    assert counts.asked == []
+
+
+def test_the_holds_length_is_the_holds_reports_own_and_no_plan_name_or_other_report_knows_it():
+    assert holds_report_routes.HOLDS_MAX_RANGE_DAYS == 92
+    source = inspect.getsource(holds_report_routes)
+    assert "def require_holds_range(requested: Range) -> RequestedRange:" in source
+    assert "requested: HoldsRange" in source
+    for plan in ("starter", "enterprise", '"pro"'):
+        assert plan not in source.lower()

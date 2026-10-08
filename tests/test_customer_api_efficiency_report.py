@@ -502,7 +502,7 @@ def test_the_route_is_guarded_by_the_settings_own_owner_or_admin_dependency_then
     [
         ({"from": "2026-06-12", "to": "2026-06-08"}, "report_range_order"),
         ({"from": "2026-06-08", "to": "2026-06-21"}, "report_range_in_future"),
-        ({"from": "2026-03-20", "to": "2026-06-20"}, "report_range_too_long"),   # 93 days
+        ({"from": "2016-06-12", "to": "2026-06-20"}, "report_range_too_long"),   # 3,661 days (the guard, Reports R9D2)
         ({"from": "2026-06-31", "to": "2026-07-01"}, None),
         ({"from": "2026-06-08T00:00:00", "to": "2026-06-12"}, None),
         ({"from": "8 June", "to": "2026-06-12"}, None),
@@ -529,6 +529,8 @@ def test_the_longest_range_and_today_are_allowed(api, db):
     _configure(db, organization=ORG_RATES, main_site=SORTER_COSTS)
 
     longest = _report(api, params={"from": "2026-03-21", "to": "2026-06-20"})   # 92 days, ending today
+    # Reports R9D2: up to the 3,660-day engineering guard.
+    assert _report(api, params={"from": "2016-06-13", "to": "2026-06-20"})["range"]["days"] == 3660
     today = _report(api, params={"from": "2026-06-20", "to": "2026-06-20"})
 
     assert longest["range"] == {"from": "2026-03-21", "to": "2026-06-20", "days": 92, "timezone": "America/Chicago", "includes_today": True}

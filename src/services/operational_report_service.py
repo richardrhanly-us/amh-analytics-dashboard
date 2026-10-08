@@ -48,11 +48,14 @@ report's reasons and its daily rejects likewise. Counting them with separate
 statements would let a row that arrives between two statements break the
 sum.
 
-THE RANGE LIMIT. MAX_REPORT_RANGE_DAYS bounds how many days one request
-may cover. It is a safeguard, not a rule about what a report may cover. The
-way of counting above has no limit of its own on the number of buckets (the
+THE RANGE LIMIT. MAX_REPORT_RANGE_DAYS bounds how many days ONE REQUEST may
+cover: an engineering guard against a pathological synchronous request, and
+nothing more. It is not how much history an organization may see -- that is
+its plan's (services.entitlement_service.earliest_report_date), and a plan
+with no history limit has none, however long this guard is. The way of
+counting above has no limit of its own on the number of buckets (the
 one-column-per-bucket statements it replaced stopped at PostgreSQL's 1,664
-columns); a longer limit is a separate decision.
+columns).
 
 Framework-neutral: no Streamlit, no FastAPI, no pandas, no caching, no
 engine. Every read takes a connection the caller supplies -- already scoped
@@ -90,8 +93,9 @@ from services.tenant_resolution_service import ResolvedOperationalTenant
 
 logger = logging.getLogger("sortview.operational_reports")
 
-# The most days one report may cover, both ends included. See THE RANGE LIMIT above.
-MAX_REPORT_RANGE_DAYS = 92
+# The most days one request may cover, both ends included: an engineering guard, not a history limit. See THE
+# RANGE LIMIT above. (It was 92 until Reports R9D2, while each day was a column of its own.)
+MAX_REPORT_RANGE_DAYS = 3660
 
 # How many days of wall-clock hours one statement counts. It once had to be a week: a bucket was a column, and a
 # week is 168 of them. A bucket is now a row, so this bounds only the one array of boundaries a statement binds:

@@ -13,13 +13,12 @@ import {
   formatAverage,
   formatCount,
   formatDate,
-  formatDayOfWeek,
   formatPercent,
-  formatShortDate,
   NOT_AVAILABLE,
   percentOf,
 } from './derive.ts'
 import { count, days, derived, rejectNote, transitNote } from './figures.ts'
+import { timeSeries } from './months.ts'
 import { ReportSection } from './ReportSections.tsx'
 import type { ReportRead } from './useSorterReports.ts'
 
@@ -128,6 +127,8 @@ export function OrganizationOverviewSection({ read, transits }: { read: ReportRe
         const total = totals.checkin_count
         const reporting = report.sorters.filter((sorter) => sorter.available).length
         const busiest = busiestDay(report.days)
+        // Day by day, or a month at a time for a long range: what is SHOWN. Every figure above is the days'.
+        const series = timeSeries(report.days, (day) => [day.checkin_count, day.reject_count])
         return (
           <>
             <p className="quiet">
@@ -151,17 +152,17 @@ export function OrganizationOverviewSection({ read, transits }: { read: ReportRe
             </dl>
             <ChartFigure
               name="org-daily-checkins"
-              heading="Daily check-ins"
+              heading={series.monthly ? 'Check-ins by month' : 'Daily check-ins'}
               summary={
                 busiest === null
                   ? `${NO_ACTIVITY}.`
                   : `${formatCount(total)} check-ins across the organization over ${days(range.days)}. Busiest day: ${formatDate(busiest.date)}, with ${formatCount(busiest.checkin_count)}.`
               }
-              chartLabel="Bar chart of the organization's check-ins on each day of the range"
-              bars={report.days.map((day) => ({ label: formatShortDate(day.date), value: day.checkin_count }))}
+              chartLabel={`Bar chart of the organization's check-ins ${series.monthly ? 'in each month' : 'on each day'} of the range`}
+              bars={series.points.map((point) => ({ label: point.bar, value: point.values[0] }))}
               emptyText={NO_ACTIVITY}
-              columns={['Date', 'Check-ins', 'Rejects']}
-              rows={report.days.map((day) => [formatDayOfWeek(day.date), formatCount(day.checkin_count), formatCount(day.reject_count)])}
+              columns={[series.period, 'Check-ins', 'Rejects']}
+              rows={series.points.map((point) => [point.row, ...point.values.map(formatCount)])}
             />
           </>
         )
@@ -372,6 +373,7 @@ export function SystemReliabilitySection({ read }: { read: ReportRead<Organizati
           return <p>{NO_SORTERS}</p>
         }
         const worstDay = busiestDay(report.days.map((day) => ({ date: day.date, checkin_count: day.reject_count })))
+        const rejectSeries = timeSeries(report.days, (day) => [day.reject_count, day.checkin_count])
         const reasons = topRejectReasons(totals.reasons)
         return (
           <>
@@ -384,17 +386,17 @@ export function SystemReliabilitySection({ read }: { read: ReportRead<Organizati
             </dl>
             <ChartFigure
               name="org-daily-rejects"
-              heading="Daily rejects"
+              heading={rejectSeries.monthly ? 'Rejects by month' : 'Daily rejects'}
               summary={
                 worstDay === null
                   ? 'No rejects in this range.'
                   : `${formatCount(totals.reject_count)} rejects across the organization over ${days(report.range.days)}. Most on one day: ${formatCount(worstDay.checkin_count)}, on ${formatDate(worstDay.date)}.`
               }
-              chartLabel="Bar chart of the organization's rejects on each day of the range"
-              bars={report.days.map((day) => ({ label: formatShortDate(day.date), value: day.reject_count }))}
+              chartLabel={`Bar chart of the organization's rejects ${rejectSeries.monthly ? 'in each month' : 'on each day'} of the range`}
+              bars={rejectSeries.points.map((point) => ({ label: point.bar, value: point.values[0] }))}
               emptyText="No rejects in this range"
-              columns={['Date', 'Rejects', 'Check-ins']}
-              rows={report.days.map((day) => [formatDayOfWeek(day.date), formatCount(day.reject_count), formatCount(day.checkin_count)])}
+              columns={[rejectSeries.period, 'Rejects', 'Check-ins']}
+              rows={rejectSeries.points.map((point) => [point.row, ...point.values.map(formatCount)])}
             />
 
             <h5 id="org-reasons-heading">Reject reasons</h5>

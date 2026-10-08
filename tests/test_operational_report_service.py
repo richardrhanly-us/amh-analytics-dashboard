@@ -73,15 +73,20 @@ def _utc(year, month, day, hour=0, minute=0) -> datetime:
 # validate_report_range
 # =====================================================================================================================
 
-def test_the_limit_is_ninety_two_days():
-    assert MAX_REPORT_RANGE_DAYS == 92
+def test_the_engineering_guard_is_3660_days():
+    # Reports R9D2: one request may cover up to 3,660 days (it was 92 while each day was a column of its own). A
+    # guard against a pathological request -- how far back a report may start is the plan's, not this.
+    assert MAX_REPORT_RANGE_DAYS == 3660
 
 
 @pytest.mark.parametrize(("from_date", "to_date"), [
     (TODAY, TODAY),                                     # one day, and it is today
     (date(2026, 6, 19), date(2026, 6, 19)),
     (date(2026, 6, 1), TODAY),
-    (TODAY - timedelta(days=91), TODAY),                # exactly 92 days, both ends included
+    (TODAY - timedelta(days=91), TODAY),                # 92 days, both ends included
+    (TODAY - timedelta(days=92), TODAY),                # 93 days: refused before Reports R9D2
+    (TODAY - timedelta(days=364), TODAY),               # a year
+    (TODAY - timedelta(days=3659), TODAY),              # exactly 3,660 days, the most one request covers
     (date(2020, 1, 1), date(2020, 3, 31)),              # long ago, 91 days
     (date(2024, 2, 28), date(2024, 3, 1)),              # across a leap day
 ])
@@ -95,8 +100,8 @@ def test_a_range_that_may_be_reported_on_is_accepted(from_date, to_date):
     (TODAY, TODAY + timedelta(days=1), "range_in_future", "to"),
     (date(2026, 6, 1), date(2027, 1, 1), "range_in_future", "to"),
     (TODAY + timedelta(days=1), TODAY + timedelta(days=2), "range_in_future", "to"),
-    (TODAY - timedelta(days=92), TODAY, "range_too_long", "to"),            # 93 days
-    (date(2025, 1, 1), date(2025, 12, 31), "range_too_long", "to"),
+    (TODAY - timedelta(days=3660), TODAY, "range_too_long", "to"),          # 3,661 days
+    (date(2015, 1, 1), date(2025, 12, 31), "range_too_long", "to"),         # 4,018 days
 ])
 def test_a_range_that_may_not_is_refused_with_which_bound_and_what_kind(from_date, to_date, problem, field):
     with pytest.raises(ReportRangeError) as refused:

@@ -5,13 +5,16 @@ import {
   datesInRange,
   daysInRange,
   DEFAULT_PRESET_DAYS,
+  HOLDS_MAX_RANGE_DAYS,
   isCalendarDate,
   lastDays,
   MAX_RANGE_DAYS,
+  offersYearToDate,
   presetOf,
   PRESETS,
   rangeProblem,
   rangeProblemText,
+  yearToDate,
 } from './dateRange.ts'
 
 const TODAY = '2026-10-05'
@@ -73,7 +76,7 @@ describe('presets', () => {
   })
 
   it('fits every preset inside the longest range available', () => {
-    expect(MAX_RANGE_DAYS).toBe(92)
+    expect(MAX_RANGE_DAYS).toBe(3660)       // the API's engineering guard (R9D2); it was 92
     for (const { days } of PRESETS) {
       expect(days).toBeLessThanOrEqual(MAX_RANGE_DAYS)
       expect(rangeProblem(lastDays(days, TODAY), TODAY)).toBeNull()
@@ -107,7 +110,7 @@ describe('rangeProblem', () => {
     [{ from: '2026-10-01', to: '2026-10-06' }, 'future'],
     [{ from: '2026-10-06', to: '2026-10-07' }, 'future'],
     [{ from: addDays(TODAY, -MAX_RANGE_DAYS), to: TODAY }, 'too_long'], // one day more than the longest
-    [{ from: '2025-01-01', to: '2025-12-31' }, 'too_long'],
+    [{ from: '2015-01-01', to: '2025-12-31' }, 'too_long'],         // 4,018 days
   ] as const)('refuses %j as %s', (range, problem) => {
     expect(rangeProblem(range, TODAY)).toBe(problem)
   })
@@ -124,10 +127,42 @@ describe('rangeProblem', () => {
     expect(rangeProblem(range, '2026-10-06')).toBeNull()
   })
 
-  it('says what is wrong in a sentence, and does not call the limit permanent', () => {
+  it('says what is wrong in a sentence, and calls the length the longest report, not a history limit', () => {
     expect(rangeProblemText('order')).toBe('The start date must be on or before the end date.')
     expect(rangeProblemText('future')).toBe('The end date cannot be after today.')
     expect(rangeProblemText('incomplete')).toBe('Enter both a start date and an end date.')
-    expect(rangeProblemText('too_long')).toBe('Choose a range of 92 days or fewer. That is the longest range available at present.')
+    expect(rangeProblemText('too_long')).toBe('A single report can cover up to 3,660 days. Choose a shorter range.')
+  })
+})
+
+describe('year to date (R9D2)', () => {
+  it('is 1 January of this year to today', () => {
+    expect(yearToDate('2026-10-05')).toEqual({ from: '2026-01-01', to: '2026-10-05' })
+    expect(yearToDate('2028-01-01')).toEqual({ from: '2028-01-01', to: '2028-01-01' })
+    expect(daysInRange(yearToDate('2028-12-31'))).toBe(366)
+  })
+
+  it.each([
+    [null, '2026-10-05', true],             // no history limit
+    [3650, '2026-10-05', true],
+    [730, '2026-10-05', true],
+    [278, '2026-10-05', true],              // exactly back to 1 January
+    [277, '2026-10-05', false],             // a day short of it: never shortened to fit
+    [90, '2026-10-05', false],
+    [30, '2026-10-05', false],
+    [30, '2027-01-20', true],               // early January: 1 January is inside a 30-day window
+    [30, '2027-01-31', false],
+  ] as const)('with %s days of history on %s is offered: %s', (historyDays, today, offered) => {
+    expect(offersYearToDate(today, historyDays)).toBe(offered)
+    if (offered) {
+      expect(rangeProblem(yearToDate(today), today)).toBeNull()
+    }
+  })
+})
+
+describe('the Holds report (R9D2)', () => {
+  it('covers up to 92 days, whatever a plan allows the other reports', () => {
+    expect(HOLDS_MAX_RANGE_DAYS).toBe(92)
+    expect(HOLDS_MAX_RANGE_DAYS).toBeLessThan(MAX_RANGE_DAYS)
   })
 })

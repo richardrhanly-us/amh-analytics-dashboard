@@ -22,8 +22,8 @@ saying which bound and what kind of problem and never the value. A range may
 also start no earlier than the organization's plan allows
 (services.entitlement_service.earliest_report_date): one that does is a 422
 with its own code, range_before_history. The two rules are independent -- the
-plan says how far back a range may start, MAX_REPORT_RANGE_DAYS how long one
-request may be.
+plan says how far back a range may start; MAX_REPORT_RANGE_DAYS, an
+engineering guard and not a history limit, how long one request may be.
 
 A route never takes an operational identifier from the request and never
 counts anything itself: the tenant comes only from the two slugs in its path,
