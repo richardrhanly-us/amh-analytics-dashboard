@@ -1,13 +1,21 @@
 import json
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import streamlit as st
 
 from services.admin_lock_service import without_security
+
+# The v1 hold classifier's rules live in a module of their own, with no Streamlit, so the customer API can use them
+# too. Re-exported here: everything that took them from this module still does.
+from services.hold_rules import (  # noqa: F401
+    INTERNAL_ROUTING_KEY,
+    V1_HOLD_LISTS,
+    V1HoldRules,
+    v1_hold_rules,
+)
 from services.privacy_hardening import log_safe_exception
 from services.tenant_service import get_effective_settings
 
@@ -49,57 +57,6 @@ def _dedupe_transit_destinations(destinations: list[dict]) -> list[dict]:
 
     return deduped
 
-# The settings key that holds the v1 hold classifier's lists of patron account names and `|DA...|` markers. Some of
-# those names can be a person's own (a staff member's patron card), so the block is never part of the dashboard's
-# generic settings: not as itself, and not inside the settings document that is handed on.
-INTERNAL_ROUTING_KEY = "internal_routing"
-_V1_HOLD_LISTS = (
-    "branch_services_names",
-    "collection_services_names",
-    "branch_services_da_patterns",
-    "collection_services_da_patterns",
-)
-
-
-@dataclass(frozen=True)
-class V1HoldRules:
-    """What the v1 (pre-cutover) hold classifier, metrics.build_acs_item_summary, is given -- and the only place in
-    the dashboard's settings these lists are kept.
-
-    It is what tells the dashboard which holds are for the library's own accounts, so that the public-holds count
-    leaves them out. A Contract v2 hold arrives already classified by the collector, from the collector's local
-    rules: these lists do not affect it.
-
-    Each entry is trimmed and upper-cased, as the classifier compares it; a blank entry is passed on as it is, and
-    the classifier ignores it. Its repr names no entry: it says only how many there are."""
-
-    branch_services_names: frozenset[str] = field(repr=False)
-    collection_services_names: frozenset[str] = field(repr=False)
-    branch_services_da_patterns: tuple[str, ...] = field(repr=False)
-    collection_services_da_patterns: tuple[str, ...] = field(repr=False)
-
-    def __repr__(self) -> str:
-        names = len(self.branch_services_names) + len(self.collection_services_names)
-        patterns = len(self.branch_services_da_patterns) + len(self.collection_services_da_patterns)
-        return f"V1HoldRules(names={names}, patterns={patterns})"
-
-
-def _listed(block: Mapping[str, Any], key: str) -> list[str]:
-    values = block.get(key, [])
-    return [str(value).strip().upper() for value in values] if isinstance(values, list) else []
-
-
-def v1_hold_rules(internal_routing: object) -> V1HoldRules:
-    """The v1 hold classifier's lists, from an `internal_routing` block (anything that is not one is no lists)."""
-    block: Mapping[str, Any] = internal_routing if isinstance(internal_routing, Mapping) else {}
-    return V1HoldRules(
-        branch_services_names=frozenset(_listed(block, "branch_services_names")),
-        collection_services_names=frozenset(_listed(block, "collection_services_names")),
-        branch_services_da_patterns=tuple(_listed(block, "branch_services_da_patterns")),
-        collection_services_da_patterns=tuple(_listed(block, "collection_services_da_patterns")),
-    )
-
-
 def without_internal_routing(settings: Mapping[str, Any] | None) -> dict[str, Any]:
     """A copy of `settings` without the internal routing block, for anything that is cached or handed to the
     dashboard as its settings."""
@@ -110,7 +67,7 @@ def public_internal_routing_view(internal_routing: object) -> dict[str, str]:
     """What may be displayed of the block outside its own form: how many entries each list has -- never an entry."""
     block: Mapping[str, Any] = internal_routing if isinstance(internal_routing, Mapping) else {}
     view = {}
-    for key in _V1_HOLD_LISTS:
+    for key in V1_HOLD_LISTS:
         values = block.get(key, [])
         count = sum(1 for value in values if str(value).strip()) if isinstance(values, list) else 0
         view[key] = f"{count} {'entry' if count == 1 else 'entries'} (not shown)"

@@ -266,6 +266,13 @@ describe('scope of this block', () => {
     expect(binVolume).not.toMatch(/key === ['"]\d|=== 7\b|length === 7|Bin [0-9]/)
     // It is every member's report, and a bin is not a destination or a measure of fullness.
     expect(binVolume).not.toMatch(/admin|owner|capacity|destination|exception|overflow/i)
+    // Holds (R8K) is two counts, read in one module and shown in one section, only where the plan has it: the
+    // plan's feature is looked at in one place, and no hold is shown by patron, item or destination.
+    expect(offenders(/public_hold_count|ill_hold_count/).sort()).toEqual(['../api/reports.ts', '../reports/HoldsSection.tsx'])
+    expect(offenders(/internal_workflow/)).toEqual(['../pages/SorterReportsPage.tsx'])
+    const holds = shipped.find(([path]) => path === '../reports/HoldsSection.tsx')?.[1] ?? ''
+    expect(holds).toMatch(/heading="Holds"/)
+    expect(holds).not.toMatch(/patron_id|barcode|item_key|transit_|is_ill|is_branch|is_collection|programming|canSee|role/)
   })
 })
 

@@ -112,7 +112,22 @@ export interface BinVolumeReport {
   bins: BinVolumeBin[]
 }
 
-export const REPORT_KINDS = ['overview', 'volume', 'routing', 'bins', 'reliability'] as const
+/**
+ * Holds handled by a sorter over the range: two counts and nothing else.
+ * Each item is counted once over the whole range, by its latest record, so
+ * the counts of a range are not the sums of its days. Holds for the
+ * library's own service accounts are in neither count. Only for a plan that
+ * has it.
+ */
+export interface HoldsReport {
+  range: ReportRange
+  /** Holds for library patrons: not interlibrary loans, and not the library's own service accounts. */
+  public_hold_count: number
+  /** Holds for interlibrary loans. */
+  ill_hold_count: number
+}
+
+export const REPORT_KINDS = ['overview', 'volume', 'routing', 'bins', 'reliability', 'holds'] as const
 export type ReportKind = (typeof REPORT_KINDS)[number]
 
 const MS_PER_DAY = 86_400_000
@@ -379,4 +394,17 @@ export async function getBinVolumeReport(
     [sum(bins.map((bin) => bin.checkin_count)), report.known_bin_count],
   )
   return report
+}
+
+/** GET .../reports/holds?from=YYYY-MM-DD&to=YYYY-MM-DD -- exactly the range and two counts. */
+export async function getHoldsReport(
+  orgSlug: string,
+  branchSlug: string,
+  from: string,
+  to: string,
+  signal?: AbortSignal,
+): Promise<HoldsReport> {
+  const body = record(await apiRequest(reportPath(orgSlug, branchSlug, 'holds', from, to), { signal }))
+  // Only these: anything else in the answer is dropped here and reaches no screen.
+  return { range: range(body, from, to), public_hold_count: count(body.public_hold_count), ill_hold_count: count(body.ill_hold_count) }
 }
