@@ -105,6 +105,8 @@ CUSTOMER_ROUTES = {
     # R8G: an organization's routing settings (customer_api.routing_settings_routes).
     ("GET", "/api/organizations/{org_slug}/settings/routing"),
     ("PUT", "/api/organizations/{org_slug}/settings/routing"),
+    # R8K: a sorter site's Holds report (customer_api.holds_report_routes).
+    ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/reports/holds"),
 }
 
 _PROBE = """

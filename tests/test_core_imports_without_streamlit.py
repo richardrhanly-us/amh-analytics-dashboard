@@ -36,6 +36,10 @@ STREAMLIT_FREE_MODULES = [
     "customer_api.tenant_scope",
     "customer_api.operational_routes",
     "services.operational_metrics_service",
+    # R8K: the Holds report -- its rules, its service and its route.
+    "services.hold_rules",
+    "services.hold_report_service",
+    "customer_api.holds_report_routes",
 ]
 
 

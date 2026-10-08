@@ -30,9 +30,10 @@ const rangeOf = (body: Body) => body.range as Body
 const daysOf = (body: Body) => body.days as Body[]
 
 describe('the four reports', () => {
-  it('are, with Bin volume, exactly these five kinds', () => {
+  it('are, with Bin volume and Holds, exactly these six kinds', () => {
     // Bin volume (Reports R7B) is the fifth kind. It has no days, so it is tested on its own, in binVolume.test.ts.
-    expect([...REPORT_KINDS]).toEqual(['overview', 'volume', 'routing', 'bins', 'reliability'])
+    // Holds (R8K) is the sixth, only for a plan that has it: two counts, tested on their own in holds.test.ts.
+    expect([...REPORT_KINDS]).toEqual(['overview', 'volume', 'routing', 'bins', 'reliability', 'holds'])
   })
 
   describe.each(READS)('%s', (kind, read, body) => {

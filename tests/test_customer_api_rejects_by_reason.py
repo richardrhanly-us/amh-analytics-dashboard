@@ -1238,6 +1238,8 @@ def test_the_branch_routes_are_exactly_the_seven_operational_endpoints_the_six_r
                      # ... and Bin Volume (customer_api.report_routes, Reports R7A).
                      "reports/bins",
                      "reports/efficiency",
+                     # ... and Holds (customer_api.holds_report_routes, R8K).
+                     "reports/holds",
                      "reports/overview", "reports/reliability", "reports/routing", "reports/volume",
                      # Reports R6B: a sorter site's Efficiency settings, read (GET) and replaced (PUT).
                      "settings/efficiency", "settings/efficiency"]

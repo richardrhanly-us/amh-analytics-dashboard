@@ -36,6 +36,8 @@ export function SorterReportsPage() {
         orgSlug={organization.slug}
         branchSlug={sorter.host_branch.slug}
         efficiency={canSeeEfficiency(organization.role)}
+        // The API decides (403 without it); this only keeps the app from asking for what the plan does not include.
+        holds={organization.entitlements.internal_workflow?.enabled === true}
       />
     </>
   )

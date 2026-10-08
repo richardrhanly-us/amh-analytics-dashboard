@@ -648,8 +648,11 @@ def test_only_the_operational_and_report_routes_use_the_tenant_scope():
     # Reports R6C added the fourth: the sorter Efficiency report, which reads its check-ins by day through the
     # same resolved tenant and the same verified connection as the other sorter-site reports
     # (tests/test_customer_api_efficiency_report.py).
+    # R8K added the fifth: the Holds report, which reads a sorter site's hold rows through the same resolved tenant
+    # and the same verified connection as the other sorter-site reports (tests/test_customer_api_holds_report.py).
     assert users == [
         "efficiency_report_routes.py",
+        "holds_report_routes.py",
         "operational_routes.py",
         "organization_report_routes.py",
         "report_routes.py",

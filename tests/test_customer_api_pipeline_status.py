@@ -1096,12 +1096,14 @@ def test_the_branch_routes_are_exactly_the_seven_operational_endpoints_the_six_r
                      # ... and Bin Volume (customer_api.report_routes, Reports R7A).
                      "reports/bins",
                      "reports/efficiency",
+                     # ... and Holds (customer_api.holds_report_routes, R8K).
+                     "reports/holds",
                      "reports/overview", "reports/reliability", "reports/routing", "reports/volume",
                      # Reports R6B: a sorter site's Efficiency settings, read (GET) and replaced (PUT).
                      "settings/efficiency", "settings/efficiency"]
 
 
-def test_the_customer_api_has_exactly_thirty_seven_routes_and_every_one_that_is_not_a_get_is_named_here():
+def test_the_customer_api_has_exactly_thirty_eight_routes_and_every_one_that_is_not_a_get_is_named_here():
     customer = sorted((method, route.path) for route in main.customer_router.routes for method in route.methods)
 
     # Reports R4 added three: the organization-level reports (customer_api.organization_report_routes).
@@ -1117,7 +1119,8 @@ def test_the_customer_api_has_exactly_thirty_seven_routes_and_every_one_that_is_
     # R8G added two: an organization's routing settings, read (a GET) and replaced (a PUT), in
     # customer_api.routing_settings_routes. The PUT requires an allowed Origin
     # (tests/test_customer_api_routing_settings.py pins that).
-    assert len(customer) == 37
+    # R8K added one: a sorter site's Holds report (customer_api.holds_report_routes), a GET.
+    assert len(customer) == 38
     assert [path for method, path in customer if method == "POST"] == [
         "/api/account/change-password",
         "/api/auth/login",
@@ -1134,7 +1137,7 @@ def test_the_customer_api_has_exactly_thirty_seven_routes_and_every_one_that_is_
         "/api/organizations/{org_slug}/settings/efficiency",
         "/api/organizations/{org_slug}/settings/routing",
     ]
-    assert sum(1 for method, _ in customer if method == "GET") == 25
+    assert sum(1 for method, _ in customer if method == "GET") == 26
     assert ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/pipeline-status") in customer
 
 

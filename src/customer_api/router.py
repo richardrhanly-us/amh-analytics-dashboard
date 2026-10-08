@@ -15,6 +15,7 @@ from customer_api.auth_routes import create_auth_router
 from customer_api.efficiency_report_routes import create_efficiency_report_router
 from customer_api.efficiency_settings_routes import create_efficiency_settings_router
 from customer_api.errors import CustomerApiRoute
+from customer_api.holds_report_routes import create_holds_report_router
 from customer_api.member_routes import create_member_router
 from customer_api.operational_routes import create_operational_router
 from customer_api.organization_report_routes import create_organization_report_router
@@ -40,6 +41,7 @@ def create_customer_router(limiter: Limiter) -> APIRouter:
     router.include_router(create_organization_report_router())
     router.include_router(create_efficiency_settings_router())
     router.include_router(create_efficiency_report_router())
+    router.include_router(create_holds_report_router())
     router.include_router(create_member_router())
     router.include_router(create_routing_settings_router())
     return router

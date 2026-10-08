@@ -4,11 +4,13 @@ import { isApiError } from '../api/client.ts'
 import { getPipelineStatus, type PipelineStatus } from '../api/liveToday.ts'
 import {
   getBinVolumeReport,
+  getHoldsReport,
   getOverviewReport,
   getReliabilityReport,
   getRoutingReport,
   getVolumeReport,
   type BinVolumeReport,
+  type HoldsReport,
   type OverviewReport,
   type ReliabilityReport,
   type ReportKind,
@@ -151,4 +153,14 @@ export function useSorterReports(orgSlug: string, branchSlug: string, range: Dat
     reliability,
     unavailable: [overview, volume, routing, bins, reliability].some((read) => read.section.status === 'unavailable'),
   }
+}
+
+/**
+ * A sorter's Holds report over one range. Not one of the five above: it is
+ * only for a plan that has it, so it is read only by the section that shows
+ * it, and that section is only there when the plan has it. Whatever becomes
+ * of it, the five are untouched.
+ */
+export function useHoldsReport(orgSlug: string, branchSlug: string, range: DateRange): ReportRead<HoldsReport> {
+  return useReport('holds', getHoldsReport, orgSlug, branchSlug, range)
 }
