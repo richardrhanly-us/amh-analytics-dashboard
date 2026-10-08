@@ -162,7 +162,34 @@ describe('scope of this block', () => {
     expect(offenders(/datetime-local|download=|text\/csv|Blob\(|createObjectURL|\.pdf/)).toEqual([])
     // R8E: one thing is chosen from a list -- a member's role -- on the one page that manages members.
     expect(offenders(/<select/)).toEqual(['../members/MembersPage.tsx'])
-    expect(offenders(/\b(Historical|Export|Administration|Settings)\b(?! dashboard data)/)).toEqual([])
+    expect(offenders(/\b(Historical|Export|Administration)\b(?! dashboard data)/)).toEqual([])
+    // R8F: an organization's owners and admins have one area for its own configuration. Its name is written once,
+    // in the one module that names the area and its sections; everything of it is under settings/.
+    expect(offenders(/\bSettings\b/)).toEqual(['../settings/settingsText.ts'])
+    const settingsSources = shipped.filter(([path]) => path.startsWith('../settings/'))
+    expect(settingsSources.map(([path]) => path).sort()).toEqual([
+      '../settings/BranchesPage.tsx',
+      '../settings/EfficiencySettingsPage.tsx',
+      '../settings/GeneralPage.tsx',
+      '../settings/SettingsLayout.tsx',
+      '../settings/settingsText.ts',
+    ])
+    // Nothing in it names what the API keeps to itself about a machine, or what R8F leaves out of an organization.
+    expect(
+      settingsSources
+        .filter(([, text]) => /hostname|installation|token|enroll|ingest|credential|password|secret|plan_|entitlement|subscription|timezone|contact/i.test(text))
+        .map(([path]) => path),
+    ).toEqual([])
+    // It asks the API for nothing of its own: what it shows is the organization already read, and the one
+    // Efficiency form that exists.
+    expect(settingsSources.filter(([, text]) => /apiRequest|useQuery|useMutation|['"`]\/api\//.test(text)).map(([path]) => path)).toEqual([])
+    // General and the inventory are to be read: neither has a form, a field or a button.
+    expect(
+      settingsSources
+        .filter(([path]) => /GeneralPage|BranchesPage/.test(path))
+        .filter(([, text]) => /<form|<input|<select|<textarea|<button|onSubmit|onClick/.test(text))
+        .map(([path]) => path),
+    ).toEqual([])
     // R8B: a person can change and reset their OWN password, in the account pages and nowhere else. Nothing
     // about anyone else's account is offered, and no page has a password field for another person.
     expect(offenders(/\b(Reset password|Change password)\b/).sort()).toEqual([
@@ -315,6 +342,13 @@ describe('how the dashboard is drawn', () => {
     const pages = shipped.filter(([path]) => path.startsWith('../pages/') || path.startsWith('../router/'))
     // Nothing that draws a page or builds an address reads the organization's branch list.
     expect(pages.filter(([, text]) => /organization\.branches|\.branches\.|BranchSummary/.test(text)).map(([path]) => path)).toEqual([])
+    // R8F: one module in the whole app reads it, and reads it as what it is -- the inventory of branches. It lists
+    // a machine only from the sorters the API returned, matched by the machine's own host branch.
+    expect(offenders(/organization\.branches|\.branches\.|BranchSummary/).filter((path) => path !== '../api/organizations.ts')).toEqual([
+      '../settings/BranchesPage.tsx',
+    ])
+    const inventory = shipped.find(([path]) => path === '../settings/BranchesPage.tsx')?.[1] ?? ''
+    expect(inventory).toMatch(/organization\.sorters\.find\(\(sorter\) => sorter\.host_branch\.slug === branch\.slug\)/)
     expect(pages.filter(([, text]) => /organization\.sorters/.test(text)).map(([path]) => path).sort()).toEqual([
       '../pages/LegacyBranchRedirect.tsx',
       '../pages/OrganizationPage.tsx',
@@ -331,6 +365,11 @@ describe('how the dashboard is drawn', () => {
       '<Route path="reports"',
       // R8E: who belongs to the organization, beside its reports.
       '<Route path="members"',
+      // R8F: the organization's own configuration, a section to an address.
+      '<Route path="settings"',
+      '<Route path="general"',
+      '<Route path="branches"',
+      '<Route path="efficiency"',
       '<Route path="sorters/:sorterSlug"',
       '<Route path="reports"',
       '<Route path="branches/:branchSlug"',

@@ -88,22 +88,32 @@ async function page(world: World = {}, overrides: ApiRoutes = {}) {
 // =====================================================================================================================
 
 describe('the way to the page', () => {
-  it.each(['owner', 'admin'])('is a link on the organization page for an %s', async (role) => {
+  it.each(['owner', 'admin'])('is one of the sections an %s reaches from the organization page, at the address it always had', async (role) => {
     serve({ role })
     const user = userEvent.setup(INSTANT)
     renderApp('/organizations/northbridge')
 
-    const link = await screen.findByRole('link', { name: 'Users & Access' })
+    // R8F: the organization page has one way in, and the members page is a section of what it opens.
+    await user.click(await screen.findByRole('link', { name: 'Settings' }))
+    const link = within(await screen.findByRole('navigation', { name: 'Settings' })).getByRole('link', { name: 'Users & Access' })
     expect(link).toHaveAttribute('href', PAGE)
     await user.click(link)
 
     expect(await screen.findByRole('heading', { level: 2, name: 'Users & Access' })).toHaveFocus()
+    expect(screen.getByTestId('address')).toHaveTextContent(PAGE)
     expect(document.title).toBe('Users & Access – SortView')
     expect(within(screen.getByRole('navigation', { name: 'Breadcrumb' })).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
       'Organizations',
       'Northbridge Library',
+      'Settings',
       'Users & Access',
     ])
+    // The strip of sections is on this page too, and says this is the one being shown.
+    const strip = within(screen.getByRole('navigation', { name: 'Settings' }))
+    expect(strip.getAllByRole('link').map((item) => item.textContent)).toEqual(['General', 'Users & Access', 'Branches & Sorters', 'Efficiency'])
+    expect(strip.getByRole('link', { name: 'Users & Access' })).toHaveAttribute('aria-current', 'page')
+    expect(strip.getByRole('link', { name: 'General' })).not.toHaveAttribute('aria-current')
+    await screen.findByRole('table', { name: 'Members' })
   })
 
   it.each(['manager', 'viewer', 'something-new'])('is not offered to a %s, and is not in the header for anyone', async (role) => {
@@ -112,7 +122,8 @@ describe('the way to the page', () => {
     await screen.findByRole('link', { name: 'Organization Reports' })
 
     expect(screen.queryByRole('link', { name: 'Users & Access' })).not.toBeInTheDocument()
-    expect(within(screen.getByRole('navigation', { name: 'Account' })).queryByText(/Users|Access|Members/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument()
+    expect(within(screen.getByRole('navigation', { name: 'Account' })).queryByText(/Users|Access|Members|Settings/)).not.toBeInTheDocument()
   })
 
   it.each(['manager', 'viewer'])('says who it is for when a %s goes to its address, and asks the API for nothing', async (role) => {
@@ -121,6 +132,9 @@ describe('the way to the page', () => {
 
     expect(await screen.findByRole('note')).toHaveTextContent("Members are managed by this organization's owners and admins.")
     expect(screen.getByRole('heading', { level: 2, name: 'Users & Access' })).toBeInTheDocument()
+    // No strip of sections, and no link into them: as before R8F.
+    expect(screen.queryByRole('navigation', { name: 'Settings' })).not.toBeInTheDocument()
+    expect(within(main()).getAllByRole('link').map((item) => item.textContent)).toEqual(['Organizations', 'Northbridge Library'])
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
     expect(within(main()).queryAllByRole('button')).toEqual([])
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
@@ -460,6 +474,7 @@ describe('changing a role', () => {
     // Back in the organization, read afresh: the page is not offered, and its address says who it is for.
     await user.click(await screen.findByRole('link', { name: 'Northbridge Library' }))
     await screen.findByRole('link', { name: 'Organization Reports' })
+    expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Users & Access' })).not.toBeInTheDocument()
   })
 
@@ -795,8 +810,8 @@ describe('the structure of the page', () => {
     expect(Array.from(main().querySelectorAll('[tabindex]')).map((element) => `${element.tagName} ${element.getAttribute('tabindex')}`)).toEqual(['H2 -1', 'H3 -1'])
     expect(main().querySelectorAll('[disabled], [aria-live], [role="button"], dialog')).toHaveLength(0)
 
-    // Every control is reached with Tab alone, in reading order, starting in the first row.
-    screen.getByRole('link', { name: 'Northbridge Library' }).focus()
+    // Every control is reached with Tab alone, in reading order: after the strip of sections, the first row.
+    within(screen.getByRole('navigation', { name: 'Settings' })).getByRole('link', { name: 'Efficiency' }).focus()
     await user.tab()
     expect(screen.getByRole('button', { name: `Change role for ${ALICE.email}` })).toHaveFocus()
     await user.keyboard('{Enter}')

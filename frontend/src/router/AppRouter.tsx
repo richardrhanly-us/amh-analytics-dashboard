@@ -12,6 +12,10 @@ import { OrganizationsPage } from '../pages/OrganizationsPage.tsx'
 import { SorterLayout } from '../pages/SorterLayout.tsx'
 import { SorterPage } from '../pages/SorterPage.tsx'
 import { SorterReportsPage } from '../pages/SorterReportsPage.tsx'
+import { BranchesPage } from '../settings/BranchesPage.tsx'
+import { EfficiencySettingsPage } from '../settings/EfficiencySettingsPage.tsx'
+import { GeneralPage } from '../settings/GeneralPage.tsx'
+import { SettingsLayout } from '../settings/SettingsLayout.tsx'
 import { PageArrivalContext } from './PageArrivalContext.ts'
 import { ORGANIZATIONS_PATH } from './paths.ts'
 
@@ -38,6 +42,13 @@ export function AppRouter() {
           <Route path="reports" element={<OrganizationReportsPage />} />
           {/* Who belongs to the organization. The page itself says so to anyone it is not for. */}
           <Route path="members" element={<MembersPage />} />
+          {/* The organization's own configuration, a section to an address. The first section is where it opens. */}
+          <Route path="settings" element={<SettingsLayout />}>
+            <Route index element={<Navigate to="general" replace />} />
+            <Route path="general" element={<GeneralPage />} />
+            <Route path="branches" element={<BranchesPage />} />
+            <Route path="efficiency" element={<EfficiencySettingsPage />} />
+          </Route>
           <Route path="sorters/:sorterSlug" element={<SorterLayout />}>
             <Route index element={<SorterPage />} />
             <Route path="reports" element={<SorterReportsPage />} />
