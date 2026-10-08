@@ -24,13 +24,19 @@ that day: the bounds are the same values, computed by the same functions.
 
 HOW A RANGE IS COUNTED. Every boundary -- each local midnight, each
 wall-clock hour -- is computed here, in Python, and bound with its type
-stated. A statement then counts the rows between consecutive boundaries:
+stated, all of them together as one array. A statement then names, for each
+row, the interval it falls in, and counts the rows of each:
 
-    COUNT(*) FILTER (WHERE event_time >= :boundary_N AND event_time < :boundary_N+1)
+    width_bucket(event_time, :boundaries)    the number of boundaries at or before the row's time
 
-one column per bucket, optionally grouped by the one stored column that says
-where an item went or why it was rejected. The database compares and counts.
-It converts no time zone, truncates no timestamp, casts nothing and reads no
+so bucket N (from 1) is [boundary N-1, boundary N): the same half-open
+intervals, made from the same boundaries, as one COUNT(*) FILTER column per
+bucket made before Reports R9D1. Two equal boundaries make an interval no
+time can fall in -- the hour the clocks skip -- exactly as before. The
+answer is one row per bucket that has rows, optionally per value of the one
+stored column that says where an item went or why it was rejected; the
+buckets with none are zero here. The database compares and counts. It
+converts no time zone, truncates no timestamp, casts nothing and reads no
 clock, so no result can depend on the database session's time zone. A stored
 destination or reject message is read only as the key of a group, turned
 into a public key or reason, counted, and dropped.
@@ -42,10 +48,11 @@ report's reasons and its daily rejects likewise. Counting them with separate
 statements would let a row that arrives between two statements break the
 sum.
 
-THE RANGE LIMIT. MAX_REPORT_RANGE_DAYS bounds the number of buckets one
-request asks for. It is a safeguard for this implementation, not a rule about
-what a report may cover: longer ranges need a different way of counting, not
-a different definition.
+THE RANGE LIMIT. MAX_REPORT_RANGE_DAYS bounds how many days one request
+may cover. It is a safeguard, not a rule about what a report may cover. The
+way of counting above has no limit of its own on the number of buckets (the
+one-column-per-bucket statements it replaced stopped at PostgreSQL's 1,664
+columns); a longer limit is a separate decision.
 
 Framework-neutral: no Streamlit, no FastAPI, no pandas, no caching, no
 engine. Every read takes a connection the caller supplies -- already scoped
@@ -61,7 +68,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import DateTime, bindparam, text
+from sqlalchemy import ARRAY, DateTime, bindparam, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.sql.elements import TextClause
 
@@ -86,8 +93,11 @@ logger = logging.getLogger("sortview.operational_reports")
 # The most days one report may cover, both ends included. See THE RANGE LIMIT above.
 MAX_REPORT_RANGE_DAYS = 92
 
-# The most hour buckets one statement counts: a week of wall-clock hours.
-_HOUR_BUCKET_DAYS_PER_STATEMENT = 7
+# How many days of wall-clock hours one statement counts. It once had to be a week: a bucket was a column, and a
+# week is 168 of them. A bucket is now a row, so this bounds only the one array of boundaries a statement binds:
+# 366 days is at most 366 * 24 + 1 = 8,785 instants -- roughly 350 KB once the driver writes them into the
+# statement -- and one statement for each year of a range.
+_HOUR_BUCKET_DAYS_PER_STATEMENT = 366
 
 
 # =====================================================================================================================
@@ -256,44 +266,37 @@ _SOURCES = (
 )
 
 
-def _bucket_count_statement(source: _Source, buckets: int) -> TextClause:
-    """One statement counting `source`'s rows in each of `buckets` consecutive
-    intervals: bucket N is [boundary_N, boundary_N + 1). The WHERE clause is
-    the single-day reads' -- the tenant, then the span the era owns -- so a
-    row is counted here exactly when it is counted there, and the bucket it
-    lands in is decided only by which pair of boundaries it falls between.
+def _bucket_count_statement(source: _Source) -> TextClause:
+    """One statement counting `source`'s rows by the interval of the bound
+    `boundaries` each falls in: one row of (group value, bucket, count) for
+    each group and bucket that has rows. Bucket N (from 1) is
+    [boundary N-1, boundary N). The WHERE clause is the single-day reads' --
+    the tenant, then the span the era owns -- so a row is counted here
+    exactly when it is counted there, and the bucket it lands in is decided
+    only by which pair of boundaries it falls between.
 
-    The text is assembled from this module's own constants and a bucket
-    count. Nothing from a caller's data is ever part of it.
+    The text is assembled from this module's own constants. Nothing from a
+    caller's data is ever part of it, and every time is a bound value: the
+    boundaries are one array of the type the table keeps its times in.
     """
     if source not in _SOURCES:
         raise ValueError("a count statement can only be built for one of this module's own sources")
-    if buckets < 1:
-        raise ValueError("a count statement needs at least one bucket")
 
-    columns = ",\n".join(
-        f"        COUNT(*) FILTER (WHERE event_time >= :boundary_{index} AND event_time < :boundary_{index + 1})"
-        for index in range(buckets)
-    )
-    grouped = source.group_column is not None
+    group = f"{source.group_column}, " if source.group_column is not None else ""
     sql = (
-        "    SELECT\n"  # nosec B608 - this module's constants and a bucket count only
-        + (f"        {source.group_column},\n" if grouped else "")
-        + columns
-        + f"""
-    FROM {source.table}
-    WHERE customer_id = :customer_id
-      AND branch_id = :branch_id
-      AND event_time >= :span_start
-      AND event_time < :span_end
-"""
-        + (f"    GROUP BY {source.group_column}\n" if grouped else "")
+        f"    SELECT {group}width_bucket(event_time, :boundaries) AS bucket, COUNT(*) AS row_count\n"  # nosec B608
+        f"    FROM {source.table}\n"
+        "    WHERE customer_id = :customer_id\n"
+        "      AND branch_id = :branch_id\n"
+        "      AND event_time >= :span_start\n"
+        "      AND event_time < :span_end\n"
+        f"    GROUP BY {group}bucket\n"
     )
     time_type = DateTime(timezone=source.aware)
     return text(sql).bindparams(
         bindparam("span_start", type_=time_type),
         bindparam("span_end", type_=time_type),
-        *(bindparam(f"boundary_{index}", type_=time_type) for index in range(buckets + 1)),
+        bindparam("boundaries", type_=ARRAY(time_type)),
     )
 
 
@@ -303,17 +306,38 @@ def _execute_bucket_count(
     source: _Source,
     span: tuple[datetime, datetime],
     boundaries: Sequence[datetime],
-):
-    return conn.execute(
-        _bucket_count_statement(source, len(boundaries) - 1),
+) -> list[tuple]:
+    """`source`'s rows in `span`, counted in each of the intervals between
+    consecutive `boundaries`: for a plain count, one row of one count per
+    interval; for a grouped one, a row for each stored value that has rows in
+    the span, that value first and then one count per interval. Every
+    interval is there, zero where nothing fell in it."""
+    buckets = len(boundaries) - 1
+    if buckets < 1:
+        raise ValueError("a count statement needs at least one bucket")
+
+    rows = conn.execute(
+        _bucket_count_statement(source),
         {
             "customer_id": tenant.operational_customer_id,
             "branch_id": tenant.operational_branch_id,
             "span_start": span[0],
             "span_end": span[1],
-            **{f"boundary_{index}": boundary for index, boundary in enumerate(boundaries)},
+            "boundaries": list(boundaries),
         },
     )
+    grouped = source.group_column is not None
+    counts_by_group: dict[object, list[int]] = {}
+    for row in rows:
+        *group, bucket, count = tuple(row)
+        # The span lies within the boundaries, so a row's bucket is always one of the intervals between them.
+        if isinstance(bucket, bool) or not isinstance(bucket, int) or not 1 <= bucket <= buckets:
+            raise ValueError("a count statement placed a row outside the intervals it was given")
+        counts_by_group.setdefault(group[0] if grouped else None, [0] * buckets)[bucket - 1] += int(count)
+
+    if not grouped:
+        return [tuple(counts_by_group.get(None, [0] * buckets))]
+    return [(stored, *counts) for stored, counts in counts_by_group.items()]
 
 
 def _bucket_counts(row: object, buckets: int) -> tuple[int, ...]:
@@ -338,7 +362,7 @@ def _counts_by_day(
     days = window.local_range.days
     totals = [0] * days
     for source, span, boundaries in _eras(window, v1_source, v2_source):
-        counts = _bucket_counts(_execute_bucket_count(conn, tenant, source, span, boundaries).one(), days)
+        counts = _bucket_counts(_execute_bucket_count(conn, tenant, source, span, boundaries)[0], days)
         totals = [total + count for total, count in zip(totals, counts, strict=True)]
     return tuple(totals)
 
@@ -376,14 +400,14 @@ def get_checkin_counts_by_hour(
     repeated hour holds both of its passes. A cutover inside an hour splits
     that hour between the eras, with nothing counted twice.
 
-    The days are counted a week at a time -- 168 buckets a statement -- and
-    a week an era owns none of is not asked for.
+    The days are counted _HOUR_BUCKET_DAYS_PER_STATEMENT at a time, and a
+    stretch of days an era owns none of is not asked for.
     """
     by_day = [[0] * WALL_CLOCK_HOURS_PER_DAY for _ in window.local_range.dates]
 
     for first, source, owned, boundaries in _weeks_of_hours(window, _V1_CHECKINS, _V2_CHECKINS):
         buckets = len(boundaries) - 1
-        counts = _bucket_counts(_execute_bucket_count(conn, tenant, source, owned, boundaries).one(), buckets)
+        counts = _bucket_counts(_execute_bucket_count(conn, tenant, source, owned, boundaries)[0], buckets)
         for index, count in enumerate(counts):
             by_day[first + index // WALL_CLOCK_HOURS_PER_DAY][index % WALL_CLOCK_HOURS_PER_DAY] += count
 
@@ -393,12 +417,14 @@ def get_checkin_counts_by_hour(
 def _weeks_of_hours(
     window: ReportWindow, v1_source: _Source, v2_source: _Source
 ) -> Iterator[tuple[int, _Source, tuple[datetime, datetime], tuple[datetime, ...]]]:
-    """The statements an hourly count of the window needs, a week of
-    wall-clock hours at a time: (index of the week's first day, source, the
-    part of that week the source's era owns, the week's hour boundaries).
+    """The statements an hourly count of the window needs, a stretch of
+    _HOUR_BUCKET_DAYS_PER_STATEMENT days of wall-clock hours at a time (the
+    name is from when a stretch was a week): (index of the stretch's first
+    day, source, the part of that stretch the source's era owns, the
+    stretch's hour boundaries).
 
-    Bucket N of a week is hour N % 24 of its day N // 24. A week an era owns
-    none of is not yielded, so its table is not read for it.
+    Bucket N of a stretch is hour N % 24 of its day N // 24. A stretch an era
+    owns none of is not yielded, so its table is not read for it.
     """
     local = window.local_range
     hours_per_day = [local_hour_boundaries(day, local.zone) for day in local.dates]

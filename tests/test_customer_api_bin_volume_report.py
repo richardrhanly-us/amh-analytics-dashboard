@@ -621,9 +621,11 @@ def test_a_long_range_is_counted_a_week_at_a_time_and_loses_and_repeats_nothing_
 
     assert body["checkin_count"] == 92 == _other(api, "volume", _range_of(92))["checkin_count"]
     assert _totals(body) == {str(key): sum(1 for offset in range(92) if offset % 5 == key) for key in range(5)}
-    # One cutover lookup, then one grouped statement for each of the range's fourteen weeks.
+    # One cutover lookup, then one grouped statement: since Reports R9D1 a statement counts up to 366 days of hours
+    # (it was one a week, fourteen here). That a boundary between statements loses and repeats nothing is tested on
+    # the service itself, over longer ranges, in tests/test_report_buckets.py.
     statements = [table for table, _params, _settings in db.queries]
-    assert statements[:15] == ["v2_cutovers", *["checkins"] * 14]
+    assert statements == ["v2_cutovers", "checkins"] * 2      # the bin report, then the volume report beside it
 
 
 @pytest.mark.parametrize("params", [

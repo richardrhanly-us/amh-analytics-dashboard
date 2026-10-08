@@ -714,8 +714,10 @@ def test_the_other_reports_count_the_same_local_days_across_a_clock_change(api, 
 
 
 def test_a_week_boundary_inside_a_long_range_loses_and_repeats_nothing(api, db):
-    """Hours are counted a week of days at a time. One check-in in the last hour of every day, and one in the
-    first, over 23 days: every day has exactly two, whichever statement its hours were in."""
+    """Hours were counted a week of days at a time; since Reports R9D1 a statement counts up to 366 days of them,
+    so a range the API accepts is one statement. (That a boundary between statements loses and repeats nothing is
+    tested on the service itself, over longer ranges, in tests/test_report_buckets.py.) One check-in in the last
+    hour of every day, and one in the first, over 23 days: every day has exactly two."""
     for day in range(1, 24):
         db.v1("Main", 1, at=_local(5, day, 0, 0))
         db.v1("Main", 1, at=_local(5, day, 23, 59))
@@ -724,7 +726,7 @@ def test_a_week_boundary_inside_a_long_range_loses_and_repeats_nothing(api, db):
 
     assert [day["checkin_count"] for day in body["days"]] == [2] * 23
     assert {entry["hour"]: entry["checkin_count"] for entry in body["hours"] if entry["checkin_count"]} == {0: 23, 23: 23}
-    assert db.log.count("checkins") == 4            # 23 days: four statements of at most seven days each
+    assert db.log.count("checkins") == 1            # 23 days: one statement of up to 366 days
 
 
 # =====================================================================================================================
