@@ -204,6 +204,14 @@ export async function listOrganizations(signal?: AbortSignal): Promise<Organizat
 }
 
 /**
+ * What the organization the pages are under is kept as, in the session's query cache. Whoever changes something
+ * the organization's answer depends on -- the signed-in person's own role in it -- asks for it again by this.
+ */
+export function organizationKey(orgSlug: string) {
+  return ['organization', orgSlug] as const
+}
+
+/**
  * GET /api/organizations/{org_slug}. Rejects with a 404 ApiError for an
  * organization that does not exist or that the user cannot see -- the API
  * answers both identically.

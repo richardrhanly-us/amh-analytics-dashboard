@@ -157,7 +157,8 @@ h2:focus-visible {
   font-weight: 600;
 }
 
-.field input {
+.field input,
+.field select {
   box-sizing: border-box;
   width: 100%;
   padding: 0.5rem 0.625rem;
@@ -1031,6 +1032,9 @@ button[aria-disabled='true'] {
 }
 
 .page-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.25rem;
   margin: -0.5rem 0 1rem;
 }
 
@@ -1391,4 +1395,49 @@ button[aria-disabled='true'] {
 
 .auth-form .notice {
   margin-top: 0;
+}
+
+/*
+ * An organization's members. The page is a column of panels; the table is words, not figures, so its cells read
+ * from the left and wrap. What can be done to a member opens in that member's row, in place.
+ */
+.members {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.members .panel > h3 {
+  margin-bottom: 0.75rem;
+}
+
+.members-table td,
+.members-table thead th:last-child {
+  text-align: left;
+  font-variant-numeric: normal;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.members-table + .quiet,
+.table-scroll + .quiet {
+  margin-bottom: 0;
+}
+
+.member-editor > :first-child {
+  margin-top: 0;
+}
+
+.member-editor .field {
+  margin-bottom: 0.5rem;
+}
+
+.member-form .field input,
+.member-form .field select,
+.member-editor .field select {
+  max-width: 24rem;
+}
+
+.member-form > .field-help {
+  margin-bottom: 1rem;
 }

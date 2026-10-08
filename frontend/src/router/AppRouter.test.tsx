@@ -457,7 +457,8 @@ describe('an organization page', () => {
 
     expect(screen.getByText('No sorting machines are registered for this organization yet.')).toBeInTheDocument()
     expect(within(main()).getByRole('heading', { level: 3, name: 'Sorting machines' })).toBeInTheDocument()
-    expect(linkNames()).toEqual(['Organizations', 'Organization Reports'])
+    // Northbridge's fixture makes Alice an admin, so the members page is offered beside the reports.
+    expect(linkNames()).toEqual(['Organizations', 'Organization Reports', 'Users & Access'])
     expect(main()).not.toHaveTextContent(/Central Branch|East Side Branch|Westside/)
   })
 
@@ -806,7 +807,7 @@ describe('the sorting machines of an organization', () => {
     // Westside is one of the organization's branches, and somewhere items are routed to. It has no machine.
     expect(NORTHBRIDGE_DETAIL.branches.map((branch) => branch.name)).toContain('Westside')
     expect(main()).not.toHaveTextContent('Westside')
-    expect(linkNames()).toEqual(['Organizations', 'Organization Reports', 'Central Library AMH', 'East Side AMH'])
+    expect(linkNames()).toEqual(['Organizations', 'Organization Reports', 'Users & Access', 'Central Library AMH', 'East Side AMH'])
   })
 
   it('shows an organization with one sorter as a list of one, not straight to its dashboard', async () => {
@@ -1191,5 +1192,48 @@ describe('signing in and out around a sorter address', () => {
 
     await screen.findByRole('button', { name: 'Sign in' })
     await waitFor(() => expect(address()).toBe('/'))
+  })
+})
+
+describe('how an organization is loaded', () => {
+  // What a browser tells a page when its connection goes and comes back.
+  const connection = (state: 'offline' | 'online') => window.dispatchEvent(new Event(state))
+
+  it('is not asked for again merely because the connection came back', async () => {
+    const fetchMock = serve()
+    renderApp('/organizations/northbridge')
+    await heading('Northbridge Library')
+    expect(organizationRequests(fetchMock)).toEqual(['/api/organizations/northbridge'])
+
+    try {
+      connection('offline')
+      connection('online')
+      // Long enough for a request to have been made, had one been asked for.
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    } finally {
+      connection('online')
+    }
+
+    expect(organizationRequests(fetchMock)).toEqual(['/api/organizations/northbridge'])
+    expect(screen.getByRole('heading', { level: 2, name: 'Northbridge Library' })).toBeInTheDocument()
+  })
+
+  it('is asked for, and says it failed, when the browser thinks it is offline -- it does not wait', async () => {
+    const fetchMock = serve({ [NORTHBRIDGE_URL]: () => Promise.reject(networkFailure()) })
+    const user = userEvent.setup()
+    renderApp('/organizations')
+    await heading('Organizations')
+
+    try {
+      connection('offline')
+      await user.click(link('Northbridge Library'))
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Could not reach the server. Check your connection and try again.')
+      expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+      expect(screen.queryByText('Loading organization…')).not.toBeInTheDocument()
+      expect(organizationRequests(fetchMock)).toContain('/api/organizations/northbridge')
+    } finally {
+      connection('online')
+    }
   })
 })
