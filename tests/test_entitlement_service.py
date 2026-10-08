@@ -326,7 +326,7 @@ def _feature(enabled=True, limit_value=None):
     return {"enabled": enabled, "limit_value": limit_value}
 
 
-TODAY = date(2026, 6, 20)
+TODAY = date(2026, 6, 20)  # freshness: allow FRESH004 -- passed as today= to earliest_report_date, which never reads the clock
 
 
 @pytest.mark.parametrize(("features", "expected"), [
