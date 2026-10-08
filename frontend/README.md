@@ -6,9 +6,13 @@ with Vite. It is a static SPA. There is no server-side rendering.
 **Status: Block F5.6, sorter navigation.** The app restores a session,
 signs in and signs out against the customer API (`/api/auth/*`), lists the
 signed-in user's organizations, lists each organization's sorting machines,
-and shows a sorter's Live Today dashboard. It is not deployed anywhere yet:
-there is no production hosting for this frontend. Nothing in this directory
-is used by the Python backend, the Streamlit app or the collector.
+and shows a sorter's Live Today dashboard. It is not deployed yet: the
+customer UI in production is still the Streamlit dashboard. The planned
+hosting -- the built app in a private S3 bucket behind CloudFront, with
+`/api/*` sent to the existing FastAPI service -- and the manual steps for a
+first trial are in [docs/react-hosting-runbook.md](../docs/react-hosting-runbook.md).
+Nothing in this directory is used by the Python backend, the Streamlit app
+or the collector.
 
 ## Routes
 
@@ -210,7 +214,8 @@ Tests stub `fetch`; none of them talks to a real backend.
 ## Build output
 
 `npm run build` writes the production site to `dist/`. That directory is
-git-ignored and is what will be uploaded to static hosting.
+git-ignored and is what will be uploaded to static hosting: how, and in what
+order, is in [docs/react-hosting-runbook.md](../docs/react-hosting-runbook.md).
 
 ## Configuration
 

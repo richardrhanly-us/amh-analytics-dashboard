@@ -12,6 +12,10 @@ SortView currently has three operational parts:
 
 These parts are related, but they are deployed differently.
 
+The React customer app (`frontend/`) is not one of them yet: it is not deployed. Its planned hosting, and
+the manual steps for a first CloudFront trial alongside Streamlit, are in
+[react-hosting-runbook.md](react-hosting-runbook.md).
+
 ## backend API deployment
 
 The backend API is responsible for:
