@@ -362,3 +362,80 @@ def test_mixed_acs_summary_live_uses_prepare_todays_acs_snapshot_for_the_v1_port
     # The latest record for B1 is the retraction (101YNN, not a hold) -- so it must NOT be counted, exactly as
     # metrics.prepare_todays_acs_snapshot's dedup would produce for a v1-only branch.
     assert result["holds_total"] == 0
+
+
+# =====================================================================================================================
+# R8J: public holds across a cutover -- v1 classified by the cloud lists, v2 by the flags the collector sent
+# =====================================================================================================================
+
+_SYNTHETIC_ACCOUNT = "EXAMPLE (ST)STAFF ACCOUNT A"
+
+
+def _v1_hold(barcode, when, patron_id=""):
+    return {"datetime": pd.Timestamp(when), "raw_message": f"101YNY0001|AB{barcode}|AJTitle|", "message_code": "10",
+            "barcode": barcode, "destination": "Main", "patron_id": patron_id}
+
+
+def _v1_patron(patron_id, name, when):
+    return {"datetime": pd.Timestamp(when), "raw_message": f"64|AA{patron_id}|AE{name}|PTADULT|", "message_code": "64",
+            "barcode": "", "destination": "", "patron_id": patron_id}
+
+
+def _v2_hold(n, when, **flags):
+    return {"datetime": pd.Timestamp(when), "item_key": str(n) * 64, "state": "hold", "destination": "main",
+            "is_ill": flags.get("is_ill", False), "is_branch_services": flags.get("is_branch_services", False),
+            "is_collection_services": flags.get("is_collection_services", False)}
+
+
+def test_public_holds_across_a_cutover_count_each_era_by_its_own_rules_and_each_hold_once(monkeypatch):
+    v1_acs = pd.DataFrame([
+        _v1_patron("p1", _SYNTHETIC_ACCOUNT, "2026-09-10T08:00:00+00:00"),
+        _v1_hold("a", "2026-09-10T09:00:00+00:00", patron_id="p1"),    # before cutover, a configured account: internal
+        _v1_hold("b", "2026-09-11T09:00:00+00:00"),                    # before cutover, public
+        _v1_hold("c", "2026-10-02T09:00:00+00:00"),                    # v1 row AFTER cutover: belongs to v2, not counted
+    ])
+    v2_acs = pd.DataFrame([
+        _v2_hold(1, "2026-09-20T09:00:00+00:00"),                       # v2 row BEFORE cutover: belongs to v1, not counted
+        _v2_hold(2, "2026-10-03T09:00:00+00:00", is_branch_services=True),
+        _v2_hold(3, "2026-10-04T09:00:00+00:00"),
+        _v2_hold(4, "2026-10-05T09:00:00+00:00"),
+    ])
+    monkeypatch.setattr(mixed, "get_effective_cutover", lambda *_a: CUTOVER)
+    monkeypatch.setattr(dl, "load_acs_history_df", lambda *_a: v1_acs)
+    monkeypatch.setattr(dl, "load_acs_item_events_history_df", lambda *_a: v2_acs)
+
+    def report(names):
+        return mixed.build_mixed_acs_item_summary(
+            ORG, BRANCH, pd.Timestamp("2026-09-01").date(), pd.Timestamp("2026-10-31").date(), [],
+            branch_services_names=names, collection_services_names=set(),
+            branch_services_da_patterns=[], collection_services_da_patterns=[],
+        )
+
+    with_list = report({_SYNTHETIC_ACCOUNT})
+    # v1: b is public, a is Branch Services. v2: 3 and 4 are public, 2 is Branch Services. c and 1 are on the wrong
+    # side of the cutover for their era, and are counted by neither.
+    assert (with_list["holds_total"], with_list["programming_total"]) == (3, 2)
+    assert sorted(with_list["holds_df"]["source_era"]) == ["v1", "v2", "v2"]
+
+    # The cloud list reaches v1 holds only: taking it away moves the v1 hold back to public, and no v2 hold moves.
+    without = report(set())
+    assert (without["holds_total"], without["programming_total"]) == (4, 1)
+    assert sorted(without["holds_df"]["source_era"]) == ["v1", "v1", "v2", "v2"]
+
+
+def test_the_cloud_lists_never_reach_a_branch_that_has_only_v2_holds(monkeypatch):
+    monkeypatch.setattr(mixed, "get_effective_cutover", lambda *_a: CUTOVER)
+    monkeypatch.setattr(dl, "load_acs_history_df", lambda *_a: pd.DataFrame(columns=["datetime", "raw_message", "message_code", "barcode", "destination", "patron_id"]))
+    monkeypatch.setattr(dl, "load_acs_item_events_history_df",
+                        lambda *_a: pd.DataFrame([_v2_hold(5, "2026-10-03T09:00:00+00:00"), _v2_hold(6, "2026-10-04T09:00:00+00:00", is_collection_services=True)]))
+
+    results = [
+        mixed.build_mixed_acs_item_summary(
+            ORG, BRANCH, pd.Timestamp("2026-09-01").date(), pd.Timestamp("2026-10-31").date(), [],
+            branch_services_names=names, collection_services_names=names, branch_services_da_patterns=patterns,
+            collection_services_da_patterns=patterns,
+        )
+        for names, patterns in ((set(), []), ({_SYNTHETIC_ACCOUNT, "ANY OTHER ACCOUNT"}, ["DAANY OTHER ACCOUNT"]))
+    ]
+
+    assert [(r["holds_total"], r["programming_total"], r["collection_services_total"]) for r in results] == [(1, 0, 1), (1, 0, 1)]

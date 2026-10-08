@@ -18,6 +18,17 @@ or touches the dashboard. Installer/release integration and installation-status 
 Never leaves: barcode, patron ID/name/type/address, title, call number, collection/shelf codes, raw SIP2 or reject text, staff names,
 message codes, raw destination text, exception or server-response text.
 
+**Where the hold classification rules live -- and where they do not.** That list is what a v2 *event* carries. It is not where
+the classification *rules* are kept. The collector's local rules file (`classification_rules.json`) is the authority for every
+v2 hold: it is classified on this machine and arrives at the server already carrying its three flags. The cloud's
+`organization_settings.settings_json["internal_routing"]` -- the same four lists, edited on the dashboard's Admin Settings page --
+does not affect a v2 hold at all. It is read only by the dashboard's v1 classifier (`src/metrics.py::build_acs_item_summary`),
+for holds from before a branch's cutover, and it is read when a report is made: changing it changes how those older holds are
+counted, the next time a report is read. Nothing keeps the two in step. Those cloud lists hold the same patron account names as
+the local file -- some of which can be a staff member's own patron card -- so the account names are **not** only on this
+machine: they are also in the cloud's settings. (v1 also stored every uploaded row's raw message in the cloud, which carries
+patron names; that is v1's, and is not part of v2.)
+
 ## The privacy boundary
 
 Only `collector/v2_transform.py` (with the raw modules only it imports: `v2_reader`, `v2_normalize`, `v2_classify`) touches a raw record.
@@ -51,7 +62,7 @@ quarantine, stdout/stderr, HTTP payloads) — raw, case-folded, hex, base64, UTF
 ## Setup (operator)
 
 ```
-python -m collector.v2_rules seed --settings <branch_settings.json> --out <root>\config\classification_rules.json   # local file: holds staff names
+python -m collector.v2_rules seed --settings <branch_settings.json> --out <root>\config\classification_rules.json   # local file: holds patron account names
 python -m collector.v2_keys init  --config <config.json>     # creates + protects the secret; prints one fixed line
 python -m collector.v2_keys check --config <config.json>     # confirms it opens, is bound to the key_id, and its ACL is verified protected
 ```
@@ -76,8 +87,9 @@ durable queue, so the next run re-reads and resends the identical events (the se
 
 * **ACS.** Code-10 records become `hold` (`101YNY…`), `non_hold_101` (other `101…`) or `other_code10`. Message-64 records only populate
   the local patron cache and produce no event. The classifier reproduces the dashboard's, **including its ILL-title quirk** (a title
-  containing the word "Ill" marks a hold ILL); a parity test compares it with `src/metrics.py`. Rules with staff names stay local,
-  are seeded from the current settings, and are held as name HMACs at runtime. `ruleset_id` is a random UUID minted per rules
+  containing the word "Ill" marks a hold ILL); a parity test compares it with `src/metrics.py`. The rules file is local and
+  is held as name HMACs at runtime, but it is seeded from a copy of the dashboard's settings, whose own lists remain in the cloud
+  (see "Where the hold classification rules live" above). `ruleset_id` is a random UUID minted per rules
   fingerprint — it has no relationship to the rules.
 * **A patron profile that arrives after the hold.** The dashboard classifies a window all at once and applies the **latest** message-64 record
   of the item's patron in that window to every hold, whichever side of the hold it falls on. Only three flags can depend on it — `is_ill`

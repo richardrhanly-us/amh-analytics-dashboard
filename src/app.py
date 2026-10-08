@@ -564,7 +564,6 @@ app_settings = load_runtime_settings(
 )
 LIBRARY_SETTINGS = app_settings["LIBRARY_SETTINGS"]
 TRANSIT_SETTINGS = app_settings["TRANSIT_SETTINGS"]
-INTERNAL_ROUTING = app_settings["INTERNAL_ROUTING"]
 
 LIBRARY_NAME = app_settings["LIBRARY_NAME"]
 BRANCH_NAME = app_settings["BRANCH_NAME"]
@@ -575,10 +574,9 @@ TRANSIT_DESTINATIONS = app_settings["TRANSIT_DESTINATIONS"]
 ENABLED_TRANSIT_DESTINATIONS = app_settings["ENABLED_TRANSIT_DESTINATIONS"]
 TRANSIT_LABELS = list(dict.fromkeys(app_settings["TRANSIT_LABELS"]))
 
-BRANCH_SERVICES_NAMES = app_settings["BRANCH_SERVICES_NAMES"]
-COLLECTION_SERVICES_NAMES = app_settings["COLLECTION_SERVICES_NAMES"]
-BRANCH_SERVICES_DA_PATTERNS = app_settings["BRANCH_SERVICES_DA_PATTERNS"]
-COLLECTION_SERVICES_DA_PATTERNS = app_settings["COLLECTION_SERVICES_DA_PATTERNS"]
+# The v1 hold classifier's lists -- patron account names and |DA...| markers -- kept in one object and handed only to
+# the two hold summaries below. They are not part of the dashboard's settings (services.settings_service.V1HoldRules).
+V1_HOLD_RULES = app_settings["V1_HOLD_RULES"]
 
 
 #***************************************************************
@@ -971,10 +969,10 @@ def _render_live_today():
         selected_customer_id,
         selected_branch_id,
         TRANSIT_LABELS,
-        BRANCH_SERVICES_NAMES,
-        COLLECTION_SERVICES_NAMES,
-        BRANCH_SERVICES_DA_PATTERNS,
-        COLLECTION_SERVICES_DA_PATTERNS,
+        V1_HOLD_RULES.branch_services_names,
+        V1_HOLD_RULES.collection_services_names,
+        V1_HOLD_RULES.branch_services_da_patterns,
+        V1_HOLD_RULES.collection_services_da_patterns,
         refresh_count=live_data_key,
     )
 
@@ -1095,10 +1093,10 @@ else:
             start_date,
             end_date,
             TRANSIT_LABELS,
-            BRANCH_SERVICES_NAMES,
-            COLLECTION_SERVICES_NAMES,
-            BRANCH_SERVICES_DA_PATTERNS,
-            COLLECTION_SERVICES_DA_PATTERNS,
+            V1_HOLD_RULES.branch_services_names,
+            V1_HOLD_RULES.collection_services_names,
+            V1_HOLD_RULES.branch_services_da_patterns,
+            V1_HOLD_RULES.collection_services_da_patterns,
         )
     else:
         acs_item_summary_history = metrics.build_acs_item_summary(
