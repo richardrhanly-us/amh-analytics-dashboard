@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { NavLink, Outlet, useOutletContext } from 'react-router'
 
 import type { OrganizationDetail } from '../api/organizations.ts'
+import { hasTransits } from '../pages/capabilities.ts'
 import { Breadcrumb } from '../components/Breadcrumb.tsx'
 import { PageHeading } from '../components/PageHeading.tsx'
 import { MEMBERS_PAGE_NAME } from '../members/memberText.ts'
@@ -28,16 +29,19 @@ import {
 /**
  * The sections of an organization's own configuration, as a strip of links.
  * Each has an address, so each is a link, and the current one says so. A
- * section is listed once it exists: there is no link to something not built.
+ * section is listed once it exists: there is no link to something not built,
+ * nor to Routing for an organization whose plan does not include transit
+ * routing.
  *
  * The members page is one of them and keeps the address it always had.
  */
-function SectionNav({ orgSlug }: { orgSlug: string }) {
+function SectionNav({ organization }: { organization: OrganizationDetail }) {
+  const orgSlug = organization.slug
   const sections = [
     { to: settingsGeneralPath(orgSlug), label: GENERAL_NAME },
     { to: organizationMembersPath(orgSlug), label: MEMBERS_PAGE_NAME },
     { to: settingsBranchesPath(orgSlug), label: BRANCHES_NAME },
-    { to: settingsRoutingPath(orgSlug), label: ROUTING_NAME },
+    ...(hasTransits(organization) ? [{ to: settingsRoutingPath(orgSlug), label: ROUTING_NAME }] : []),
     { to: settingsEfficiencyPath(orgSlug), label: EFFICIENCY_NAME },
   ]
   return (
@@ -85,7 +89,7 @@ export function SettingsFrame({
     <>
       <Breadcrumb trail={trail} current={section} />
       <PageHeading>{section}</PageHeading>
-      {offered && <SectionNav orgSlug={organization.slug} />}
+      {offered && <SectionNav organization={organization} />}
       {children}
     </>
   )

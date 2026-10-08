@@ -15,12 +15,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import logging
+from collections.abc import Callable, Iterable, Mapping
+from datetime import date, timedelta
 from typing import Any
 
 from sqlalchemy import text
 
 from database import get_engine
+
+logger = logging.getLogger("sortview.entitlements")
 
 # Every function in this module is UNCACHED and framework-neutral: each
 # lookup queries the database, and nothing here imports Streamlit. The
@@ -273,3 +277,78 @@ def feature_limit(entitlement_context: dict[str, Any], feature_key: str):
     if not feature:
         return None
     return feature.get("limit_value")
+
+
+
+#***************************************************************
+#
+#  Capabilities: what a plan's features mean
+#
+#  Description: The one reading of the plan features that decide what a
+#               customer may see, by feature key and never by plan name.
+#               Each one FAILS CLOSED: a feature that is missing, switched
+#               off or holds a value that is not a positive whole number
+#               gives the least the product offers, never the most.
+#
+#               transits      enabled: transit routing is shown
+#               history_days  enabled, N: a report may start no earlier
+#                             than N - 1 days before today
+#                             enabled, no limit: no earliest date
+#                             otherwise: DEFAULT_HISTORY_DAYS
+#               max_sorters   enabled, N: at most N sorter sites
+#                             enabled, no limit: no maximum
+#                             otherwise: DEFAULT_MAX_SORTERS
+#
+#***************************************************************
+
+TRANSITS_FEATURE = "transits"
+HISTORY_DAYS_FEATURE = "history_days"
+MAX_SORTERS_FEATURE = "max_sorters"
+
+DEFAULT_HISTORY_DAYS = 30
+DEFAULT_MAX_SORTERS = 1
+
+# A sorter site counts while one of its installations can report. An inactive or retired one is history only.
+SORTER_INSTALLATION_STATUSES = frozenset({"provisioning", "active"})
+
+
+def _limit_or_unlimited(entitlement_context: dict[str, Any], feature_key: str, default: int) -> int | None:
+    # The feature's positive limit, None for "no limit", or `default` when the feature does not grant one.
+    feature = entitlement_context.get("entitlements", {}).get(feature_key)
+    if not feature or not feature.get("enabled", False):
+        return default
+    limit = feature.get("limit_value")
+    if limit is None:
+        return None
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+        # The key only: a stored value is not repeated in a log.
+        logger.warning("Unusable plan feature limit; the default applies | feature=%s", feature_key)
+        return default
+    return limit
+
+
+def transits_enabled(entitlement_context: dict[str, Any]) -> bool:
+    return feature_enabled(entitlement_context, TRANSITS_FEATURE)
+
+
+def history_days_limit(entitlement_context: dict[str, Any]) -> int | None:
+    """How many calendar days back, today included, a report may reach. None: no limit."""
+    return _limit_or_unlimited(entitlement_context, HISTORY_DAYS_FEATURE, DEFAULT_HISTORY_DAYS)
+
+
+def earliest_report_date(entitlement_context: dict[str, Any], today: date) -> date | None:
+    """The first date a report may start on, given the product's `today`. None: no earliest date."""
+    days = history_days_limit(entitlement_context)
+    return None if days is None else today - timedelta(days=days - 1)
+
+
+def max_sorters_limit(entitlement_context: dict[str, Any]) -> int | None:
+    """How many sorter sites the organization may have. None: no limit."""
+    return _limit_or_unlimited(entitlement_context, MAX_SORTERS_FEATURE, DEFAULT_MAX_SORTERS)
+
+
+def count_sorter_sites(installations: Iterable[Mapping[str, Any]]) -> int:
+    """The sorter sites among an organization's collector installations (each with `branch_id` and `status`):
+    the distinct host branches with at least one installation that can report. Two installations at one branch are
+    one site. A routing destination is not an installation and is never counted."""
+    return len({row["branch_id"] for row in installations if row["status"] in SORTER_INSTALLATION_STATUSES})

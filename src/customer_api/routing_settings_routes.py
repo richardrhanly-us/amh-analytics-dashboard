@@ -50,6 +50,7 @@ from starlette.responses import JSONResponse, Response
 
 from customer_api.auth_dependencies import require_allowed_origin
 from customer_api.efficiency_settings_routes import Admin, WritingAdmin
+from customer_api.entitlement_dependencies import Transits
 from customer_api.errors import (
     NO_STORE_HEADERS,
     CustomerApiError,
@@ -110,14 +111,16 @@ def create_routing_settings_router() -> APIRouter:
     router = APIRouter(prefix="/organizations/{org_slug}", route_class=CustomerApiRoute)
 
     @router.get("/settings/routing")
-    def get_organization_routing_settings(org_slug: str, user: Admin) -> Response:
+    def get_organization_routing_settings(org_slug: str, user: Admin, _transits: Transits) -> Response:
         stored = routing_settings_service.read_organization_routing(org_slug, user_id=user["id"])
         if stored is None:
             raise _organization_not_found()
         return _body(stored)
 
     @router.put("/settings/routing", dependencies=[Depends(require_allowed_origin)])
-    def put_organization_routing_settings(org_slug: str, user: WritingAdmin, body: RoutingSettingsRequest) -> Response:
+    def put_organization_routing_settings(
+        org_slug: str, user: WritingAdmin, _transits: Transits, body: RoutingSettingsRequest
+    ) -> Response:
         try:
             wanted = validate_routing_settings(body.routing.model_dump())
         except RoutingSettingsError as error:

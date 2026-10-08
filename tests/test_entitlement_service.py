@@ -1,3 +1,7 @@
+import logging
+from datetime import date
+
+import pytest
 from db_fakes import FakeEngine, FakeQueryResult
 
 from src.services import entitlement_service
@@ -307,3 +311,124 @@ def test_feature_limit_returns_configured_value():
 def test_feature_limit_none_when_entitlement_absent():
     context = {"entitlements": {}}
     assert entitlement_service.feature_limit(context, "max_branches") is None
+
+
+# =====================================================================================================================
+# R9C: capabilities -- what the plan's transits, history_days and max_sorters mean. By key, never by plan name, and
+# failing closed: a missing, switched-off or unusable feature gives the least, never the most.
+# =====================================================================================================================
+
+def _context(**features):
+    return {"role": "viewer", "subscription": None, "entitlements": features}
+
+
+def _feature(enabled=True, limit_value=None):
+    return {"enabled": enabled, "limit_value": limit_value}
+
+
+TODAY = date(2026, 6, 20)  # freshness: allow FRESH004 -- passed as today= to earliest_report_date, which never reads the clock
+
+
+@pytest.mark.parametrize(("features", "expected"), [
+    ({"transits": _feature(True)}, True),
+    ({"transits": _feature(True, 3)}, True),
+    ({"transits": _feature(False)}, False),
+    ({}, False),
+    ({"internal_workflow": _feature(True)}, False),
+])
+def test_transit_routing_is_on_only_when_the_plan_switches_it_on(features, expected):
+    assert entitlement_service.transits_enabled(_context(**features)) is expected
+
+
+@pytest.mark.parametrize(("history", "days", "earliest"), [
+    (_feature(True, 30), 30, date(2026, 5, 22)),       # today and the 29 days before it
+    (_feature(True, 1), 1, date(2026, 6, 20)),         # today only
+    (_feature(True, 90), 90, date(2026, 3, 23)),
+    (_feature(True, 730), 730, date(2024, 6, 21)),
+    (_feature(True, None), None, None),                # no limit: no earliest date
+])
+def test_the_history_window_is_the_plans_number_of_days_counting_today(history, days, earliest):
+    context = _context(history_days=history)
+
+    assert entitlement_service.history_days_limit(context) == days
+    assert entitlement_service.earliest_report_date(context, TODAY) == earliest
+
+
+@pytest.mark.parametrize("history", [
+    None,                       # no row
+    _feature(False, 3650),      # switched off
+    _feature(False, None),      # switched off, no limit: still not "everything"
+    _feature(True, 0),
+    _feature(True, -30),
+    _feature(True, "3650"),
+    _feature(True, 36.5),
+    _feature(True, True),
+])
+def test_a_missing_switched_off_or_unusable_history_feature_is_thirty_days(history):
+    context = _context(**({} if history is None else {"history_days": history}))
+
+    assert entitlement_service.history_days_limit(context) == entitlement_service.DEFAULT_HISTORY_DAYS == 30
+    assert entitlement_service.earliest_report_date(context, TODAY) == date(2026, 5, 22)
+
+
+def test_an_unusable_limit_is_logged_by_its_key_only(caplog):
+    with caplog.at_level(logging.WARNING, logger="sortview.entitlements"):
+        entitlement_service.history_days_limit(_context(history_days=_feature(True, -777)))
+
+    assert [record.getMessage() for record in caplog.records] == [
+        "Unusable plan feature limit; the default applies | feature=history_days"
+    ]
+    assert "-777" not in caplog.text
+
+
+@pytest.mark.parametrize(("sorters", "expected"), [
+    (_feature(True, 1), 1),
+    (_feature(True, 4), 4),
+    (_feature(True, None), None),       # no limit
+    (None, 1),                          # no row
+    (_feature(False, 10), 1),           # switched off
+    (_feature(False, None), 1),
+    (_feature(True, 0), 1),
+    (_feature(True, -2), 1),
+    (_feature(True, "5"), 1),
+])
+def test_the_sorter_limit_is_the_plans_number_or_one(sorters, expected):
+    context = _context(**({} if sorters is None else {"max_sorters": sorters}))
+
+    assert entitlement_service.max_sorters_limit(context) == expected
+
+
+def test_max_branches_is_left_as_it_was():
+    # Not reinterpreted as a sorter count (R9C): it still has no limit when its row is missing.
+    from src.services import permission_service
+
+    assert permission_service.can_access_branch_count(_context(), 50) is True
+    assert permission_service.can_access_branch_count(_context(max_branches=_feature(True, 1)), 2) is False
+
+
+def _installation(branch_id, status):
+    return {"branch_id": branch_id, "status": status}
+
+
+@pytest.mark.parametrize(("installations", "expected"), [
+    ([], 0),
+    ([_installation(11, "active")], 1),
+    ([_installation(11, "provisioning")], 1),
+    ([_installation(11, "active"), _installation(11, "provisioning")], 1),   # a replacement beside the old one: one site
+    ([_installation(11, "active"), _installation(11, "active")], 1),         # two collectors at one branch: one site
+    ([_installation(11, "active"), _installation(12, "active")], 2),
+    ([_installation(11, "inactive")], 0),                                     # switched off: history only
+    ([_installation(11, "retired")], 0),                                      # decommissioned
+    ([_installation(11, "retired"), _installation(11, "active")], 1),
+    ([_installation(11, "inactive"), _installation(12, "provisioning"), _installation(13, "retired")], 1),
+])
+def test_a_sorter_site_is_a_branch_with_an_installation_that_can_report(installations, expected):
+    assert entitlement_service.count_sorter_sites(installations) == expected
+
+
+def test_capabilities_are_read_by_feature_key_and_never_by_plan_name():
+    import inspect
+
+    source = inspect.getsource(entitlement_service).lower()
+    for plan in ("starter", "enterprise", "'pro'", '"pro"', "tier"):
+        assert plan not in source, plan

@@ -36,6 +36,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from controlled_clock import ControlledClock
+from entitlement_support import feature, grant
 from fastapi.dependencies.utils import get_flat_dependant
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, text
@@ -246,6 +247,8 @@ def session(monkeypatch):
 
 @pytest.fixture
 def api(monkeypatch, clock, session):
+    # Every plan feature, with no history limit: what a plan does to these reports is tested on its own (R9C).
+    grant(monkeypatch)
     monkeypatch.delenv("SORTVIEW_LIVE_TIMEZONE", raising=False)
     main.limiter.reset()
     yield TestClient(main.app)
@@ -1518,3 +1521,76 @@ def test_the_statements_run_for_each_sorter_site(api, db, report, per_site):
     assert len(statements) == 3 + len(resolutions) + sum(len(tables) for tables in per_site.values())
     # The mapping check runs only for a site that did not resolve.
     assert not any("organization_is_mapped" in statement for statement in statements)
+
+
+# =====================================================================================================================
+# R9C: the organization's plan -- its history window, and transit routing for the Routing network
+# =====================================================================================================================
+
+BEFORE_HISTORY = {"code": "range_before_history", "message": "The selected range starts before this organization's available reporting window."}
+NOT_AVAILABLE = {"code": "feature_not_available", "message": "This feature is not available for this organization."}
+
+
+@pytest.mark.parametrize("report", REPORTS)
+@pytest.mark.parametrize(("history", "oldest_allowed"), [
+    (feature(True, 30), "2026-05-22"),
+    (None, "2026-05-22"),                    # no history feature: thirty days
+    (feature(False, 3650), "2026-05-22"),     # switched off: thirty days
+    (feature(True, 0), "2026-05-22"),         # unusable: thirty days
+    (feature(True, 90), "2026-03-23"),
+])
+def test_an_organization_report_starts_no_earlier_than_the_plan_allows(api, db, monkeypatch, report, history, oldest_allowed):
+    grant(monkeypatch, history_days=history)
+    earlier = (date.fromisoformat(oldest_allowed) - timedelta(days=1)).isoformat()
+
+    assert _get(api, report, {"from": oldest_allowed, "to": "2026-06-12"}).status_code == 200
+    refused = _get(api, report, {"from": earlier, "to": "2026-06-12"})
+    assert (refused.status_code, refused.json()) == (422, BEFORE_HISTORY)
+
+
+def test_with_no_history_limit_an_old_range_is_read_and_92_days_is_still_the_most(api, db, monkeypatch):
+    grant(monkeypatch, history_days=feature(True, None))
+
+    assert _report(api, "overview", {"from": "2001-01-01", "to": "2001-01-31"})["totals"]["checkin_count"] == 0
+    too_long = _get(api, "overview", {"from": "2001-01-01", "to": "2001-06-30"})
+    assert too_long.status_code == 422 and too_long.json()["detail"][0]["type"] == "report_range_too_long"
+
+
+def test_the_organization_is_settled_before_its_history_window(api, db, monkeypatch):
+    asked = grant(monkeypatch, history_days=feature(True, 30))
+    old = {"from": "2020-01-01", "to": "2020-01-31"}
+
+    assert _get(api, "overview", old, headers={}).json() == NOT_AUTHENTICATED
+    assert _get(api, "overview", old, org="beta").json() == ORGANIZATION_NOT_FOUND
+    assert _get(api, "overview", old, org="closed").json() == ORGANIZATION_NOT_FOUND
+    assert asked == []
+    assert _get(api, "overview", old, org="paused").json() == BEFORE_HISTORY     # suspended: readable, same window
+    assert _get(api, "overview", {"from": "2026-05-22", "to": "2026-06-12"}, org="paused").status_code == 200
+
+
+@pytest.mark.parametrize("transits", [None, feature(False)])
+def test_without_transit_routing_the_routing_network_is_403_and_the_others_are_not(api, db, monkeypatch, transits):
+    grant(monkeypatch, transits=transits)
+
+    response = _get(api, "routing-network")
+    assert (response.status_code, response.json()) == (403, NOT_AVAILABLE)
+    assert response.headers["cache-control"] == "no-store"
+    # The overview keeps its shape, transit totals included: it is not a transit-only report (R9C).
+    assert _report(api, "overview")["totals"]["transit_count"] >= 0
+    assert _get(api, "reliability").status_code == 200
+
+
+def test_the_routing_network_gate_comes_after_who_and_where_and_before_the_range(api, db, monkeypatch):
+    grant(monkeypatch, transits=None)
+    backwards = {"from": "2026-06-12", "to": "2026-06-08"}
+
+    assert _get(api, "routing-network", headers={}).json() == NOT_AUTHENTICATED
+    assert _get(api, "routing-network", org="beta").json() == ORGANIZATION_NOT_FOUND
+    assert _get(api, "routing-network", org="closed").json() == ORGANIZATION_NOT_FOUND
+    assert _get(api, "routing-network", backwards).json() == NOT_AVAILABLE
+
+    grant(monkeypatch, transits=feature(True))
+    refused = _get(api, "routing-network", backwards)
+    assert refused.status_code == 422 and refused.json()["detail"][0]["type"] == "report_range_order"
+    assert _get(api, "routing-network").status_code == 200
+    assert _get(api, "routing-network", org="paused").status_code == 200      # suspended: still readable

@@ -35,6 +35,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from controlled_clock import ControlledClock
+from entitlement_support import feature, grant
 from fastapi.dependencies.utils import get_flat_dependant
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
@@ -145,6 +146,8 @@ def clock():
 @pytest.fixture
 def api(monkeypatch, clock):
     monkeypatch.setattr(session_service, "validate_session", lambda raw_token: dict(USER))
+    # Every plan feature, with no history limit: what a plan does to these reports is tested on its own (R9C).
+    grant(monkeypatch)
     monkeypatch.delenv("SORTVIEW_LIVE_TIMEZONE", raising=False)
     main.limiter.reset()
     yield TestClient(main.app)
@@ -1072,11 +1075,15 @@ def test_each_route_takes_the_two_path_slugs_and_the_two_dates_and_nothing_else(
 
     assert route.path == f"/api/organizations/{{org_slug}}/branches/{{branch_slug}}/reports/{report}"
     assert route.methods == {"GET"}
-    assert sorted(p.name for p in flat.path_params) == ["branch_slug", "org_slug"]
+    # A slug can be read by more than one dependency (R9C: the range's history window reads the organization's
+    # plan): still the same two path parameters, and nothing else.
+    assert sorted({p.name for p in flat.path_params}) == ["branch_slug", "org_slug"]
     assert sorted((p.alias, p.field_info.is_required()) for p in flat.query_params) == [("from", True), ("to", True)]
     assert flat.body_params == [] and flat.header_params == []
-    # The tenant is resolved first, the range second: 401, then 404, then 422.
-    assert list(inspect.signature(route.endpoint).parameters) == ["tenant", "requested"]
+    # The tenant is resolved first, then (for Routing only) the plan's transit feature, the range last: 401, then
+    # 404, then 403, then 422.
+    expected = ["tenant", "_transits", "requested"] if report == "routing" else ["tenant", "requested"]
+    assert list(inspect.signature(route.endpoint).parameters) == expected
 
 
 def test_the_routes_are_read_only(api, db):
@@ -1136,3 +1143,167 @@ def test_the_single_day_endpoints_answer_exactly_as_before(api, db):
     # A single-day read still takes `date`, and not a range.
     refused = api.get(BASE.format(org="acme", branch="main") + "/checkins/count", headers=COOKIE, params=JUNE_8_TO_12)
     assert refused.status_code == 422
+
+
+# =====================================================================================================================
+# R9C: how far back a range may start (the plan's history_days), and transit routing (the plan's transits)
+# =====================================================================================================================
+
+BEFORE_HISTORY = {"code": "range_before_history", "message": "The selected range starts before this organization's available reporting window."}
+NOT_AVAILABLE = {"code": "feature_not_available", "message": "This feature is not available for this organization."}
+
+
+def _from(first: str, last: str = "2026-06-20") -> dict:
+    return {"from": first, "to": last}
+
+
+def _refused_kind(response) -> str:
+    assert response.status_code == 422, response.text
+    body = response.json()
+    return body["code"] if body["code"] != "validation_error" else body["detail"][0]["type"]
+
+
+@pytest.mark.parametrize("report", REPORTS)
+def test_a_thirty_day_window_starts_twenty_nine_days_before_today_and_not_a_day_earlier(api, db, monkeypatch, report):
+    grant(monkeypatch, history_days=feature(True, 30))
+
+    assert _get(api, report, _from("2026-05-22")).status_code == 200            # today, 20 June, and the 29 days before
+    refused = _get(api, report, _from("2026-05-21"))
+    assert (refused.status_code, refused.json()) == (422, BEFORE_HISTORY)
+    assert refused.headers["cache-control"] == "no-store"
+    assert "2026-05-21" not in refused.text
+
+
+def test_a_longer_window_takes_an_old_start_but_one_request_is_still_at_most_92_days(api, db, monkeypatch):
+    grant(monkeypatch, history_days=feature(True, 90))
+    assert _get(api, "volume", _from("2026-03-23", "2026-04-30")).status_code == 200     # 89 days before today
+    assert _refused_kind(_get(api, "volume", _from("2026-03-22", "2026-04-30"))) == "range_before_history"
+
+    grant(monkeypatch, history_days=feature(True, 3650))
+    assert _get(api, "volume", _from("2020-01-01", "2020-03-31")).status_code == 200     # 91 days, years back
+    assert _refused_kind(_get(api, "volume", _from("2026-01-01"))) == "report_range_too_long"
+
+
+def test_no_limit_means_no_earliest_date_and_the_92_day_cap_still_holds(api, db, monkeypatch):
+    grant(monkeypatch, history_days=feature(True, None))
+
+    old = _report(api, "overview", _from("2001-01-01", "2001-01-31"))
+    assert old["checkin_count"] == 0 and old["range"]["days"] == 31
+    assert _refused_kind(_get(api, "overview", _from("2001-01-01", "2001-06-30"))) == "report_range_too_long"
+
+
+@pytest.mark.parametrize("history", [
+    None,                        # no history feature at all
+    feature(False, 3650),        # switched off
+    feature(False, None),
+    feature(True, 0),            # not a usable number of days
+    feature(True, -5),
+    feature(True, "3650"),
+    feature(True, 36.5),
+    feature(True, True),
+])
+def test_a_missing_switched_off_or_unusable_history_feature_is_thirty_days_never_more(api, db, monkeypatch, history):
+    grant(monkeypatch, history_days=history)
+
+    assert _get(api, "reliability", _from("2026-05-22")).status_code == 200
+    assert _refused_kind(_get(api, "reliability", _from("2026-05-21"))) == "range_before_history"
+
+
+def test_the_other_range_rules_are_unchanged_and_come_first(api, db, monkeypatch):
+    grant(monkeypatch, history_days=feature(True, 30))
+
+    assert _refused_kind(_get(api, "volume", _from("2026-06-12", "2026-06-08"))) == "report_range_order"
+    assert _refused_kind(_get(api, "volume", _from("2026-06-19", "2026-06-21"))) == "report_range_in_future"
+    assert _refused_kind(_get(api, "volume", _from("2026-01-01"))) == "report_range_too_long"
+    assert _get(api, "volume", {"from": "June 8", "to": "2026-06-12"}).json()["code"] == "validation_error"
+
+
+def test_who_and_which_organization_are_settled_before_the_history_window(api, db, monkeypatch):
+    asked = grant(monkeypatch, history_days=feature(True, 30))
+    old = _from("2020-01-01", "2020-01-31")
+
+    assert _get(api, "volume", old, headers={}).status_code == 401
+    assert _get(api, "volume", old, org="beta", branch="north").json() == TENANT_NOT_FOUND     # not a member
+    assert _get(api, "volume", old, org="closed").json() == TENANT_NOT_FOUND                   # cancelled
+    assert asked == []
+    # The plan read is the organization's in the path, for the signed-in user -- once for the request.
+    assert _refused_kind(_get(api, "volume", old)) == "range_before_history"
+    assert asked == [(USER["id"], "acme")]
+
+
+def test_a_suspended_organization_reads_its_reports_within_its_window(api, db, monkeypatch):
+    grant(monkeypatch, history_days=feature(True, 30))
+
+    assert _get(api, "volume", _from("2026-05-22"), org="paused").status_code == 200
+    assert _refused_kind(_get(api, "volume", _from("2026-05-21"), org="paused")) == "range_before_history"
+
+
+def _by_destination(api, params=None, *, org="acme", branch="main", headers=COOKIE):
+    return api.get(
+        BASE.format(org=org, branch=branch) + "/checkins/by-destination",
+        headers=headers,
+        params={"date": "2026-06-10"} if params is None else params,
+    )
+
+
+@pytest.mark.parametrize("transits", [None, feature(False), feature(False, 5)])
+def test_without_transit_routing_the_routing_report_and_the_days_routing_are_403(api, db, monkeypatch, transits):
+    grant(monkeypatch, transits=transits)
+
+    for response in (_get(api, "routing"), _by_destination(api)):
+        assert (response.status_code, response.json()) == (403, NOT_AVAILABLE)
+        assert response.headers["cache-control"] == "no-store"
+    # Nothing else is about transit routing, and nothing else is refused.
+    for report in ("overview", "volume", "reliability"):
+        assert _get(api, report).status_code == 200, report
+    count = api.get(BASE.format(org="acme", branch="main") + "/checkins/count", headers=COOKIE, params={"date": "2026-06-10"})
+    assert count.status_code == 200
+
+
+def test_with_transit_routing_both_answer_as_before(api, db, monkeypatch):
+    grant(monkeypatch, transits=feature(True))
+    db.v1("Westside", 2, at=_local(6, 10))
+
+    assert _get(api, "routing").status_code == 200
+    assert _by_destination(api).json()["checkin_count"] == 2
+    assert _by_destination(api, org="paused").status_code == 200     # suspended: still readable
+
+
+def test_the_transit_gate_comes_after_who_and_where_and_before_the_dates(api, db, monkeypatch):
+    grant(monkeypatch, transits=None)
+    bad_range, bad_date = _from("2026-06-12", "2026-06-08"), {"date": "June 10"}
+
+    assert _get(api, "routing", headers={}).json() == NOT_AUTHENTICATED
+    assert _by_destination(api, headers={}).json() == NOT_AUTHENTICATED
+    assert _get(api, "routing", org="beta", branch="north").json() == TENANT_NOT_FOUND
+    assert _by_destination(api, org="closed").json() == TENANT_NOT_FOUND
+    assert _get(api, "routing", bad_range).json() == NOT_AVAILABLE
+    assert _by_destination(api, bad_date).json() == NOT_AVAILABLE
+
+    grant(monkeypatch, transits=feature(True))
+    assert _refused_kind(_get(api, "routing", bad_range)) == "report_range_order"
+    assert _by_destination(api, bad_date).status_code == 422
+
+
+def test_every_range_route_is_held_to_the_history_window_by_the_one_shared_range():
+    """Every customer route that takes a `from`/`to` range takes it through report_routes.require_report_range --
+    the one place the history window is applied -- so none can be added that skips it."""
+
+    def calls(dependant):
+        yield dependant.call
+        for sub in dependant.dependencies:
+            yield from calls(sub)
+
+    ranged = [
+        route for route in main.app.routes
+        if getattr(route, "path", "").startswith("/api/")
+        and {p.alias for p in get_flat_dependant(route.dependant).query_params} >= {"from", "to"}
+    ]
+    assert sorted(route.path for route in ranged) == sorted([
+        "/api/organizations/{org_slug}/branches/{branch_slug}/reports/" + report
+        for report in ("overview", "volume", "routing", "reliability", "bins", "efficiency", "holds")
+    ] + [
+        "/api/organizations/{org_slug}/reports/" + report for report in ("overview", "routing-network", "reliability")
+    ])
+    for route in ranged:
+        assert report_routes.require_report_range in set(calls(route.dependant)), route.path

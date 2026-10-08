@@ -88,8 +88,12 @@ export interface LiveToday {
  *
  * Nothing is kept once the page is left (gcTime 0): coming back, or changing
  * branch, starts from loading and never from another visit's numbers.
+ *
+ * TRANSIT ROUTING. `transits` false (the organization's plan does not include
+ * it): the day's check-ins by destination are never asked for, on the first
+ * load or on any refresh.
  */
-export function useLiveToday(orgSlug: string, branchSlug: string): LiveToday {
+export function useLiveToday(orgSlug: string, branchSlug: string, transits: boolean): LiveToday {
   const queryClient = useQueryClient()
   const [paused, setPaused] = useState(false)
 
@@ -106,15 +110,19 @@ export function useLiveToday(orgSlug: string, branchSlug: string): LiveToday {
   const currentHour = timeZone === null || asOf === null ? null : productHour(new Date(asOf), timeZone)
 
   // `date ?? ''` only keeps the types simple: with no date the query is disabled and its function never runs.
-  const dated = <T>(endpoint: string, load: (org: string, branch: string, date: string, signal: AbortSignal) => Promise<T>) => ({
+  const dated = <T>(
+    endpoint: string,
+    load: (org: string, branch: string, date: string, signal: AbortSignal) => Promise<T>,
+    included = true,
+  ) => ({
     queryKey: ['live-today', orgSlug, branchSlug, 'day', date, endpoint],
     queryFn: ({ signal }: { signal: AbortSignal }) => load(orgSlug, branchSlug, date ?? '', signal),
-    enabled: date !== null,
+    enabled: included && date !== null,
     gcTime: 0,
   })
   const checkinCountQuery = useQuery(dated('checkins/count', getCheckinCount))
   const checkinsByHourQuery = useQuery(dated('checkins/by-hour', getCheckinsByHour))
-  const checkinsByDestinationQuery = useQuery(dated('checkins/by-destination', getCheckinsByDestination))
+  const checkinsByDestinationQuery = useQuery(dated('checkins/by-destination', getCheckinsByDestination, transits))
   const rejectCountQuery = useQuery(dated('rejects/count', getRejectCount))
   const rejectsByReasonQuery = useQuery(dated('rejects/by-reason', getRejectsByReason))
 

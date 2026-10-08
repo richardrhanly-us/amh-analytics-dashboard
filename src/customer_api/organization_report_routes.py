@@ -45,6 +45,7 @@ from typing import Annotated, Any, TypeVar
 from fastapi import APIRouter, Depends
 from starlette.responses import JSONResponse, Response
 
+from customer_api.entitlement_dependencies import Transits
 from customer_api.errors import NO_STORE_HEADERS, CustomerApiRoute
 from customer_api.operational_schemas import RoutingDestination, RoutingHome
 from customer_api.organization_report_schemas import (
@@ -160,7 +161,7 @@ def create_organization_report_router() -> APIRouter:
         ))
 
     @router.get("/routing-network")
-    def get_organization_routing_network_report(org_slug: str, user: Member, requested: Range) -> Response:
+    def get_organization_routing_network_report(org_slug: str, user: Member, _transits: Transits, requested: Range) -> Response:
         local_range = requested.local_range
         report = _read(org_slug, user, lambda resolve_site, open_site: get_organization_routing_network(
             org_slug, local_range, resolve_site=resolve_site, open_site=open_site,

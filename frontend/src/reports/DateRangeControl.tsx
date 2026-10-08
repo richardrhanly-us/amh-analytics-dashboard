@@ -1,6 +1,16 @@
 import { useState, type FormEvent } from 'react'
 
-import { daysInRange, lastDays, MAX_RANGE_DAYS, presetOf, PRESETS, rangeProblem, rangeProblemText, type DateRange } from './dateRange.ts'
+import {
+  daysInRange,
+  earliestDate,
+  lastDays,
+  MAX_RANGE_DAYS,
+  presetOf,
+  presetsFor,
+  rangeProblem,
+  rangeProblemText,
+  type DateRange,
+} from './dateRange.ts'
 import { formatDate } from './derive.ts'
 
 /**
@@ -13,21 +23,27 @@ import { formatDate } from './derive.ts'
  * had, which is the one its figures say they are for.
  *
  * Dates are calendar dates in the product's zone. `today` is the product's
- * date, not this browser's.
+ * date, not this browser's. `historyDays` is how far back the organization's
+ * plan lets a range start (pages/capabilities' historyDays; null for no
+ * limit): only the presets within it are offered, and no earlier start date
+ * can be chosen. The API holds every range to the same rule.
  */
 export function DateRangeControl({
   range,
   today,
+  historyDays,
   onChange,
 }: {
   range: DateRange
   today: string
+  historyDays: number | null
   onChange: (range: DateRange) => void
 }) {
   // What is in the two date boxes: the applied range until someone types.
   const [draft, setDraft] = useState<DateRange>(range)
   const [problem, setProblem] = useState<string | null>(null)
   const activePreset = presetOf(range, today)
+  const earliest = earliestDate(today, historyDays)
 
   function choose(next: DateRange) {
     setDraft(next)
@@ -37,7 +53,7 @@ export function DateRangeControl({
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const found = rangeProblem(draft, today)
+    const found = rangeProblem(draft, today, earliest)
     if (found !== null) {
       setProblem(rangeProblemText(found))
       return
@@ -48,7 +64,7 @@ export function DateRangeControl({
   return (
     <div className="range-control">
       <div className="range-presets" role="group" aria-label="Date range presets">
-        {PRESETS.map((preset) => (
+        {presetsFor(historyDays).map((preset) => (
           <button
             key={preset.days}
             type="button"
@@ -69,6 +85,7 @@ export function DateRangeControl({
             name="from"
             type="date"
             value={draft.from}
+            min={earliest ?? undefined}
             max={today}
             aria-invalid={problem !== null}
             aria-describedby="report-range-help"
@@ -96,8 +113,9 @@ export function DateRangeControl({
       </form>
 
       <p className="range-help" id="report-range-help">
-        Up to {MAX_RANGE_DAYS} days can be shown at a time at present. The latest date that can be chosen is today,{' '}
-        {formatDate(today)}.
+        Up to {MAX_RANGE_DAYS} days can be shown at a time at present.
+        {earliest !== null && ` The earliest date that can be chosen is ${formatDate(earliest)}.`} The latest date that can
+        be chosen is today, {formatDate(today)}.
       </p>
       {problem !== null && (
         <p className="error-message" role="alert">

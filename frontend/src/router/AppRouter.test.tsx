@@ -775,7 +775,8 @@ const METRO_DETAIL = {
   ],
   sorters: [sorter('central', 'Central Library AMH', 'Central Library'), sorter('westside', 'Westside AMH', 'Westside')],
   subscription: null,
-  entitlements: {},
+  // Its routing is the point of these tests: its plan includes transit routing (R9C).
+  entitlements: { transits: { enabled: true, limit_value: null } },
 }
 const hours = (counts: Record<number, number>) => Array.from({ length: 24 }, (_, hour) => counts[hour] ?? 0)
 const METRO_CENTRAL = { ...LIVE, hours: hours({ 9: 100 }), routing: { home: 'Central', transit: [['westside', 'Westside', 30], ['north', 'North', 5]] as [string, string, number][] } }

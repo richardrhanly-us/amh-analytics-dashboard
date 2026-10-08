@@ -90,7 +90,8 @@ export function ReportSection<T>({
   )
 }
 
-export function OverviewSection({ read }: { read: ReportRead<OverviewReport> }) {
+/** `transits`: the organization's plan includes transit routing. Without it, the in-transit figure is not shown. */
+export function OverviewSection({ read, transits }: { read: ReportRead<OverviewReport>; transits: boolean }) {
   return (
     <ReportSection name="report-overview" heading="Overview" read={read}>
       {(report) => {
@@ -105,10 +106,12 @@ export function OverviewSection({ read }: { read: ReportRead<OverviewReport> }) 
                 {...derived(average(total, report.range.days), formatAverage, 'Every calendar day in the range')}
               />
               <MetricCard label="Active days" {...count(report.active_days, `Of ${days(report.range.days)}`)} />
-              <MetricCard
-                label="In transit"
-                {...count(report.transit_count, transitNote(percentOf(report.transit_count, total)))}
-              />
+              {transits && (
+                <MetricCard
+                  label="In transit"
+                  {...count(report.transit_count, transitNote(percentOf(report.transit_count, total)))}
+                />
+              )}
               <MetricCard label="Rejects" {...count(report.reject_count, rejectNote(percentOf(report.reject_count, total)))} />
               <MetricCard
                 label="Busiest day"

@@ -29,6 +29,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from entitlement_support import grant
 from fastapi.dependencies.utils import get_flat_dependant
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
@@ -281,6 +282,8 @@ def db(monkeypatch):
 @pytest.fixture
 def api(monkeypatch):
     monkeypatch.setattr(session_service, "validate_session", lambda raw_token: dict(USER))
+    # Every plan feature, with no history limit: what a plan does to these reports is tested on its own (R9C).
+    grant(monkeypatch)
     monkeypatch.delenv("SORTVIEW_LIVE_TIMEZONE", raising=False)
     main.limiter.reset()
     yield TestClient(main.app)
@@ -954,7 +957,9 @@ def test_the_route_takes_the_two_path_slugs_and_the_date_and_nothing_else():
     assert route.path == "/api/organizations/{org_slug}/branches/{branch_slug}/checkins/by-destination"
     assert route.methods == {"GET"}
     dependant = get_flat_dependant(route.dependant)
-    assert sorted(parameter.name for parameter in dependant.path_params) == ["branch_slug", "org_slug"]
+    # A slug can be read by more than one of the route's dependencies (R9C: the plan's transit feature reads the
+    # organization's): still the same two path parameters, and nothing else.
+    assert sorted({parameter.name for parameter in dependant.path_params}) == ["branch_slug", "org_slug"]
     assert [(parameter.alias, parameter.field_info.is_required()) for parameter in dependant.query_params] == [("date", True)]
     assert dependant.body_params == [] and dependant.header_params == []
 

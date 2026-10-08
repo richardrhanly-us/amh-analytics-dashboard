@@ -5,6 +5,7 @@ export const SETTINGS_NAME = 'Settings'
 export const GENERAL_NAME = 'General'
 export const BRANCHES_NAME = 'Branches & Sorters'
 export const ROUTING_NAME = 'Routing'
+export const ROUTING_NOT_AVAILABLE = 'Routing is not available for this organization.'
 export const EFFICIENCY_NAME = 'Efficiency'
 
 /** Said to someone who opens the area and is not one of the people it is for. Nothing else is shown to them. */

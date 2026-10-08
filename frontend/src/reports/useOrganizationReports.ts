@@ -46,9 +46,11 @@ export function useOrganizationProductDay(orgSlug: string, branchSlugs: readonly
 type Load<T> = (orgSlug: string, from: string, to: string, signal?: AbortSignal) => Promise<T>
 
 /** One organization report. Its key names the organization, the report and the range: a change in any is a new question. */
-function useReport<T>(kind: OrganizationReportKind, load: Load<T>, orgSlug: string, range: DateRange): ReportRead<T> {
-  return useReportQuery(['organization-reports', orgSlug, kind, range.from, range.to], (signal) =>
-    load(orgSlug, range.from, range.to, signal),
+function useReport<T>(kind: OrganizationReportKind, load: Load<T>, orgSlug: string, range: DateRange, enabled = true): ReportRead<T> {
+  return useReportQuery(
+    ['organization-reports', orgSlug, kind, range.from, range.to],
+    (signal) => load(orgSlug, range.from, range.to, signal),
+    enabled,
   )
 }
 
@@ -58,21 +60,26 @@ export interface OrganizationReports {
   reliability: ReportRead<OrganizationReliabilityReport>
   /** Any one of them was answered 404: the organization is not there for this user to see. */
   unavailable: boolean
+  /** Any one of them was refused because the range starts before the organization's plan lets a report reach. */
+  beforeHistory: boolean
 }
 
 /**
  * The three reports of one organization over one range, each read on its
  * own: one that fails says so in its own section and leaves the others alone.
  */
-export function useOrganizationReports(orgSlug: string, range: DateRange): OrganizationReports {
+export function useOrganizationReports(orgSlug: string, range: DateRange, transits: boolean): OrganizationReports {
   const overview = useReport('overview', getOrganizationOverviewReport, orgSlug, range)
-  const routingNetwork = useReport('routing-network', getOrganizationRoutingNetworkReport, orgSlug, range)
+  // Transit routing is a plan feature: without it, the Routing network is not asked for at all.
+  const routingNetwork = useReport('routing-network', getOrganizationRoutingNetworkReport, orgSlug, range, transits)
   const reliability = useReport('reliability', getOrganizationReliabilityReport, orgSlug, range)
+  const reads = [overview, routingNetwork, reliability]
 
   return {
     overview,
     routingNetwork,
     reliability,
-    unavailable: [overview, routingNetwork, reliability].some((read) => read.section.status === 'unavailable'),
+    unavailable: reads.some((read) => read.section.status === 'unavailable'),
+    beforeHistory: reads.some((read) => read.section.status === 'before_history'),
   }
 }

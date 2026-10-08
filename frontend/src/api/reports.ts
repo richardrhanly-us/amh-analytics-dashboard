@@ -128,6 +128,9 @@ export interface HoldsReport {
 }
 
 export const REPORT_KINDS = ['overview', 'volume', 'routing', 'bins', 'reliability', 'holds'] as const
+
+/** The API's code for a range that starts before the organization's plan lets a report reach (R9C). */
+export const RANGE_BEFORE_HISTORY = 'range_before_history'
 export type ReportKind = (typeof REPORT_KINDS)[number]
 
 const MS_PER_DAY = 86_400_000

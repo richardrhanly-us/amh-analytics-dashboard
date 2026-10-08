@@ -118,6 +118,8 @@ describe('getOrganization', () => {
     expect(detail.entitlements).toStrictEqual({
       transits_tab: { enabled: true, limit_value: null },
       branch_count: { enabled: true, limit_value: 5 },
+      transits: { enabled: true, limit_value: null },
+      history_days: { enabled: true, limit_value: null },
     })
     expect(detail.role).toBe('admin')
     expect(detail.access_mode).toBe('full')

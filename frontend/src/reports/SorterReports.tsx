@@ -2,7 +2,7 @@ import { useState } from 'react'
 
 import { LoadFailure } from '../components/LoadFailure.tsx'
 import { DateRangeControl, RangeShown } from './DateRangeControl.tsx'
-import { DEFAULT_PRESET_DAYS, lastDays, type DateRange } from './dateRange.ts'
+import { defaultRange, type DateRange } from './dateRange.ts'
 import { BinVolumeSection } from './BinVolumeSection.tsx'
 import { EfficiencySection } from './EfficiencySection.tsx'
 import { HoldsSection } from './HoldsSection.tsx'
@@ -10,6 +10,7 @@ import { OverviewSection, ReliabilitySection, RoutingSection, VolumeSection } fr
 import { useProductDay, useSorterReports } from './useSorterReports.ts'
 
 const UNAVAILABLE = 'Reports are not available for this sorter yet.'
+const BEFORE_HISTORY = "The selected range starts before this organization's available reporting window. Choose a later start date."
 
 interface Sorter {
   orgSlug: string
@@ -18,14 +19,18 @@ interface Sorter {
   efficiency: boolean
   /** The organization's plan includes the sorter's Holds report: another section, read on its own. */
   holds: boolean
+  /** The organization's plan includes transit routing: the Routing report, and the in-transit figure. */
+  transits: boolean
+  /** How far back the organization's plan lets a report start (pages/capabilities' historyDays; null: no limit). */
+  historyDays: number | null
 }
 
 /**
  * The reports for one range. Keyed by range from outside, so a new range starts with nothing carried over.
  * `today` is the product's date.
  */
-function Reports({ orgSlug, branchSlug, efficiency, holds, range, today }: Sorter & { range: DateRange; today: string }) {
-  const reports = useSorterReports(orgSlug, branchSlug, range)
+function Reports({ orgSlug, branchSlug, efficiency, holds, transits, range, today }: Sorter & { range: DateRange; today: string }) {
+  const reports = useSorterReports(orgSlug, branchSlug, range, transits)
 
   if (reports.unavailable) {
     // The sorter exists -- the organization lists it -- but has nothing to report on. That is not "not found".
@@ -36,11 +41,21 @@ function Reports({ orgSlug, branchSlug, efficiency, holds, range, today }: Sorte
     )
   }
 
+  if (reports.beforeHistory) {
+    // The plan's window changed after this range was chosen: the API refuses it. A later start date is the answer.
+    return (
+      <p className="notice" role="note">
+        {BEFORE_HISTORY}
+      </p>
+    )
+  }
+
   return (
     <div className="report-sections">
-      <OverviewSection read={reports.overview} />
+      <OverviewSection read={reports.overview} transits={transits} />
       <VolumeSection read={reports.volume} />
-      <RoutingSection read={reports.routing} />
+      {/* Not asked for at all unless the plan includes transit routing. */}
+      {transits && <RoutingSection read={reports.routing} />}
       <BinVolumeSection read={reports.bins} />
       <ReliabilitySection read={reports.reliability} />
       {/* Not asked for at all unless the plan has it. Whatever becomes of it, the five above are untouched. */}
@@ -51,14 +66,14 @@ function Reports({ orgSlug, branchSlug, efficiency, holds, range, today }: Sorte
   )
 }
 
-function ReportsForDay({ orgSlug, branchSlug, efficiency, holds, timeZone, today }: Sorter & { timeZone: string; today: string }) {
-  const [range, setRange] = useState<DateRange>(() => lastDays(DEFAULT_PRESET_DAYS, today))
+function ReportsForDay({ timeZone, today, ...sorter }: Sorter & { timeZone: string; today: string }) {
+  const [range, setRange] = useState<DateRange>(() => defaultRange(today, sorter.historyDays))
 
   return (
     <>
-      <DateRangeControl range={range} today={today} onChange={setRange} />
+      <DateRangeControl range={range} today={today} historyDays={sorter.historyDays} onChange={setRange} />
       <RangeShown range={range} today={today} timeZone={timeZone} />
-      <Reports key={`${range.from}/${range.to}`} orgSlug={orgSlug} branchSlug={branchSlug} efficiency={efficiency} holds={holds} range={range} today={today} />
+      <Reports key={`${range.from}/${range.to}`} {...sorter} range={range} today={today} />
     </>
   )
 }
@@ -74,7 +89,8 @@ function ReportsForDay({ orgSlug, branchSlug, efficiency, holds, timeZone, today
  * of the product's calendar dates and may not go past its today, so nothing
  * can be asked for until both are known.
  */
-export function SorterReports({ orgSlug, branchSlug, efficiency, holds }: Sorter) {
+export function SorterReports(sorter: Sorter) {
+  const { orgSlug, branchSlug } = sorter
   const { day, retry } = useProductDay(orgSlug, branchSlug)
 
   switch (day.status) {
@@ -89,6 +105,6 @@ export function SorterReports({ orgSlug, branchSlug, efficiency, holds }: Sorter
     case 'error':
       return <LoadFailure message={day.message} onRetry={retry} />
     case 'ready':
-      return <ReportsForDay orgSlug={orgSlug} branchSlug={branchSlug} efficiency={efficiency} holds={holds} timeZone={day.timeZone} today={day.today} />
+      return <ReportsForDay {...sorter} timeZone={day.timeZone} today={day.today} />
   }
 }

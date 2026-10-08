@@ -685,6 +685,22 @@ def _seed_members(owner_engine, runtime_engine) -> None:
         # Production sortview_app holds SELECT on both (scripts/runtime_role_privileges.py);
         # the phase 1 role above was only given what the ingestion endpoints need.
         conn.execute(text(f"GRANT SELECT ON TABLE public.memberships, public.app_users TO {role}"))  # nosec B608
+        # R9C: every customer report reads the organization's plan (its history window; transit routing for the
+        # routing reads). Production sortview_app holds SELECT on these three as well. Both tenants are on a plan
+        # with every feature and no history limit, so what these tests show is unchanged by the plan.
+        conn.execute(text(f"GRANT SELECT ON TABLE public.plans, public.subscriptions, public.feature_entitlements TO {role}"))  # nosec B608
+        conn.execute(text("INSERT INTO plans (code, name) VALUES ('test-every-feature', 'Every feature') ON CONFLICT (code) DO NOTHING"))
+        conn.execute(text(
+            "INSERT INTO feature_entitlements (plan_id, feature_key, enabled, limit_value) "
+            "SELECT p.id, f.feature_key, TRUE, NULL FROM plans p, "
+            "(VALUES ('transits'), ('history_days'), ('internal_workflow')) AS f(feature_key) "
+            "WHERE p.code = 'test-every-feature' ON CONFLICT (plan_id, feature_key) DO NOTHING"
+        ))
+        conn.execute(text("DELETE FROM subscriptions WHERE organization_id IN (1, 2)"))
+        conn.execute(text(
+            "INSERT INTO subscriptions (organization_id, plan_id, status) "
+            "SELECT o.id, p.id, 'active' FROM plans p, (VALUES (1), (2)) AS o(id) WHERE p.code = 'test-every-feature'"
+        ))
 
 
 @pytest.fixture

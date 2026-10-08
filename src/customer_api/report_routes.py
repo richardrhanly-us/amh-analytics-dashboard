@@ -18,7 +18,12 @@ A RANGE is two calendar dates, `from` and `to`, both included, in the
 product's zone. It is checked before any connection is opened -- each date
 by the same rule as the single-day reads' `date`, then the pair together --
 and a range that cannot be reported on is the application's ordinary 422,
-saying which bound and what kind of problem and never the value.
+saying which bound and what kind of problem and never the value. A range may
+also start no earlier than the organization's plan allows
+(services.entitlement_service.earliest_report_date): one that does is a 422
+with its own code, range_before_history. The two rules are independent -- the
+plan says how far back a range may start, MAX_REPORT_RANGE_DAYS how long one
+request may be.
 
 A route never takes an operational identifier from the request and never
 counts anything itself: the tenant comes only from the two slugs in its path,
@@ -37,7 +42,8 @@ from pydantic import BeforeValidator
 from starlette.responses import JSONResponse, Response
 
 from customer_api import settings
-from customer_api.errors import NO_STORE_HEADERS, CustomerApiRoute
+from customer_api.entitlement_dependencies import OrganizationEntitlements, Transits
+from customer_api.errors import NO_STORE_HEADERS, CustomerApiError, CustomerApiRoute
 from customer_api.operational_routes import ResolvedTenant, _calendar_date
 from customer_api.operational_schemas import RoutingDestination, RoutingHome
 from customer_api.report_schemas import (
@@ -56,6 +62,7 @@ from customer_api.report_schemas import (
     VolumeReportResponse,
 )
 from customer_api.tenant_scope import open_customer_tenant_connection
+from services import entitlement_service
 from services.operational_report_service import (
     LocalRange,
     ReportRangeError,
@@ -93,8 +100,9 @@ class RequestedRange:
         )
 
 
-def require_report_range(from_date: FromDate, to_date: ToDate) -> RequestedRange:
-    """The range in the request's `from` and `to`, or the ordinary 422.
+def require_report_range(from_date: FromDate, to_date: ToDate, entitlements: OrganizationEntitlements) -> RequestedRange:
+    """The range in the request's `from` and `to`, or the ordinary 422 -- or, for a range that starts before the
+    organization's plan allows, the 422 range_before_history.
 
     The product's current date is read once and here -- the services are
     told what today is and never read a clock of their own. A zone that is
@@ -114,11 +122,17 @@ def require_report_range(from_date: FromDate, to_date: ToDate) -> RequestedRange
             "input": None,
         }]) from None
 
+    earliest = entitlement_service.earliest_report_date(entitlements, today)
+    if earliest is not None and from_date < earliest:
+        raise CustomerApiError(
+            422, "range_before_history", "The selected range starts before this organization's available reporting window."
+        )
+
     return RequestedRange(local_range=local_range(from_date, to_date, zone), includes_today=to_date == today)
 
 
-# Declared AFTER the tenant in every route below, so a request is authenticated and resolved first, exactly as
-# for the single-day reads: 401, then 404, then 422.
+# Declared AFTER the tenant (and after a route's own plan feature) in every route below, so a request is
+# authenticated and resolved first, exactly as for the single-day reads: 401, then 404, then 403, then 422.
 Range = Annotated[RequestedRange, Depends(require_report_range)]
 
 
@@ -173,7 +187,7 @@ def create_report_router() -> APIRouter:
         ))
 
     @router.get("/routing")
-    def get_site_routing_report(tenant: ResolvedTenant, requested: Range) -> Response:
+    def get_site_routing_report(tenant: ResolvedTenant, _transits: Transits, requested: Range) -> Response:
         dates = requested.local_range.dates
 
         with open_customer_tenant_connection(tenant) as conn:

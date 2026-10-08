@@ -143,7 +143,9 @@ describe('scope of this block', () => {
   })
 
   it('never uses the older ingest-status endpoint, or any other operational one', () => {
-    expect(offenders(/ingest[-_]?status|\/ingest\b|transits|heartbeat/i)).toEqual([])
+    // R9C: `transits` is now the plan feature read in pages/capabilities.ts; what stays banned is the old
+    // operational endpoint, as a path.
+    expect(offenders(/ingest[-_]?status|\/ingest\b|\/transits\b|heartbeat/i)).toEqual([])
   })
 
   it('judges nothing by age: there is no staleness threshold', () => {
@@ -270,6 +272,11 @@ describe('scope of this block', () => {
     // plan's feature is looked at in one place, and no hold is shown by patron, item or destination.
     expect(offenders(/public_hold_count|ill_hold_count/).sort()).toEqual(['../api/reports.ts', '../reports/HoldsSection.tsx'])
     expect(offenders(/internal_workflow/)).toEqual(['../pages/SorterReportsPage.tsx'])
+    // R9C: transit routing and the history window are read from the plan in one module, by feature key and never
+    // by the plan's name, and nothing else reads an organization's entitlements directly.
+    expect(offenders(/history_days|entitlements\.transits/)).toEqual(['../pages/capabilities.ts'])
+    expect(offenders(/entitlements\.\w/).sort()).toEqual(['../pages/SorterReportsPage.tsx', '../pages/capabilities.ts'])
+    expect(offenders(/\bstarter\b|\benterprise\b|plan_code\s*===|plan_name\s*===/i)).toEqual([])
     const holds = shipped.find(([path]) => path === '../reports/HoldsSection.tsx')?.[1] ?? ''
     expect(holds).toMatch(/heading="Holds"/)
     expect(holds).not.toMatch(/patron_id|barcode|item_key|transit_|is_ill|is_branch|is_collection|programming|canSee|role/)
