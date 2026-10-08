@@ -20,6 +20,7 @@ from customer_api.operational_routes import create_operational_router
 from customer_api.organization_report_routes import create_organization_report_router
 from customer_api.organization_routes import create_organization_router
 from customer_api.report_routes import create_report_router
+from customer_api.routing_settings_routes import create_routing_settings_router
 
 API_PREFIX = "/api"
 
@@ -40,4 +41,5 @@ def create_customer_router(limiter: Limiter) -> APIRouter:
     router.include_router(create_efficiency_settings_router())
     router.include_router(create_efficiency_report_router())
     router.include_router(create_member_router())
+    router.include_router(create_routing_settings_router())
     return router
