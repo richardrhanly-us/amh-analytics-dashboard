@@ -22,6 +22,11 @@ export function organizationReportsPath(orgSlug: string): string {
   return `${organizationPath(orgSlug)}/reports`
 }
 
+/** Who belongs to the organization, and with what role. For its owners and admins. */
+export function organizationMembersPath(orgSlug: string): string {
+  return `${organizationPath(orgSlug)}/members`
+}
+
 export function sorterPath(orgSlug: string, sorterSlug: string): string {
   return `${organizationPath(orgSlug)}/sorters/${encodeURIComponent(sorterSlug)}`
 }

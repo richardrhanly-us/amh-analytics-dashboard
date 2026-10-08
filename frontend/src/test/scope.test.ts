@@ -112,11 +112,15 @@ describe('scope of this block', () => {
       '/api/organizations',
       '/api/organizations/${encodeURIComponent(orgSlug)}',
       '/api/organizations/${segment(orgSlug)}/branches/${segment(branchSlug)}',
+      // R8E: an organization's members -- the list, and under it the three changes and the recent changes -- all in
+      // the one module that knows them (api/members.ts).
+      '/api/organizations/${segment(orgSlug)}/members',
       // The organization's three range reports, built in the one module that reads them.
       '/api/organizations/${segment(orgSlug)}/reports/${kind}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}',
       // An organization's Efficiency defaults, read and replaced by the one module that knows them (api/efficiency.ts).
       '/api/organizations/${segment(orgSlug)}/settings/efficiency',
     ])
+    expect(offenders(/\/api\/organizations\/[^'"`]*\/members/)).toEqual(['../api/members.ts'])
     expect(offenders(/\/reports\/\$\{kind\}/).sort()).toEqual(['../api/organizationReports.ts', '../api/reports.ts'])
 
     // Under a branch: exactly the six Live Today reads, each named once, in the one module that makes them.
@@ -155,15 +159,28 @@ describe('scope of this block', () => {
     // Dates are chosen in two places: the report range control, and a sorter's in-service date.
     expect(offenders(/type="date"/)).toEqual(['../reports/DateRangeControl.tsx'])
     expect(offenders(/'date' : 'text'/)).toEqual(['../reports/EfficiencyAssumptionsPanel.tsx'])
-    expect(offenders(/datetime-local|<select|download=|text\/csv|Blob\(|createObjectURL|\.pdf/)).toEqual([])
+    expect(offenders(/datetime-local|download=|text\/csv|Blob\(|createObjectURL|\.pdf/)).toEqual([])
+    // R8E: one thing is chosen from a list -- a member's role -- on the one page that manages members.
+    expect(offenders(/<select/)).toEqual(['../members/MembersPage.tsx'])
     expect(offenders(/\b(Historical|Export|Administration|Settings)\b(?! dashboard data)/)).toEqual([])
     // R8B: a person can change and reset their OWN password, in the account pages and nowhere else. Nothing
-    // about anyone else's account, an organization's users, roles or settings is offered.
+    // about anyone else's account is offered, and no page has a password field for another person.
     expect(offenders(/\b(Reset password|Change password)\b/).sort()).toEqual([
       '../account/AccountPage.tsx',
       '../account/ResetPasswordPage.tsx',
     ])
-    expect(offenders(/invit|\bMFA\b|two-factor|authenticator|Users (&|and) access|change (your )?email|new email/i)).toEqual([])
+    expect(offenders(/invit|\bMFA\b|two-factor|authenticator|change (your )?email|new email/i)).toEqual([])
+    // R8E: an organization's owners and admins manage its members on one page. Its name is written once, and
+    // everything about members is under members/ and in the one API module -- with no password anywhere in it.
+    expect(offenders(/Users (&|and) access/i)).toEqual(['../members/memberText.ts'])
+    const memberSources = shipped.filter(([path]) => path.startsWith('../members/') || path === '../api/members.ts')
+    expect(memberSources.map(([path]) => path).sort()).toEqual([
+      '../api/members.ts',
+      '../members/MembersPage.tsx',
+      '../members/memberText.ts',
+      '../members/useMembers.ts',
+    ])
+    expect(memberSources.filter(([, text]) => /type="password"|PasswordField|password:|_password|user_id|member_id|: number/.test(text)).map(([path]) => path)).toEqual([])
     // Efficiency is shown as an ESTIMATE under assumptions -- a manual-workload equivalent and a labor-value
     // equivalent -- and never as time or money anyone is known to have been spared. None of these words is in the
     // app, in any form a person could read:
@@ -265,6 +282,8 @@ describe('how the dashboard is drawn', () => {
       // The heading of a view that replaces another at the same address: sign in / forgot password / reset result.
       '../components/ArrivalHeading.tsx',
       '../components/PageHeading.tsx',
+      // The Members heading takes focus when a member has been removed and the row that had focus is gone.
+      '../members/MembersPage.tsx',
       // A report section's heading takes focus when its "Try again" succeeds and the button goes.
       '../reports/ReportSections.tsx',
     ])
@@ -310,6 +329,8 @@ describe('how the dashboard is drawn', () => {
       '<Route path="organizations/:orgSlug"',
       // The organization's own reports, beside its sorters and under none of them.
       '<Route path="reports"',
+      // R8E: who belongs to the organization, beside its reports.
+      '<Route path="members"',
       '<Route path="sorters/:sorterSlug"',
       '<Route path="reports"',
       '<Route path="branches/:branchSlug"',

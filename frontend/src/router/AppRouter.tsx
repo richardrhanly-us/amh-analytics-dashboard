@@ -2,6 +2,7 @@ import { useRef } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router'
 
 import { AccountPage } from '../account/AccountPage.tsx'
+import { MembersPage } from '../members/MembersPage.tsx'
 import { LegacyBranchRedirect } from '../pages/LegacyBranchRedirect.tsx'
 import { NotFoundPage } from '../pages/NotFoundPage.tsx'
 import { OrganizationLayout } from '../pages/OrganizationLayout.tsx'
@@ -35,6 +36,8 @@ export function AppRouter() {
           <Route index element={<OrganizationPage />} />
           {/* The organization's own reports: every sorter together. A sorter's reports are under that sorter. */}
           <Route path="reports" element={<OrganizationReportsPage />} />
+          {/* Who belongs to the organization. The page itself says so to anyone it is not for. */}
+          <Route path="members" element={<MembersPage />} />
           <Route path="sorters/:sorterSlug" element={<SorterLayout />}>
             <Route index element={<SorterPage />} />
             <Route path="reports" element={<SorterReportsPage />} />

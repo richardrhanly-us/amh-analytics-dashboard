@@ -1184,7 +1184,9 @@ describe('what is said aloud', () => {
     await loaded()
     const status = screen.getByText(/Refreshes automatically every 3 minutes\./).closest('p') as HTMLElement
     expect(status).toHaveTextContent(/^Refreshes automatically every 3 minutes\. Last updated Oct 5, 2026, 1:50\sPM CDT\.$/)
-    expect(within(status).getByText(/1:50\sPM CDT/)).toHaveAttribute('datetime', '2026-10-05T18:50:00.000Z')
+    // The instant the data arrived, to the millisecond. This test's clock moves with real time while the page
+    // loads, so which millisecond of that second it was is not something to pin.
+    expect(within(status).getByText(/1:50\sPM CDT/).getAttribute('datetime')).toMatch(/^2026-10-05T18:50:00\.\d{3}Z$/)
 
     // A minute passes with no refresh: nothing on the page counts it down.
     const before = main().textContent
