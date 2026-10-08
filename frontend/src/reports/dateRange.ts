@@ -5,8 +5,16 @@
  * is "today" is the product's to say, and is always passed in.
  */
 
-/** The longest range that can be reported on at present, both ends included. The API's limit, mirrored. */
-export const MAX_RANGE_DAYS = 92
+/**
+ * The most days one report may cover, both ends included: the API's
+ * engineering guard (MAX_REPORT_RANGE_DAYS), mirrored. It is not how far back
+ * an organization may look -- that is its plan's (earliestDate below), and a
+ * plan with no history limit has none, however long this is.
+ */
+export const MAX_RANGE_DAYS = 3660
+
+/** The longest range the Holds report covers, whatever the plan allows (the API's HOLDS_MAX_RANGE_DAYS). */
+export const HOLDS_MAX_RANGE_DAYS = 92
 
 export interface DateRange {
   from: string
@@ -74,6 +82,21 @@ export function presetsFor(historyDays: number | null): ReadonlyArray<(typeof PR
   return PRESETS.filter(({ days }) => historyDays === null || days <= historyDays)
 }
 
+/** This year so far: 1 January of today's year, to today. */
+export function yearToDate(today: string): DateRange {
+  return { from: `${today.slice(0, 4)}-01-01`, to: today }
+}
+
+/**
+ * Whether "Year to date" can be offered: only when 1 January is inside the
+ * plan's window. It is never shortened to fit -- a shorter range is not this
+ * year so far.
+ */
+export function offersYearToDate(today: string, historyDays: number | null): boolean {
+  const earliest = earliestDate(today, historyDays)
+  return earliest === null || yearToDate(today).from >= earliest
+}
+
 /** The first date a report may start on, or null for no earliest date. */
 export function earliestDate(today: string, historyDays: number | null): string | null {
   return historyDays === null ? null : addDays(today, -(historyDays - 1))
@@ -123,7 +146,7 @@ const PROBLEM_TEXT: Record<RangeProblem, string> = {
   incomplete: 'Enter both a start date and an end date.',
   order: 'The start date must be on or before the end date.',
   future: 'The end date cannot be after today.',
-  too_long: `Choose a range of ${MAX_RANGE_DAYS} days or fewer. That is the longest range available at present.`,
+  too_long: `A single report can cover up to ${MAX_RANGE_DAYS.toLocaleString('en-US')} days. Choose a shorter range.`,
   before_history: "The start date is before this organization's available reporting window.",
 }
 

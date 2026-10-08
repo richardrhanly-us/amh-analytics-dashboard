@@ -279,7 +279,8 @@ describe('scope of this block', () => {
     expect(offenders(/\bstarter\b|\benterprise\b|plan_code\s*===|plan_name\s*===/i)).toEqual([])
     const holds = shipped.find(([path]) => path === '../reports/HoldsSection.tsx')?.[1] ?? ''
     expect(holds).toMatch(/heading="Holds"/)
-    expect(holds).not.toMatch(/patron_id|barcode|item_key|transit_|is_ill|is_branch|is_collection|programming|canSee|role/)
+    // (R9D2: its note is a role="note"; what is banned is a member's role deciding anything.)
+    expect(holds).not.toMatch(/patron_id|barcode|item_key|transit_|is_ill|is_branch|is_collection|programming|canSee|\.role\b/)
   })
 })
 

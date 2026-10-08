@@ -5,10 +5,12 @@ import {
   earliestDate,
   lastDays,
   MAX_RANGE_DAYS,
+  offersYearToDate,
   presetOf,
   presetsFor,
   rangeProblem,
   rangeProblemText,
+  yearToDate,
   type DateRange,
 } from './dateRange.ts'
 import { formatDate } from './derive.ts'
@@ -25,8 +27,9 @@ import { formatDate } from './derive.ts'
  * Dates are calendar dates in the product's zone. `today` is the product's
  * date, not this browser's. `historyDays` is how far back the organization's
  * plan lets a range start (pages/capabilities' historyDays; null for no
- * limit): only the presets within it are offered, and no earlier start date
- * can be chosen. The API holds every range to the same rule.
+ * limit): only the presets within it are offered -- "Year to date" only when
+ * 1 January is inside it -- and no earlier start date can be chosen. The API
+ * holds every range to the same rule.
  */
 export function DateRangeControl({
   range,
@@ -44,6 +47,9 @@ export function DateRangeControl({
   const [problem, setProblem] = useState<string | null>(null)
   const activePreset = presetOf(range, today)
   const earliest = earliestDate(today, historyDays)
+  const thisYear = yearToDate(today)
+  // When a fixed preset is the same range (1-7 January), that one is the one shown as chosen.
+  const yearToDateActive = activePreset === null && range.from === thisYear.from && range.to === thisYear.to
 
   function choose(next: DateRange) {
     setDraft(next)
@@ -75,6 +81,16 @@ export function DateRangeControl({
             {preset.label}
           </button>
         ))}
+        {offersYearToDate(today, historyDays) && (
+          <button
+            type="button"
+            className={yearToDateActive ? undefined : 'button-secondary'}
+            aria-pressed={yearToDateActive}
+            onClick={() => choose(thisYear)}
+          >
+            Year to date
+          </button>
+        )}
       </div>
 
       <form className="range-custom" onSubmit={handleSubmit} aria-label="Custom date range" noValidate>
@@ -113,7 +129,7 @@ export function DateRangeControl({
       </form>
 
       <p className="range-help" id="report-range-help">
-        Up to {MAX_RANGE_DAYS} days can be shown at a time at present.
+        A single report can cover up to {MAX_RANGE_DAYS.toLocaleString('en-US')} days.
         {earliest !== null && ` The earliest date that can be chosen is ${formatDate(earliest)}.`} The latest date that can
         be chosen is today, {formatDate(today)}.
       </p>

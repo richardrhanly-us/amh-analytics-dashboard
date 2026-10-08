@@ -1225,8 +1225,12 @@ def test_ninety_two_days_is_accepted_and_ninety_three_is_refused(api, db, report
         assert [day["date"] for day in days] == _dates("2026-03-21", "2026-06-20")
         assert days[0]["checkin_count"] == 1 and days[-1]["checkin_count"] == 1
 
+    # Reports R9D2: a request may now be longer, up to the 3,660-day engineering guard.
+    assert _get(api, report, _range_of(93)).json()["range"]["days"] == 93
+    assert _get(api, report, _range_of(3660)).json()["range"]["days"] == 3660
+
     db.log.clear()
-    refused = _get(api, report, _range_of(93))
+    refused = _get(api, report, _range_of(3661))
 
     assert refused.status_code == 422
     assert db.log == []
@@ -1258,7 +1262,7 @@ def test_a_range_that_cannot_be_reported_on_is_a_422_and_nothing_operational_is_
 
 
 def test_a_refused_range_is_refused_exactly_as_the_sorter_site_reports_refuse_it(api, db):
-    for params in ({"from": "2026-06-12", "to": "2026-06-08"}, {"from": "2026-06-19", "to": "2026-06-21"}, _range_of(93)):
+    for params in ({"from": "2026-06-12", "to": "2026-06-08"}, {"from": "2026-06-19", "to": "2026-06-21"}, _range_of(3661)):
         organization = _get(api, "overview", params)
         site = api.get(SITE.format(org="acme", branch="main", report="overview"), headers=COOKIE, params=params)
 
@@ -1548,11 +1552,12 @@ def test_an_organization_report_starts_no_earlier_than_the_plan_allows(api, db, 
     assert (refused.status_code, refused.json()) == (422, BEFORE_HISTORY)
 
 
-def test_with_no_history_limit_an_old_range_is_read_and_92_days_is_still_the_most(api, db, monkeypatch):
+def test_with_no_history_limit_an_old_range_is_read_and_3660_days_is_the_most(api, db, monkeypatch):
     grant(monkeypatch, history_days=feature(True, None))
 
     assert _report(api, "overview", {"from": "2001-01-01", "to": "2001-01-31"})["totals"]["checkin_count"] == 0
-    too_long = _get(api, "overview", {"from": "2001-01-01", "to": "2001-06-30"})
+    assert _report(api, "overview", {"from": "2001-01-01", "to": "2001-06-30"})["range"]["days"] == 181
+    too_long = _get(api, "overview", _range_of(3661))
     assert too_long.status_code == 422 and too_long.json()["detail"][0]["type"] == "report_range_too_long"
 
 

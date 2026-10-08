@@ -187,6 +187,6 @@ export function useSorterReports(orgSlug: string, branchSlug: string, range: Dat
  * it, and that section is only there when the plan has it. Whatever becomes
  * of it, the five are untouched.
  */
-export function useHoldsReport(orgSlug: string, branchSlug: string, range: DateRange): ReportRead<HoldsReport> {
-  return useReport('holds', getHoldsReport, orgSlug, branchSlug, range)
+export function useHoldsReport(orgSlug: string, branchSlug: string, range: DateRange, enabled = true): ReportRead<HoldsReport> {
+  return useReport('holds', getHoldsReport, orgSlug, branchSlug, range, enabled)
 }

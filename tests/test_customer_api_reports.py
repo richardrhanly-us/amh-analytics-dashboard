@@ -502,16 +502,18 @@ def _range_of(days: int, *, ending: str = "2026-06-20") -> dict:
 
 
 @pytest.mark.parametrize("report", REPORTS)
-def test_ninety_two_days_is_accepted_and_ninety_three_is_refused(api, db, report):
-    accepted = _get(api, report, _range_of(92))
-
-    assert accepted.status_code == 200
-    assert accepted.json()["range"]["days"] == 92 and len(accepted.json()["days"]) == 92
+def test_ninety_three_days_and_the_longest_range_are_accepted_and_one_day_more_is_refused(api, db, report):
+    # Reports R9D2: up to 3,660 days a request (the engineering guard); it was 92.
+    for days in (92, 93, 3660):
+        accepted = _get(api, report, _range_of(days))
+        assert accepted.status_code == 200, days
+        assert accepted.json()["range"]["days"] == days and len(accepted.json()["days"]) == days
 
     db.log.clear()
-    refused = _get(api, report, _range_of(93))
+    refused = _get(api, report, _range_of(3661))
 
     assert refused.status_code == 422
+    assert refused.json()["detail"][0]["type"] == "report_range_too_long"
     assert db.log == []
 
 
@@ -587,7 +589,7 @@ def test_a_refused_range_is_the_ordinary_422_and_says_which_bound_without_echoin
     refusals = {
         "report_range_order": ({"from": "2026-06-12", "to": "2026-06-08"}, "from"),
         "report_range_in_future": ({"from": "2026-06-19", "to": "2026-07-04"}, "to"),
-        "report_range_too_long": (_range_of(93), "to"),
+        "report_range_too_long": (_range_of(3661), "to"),
     }
 
     for kind, (params, field) in refusals.items():
@@ -1176,22 +1178,33 @@ def test_a_thirty_day_window_starts_twenty_nine_days_before_today_and_not_a_day_
     assert "2026-05-21" not in refused.text
 
 
-def test_a_longer_window_takes_an_old_start_but_one_request_is_still_at_most_92_days(api, db, monkeypatch):
-    grant(monkeypatch, history_days=feature(True, 90))
-    assert _get(api, "volume", _from("2026-03-23", "2026-04-30")).status_code == 200     # 89 days before today
-    assert _refused_kind(_get(api, "volume", _from("2026-03-22", "2026-04-30"))) == "range_before_history"
+@pytest.mark.parametrize(("history", "accepted", "refused", "kind"), [
+    # The plan's window, by its own number of days -- the production plans' 90, 730 and 3,650 among them -- and the
+    # engineering guard, 3,660 days a request, for a plan with no history limit (Reports R9D2).
+    (30, (1, 30), 31, "range_before_history"),
+    (90, (90,), 91, "range_before_history"),
+    (730, (365, 730), 731, "range_before_history"),
+    (3650, (3650,), 3651, "range_before_history"),
+    (None, (93, 3660), 3661, "report_range_too_long"),
+])
+def test_a_plans_window_and_the_engineering_guard_are_two_separate_limits(api, db, monkeypatch, history, accepted, refused, kind):
+    grant(monkeypatch, history_days=feature(True, history))
 
-    grant(monkeypatch, history_days=feature(True, 3650))
-    assert _get(api, "volume", _from("2020-01-01", "2020-03-31")).status_code == 200     # 91 days, years back
-    assert _refused_kind(_get(api, "volume", _from("2026-01-01"))) == "report_range_too_long"
+    for days in accepted:
+        response = _get(api, "volume", _range_of(days))
+        assert response.status_code == 200, days
+        assert response.json()["range"]["days"] == days
+    assert _refused_kind(_get(api, "volume", _range_of(refused))) == kind
 
 
-def test_no_limit_means_no_earliest_date_and_the_92_day_cap_still_holds(api, db, monkeypatch):
+def test_no_limit_means_no_earliest_date_and_a_range_long_ago_is_zeros_not_a_refusal(api, db, monkeypatch):
+    # first_data_date is future work (for an eventual "All history" preset): a range before the first stored event is
+    # simply days with nothing in them.
     grant(monkeypatch, history_days=feature(True, None))
 
     old = _report(api, "overview", _from("2001-01-01", "2001-01-31"))
     assert old["checkin_count"] == 0 and old["range"]["days"] == 31
-    assert _refused_kind(_get(api, "overview", _from("2001-01-01", "2001-06-30"))) == "report_range_too_long"
+    assert _report(api, "overview", _from("2001-01-01", "2001-06-30"))["range"]["days"] == 181
 
 
 @pytest.mark.parametrize("history", [
@@ -1216,7 +1229,8 @@ def test_the_other_range_rules_are_unchanged_and_come_first(api, db, monkeypatch
 
     assert _refused_kind(_get(api, "volume", _from("2026-06-12", "2026-06-08"))) == "report_range_order"
     assert _refused_kind(_get(api, "volume", _from("2026-06-19", "2026-06-21"))) == "report_range_in_future"
-    assert _refused_kind(_get(api, "volume", _from("2026-01-01"))) == "report_range_too_long"
+    assert _refused_kind(_get(api, "volume", _range_of(3661))) == "report_range_too_long"     # before the window too
+    assert _refused_kind(_get(api, "volume", _from("2026-01-01"))) == "range_before_history"
     assert _get(api, "volume", {"from": "June 8", "to": "2026-06-12"}).json()["code"] == "validation_error"
 
 

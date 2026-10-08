@@ -152,7 +152,8 @@ describe('what the plan allows', () => {
     expect(rangeProblem({ from: '2026-09-06', to: TODAY }, TODAY, '2026-09-06')).toBeNull()
     expect(rangeProblem({ from: '2026-09-05', to: TODAY }, TODAY, '2026-09-06')).toBe('before_history')
     expect(rangeProblem({ from: '2026-09-05', to: '2026-09-01' }, TODAY, '2026-09-06')).toBe('order')
-    expect(rangeProblem({ from: '2026-01-01', to: TODAY }, TODAY, '2026-09-06')).toBe('too_long')
+    expect(rangeProblem({ from: '2016-09-27', to: TODAY }, TODAY, '2026-09-06')).toBe('too_long')        // 3,661 days
+    expect(rangeProblem({ from: '2026-01-01', to: TODAY }, TODAY, '2026-09-06')).toBe('before_history')
     expect(rangeProblem({ from: '2001-01-01', to: '2001-01-31' }, TODAY, null)).toBeNull()
   })
 })
@@ -310,19 +311,19 @@ describe('the history window', () => {
     expect(requestedUrls(fetchMock).some((url) => url.includes('/reports/overview?from=2026-07-08&to=2026-08-31'))).toBe(true)
   })
 
-  it('no limit: no earliest date, an old range is asked for, and 92 days is still the most', async () => {
+  it('no limit: no earliest date, an old range is asked for, and 3,660 days is the longest report', async () => {
     const fetchMock = serve({ northbridge: EVERYTHING })
     await sorterReportsLoaded()
 
-    expect(presetNames()).toEqual(['Last 7 days', 'Last 30 days', 'Last 90 days'])
+    expect(presetNames()).toEqual(['Last 7 days', 'Last 30 days', 'Last 90 days', 'Year to date'])
     expect(fromInput()).not.toHaveAttribute('min')
     expect(screen.queryByText(/The earliest date that can be chosen is/)).not.toBeInTheDocument()
 
     await applyCustom('2021-01-01', '2021-01-31')
     expect(requestedUrls(fetchMock).some((url) => url.includes('/reports/overview?from=2021-01-01&to=2021-01-31'))).toBe(true)
 
-    await applyCustom('2021-01-01', '2021-06-30')
-    expect(screen.getByRole('alert')).toHaveTextContent('Choose a range of 92 days or fewer.')
+    await applyCustom('2016-09-27', TODAY)
+    expect(screen.getByRole('alert')).toHaveTextContent('A single report can cover up to 3,660 days.')
   })
 
   it('the organization’s reports hold to the same window', async () => {
@@ -364,7 +365,7 @@ describe('moving to another organization', () => {
     await sorterReportsLoaded()
     expect(region('Routing')).toBeInTheDocument()
     expect(region('Holds')).toBeInTheDocument()
-    expect(presetNames()).toEqual(['Last 7 days', 'Last 30 days', 'Last 90 days'])
+    expect(presetNames()).toEqual(['Last 7 days', 'Last 30 days', 'Last 90 days', 'Year to date'])
     const before = transitRequests(fetchMock).length
 
     await person.click(screen.getByRole('link', { name: 'Organizations' }))
