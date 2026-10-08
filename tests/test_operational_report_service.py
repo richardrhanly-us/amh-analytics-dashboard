@@ -4,7 +4,7 @@ range reports.
     validate_report_range(from_date, to_date, today=)   which ranges may be reported on
     local_range(from_date, to_date, zone)               a run of local days, as boundaries for both tables
     report_window(conn, tenant, local_range)            the part of a range each era owns
-    _bucket_count_statement(source, buckets)            the one statement shape every count is made with
+    _bucket_count_statement(source)                     the one statement shape every count is made with
 
 The counts themselves are tested through the real routes, against real
 tables, in tests/test_customer_api_reports.py -- including that every day of
@@ -28,7 +28,7 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import DateTime, create_engine, text
+from sqlalchemy import ARRAY, DateTime, create_engine, text
 from sqlalchemy.pool import StaticPool
 
 from services import operational_metrics_service, operational_report_service
@@ -41,6 +41,7 @@ from services.operational_report_service import (
     ReportRangeError,
     ReportWindow,
     _bucket_count_statement,
+    _execute_bucket_count,
     _Source,
     _week_boundaries,
     local_range,
@@ -383,12 +384,11 @@ def test_the_forbidden_list_is_still_the_single_day_modules_own():
 
 
 @pytest.mark.parametrize("source", _SOURCES)
-@pytest.mark.parametrize("buckets", [1, 2, 24, 92, 168])
-def test_no_statement_depends_on_the_database_session_time_zone_or_reads_a_clock(source, buckets):
-    sql = str(_bucket_count_statement(source, buckets)).upper()
+def test_no_statement_depends_on_the_database_session_time_zone_or_reads_a_clock(source):
+    sql = str(_bucket_count_statement(source)).upper()
 
     for forbidden in (*FORBIDDEN_IN_SQL, "DATE_TRUNC", "EXTRACT", "CAST(", "INTERVAL", "TO_CHAR", "STRFTIME", "EPOCH"):
-        assert forbidden not in sql, (source.table, buckets, forbidden)
+        assert forbidden not in sql, (source.table, forbidden)
     for identifying in ("BARCODE", "TITLE", "ITEM_KEY", "EVENT_KEY", "KEY_ID", "PATRON", "JOIN", "DISTINCT", "ORDER BY"):
         assert identifying not in sql, (source.table, identifying)
 
@@ -402,30 +402,31 @@ def test_the_module_keeps_no_statement_text_other_than_the_one_builder():
 
 
 @pytest.mark.parametrize("source", _SOURCES)
-def test_a_statement_is_the_single_day_where_clause_and_one_count_per_bucket(source):
-    sql = " ".join(str(_bucket_count_statement(source, 3)).split())
+def test_a_statement_is_the_single_day_where_clause_and_one_row_per_bucket(source):
+    """Reports R9D1: the bucket a row falls in is a value of the row, from the one array of boundaries, and the rows
+    of each bucket are counted -- one statement for any number of buckets, never a column per bucket."""
+    sql = " ".join(str(_bucket_count_statement(source)).split())
     select, rest = sql.split(" FROM ", 1)
-    grouped = source.group_column is not None
+    group = f"{source.group_column}, " if source.group_column is not None else ""
 
-    assert rest.startswith(
+    assert select == f"SELECT {group}width_bucket(event_time, :boundaries) AS bucket, COUNT(*) AS row_count"
+    assert rest == (
         f"{source.table} WHERE customer_id = :customer_id AND branch_id = :branch_id "
-        "AND event_time >= :span_start AND event_time < :span_end"
+        f"AND event_time >= :span_start AND event_time < :span_end GROUP BY {group}bucket"
     )
-    assert rest.endswith(f"GROUP BY {source.group_column}") is grouped
-    assert select.count("COUNT(*) FILTER") == 3
-    for bucket in range(3):
-        assert f"(WHERE event_time >= :boundary_{bucket} AND event_time < :boundary_{bucket + 1})" in select
-    assert select.startswith(f"SELECT {source.group_column}," if grouped else "SELECT COUNT(*)")
 
 
 @pytest.mark.parametrize("source", _SOURCES)
 def test_every_time_is_bound_with_the_type_its_table_keeps(source):
-    statement = _bucket_count_statement(source, 2)
+    statement = _bucket_count_statement(source)
     times = {name: bind.type for name, bind in statement._bindparams.items() if name not in ("customer_id", "branch_id")}
 
-    assert sorted(times) == ["boundary_0", "boundary_1", "boundary_2", "span_end", "span_start"]
-    for bound_type in times.values():
-        assert isinstance(bound_type, DateTime) and bound_type.timezone is source.aware
+    assert sorted(times) == ["boundaries", "span_end", "span_start"]
+    for name in ("span_start", "span_end"):
+        assert isinstance(times[name], DateTime) and times[name].timezone is source.aware
+    # The boundaries are one array of that same type (the real server's reading of it: test_report_buckets_postgres).
+    assert isinstance(times["boundaries"], ARRAY)
+    assert isinstance(times["boundaries"].item_type, DateTime) and times["boundaries"].item_type.timezone is source.aware
 
 
 def test_the_sources_are_the_four_tables_in_both_forms_and_nothing_else():
@@ -447,13 +448,13 @@ def test_the_sources_are_the_four_tables_in_both_forms_and_nothing_else():
 ])
 def test_a_statement_cannot_be_built_for_any_other_table_or_column(source):
     with pytest.raises(ValueError, match="one of this module's own sources"):
-        _bucket_count_statement(source, 1)
+        _bucket_count_statement(source)
 
 
-@pytest.mark.parametrize("buckets", [0, -1])
-def test_a_statement_needs_at_least_one_bucket(buckets):
+@pytest.mark.parametrize("boundaries", [(), (_local(2026, 6, 8),)])
+def test_a_count_needs_at_least_one_bucket(boundaries):
     with pytest.raises(ValueError, match="at least one bucket"):
-        _bucket_count_statement(_SOURCES[0], buckets)
+        _execute_bucket_count(None, TENANT, _SOURCES[0], (_local(2026, 6, 8), _local(2026, 6, 9)), boundaries)
 
 
 def test_the_module_reads_no_clock_no_environment_and_creates_no_engine():
@@ -477,7 +478,7 @@ def test_the_module_depends_only_on_the_standard_library_sqlalchemy_and_the_sing
         "from dataclasses import dataclass",
         "from datetime import date, datetime, timedelta",
         "from zoneinfo import ZoneInfo",
-        "from sqlalchemy import DateTime, bindparam, text",
+        "from sqlalchemy import ARRAY, DateTime, bindparam, text",
         "from sqlalchemy.engine import Connection",
         "from sqlalchemy.sql.elements import TextClause",
         "from services.operational_metrics_service import (",

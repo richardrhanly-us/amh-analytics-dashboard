@@ -976,8 +976,8 @@ def test_every_statement_runs_under_the_scope_of_the_one_site_it_reads(api, db, 
     for table, parameters, settings in db.queries:
         # The ids a statement is bound to are exactly the context it runs under: never wider, never another's.
         assert (str(parameters["customer_id"]), str(parameters["branch_id"])) == (settings["customer_id"], settings["branch_id"]), table
-        assert set(parameters) - {"customer_id", "branch_id", "span_start", "span_end"} == {
-            name for name in parameters if name.startswith("boundary_")}, table
+        # And otherwise only times: the span, and (since Reports R9D1) the one array of boundaries.
+        assert set(parameters) - {"customer_id", "branch_id", "span_start", "span_end"} <= {"boundaries"}, table
     # Only Acme's two sorter sites were ever in scope -- not its other branches, and not another organization.
     assert {(customer, branch) for _table, customer, branch in db.scoped_reads()} == {(str(ACME), str(MAIN)), (str(ACME), str(EAST))}
     # One connection per site, each closed before the next is opened.

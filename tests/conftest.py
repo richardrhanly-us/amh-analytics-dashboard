@@ -19,10 +19,16 @@ for path in (ROOT_DIR, SRC_DIR):
     if path not in sys.path:
         sys.path.insert(0, path)
 
+# The report engine counts with PostgreSQL's width_bucket and an array of boundaries. The report tests that run it on
+# SQLite get both from here (R9D1); the service itself has no SQLite path.
+from sqlite_width_bucket import install as install_sqlite_width_bucket
+
 # Imported at module level (collection time), not lazily inside a fixture
 # -- see _collector_run_audit_fallback_path below for why that distinction
 # matters here specifically.
 from collector import run_audit, v2_schedule
+
+install_sqlite_width_bucket()
 
 # main.py reads DATABASE_URL at import time. Tests never hit a real
 # database (main.engine is monkeypatched), so a placeholder is enough.
