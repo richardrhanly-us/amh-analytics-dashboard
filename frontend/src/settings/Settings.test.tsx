@@ -26,7 +26,7 @@ const MEMBERS_PAGE = '/organizations/northbridge/members'
 const INSTANT = { delay: null }
 
 const NOT_FOR_YOU = "Settings are managed by this organization's owners and admins."
-const SECTIONS = ['General', 'Users & Access', 'Branches & Sorters', 'Efficiency']
+const SECTIONS = ['General', 'Users & Access', 'Branches & Sorters', 'Routing', 'Efficiency']
 
 interface World {
   role?: string
@@ -124,16 +124,17 @@ describe('the way in', () => {
 })
 
 describe('the strip of sections', () => {
-  it('lists the four sections that exist, each a link to its own address, and no other', async () => {
+  it('lists the five sections that exist, each a link to its own address, and no other', async () => {
     await page(GENERAL, 'General')
 
     expect(strip().getAllByRole('link').map((item) => [item.textContent, item.getAttribute('href')])).toEqual([
       ['General', GENERAL],
       ['Users & Access', MEMBERS_PAGE],
       ['Branches & Sorters', BRANCHES],
+      ['Routing', `${AREA}/routing`],
       ['Efficiency', EFFICIENCY_PAGE],
     ])
-    expect(strip().queryByText(/Routing|Workflow|Billing|Plan/i)).not.toBeInTheDocument()
+    expect(strip().queryByText(/Internal|Workflow|Billing|Plan/i)).not.toBeInTheDocument()
     expect(screen.getByRole('navigation', { name: 'Settings' }).querySelectorAll('button, [role="tab"], [tabindex]')).toHaveLength(0)
   })
 
@@ -176,7 +177,7 @@ describe('the strip of sections', () => {
 
   it('has no page for a section that does not exist', async () => {
     serve()
-    renderApp(`${AREA}/routing`)
+    renderApp(`${AREA}/workflow`)
 
     expect(await screen.findByRole('heading', { level: 2, name: 'Page not found' })).toBeInTheDocument()
   })
@@ -326,7 +327,7 @@ describe('Branches & Sorters', () => {
 
     expect(main()).toHaveTextContent('No branches are registered for this organization yet.')
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
-    expect(strip().getAllByRole('link')).toHaveLength(4)
+    expect(strip().getAllByRole('link')).toHaveLength(5)
   })
 })
 

@@ -40,6 +40,10 @@ export function settingsBranchesPath(orgSlug: string): string {
   return `${organizationSettingsPath(orgSlug)}/branches`
 }
 
+export function settingsRoutingPath(orgSlug: string): string {
+  return `${organizationSettingsPath(orgSlug)}/routing`
+}
+
 export function settingsEfficiencyPath(orgSlug: string): string {
   return `${organizationSettingsPath(orgSlug)}/efficiency`
 }

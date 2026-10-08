@@ -110,7 +110,7 @@ describe('the way to the page', () => {
     ])
     // The strip of sections is on this page too, and says this is the one being shown.
     const strip = within(screen.getByRole('navigation', { name: 'Settings' }))
-    expect(strip.getAllByRole('link').map((item) => item.textContent)).toEqual(['General', 'Users & Access', 'Branches & Sorters', 'Efficiency'])
+    expect(strip.getAllByRole('link').map((item) => item.textContent)).toEqual(['General', 'Users & Access', 'Branches & Sorters', 'Routing', 'Efficiency'])
     expect(strip.getByRole('link', { name: 'Users & Access' })).toHaveAttribute('aria-current', 'page')
     expect(strip.getByRole('link', { name: 'General' })).not.toHaveAttribute('aria-current')
     await screen.findByRole('table', { name: 'Members' })

@@ -1466,3 +1466,46 @@ button[aria-disabled='true'] {
 .settings-panel .assumptions-form .field input {
   max-width: 24rem;
 }
+
+/*
+ * Routing: one destination to a row -- its label, whether it is enabled, and the way to take it out. A row wraps
+ * whole on a narrow screen. A tick box is its own size, not a field's width.
+ */
+.field input[type='checkbox'],
+.routing-enabled input {
+  width: auto;
+  margin: 0 0.375rem 0 0;
+}
+
+.routing-rows {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0 0 1rem;
+  padding: 0;
+  list-style: none;
+}
+
+.routing-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem 1rem;
+}
+
+.routing-row .field {
+  flex: 1 1 16rem;
+  max-width: 28rem;
+  margin-bottom: 0;
+}
+
+.routing-enabled {
+  padding: 0.5rem 0;
+}
+
+.routing-form .settings-panel .field input[type='text'] {
+  max-width: 28rem;
+}
+
+.routing-form .settings-panel > .form-actions + .field-help {
+  margin-top: 0.75rem;
+}

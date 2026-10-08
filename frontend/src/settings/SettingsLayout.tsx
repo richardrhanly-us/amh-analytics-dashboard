@@ -13,8 +13,17 @@ import {
   settingsBranchesPath,
   settingsEfficiencyPath,
   settingsGeneralPath,
+  settingsRoutingPath,
 } from '../router/paths.ts'
-import { BRANCHES_NAME, canManageOrganization, EFFICIENCY_NAME, GENERAL_NAME, MANAGED_BY_OWNERS_AND_ADMINS, SETTINGS_NAME } from './settingsText.ts'
+import {
+  BRANCHES_NAME,
+  canManageOrganization,
+  EFFICIENCY_NAME,
+  GENERAL_NAME,
+  MANAGED_BY_OWNERS_AND_ADMINS,
+  ROUTING_NAME,
+  SETTINGS_NAME,
+} from './settingsText.ts'
 
 /**
  * The sections of an organization's own configuration, as a strip of links.
@@ -28,6 +37,7 @@ function SectionNav({ orgSlug }: { orgSlug: string }) {
     { to: settingsGeneralPath(orgSlug), label: GENERAL_NAME },
     { to: organizationMembersPath(orgSlug), label: MEMBERS_PAGE_NAME },
     { to: settingsBranchesPath(orgSlug), label: BRANCHES_NAME },
+    { to: settingsRoutingPath(orgSlug), label: ROUTING_NAME },
     { to: settingsEfficiencyPath(orgSlug), label: EFFICIENCY_NAME },
   ]
   return (
