@@ -102,6 +102,9 @@ CUSTOMER_ROUTES = {
     ("PUT", "/api/organizations/{org_slug}/members/role"),
     ("POST", "/api/organizations/{org_slug}/members/remove"),
     ("GET", "/api/organizations/{org_slug}/members/activity"),
+    # R8G: an organization's routing settings (customer_api.routing_settings_routes).
+    ("GET", "/api/organizations/{org_slug}/settings/routing"),
+    ("PUT", "/api/organizations/{org_slug}/settings/routing"),
 }
 
 _PROBE = """
