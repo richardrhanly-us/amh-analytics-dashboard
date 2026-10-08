@@ -29,6 +29,7 @@ from pydantic import BeforeValidator
 from starlette.responses import JSONResponse, Response
 
 from customer_api import settings
+from customer_api.entitlement_dependencies import Transits
 from customer_api.errors import NO_STORE_HEADERS, CustomerApiRoute
 from customer_api.operational_schemas import (
     CheckinCountResponse,
@@ -165,7 +166,8 @@ def create_operational_router() -> APIRouter:
         return JSONResponse(content=body.model_dump(mode="json"), headers=NO_STORE_HEADERS)
 
     @router.get("/checkins/by-destination")
-    def get_checkins_by_destination(tenant: ResolvedTenant, local_date: LocalDate) -> Response:
+    def get_checkins_by_destination(tenant: ResolvedTenant, _transits: Transits, local_date: LocalDate) -> Response:
+        # Transit routing is a plan feature: without it, 403 (after the tenant's 401/404, before the date's 422).
         # The same day, in the same zone, as /checkins/count.
         zone = settings.product_timezone()
 

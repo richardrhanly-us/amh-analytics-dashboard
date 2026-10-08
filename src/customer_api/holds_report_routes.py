@@ -28,12 +28,12 @@ two slugs.
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from starlette.responses import JSONResponse, Response
 
-from customer_api.auth_dependencies import require_current_user
+from customer_api.entitlement_dependencies import OrganizationEntitlements
 from customer_api.errors import NO_STORE_HEADERS, CustomerApiError, CustomerApiRoute
 from customer_api.holds_report_schemas import HoldsReportResponse
 from customer_api.operational_routes import ResolvedTenant
@@ -48,11 +48,11 @@ from services.operational_report_service import report_window
 HOLDS_FEATURE = "internal_workflow"
 
 
-def require_holds_feature(org_slug: str, user: Annotated[dict[str, Any], Depends(require_current_user)]) -> None:
+def require_holds_feature(entitlements: OrganizationEntitlements) -> None:
     """The organization's plan includes the holds report, or 403. Read for the organization in the path, by the
-    same uncached lookup the organization detail is built from. A database failure propagates as a server error."""
-    context = entitlement_service.build_entitlement_context(user["id"], org_slug)
-    if not entitlement_service.feature_enabled(context, HOLDS_FEATURE):
+    same uncached lookup the organization detail is built from (once per request, shared with the range's history
+    window). A database failure propagates as a server error."""
+    if not entitlement_service.feature_enabled(entitlements, HOLDS_FEATURE):
         raise CustomerApiError(403, "feature_not_available", "This report is not available for this organization.")
 
 

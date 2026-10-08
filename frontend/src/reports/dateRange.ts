@@ -65,6 +65,25 @@ export const PRESETS = [
 /** The preset a report page opens on. */
 export const DEFAULT_PRESET_DAYS = 30
 
+/**
+ * The presets an organization can use: those that reach no further back than
+ * its plan allows. `historyDays` is pages/capabilities' historyDays -- null
+ * for no limit.
+ */
+export function presetsFor(historyDays: number | null): ReadonlyArray<(typeof PRESETS)[number]> {
+  return PRESETS.filter(({ days }) => historyDays === null || days <= historyDays)
+}
+
+/** The first date a report may start on, or null for no earliest date. */
+export function earliestDate(today: string, historyDays: number | null): string | null {
+  return historyDays === null ? null : addDays(today, -(historyDays - 1))
+}
+
+/** The range a report page opens on: the default preset, or the whole window if the plan allows less. */
+export function defaultRange(today: string, historyDays: number | null): DateRange {
+  return lastDays(historyDays === null ? DEFAULT_PRESET_DAYS : Math.min(DEFAULT_PRESET_DAYS, historyDays), today)
+}
+
 /** The last `days` days, ending on `today` and including it. */
 export function lastDays(days: number, today: string): DateRange {
   return { from: addDays(today, -(days - 1)), to: today }
@@ -76,14 +95,14 @@ export function presetOf(range: DateRange, today: string): number | null {
   return preset?.days ?? null
 }
 
-export type RangeProblem = 'incomplete' | 'order' | 'future' | 'too_long'
+export type RangeProblem = 'incomplete' | 'order' | 'future' | 'too_long' | 'before_history'
 
 /**
  * What is wrong with a range someone typed, or null if it can be asked for.
  * The same rules, in the same order, as the API applies -- so a range that
  * passes here is not then refused there.
  */
-export function rangeProblem(range: DateRange, today: string): RangeProblem | null {
+export function rangeProblem(range: DateRange, today: string, earliest: string | null = null): RangeProblem | null {
   if (!isCalendarDate(range.from) || !isCalendarDate(range.to)) {
     return 'incomplete'
   }
@@ -93,7 +112,11 @@ export function rangeProblem(range: DateRange, today: string): RangeProblem | nu
   if (range.to > today) {
     return 'future'
   }
-  return daysInRange(range) > MAX_RANGE_DAYS ? 'too_long' : null
+  if (daysInRange(range) > MAX_RANGE_DAYS) {
+    return 'too_long'
+  }
+  // How far back the organization's plan lets a range start (`earliest`, from earliestDate): the API's last rule.
+  return earliest !== null && range.from < earliest ? 'before_history' : null
 }
 
 const PROBLEM_TEXT: Record<RangeProblem, string> = {
@@ -101,6 +124,7 @@ const PROBLEM_TEXT: Record<RangeProblem, string> = {
   order: 'The start date must be on or before the end date.',
   future: 'The end date cannot be after today.',
   too_long: `Choose a range of ${MAX_RANGE_DAYS} days or fewer. That is the longest range available at present.`,
+  before_history: "The start date is before this organization's available reporting window.",
 }
 
 export function rangeProblemText(problem: RangeProblem): string {

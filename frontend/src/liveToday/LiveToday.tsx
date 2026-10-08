@@ -174,7 +174,7 @@ function Routing({ routing }: { routing: Section<CheckinsByDestination> }) {
   )
 }
 
-function Today({ live }: { live: LiveTodayData }) {
+function Today({ live, transits }: { live: LiveTodayData; transits: boolean }) {
   const { checkinCount, checkinsByHour, checkinsByDestination, rejectCount, currentHour } = live
   const dateText = live.date === null ? null : formatCalendarDate(live.date)
 
@@ -212,10 +212,13 @@ function Today({ live }: { live: LiveTodayData }) {
             />
           </dl>
         </SummaryGroup>
-        <SummaryGroup name="routing" heading="Routing">
-          <p className="summary-caption">Where this sorter sent today&rsquo;s check-ins.</p>
-          <Routing routing={checkinsByDestination} />
-        </SummaryGroup>
+        {/* Only when the organization's plan includes transit routing: otherwise it is not asked for either. */}
+        {transits && (
+          <SummaryGroup name="routing" heading="Routing">
+            <p className="summary-caption">Where this sorter sent today&rsquo;s check-ins.</p>
+            <Routing routing={checkinsByDestination} />
+          </SummaryGroup>
+        )}
         <SummaryGroup name="rejects" heading="Rejects">
           <dl className="metrics">
             <MetricCard label="Rejects today" {...figure(rejectCount, (data) => count(data.reject_count))} />
@@ -265,8 +268,8 @@ function problem(live: LiveTodayData): string | null {
  * The Live Today dashboard for one sorter the user can see. `branchSlug` is the sorter's host branch: the scope
  * the operational API reads by.
  */
-export function LiveToday({ orgSlug, branchSlug }: { orgSlug: string; branchSlug: string }) {
-  const live = useLiveToday(orgSlug, branchSlug)
+export function LiveToday({ orgSlug, branchSlug, transits }: { orgSlug: string; branchSlug: string; transits: boolean }) {
+  const live = useLiveToday(orgSlug, branchSlug, transits)
 
   if (live.unavailable) {
     // The sorter exists -- the organization lists it -- but has no live data. That is not "not found".
@@ -328,7 +331,7 @@ export function LiveToday({ orgSlug, branchSlug }: { orgSlug: string; branchSlug
         <ErrorMessage message={problem(live)} />
         <PipelinePanel pipeline={live.pipeline.data} />
       </div>
-      <Today live={live} />
+      <Today live={live} transits={transits} />
       <div className="live-detail">
         <HourlyCheckins checkinsByHour={live.checkinsByHour} currentHour={live.currentHour} timeZone={live.timeZone} />
         <RejectReasons rejectsByReason={live.rejectsByReason} />

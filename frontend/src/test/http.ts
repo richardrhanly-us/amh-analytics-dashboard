@@ -105,6 +105,10 @@ export const NORTHBRIDGE_DETAIL = {
   entitlements: {
     transits_tab: { enabled: true, limit_value: null },
     branch_count: { enabled: true, limit_value: 5 },
+    // Transit routing, and no limit on how far back a report may start: what a plan without them changes is tested
+    // on its own (capabilities.test.tsx).
+    transits: { enabled: true, limit_value: null },
+    history_days: { enabled: true, limit_value: null },
   },
 }
 
@@ -115,7 +119,11 @@ export const RIVERSIDE_DETAIL = {
     { slug: 'main', name: 'Riverside Main AMH', host_branch: { slug: 'main', name: 'Riverside Main' }, status: 'active', collector_count: 1 },
   ],
   subscription: null,
-  entitlements: {},
+  // As Northbridge: what a plan without these changes is tested on its own (capabilities.test.tsx).
+  entitlements: {
+    transits: { enabled: true, limit_value: null },
+    history_days: { enabled: true, limit_value: null },
+  },
 }
 
 export const TENANT_NOT_FOUND = { code: 'tenant_not_found', message: 'Organization or branch not found.' }

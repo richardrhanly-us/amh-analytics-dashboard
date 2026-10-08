@@ -116,7 +116,8 @@ function DataTable({
   )
 }
 
-export function OrganizationOverviewSection({ read }: { read: ReportRead<OrganizationOverviewReport> }) {
+/** `transits`: the organization's plan includes transit routing. Without it, the in-transit figure is not shown. */
+export function OrganizationOverviewSection({ read, transits }: { read: ReportRead<OrganizationOverviewReport>; transits: boolean }) {
   return (
     <ReportSection name="org-overview" heading="Overview" read={read}>
       {(report) => {
@@ -136,7 +137,9 @@ export function OrganizationOverviewSection({ read }: { read: ReportRead<Organiz
             <dl className="metrics">
               <MetricCard label="Check-ins" {...count(total, `Over ${days(range.days)}`)} />
               <MetricCard label="Average per day" {...derived(average(total, range.days), formatAverage, 'Every calendar day in the range')} />
-              <MetricCard label="In transit" {...count(totals.transit_count, transitNote(percentOf(totals.transit_count, total)))} />
+              {transits && (
+                <MetricCard label="In transit" {...count(totals.transit_count, transitNote(percentOf(totals.transit_count, total)))} />
+              )}
               <MetricCard label="Rejects" {...count(totals.reject_count, rejectNote(percentOf(totals.reject_count, total)))} />
               <MetricCard
                 label="Sorting machines"
@@ -171,7 +174,16 @@ export function OrganizationOverviewSection({ read }: { read: ReportRead<Organiz
  * The organization's sorters side by side, in the organization's own order.
  * A sorter that has reports is a link to them.
  */
-export function SorterComparisonSection({ orgSlug, read }: { orgSlug: string; read: ReportRead<OrganizationOverviewReport> }) {
+export function SorterComparisonSection({
+  orgSlug,
+  read,
+  transits,
+}: {
+  orgSlug: string
+  read: ReportRead<OrganizationOverviewReport>
+  /** The organization's plan includes transit routing. Without it, the two transit columns are not shown. */
+  transits: boolean
+}) {
   return (
     <ReportSection name="org-comparison" heading="Sorter comparison" read={read}>
       {(report) => {
@@ -190,8 +202,7 @@ export function SorterComparisonSection({ orgSlug, read }: { orgSlug: string; re
                 'Status',
                 'Check-ins',
                 'Share of check-ins',
-                'In transit',
-                'Transit rate',
+                ...(transits ? ['In transit', 'Transit rate'] : []),
                 'Rejects',
                 'Reject rate',
                 'Active days',
@@ -214,8 +225,12 @@ export function SorterComparisonSection({ orgSlug, read }: { orgSlug: string; re
                     sorter.available ? (status ?? 'Active') : [UNAVAILABLE, status].filter((word) => word !== null).join(' · '),
                     figure(sorter.available, formatCount(sorter.checkin_count)),
                     figure(sorter.available, rate(sorter.checkin_count, total)),
-                    figure(sorter.available, formatCount(sorter.transit_count)),
-                    figure(sorter.available, rate(sorter.transit_count, sorter.checkin_count)),
+                    ...(transits
+                      ? [
+                          figure(sorter.available, formatCount(sorter.transit_count)),
+                          figure(sorter.available, rate(sorter.transit_count, sorter.checkin_count)),
+                        ]
+                      : []),
                     figure(sorter.available, formatCount(sorter.reject_count)),
                     figure(sorter.available, rate(sorter.reject_count, sorter.checkin_count)),
                     figure(sorter.available, `${formatCount(sorter.active_days)} of ${formatCount(report.range.days)}`),

@@ -24,6 +24,7 @@ import json
 import logging
 
 import pytest
+from entitlement_support import feature, grant
 from fastapi.testclient import TestClient
 
 import main
@@ -136,6 +137,8 @@ def world(monkeypatch):
     monkeypatch.setattr(access_service, "get_user_memberships", memberships)
     monkeypatch.setattr(access_service, "get_org_access_mode", lambda org_slug: state["modes"].get(org_slug, "blocked"))
     monkeypatch.setattr(entitlement_service, "get_org_role_for_user", role)
+    # Transit routing is on: what its absence does is tested on its own (R9C).
+    grant(monkeypatch)
     return state
 
 
@@ -528,3 +531,51 @@ def test_the_service_reads_and_writes_the_organizations_transit_key_alone():
         assert forbidden not in code, forbidden
     assert "THE ORGANIZATION'S OWN BLOCK, AND ONLY THAT." in source and "nothing here looks at branch_settings at all" in source
     assert json.loads(json.dumps(serialize_routing_settings(parse_stored_routing_settings(DOCUMENT["transit"]))))["destinations"][0]["key"] == "westside"
+
+
+# =====================================================================================================================
+# R9C: routing settings are part of transit routing, a plan feature
+# =====================================================================================================================
+
+NOT_AVAILABLE = {"code": "feature_not_available", "message": "This feature is not available for this organization."}
+
+
+@pytest.mark.parametrize("transits", [None, feature(False)])
+def test_without_transit_routing_the_settings_can_be_neither_read_nor_replaced(api, store, monkeypatch, transits):
+    grant(monkeypatch, transits=transits)
+
+    _refused(_get(api), 403, NOT_AVAILABLE)
+    _refused(_put(api, WANTED), 403, NOT_AVAILABLE)
+    # Nothing was read or written: the gate is before the service.
+    assert store.calls == []
+
+
+def test_with_transit_routing_they_are_read_and_replaced_as_before(api, store, monkeypatch):
+    grant(monkeypatch, transits=feature(True))
+
+    assert _get(api).json() == {"routing": STORED}
+    assert _put(api, WANTED).json() == {"routing": WANTED}
+    assert len(store.writes()) == 1
+
+
+def test_the_transit_gate_comes_after_who_may_manage_them_and_the_write_rules_still_hold(api, store, monkeypatch, world):
+    grant(monkeypatch, transits=None)
+
+    _refused(_get(api, user=None), 401, NOT_AUTHENTICATED)
+    _refused(_get(api, BETA), 404, ORGANIZATION_NOT_FOUND)          # not a member of beta
+    _refused(_get(api, user=VIEWER), 403, FORBIDDEN)                  # a member who does not manage settings
+    _refused(_put(api, WANTED, origin="https://elsewhere.invalid"), 403, ORIGIN_NOT_ALLOWED)
+    _refused(_put(api, WANTED, origin=None), 403, ORIGIN_NOT_ALLOWED)
+    # A body that could not be stored is not looked at: the feature is refused first.
+    _refused(_put(api, {"home_branch_label": "", "destinations": "nope"}), 403, NOT_AVAILABLE)
+
+    world["modes"]["acme"] = "read_only"                               # suspended
+    _refused(_put(api, WANTED), 403, READ_ONLY)
+    _refused(_get(api), 403, NOT_AVAILABLE)
+    assert store.calls == []
+
+    grant(monkeypatch, transits=feature(True))
+    assert _get(api).status_code == 200                                # suspended: still readable
+    _refused(_put(api, WANTED), 403, READ_ONLY)
+    world["modes"]["acme"] = "full"
+    assert _put(api, {"home_branch_label": "", "destinations": "nope"}).status_code == 422   # reached validation

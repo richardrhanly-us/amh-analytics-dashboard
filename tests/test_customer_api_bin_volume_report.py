@@ -32,10 +32,12 @@ The clock the route reads is the shared controlled clock
 from __future__ import annotations
 
 import inspect
+import re
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from controlled_clock import ControlledClock
+from entitlement_support import grant
 from fastapi.dependencies.utils import get_flat_dependant
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
@@ -131,6 +133,8 @@ def clock():
 @pytest.fixture
 def api(monkeypatch, clock):
     monkeypatch.setattr(session_service, "validate_session", lambda raw_token: dict(USER))
+    # Every plan feature, with no history limit: what a plan does to these reports is tested on its own (R9C).
+    grant(monkeypatch)
     monkeypatch.delenv("SORTVIEW_LIVE_TIMEZONE", raising=False)
     main.limiter.reset()
     yield TestClient(main.app)
@@ -706,8 +710,13 @@ def test_any_member_may_read_it_it_is_not_an_owner_or_admin_report(api, db):
     for report in ("overview", "volume", "routing", "reliability"):
         assert _get(api, report=report).status_code == 200
     source = inspect.getsource(report_routes)
-    for gate in ("role", "admin", "owner", "entitlement", "permission"):
+    for gate in ("role", "admin", "owner", "permission"):
         assert gate not in source, gate
+    # The organization's plan reaches these routes in two ways only (R9C), neither of them about who the member is:
+    # the history window every range is held to, and transit routing for the Routing report. Bin volume is neither.
+    assert re.findall(r"entitlement_service\.(\w+)\(", source) == ["earliest_report_date"]
+    assert "def get_site_routing_report(tenant: ResolvedTenant, _transits: Transits, requested: Range)" in source
+    assert "_transits" not in source.split('@router.get("/bins")')[1]
 
 
 def test_a_suspended_organization_can_still_be_read(api, db):

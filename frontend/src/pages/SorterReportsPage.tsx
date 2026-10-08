@@ -2,6 +2,7 @@ import { useOutletContext } from 'react-router'
 
 import { SorterReports } from '../reports/SorterReports.tsx'
 import { canSeeEfficiency } from '../reports/useEfficiency.ts'
+import { hasTransits, historyDays } from './capabilities.ts'
 import { sorterStatusLabel } from './labels.ts'
 import type { SorterContext } from './SorterLayout.tsx'
 
@@ -38,6 +39,8 @@ export function SorterReportsPage() {
         efficiency={canSeeEfficiency(organization.role)}
         // The API decides (403 without it); this only keeps the app from asking for what the plan does not include.
         holds={organization.entitlements.internal_workflow?.enabled === true}
+        transits={hasTransits(organization)}
+        historyDays={historyDays(organization)}
       />
     </>
   )

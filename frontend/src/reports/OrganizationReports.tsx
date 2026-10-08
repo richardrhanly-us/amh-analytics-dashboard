@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 
 import type { OrganizationDetail } from '../api/organizations.ts'
 import { LoadFailure } from '../components/LoadFailure.tsx'
+import { hasTransits, historyDays } from '../pages/capabilities.ts'
 import { NotFoundPage } from '../pages/NotFoundPage.tsx'
 import { DateRangeControl, RangeShown } from './DateRangeControl.tsx'
-import { DEFAULT_PRESET_DAYS, lastDays, type DateRange } from './dateRange.ts'
+import { defaultRange, type DateRange } from './dateRange.ts'
 import {
   NO_SORTERS,
   OrganizationOverviewSection,
@@ -14,9 +15,24 @@ import {
 } from './OrganizationReportSections.tsx'
 import { useOrganizationProductDay, useOrganizationReports } from './useOrganizationReports.ts'
 
-function ReportsForDay({ orgSlug, timeZone, today, onGone }: { orgSlug: string; timeZone: string; today: string; onGone: () => void }) {
-  const [range, setRange] = useState<DateRange>(() => lastDays(DEFAULT_PRESET_DAYS, today))
-  const reports = useOrganizationReports(orgSlug, range)
+const BEFORE_HISTORY = "The selected range starts before this organization's available reporting window. Choose a later start date."
+
+function ReportsForDay({
+  organization,
+  timeZone,
+  today,
+  onGone,
+}: {
+  organization: OrganizationDetail
+  timeZone: string
+  today: string
+  onGone: () => void
+}) {
+  const orgSlug = organization.slug
+  const transits = hasTransits(organization)
+  const history = historyDays(organization)
+  const [range, setRange] = useState<DateRange>(() => defaultRange(today, history))
+  const reports = useOrganizationReports(orgSlug, range, transits)
 
   // A 404 for a report: the API no longer returns this organization to this user. The whole page says so.
   useEffect(() => {
@@ -31,15 +47,23 @@ function ReportsForDay({ orgSlug, timeZone, today, onGone }: { orgSlug: string; 
 
   return (
     <>
-      <DateRangeControl range={range} today={today} onChange={setRange} />
+      <DateRangeControl range={range} today={today} historyDays={history} onChange={setRange} />
       <RangeShown range={range} today={today} timeZone={timeZone} />
-      {/* Keyed by range, so a new range starts with nothing carried over. */}
-      <div className="report-sections" key={`${range.from}/${range.to}`}>
-        <OrganizationOverviewSection read={reports.overview} />
-        <SorterComparisonSection orgSlug={orgSlug} read={reports.overview} />
-        <RoutingNetworkSection read={reports.routingNetwork} />
-        <SystemReliabilitySection read={reports.reliability} />
-      </div>
+      {reports.beforeHistory ? (
+        // The plan's window changed after this range was chosen: the API refuses it. A later start date is the answer.
+        <p className="notice" role="note">
+          {BEFORE_HISTORY}
+        </p>
+      ) : (
+        // Keyed by range, so a new range starts with nothing carried over.
+        <div className="report-sections" key={`${range.from}/${range.to}`}>
+          <OrganizationOverviewSection read={reports.overview} transits={transits} />
+          <SorterComparisonSection orgSlug={orgSlug} read={reports.overview} transits={transits} />
+          {/* Not asked for at all unless the plan includes transit routing. */}
+          {transits && <RoutingNetworkSection read={reports.routingNetwork} />}
+          <SystemReliabilitySection read={reports.reliability} />
+        </div>
+      )}
     </>
   )
 }
@@ -63,7 +87,7 @@ function ReportsOfSorters({ organization, onGone }: { organization: Organization
     case 'error':
       return <LoadFailure message={day.message} onRetry={retry} />
     case 'ready':
-      return <ReportsForDay orgSlug={organization.slug} timeZone={day.timeZone} today={day.today} onGone={onGone} />
+      return <ReportsForDay organization={organization} timeZone={day.timeZone} today={day.today} onGone={onGone} />
   }
 }
 

@@ -7,9 +7,10 @@ import type { OrganizationDetail } from '../api/organizations.ts'
 import { INVALID_ROUTING_SETTINGS, type RoutingSettings } from '../api/routingSettings.ts'
 import { messageFor } from '../components/errorText.ts'
 import { LoadFailure } from '../components/LoadFailure.tsx'
+import { hasTransits } from '../pages/capabilities.ts'
 import { NotFoundPage } from '../pages/NotFoundPage.tsx'
 import { SettingsFrame } from './SettingsLayout.tsx'
-import { MANAGED_BY_OWNERS_AND_ADMINS, ROUTING_NAME } from './settingsText.ts'
+import { MANAGED_BY_OWNERS_AND_ADMINS, ROUTING_NAME, ROUTING_NOT_AVAILABLE } from './settingsText.ts'
 import { useRoutingSettings } from './useRoutingSettings.ts'
 
 /** The most destinations an organization may have. The API decides; this only stops the page offering one more. */
@@ -378,9 +379,27 @@ function RoutingForm({ stored, saving, onSave }: { stored: RoutingSettings; savi
  *
  * A suspended organization's routing can be read and not changed, so it is
  * shown as it is stored, with nothing to change it with.
+ *
+ * Routing is part of transit routing, a plan feature. For an organization
+ * whose plan does not include it -- an address typed in, or one kept from
+ * before -- this says so and asks the API for nothing, which would refuse it.
  */
 export function RoutingPage() {
   const organization = useOutletContext<OrganizationDetail>()
+
+  if (!hasTransits(organization)) {
+    return (
+      <SettingsFrame organization={organization} section={ROUTING_NAME}>
+        <p className="notice" role="note">
+          {ROUTING_NOT_AVAILABLE}
+        </p>
+      </SettingsFrame>
+    )
+  }
+  return <RoutingSettings organization={organization} />
+}
+
+function RoutingSettings({ organization }: { organization: OrganizationDetail }) {
   const { routing, retry, save, saving } = useRoutingSettings(organization.slug)
 
   if (routing.status === 'not_found') {

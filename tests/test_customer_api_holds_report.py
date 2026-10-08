@@ -52,7 +52,9 @@ class Plan:
     def context(self, user_id, org_slug):
         self.lookups.append((user_id, org_slug))
         on = org_slug in self.enabled
-        return {"role": "viewer", "subscription": None, "entitlements": {"internal_workflow": {"enabled": on, "limit_value": None}, "history_days": {"enabled": True, "limit_value": 90}}}
+        return {"role": "viewer", "subscription": None, "entitlements": {"internal_workflow": {"enabled": on, "limit_value": None}, "history_days": {"enabled": True, "limit_value": 90},
+                                                                    # Transit routing on throughout: only the holds feature varies here (R9C).
+                                                                    "transits": {"enabled": True, "limit_value": None}}}
 
 
 class Counts:
@@ -188,6 +190,21 @@ def test_the_feature_is_checked_before_the_range(api, db, plan, counts):
     _refused(_get(api, params={"from": "2026-06-12", "to": "2026-06-08"}), 403, NOT_AVAILABLE)
     plan.enabled.add("acme")
     assert _get(api, params={"from": "2026-06-12", "to": "2026-06-08"}).status_code == 422
+
+
+def test_the_feature_is_checked_before_the_history_window_and_both_lookups_are_one(api, db, plan, counts):
+    # R9C. The plan here allows 90 days back from 20 June: 23 March is the first date a range may start on.
+    before = {"from": "2026-03-22", "to": "2026-03-31"}
+    plan.enabled.discard("acme")
+    _refused(_get(api, params=before), 403, NOT_AVAILABLE)
+
+    plan.enabled.add("acme")
+    refused = _get(api, params=before)
+    assert (refused.status_code, refused.json()["code"]) == (422, "range_before_history")
+    # The holds feature and the history window come from one read of the plan per request.
+    lookups = len(plan.lookups)
+    assert _get(api, params={"from": "2026-03-23", "to": "2026-03-31"}).status_code == 200
+    assert plan.lookups[lookups:] == [(1, "acme")]
 
 
 @pytest.mark.parametrize("params", [

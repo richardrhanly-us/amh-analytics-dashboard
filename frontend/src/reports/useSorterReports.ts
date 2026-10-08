@@ -9,6 +9,7 @@ import {
   getReliabilityReport,
   getRoutingReport,
   getVolumeReport,
+  RANGE_BEFORE_HISTORY,
   type BinVolumeReport,
   type HoldsReport,
   type OverviewReport,
@@ -70,7 +71,11 @@ export function useProductDayFrom(
  *   loading      nothing to show yet
  *   ready        `data` is the answer for exactly this sorter and this range
  *   unavailable  the API answered 404: there is nothing to report on for this sorter
+ *   before_history  the range starts before the organization's plan lets a report reach
  *   error        it could not be loaded; `message` is safe to show
+ *
+ * A report the organization's plan does not include is not asked for at all
+ * (`enabled` false): it stays `loading` and is not shown.
  *
  * There is no "last good answer" here, on purpose. A different range, or a
  * different sorter, is a different question with its own key, and it starts
@@ -81,6 +86,7 @@ export type ReportSection<T> =
   | { status: 'loading' }
   | { status: 'ready'; data: T }
   | { status: 'unavailable' }
+  | { status: 'before_history' }
   | { status: 'error'; message: string }
 
 export interface ReportRead<T> {
@@ -93,15 +99,28 @@ export interface ReportRead<T> {
 
 type Load<T> = (orgSlug: string, branchSlug: string, from: string, to: string, signal?: AbortSignal) => Promise<T>
 
-function useReport<T>(kind: ReportKind, load: Load<T>, orgSlug: string, branchSlug: string, range: DateRange): ReportRead<T> {
-  return useReportQuery(['reports', orgSlug, branchSlug, kind, range.from, range.to], (signal) =>
-    load(orgSlug, branchSlug, range.from, range.to, signal),
+function useReport<T>(
+  kind: ReportKind,
+  load: Load<T>,
+  orgSlug: string,
+  branchSlug: string,
+  range: DateRange,
+  enabled = true,
+): ReportRead<T> {
+  return useReportQuery(
+    ['reports', orgSlug, branchSlug, kind, range.from, range.to],
+    (signal) => load(orgSlug, branchSlug, range.from, range.to, signal),
+    enabled,
   )
 }
 
 /** One report read under `queryKey`, which must name everything the answer depends on: whose it is, which report, which range. */
-export function useReportQuery<T>(queryKey: readonly string[], load: (signal: AbortSignal) => Promise<T>): ReportRead<T> {
-  const query = useQuery({ queryKey, queryFn: ({ signal }) => load(signal), gcTime: 0 })
+export function useReportQuery<T>(
+  queryKey: readonly string[],
+  load: (signal: AbortSignal) => Promise<T>,
+  enabled = true,
+): ReportRead<T> {
+  const query = useQuery({ queryKey, queryFn: ({ signal }) => load(signal), gcTime: 0, enabled })
 
   let section: ReportSection<T>
   if (query.isFetching && query.data === undefined) {
@@ -111,6 +130,8 @@ export function useReportQuery<T>(queryKey: readonly string[], load: (signal: Ab
     section = { status: 'ready', data: query.data }
   } else if (isApiError(query.error) && query.error.status === 404) {
     section = { status: 'unavailable' }
+  } else if (isApiError(query.error) && query.error.code === RANGE_BEFORE_HISTORY) {
+    section = { status: 'before_history' }
   } else if (query.isError) {
     section = { status: 'error', message: messageFor(query.error) }
   } else {
@@ -132,18 +153,22 @@ export interface SorterReports {
   reliability: ReportRead<ReliabilityReport>
   /** Any one of them was answered 404: there are no reports for this sorter. */
   unavailable: boolean
+  /** Any one of them was refused because the range starts before the organization's plan lets a report reach. */
+  beforeHistory: boolean
 }
 
 /**
  * The five reports of one sorter over one range, each read on its own: one
  * that fails says so in its own section and leaves the other four alone.
  */
-export function useSorterReports(orgSlug: string, branchSlug: string, range: DateRange): SorterReports {
+export function useSorterReports(orgSlug: string, branchSlug: string, range: DateRange, transits: boolean): SorterReports {
   const overview = useReport('overview', getOverviewReport, orgSlug, branchSlug, range)
   const volume = useReport('volume', getVolumeReport, orgSlug, branchSlug, range)
-  const routing = useReport('routing', getRoutingReport, orgSlug, branchSlug, range)
+  // Transit routing is a plan feature: without it, the Routing report is not asked for at all.
+  const routing = useReport('routing', getRoutingReport, orgSlug, branchSlug, range, transits)
   const bins = useReport('bins', getBinVolumeReport, orgSlug, branchSlug, range)
   const reliability = useReport('reliability', getReliabilityReport, orgSlug, branchSlug, range)
+  const reads = [overview, volume, routing, bins, reliability]
 
   return {
     overview,
@@ -151,7 +176,8 @@ export function useSorterReports(orgSlug: string, branchSlug: string, range: Dat
     routing,
     bins,
     reliability,
-    unavailable: [overview, volume, routing, bins, reliability].some((read) => read.section.status === 'unavailable'),
+    unavailable: reads.some((read) => read.section.status === 'unavailable'),
+    beforeHistory: reads.some((read) => read.section.status === 'before_history'),
   }
 }
 
