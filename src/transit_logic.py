@@ -4,16 +4,14 @@
 #
 #  File:         transit_logic.py
 #
-#  Description: Provides transit and internal routing logic for the
-#               SortView dashboard. This file normalizes transit
-#               destinations, identifies internal routing categories,
+#  Description: Provides transit logic for the SortView dashboard.
+#               This file normalizes transit destinations,
 #               summarizes transit activity, calculates transit times,
 #               compares transit and reject patterns, and builds
 #               diagnostic summaries for transit destinations.
 #
 #***************************************************************
 
-import re
 
 import pandas as pd
 
@@ -53,149 +51,6 @@ def normalize_transit_destination(value):
         return "Library Express"
 
     return text
-
-
-#***************************************************************
-#
-#  Function:     normalize_internal_destination
-#
-#  Description: Classifies non-public routing destinations into
-#               internal workflow categories such as ILL, Collection
-#               Services, Repair/Mending, Staff Review, or Other
-#               Internal. Public transit destinations and invalid
-#               routing values are ignored.
-#
-#  Parameters:  destination - Destination value from ACS or routing data.
-#               raw_message - Raw ACS message text.
-#               message_code - ACS message code.
-#
-#  Returns:     str | None - Internal routing category, or None if the
-#                            row should not be counted as internal routing.
-#
-#***************************************************************
-
-def normalize_internal_destination(destination, raw_message="", message_code=""):
-    # Normalize inputs so text checks do not fail on None values.
-    destination = "" if destination is None else str(destination).strip()
-    raw_message = "" if raw_message is None else str(raw_message)
-    message_code = "" if message_code is None else str(message_code).strip()
-
-    combined = f"{destination} {raw_message}".upper()
-
-    # Ignore rows that do not provide any destination or message text.
-    if not destination and not raw_message:
-        return None
-
-    # Ignore normal public transit destinations.
-    if "WESTSIDE" in combined or "LIBRARY EXPRESS" in combined:
-        return None
-
-    # Ignore missing or invalid agency destinations.
-    if "NO AGENCY DESTINATION" in combined or destination == "":
-        return None
-
-    # Identify interlibrary loan routing.
-    if re.search(r"\bILL\b", combined) or "INTERLIBRARY" in combined:
-        return "ILL"
-
-    # Identify collection services or processing-related routing.
-    if (
-        "COLLECTION SERVICES" in combined
-        or "COLLECTION" in combined
-        or "CATALOG" in combined
-        or "PROCESSING" in combined
-    ):
-        return "Collection Services"
-
-    # Identify repair or mending workflows.
-    if "REPAIR" in combined or "MENDING" in combined or "MEND" in combined:
-        return "Repair / Mending"
-
-    # Identify staff review workflows.
-    if "STAFF" in combined or "REVIEW" in combined:
-        return "Staff Review"
-
-    # Exclude message codes that should not be treated as internal routing.
-    if message_code in {"09", "10", "11", "12", "13", "14", "15", "16", "17", "18"}:
-        return None
-
-    return "Other Internal"
-
-
-#***************************************************************
-#
-#  Function:     build_internal_routing_summary
-#
-#  Description: Builds a summary dataframe of internal routing
-#               categories from ACS event data. Each ACS row is
-#               classified with normalize_internal_destination, then
-#               grouped by category.
-#
-#  Parameters:  acs_df - ACS event dataframe.
-#
-#  Returns:     DataFrame - Internal routing category counts.
-#
-#***************************************************************
-
-def build_internal_routing_summary(acs_df):
-    if acs_df is None or len(acs_df) == 0:
-        return pd.DataFrame(columns=["internal_category", "count"])
-
-    work_df = acs_df.copy()
-
-    # Normalize datetime values when available.
-    if "datetime" in work_df.columns:
-        work_df["datetime"] = pd.to_datetime(work_df["datetime"], errors="coerce")
-
-    # Classify each row into an internal routing category.
-    work_df["internal_category"] = work_df.apply(
-        lambda row: normalize_internal_destination(
-            row.get("destination"),
-            row.get("raw_message"),
-            row.get("message_code"),
-        ),
-        axis=1,
-    )
-
-    # Keep only rows that were classified as internal routing.
-    work_df = work_df[work_df["internal_category"].notna()].copy()
-
-    if len(work_df) == 0:
-        return pd.DataFrame(columns=["internal_category", "count"])
-
-    summary = (
-        work_df["internal_category"]
-        .value_counts()
-        .rename_axis("internal_category")
-        .reset_index(name="count")
-    )
-
-    return summary
-
-
-#***************************************************************
-#
-#  Function:     get_internal_count
-#
-#  Description: Retrieves the count for one internal routing category
-#               from an internal routing summary dataframe.
-#
-#  Parameters:  summary_df - Internal routing summary dataframe.
-#               category_name - Category name to look up.
-#
-#  Returns:     int - Count for the requested category, or 0 if missing.
-#
-#***************************************************************
-
-def get_internal_count(summary_df, category_name):
-    if summary_df is None or len(summary_df) == 0:
-        return 0
-
-    match = summary_df.loc[summary_df["internal_category"] == category_name, "count"]
-    if len(match) == 0:
-        return 0
-
-    return int(match.iloc[0])
 
 
 #***************************************************************

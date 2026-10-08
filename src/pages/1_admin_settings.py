@@ -22,6 +22,7 @@ from services.privacy_hardening import (
     install_streamlit_log_scrubber,
     log_safe_exception,
 )
+from services.settings_service import public_internal_routing_view
 from services.sidebar_service import render_main_sidebar
 from services.streamlit_access_adapter import (
     get_org_branches,
@@ -695,6 +696,9 @@ with st.expander("Current DB Preview", expanded=False):
         )
         # Only whether the lock is on and a password is set -- never the password or its hash.
         preview_settings["security"] = public_security_view(preview_settings.get("security"))
+        # And only how many internal routing entries there are -- never a patron account name or a pattern. The
+        # entries themselves are in the form above, for the people allowed to edit them.
+        preview_settings["internal_routing"] = public_internal_routing_view(preview_settings.get("internal_routing"))
         st.json(preview_settings)
     except Exception as exc:
         log_safe_exception(logger, "Admin settings preview failed", exc)

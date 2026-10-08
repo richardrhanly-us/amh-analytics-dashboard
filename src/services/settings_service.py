@@ -1,6 +1,9 @@
 import json
 import logging
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import streamlit as st
 
@@ -46,18 +49,88 @@ def _dedupe_transit_destinations(destinations: list[dict]) -> list[dict]:
 
     return deduped
 
+# The settings key that holds the v1 hold classifier's lists of patron account names and `|DA...|` markers. Some of
+# those names can be a person's own (a staff member's patron card), so the block is never part of the dashboard's
+# generic settings: not as itself, and not inside the settings document that is handed on.
+INTERNAL_ROUTING_KEY = "internal_routing"
+_V1_HOLD_LISTS = (
+    "branch_services_names",
+    "collection_services_names",
+    "branch_services_da_patterns",
+    "collection_services_da_patterns",
+)
+
+
+@dataclass(frozen=True)
+class V1HoldRules:
+    """What the v1 (pre-cutover) hold classifier, metrics.build_acs_item_summary, is given -- and the only place in
+    the dashboard's settings these lists are kept.
+
+    It is what tells the dashboard which holds are for the library's own accounts, so that the public-holds count
+    leaves them out. A Contract v2 hold arrives already classified by the collector, from the collector's local
+    rules: these lists do not affect it.
+
+    Each entry is trimmed and upper-cased, as the classifier compares it; a blank entry is passed on as it is, and
+    the classifier ignores it. Its repr names no entry: it says only how many there are."""
+
+    branch_services_names: frozenset[str] = field(repr=False)
+    collection_services_names: frozenset[str] = field(repr=False)
+    branch_services_da_patterns: tuple[str, ...] = field(repr=False)
+    collection_services_da_patterns: tuple[str, ...] = field(repr=False)
+
+    def __repr__(self) -> str:
+        names = len(self.branch_services_names) + len(self.collection_services_names)
+        patterns = len(self.branch_services_da_patterns) + len(self.collection_services_da_patterns)
+        return f"V1HoldRules(names={names}, patterns={patterns})"
+
+
+def _listed(block: Mapping[str, Any], key: str) -> list[str]:
+    values = block.get(key, [])
+    return [str(value).strip().upper() for value in values] if isinstance(values, list) else []
+
+
+def v1_hold_rules(internal_routing: object) -> V1HoldRules:
+    """The v1 hold classifier's lists, from an `internal_routing` block (anything that is not one is no lists)."""
+    block: Mapping[str, Any] = internal_routing if isinstance(internal_routing, Mapping) else {}
+    return V1HoldRules(
+        branch_services_names=frozenset(_listed(block, "branch_services_names")),
+        collection_services_names=frozenset(_listed(block, "collection_services_names")),
+        branch_services_da_patterns=tuple(_listed(block, "branch_services_da_patterns")),
+        collection_services_da_patterns=tuple(_listed(block, "collection_services_da_patterns")),
+    )
+
+
+def without_internal_routing(settings: Mapping[str, Any] | None) -> dict[str, Any]:
+    """A copy of `settings` without the internal routing block, for anything that is cached or handed to the
+    dashboard as its settings."""
+    return {key: value for key, value in (settings or {}).items() if key != INTERNAL_ROUTING_KEY}
+
+
+def public_internal_routing_view(internal_routing: object) -> dict[str, str]:
+    """What may be displayed of the block outside its own form: how many entries each list has -- never an entry."""
+    block: Mapping[str, Any] = internal_routing if isinstance(internal_routing, Mapping) else {}
+    view = {}
+    for key in _V1_HOLD_LISTS:
+        values = block.get(key, [])
+        count = sum(1 for value in values if str(value).strip()) if isinstance(values, list) else 0
+        view[key] = f"{count} {'entry' if count == 1 else 'entries'} (not shown)"
+    return view
+
+
 def load_branch_settings(settings_file: Path) -> dict:
     with open(settings_file, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
 def load_app_settings_from_file(settings_file: Path) -> dict:
-    # The `security` block (the Admin Settings lock) is never part of the dashboard's cached settings.
-    branch_settings = without_security(load_branch_settings(settings_file))
+    # The `security` block (the Admin Settings lock) is never part of the dashboard's cached settings, and the
+    # internal routing block is kept apart from them, in V1_HOLD_RULES.
+    stored = without_security(load_branch_settings(settings_file))
+    internal_routing = stored.get(INTERNAL_ROUTING_KEY, {})
+    branch_settings = without_internal_routing(stored)
 
     library_settings = branch_settings.get("library", {})
     transit_settings = branch_settings.get("transit", {})
-    internal_routing = branch_settings.get("internal_routing", {})
 
     transit_home_label = transit_settings.get("home_branch_label", "Main")
     transit_destinations = transit_settings.get("destinations", [])
@@ -72,32 +145,12 @@ def load_app_settings_from_file(settings_file: Path) -> dict:
         for d in enabled_transit_destinations
     ]
 
-    branch_services_names = {
-        str(x).strip().upper()
-        for x in internal_routing.get("branch_services_names", [])
-    }
-
-    collection_services_names = {
-        str(x).strip().upper()
-        for x in internal_routing.get("collection_services_names", [])
-    }
-
-    branch_services_da_patterns = [
-        str(x).strip().upper()
-        for x in internal_routing.get("branch_services_da_patterns", [])
-    ]
-
-    collection_services_da_patterns = [
-        str(x).strip().upper()
-        for x in internal_routing.get("collection_services_da_patterns", [])
-    ]
 
     return {
         "source": "file",
         "branch_settings": branch_settings,
         "LIBRARY_SETTINGS": library_settings,
         "TRANSIT_SETTINGS": transit_settings,
-        "INTERNAL_ROUTING": internal_routing,
         "LIBRARY_NAME": library_settings.get("library_name", "New Braunfels Public Library"),
         "BRANCH_NAME": library_settings.get("branch_name", "Main Branch"),
         "SYSTEM_NAME": library_settings.get("system_name", "Tech Logic UltraSort"),
@@ -105,10 +158,8 @@ def load_app_settings_from_file(settings_file: Path) -> dict:
         "TRANSIT_DESTINATIONS": transit_destinations,
         "ENABLED_TRANSIT_DESTINATIONS": enabled_transit_destinations,
         "TRANSIT_LABELS": transit_labels,
-        "BRANCH_SERVICES_NAMES": branch_services_names,
-        "COLLECTION_SERVICES_NAMES": collection_services_names,
-        "BRANCH_SERVICES_DA_PATTERNS": branch_services_da_patterns,
-        "COLLECTION_SERVICES_DA_PATTERNS": collection_services_da_patterns,
+        # The v1 hold classifier's lists, and nowhere else in these settings (see V1HoldRules).
+        "V1_HOLD_RULES": v1_hold_rules(internal_routing),
     }
 
 
@@ -117,11 +168,14 @@ def load_app_settings_from_db(org_slug: str, branch_slug: str | None = None) -> 
     # This dict is cached process-wide (st.cache_data) and built for every user of the organization, so the
     # `security` block (the Admin Settings lock -- a hash, or a legacy plaintext password) is dropped from it.
     # Only the Admin Settings page reads that block, straight from the database, when it verifies an unlock.
-    settings = without_security(effective.get("settings"))
+    stored = without_security(effective.get("settings"))
+    # The internal routing block is kept apart too: it reaches the v1 hold classifier as V1_HOLD_RULES, and is in
+    # neither the settings document nor the tenant handed to the dashboard.
+    internal_routing = stored.get(INTERNAL_ROUTING_KEY, {})
+    settings = without_internal_routing(stored)
     effective = {**effective, "settings": settings}
 
     transit_settings = settings.get("transit", {})
-    internal_routing = settings.get("internal_routing", {})
 
     transit_home_label = transit_settings.get("home_branch_label", "Main")
     transit_destinations = transit_settings.get("destinations", [])
@@ -136,25 +190,6 @@ def load_app_settings_from_db(org_slug: str, branch_slug: str | None = None) -> 
         for d in enabled_transit_destinations
     ]
 
-    branch_services_names = {
-        str(x).strip().upper()
-        for x in internal_routing.get("branch_services_names", [])
-    }
-
-    collection_services_names = {
-        str(x).strip().upper()
-        for x in internal_routing.get("collection_services_names", [])
-    }
-
-    branch_services_da_patterns = [
-        str(x).strip().upper()
-        for x in internal_routing.get("branch_services_da_patterns", [])
-    ]
-
-    collection_services_da_patterns = [
-        str(x).strip().upper()
-        for x in internal_routing.get("collection_services_da_patterns", [])
-    ]
 
     library_name = settings.get("library_name", effective["organization"]["name"])
     branch_name = settings.get("branch_name", effective["branch"]["name"])
@@ -170,7 +205,6 @@ def load_app_settings_from_db(org_slug: str, branch_slug: str | None = None) -> 
             "system_name": system_name,
         },
         "TRANSIT_SETTINGS": transit_settings,
-        "INTERNAL_ROUTING": internal_routing,
         "LIBRARY_NAME": library_name,
         "BRANCH_NAME": branch_name,
         "SYSTEM_NAME": system_name,
@@ -178,10 +212,8 @@ def load_app_settings_from_db(org_slug: str, branch_slug: str | None = None) -> 
         "TRANSIT_DESTINATIONS": transit_destinations,
         "ENABLED_TRANSIT_DESTINATIONS": enabled_transit_destinations,
         "TRANSIT_LABELS": transit_labels,
-        "BRANCH_SERVICES_NAMES": branch_services_names,
-        "COLLECTION_SERVICES_NAMES": collection_services_names,
-        "BRANCH_SERVICES_DA_PATTERNS": branch_services_da_patterns,
-        "COLLECTION_SERVICES_DA_PATTERNS": collection_services_da_patterns,
+        # The v1 hold classifier's lists, and nowhere else in these settings (see V1HoldRules).
+        "V1_HOLD_RULES": v1_hold_rules(internal_routing),
     }
 
 

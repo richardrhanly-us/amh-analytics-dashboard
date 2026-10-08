@@ -316,7 +316,7 @@ def test_a_normalized_destination_slug_is_accepted(value):
 
 @pytest.mark.parametrize("value", [
     "Westside", "Library Express", "Main", "MAIN", "No Agency Destination",         # raw / display labels
-    "DA(AH) TS(AH)-CATALOGING", "(AH) TS(AH)-CATALOGING", "COURTNEY (ST)MEISSNER",  # staff and department names
+    "DA(AH) TS(AH)-CATALOGING", "(AH) TS(AH)-CATALOGING", "EXAMPLE (ST)STAFF ACCOUNT A",  # staff and department names
     "library-express", "library.express", "west side", "west/side", "west|side", "1main", "_main",
     "", " ", "main ", " main", "main\n", "x" * 33, "westé", "вест", None, 4, ["main"],
 ])

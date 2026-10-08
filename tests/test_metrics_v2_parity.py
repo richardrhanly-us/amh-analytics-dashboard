@@ -155,3 +155,26 @@ def test_destination_mapping_matches_the_deployed_v2_normalize_module():
                 "No Agency Destination", "something else entirely"):
         expected = v2_normalize.normalize_destination(raw, rules=_NoCustomRules())
         assert map_transit_label_to_v2_slug(raw) == expected, raw
+
+
+# --- R8J: a v2 hold's flags are what the collector decided, and decide public holds as v1's do ----------------------
+
+def test_overlapping_v2_flags_count_in_each_total_and_take_the_hold_out_of_public_holds_once():
+    df = _acs_items_df([
+        _hold("1" * 64, is_ill=True, is_collection_services=True),
+        _hold("2" * 64, is_branch_services=True, is_collection_services=True),
+        _hold("3" * 64),
+    ])
+
+    result = build_acs_item_summary_v2(df, [])
+
+    assert (result["holds_total"], result["ill_total"], result["programming_total"], result["collection_services_total"]) == (1, 1, 1, 2)
+
+
+def test_a_v2_holds_flags_are_taken_as_sent_and_a_missing_flag_is_false():
+    # Nothing is reclassified on the server: there is no list to classify with. A flag that did not arrive is false.
+    df = _acs_items_df([_hold("1" * 64, is_branch_services=None, is_collection_services=None), _hold("2" * 64, is_collection_services=True)])
+
+    result = build_acs_item_summary_v2(df, [])
+
+    assert (result["holds_total"], result["programming_total"], result["collection_services_total"]) == (1, 0, 1)
