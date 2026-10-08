@@ -27,6 +27,23 @@ export function organizationMembersPath(orgSlug: string): string {
   return `${organizationPath(orgSlug)}/members`
 }
 
+/** The organization's own configuration, for its owners and admins. Its first section is General. */
+export function organizationSettingsPath(orgSlug: string): string {
+  return `${organizationPath(orgSlug)}/settings`
+}
+
+export function settingsGeneralPath(orgSlug: string): string {
+  return `${organizationSettingsPath(orgSlug)}/general`
+}
+
+export function settingsBranchesPath(orgSlug: string): string {
+  return `${organizationSettingsPath(orgSlug)}/branches`
+}
+
+export function settingsEfficiencyPath(orgSlug: string): string {
+  return `${organizationSettingsPath(orgSlug)}/efficiency`
+}
+
 export function sorterPath(orgSlug: string, sorterSlug: string): string {
   return `${organizationPath(orgSlug)}/sorters/${encodeURIComponent(sorterSlug)}`
 }

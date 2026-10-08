@@ -5,12 +5,11 @@ import { fieldProblems } from '../api/account.ts'
 import { isApiError } from '../api/client.ts'
 import { INVALID_MEMBER, type Member, type MemberActivity } from '../api/members.ts'
 import type { OrganizationDetail } from '../api/organizations.ts'
-import { Breadcrumb } from '../components/Breadcrumb.tsx'
 import { messageFor } from '../components/errorText.ts'
 import { LoadFailure } from '../components/LoadFailure.tsx'
-import { PageHeading } from '../components/PageHeading.tsx'
 import { NotFoundPage } from '../pages/NotFoundPage.tsx'
-import { ORGANIZATIONS_PATH, organizationPath } from '../router/paths.ts'
+import { ORGANIZATIONS_PATH } from '../router/paths.ts'
+import { SettingsFrame } from '../settings/SettingsLayout.tsx'
 import { formatLocalInstant } from '../time/localTime.ts'
 import { activitySentence, assignableRoles, canManageMembers, memberProblems, MEMBERS_PAGE_NAME, roleName } from './memberText.ts'
 import { useMemberActivity, useMemberChanges, useMembers, type MemberChanges } from './useMembers.ts'
@@ -449,20 +448,15 @@ function RecentChanges({ changes }: { changes: MemberActivity[] }) {
   )
 }
 
-/** The way back up, and the page's name. */
-function Frame({ organization, children }: { organization: OrganizationDetail; children: ReactNode }) {
+/**
+ * The way back up, the page's name, and -- for the people it is for -- the strip of sections it is one of. It
+ * keeps its own address; it is drawn as part of the organization's configuration.
+ */
+function Frame({ organization, offered = true, children }: { organization: OrganizationDetail; offered?: boolean; children: ReactNode }) {
   return (
-    <>
-      <Breadcrumb
-        trail={[
-          { to: ORGANIZATIONS_PATH, label: 'Organizations' },
-          { to: organizationPath(organization.slug), label: organization.name },
-        ]}
-        current={MEMBERS_PAGE_NAME}
-      />
-      <PageHeading>{MEMBERS_PAGE_NAME}</PageHeading>
+    <SettingsFrame organization={organization} section={MEMBERS_PAGE_NAME} offered={offered}>
       {children}
-    </>
+    </SettingsFrame>
   )
 }
 
@@ -566,7 +560,7 @@ export function MembersPage() {
 
   if (!canManageMembers(organization.role)) {
     return (
-      <Frame organization={organization}>
+      <Frame organization={organization} offered={false}>
         <p className="notice" role="note">
           {MANAGED_BY_OWNERS_AND_ADMINS}
         </p>

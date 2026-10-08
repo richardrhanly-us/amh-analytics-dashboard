@@ -131,7 +131,7 @@ describe('the signed-in app', () => {
     expect(within(banner).getByText('alice@example.test')).toBeInTheDocument()
   })
 
-  it.each(['/nowhere', '/organizations/northbridge/settings', '/organizations/northbridge/branches', '/branches/central'])(
+  it.each(['/nowhere', '/organizations/northbridge/settings/nowhere', '/organizations/northbridge/branches', '/branches/central'])(
     'shows the not-found page at %s and asks the API for nothing more',
     async (path) => {
       const fetchMock = serve()
@@ -457,8 +457,8 @@ describe('an organization page', () => {
 
     expect(screen.getByText('No sorting machines are registered for this organization yet.')).toBeInTheDocument()
     expect(within(main()).getByRole('heading', { level: 3, name: 'Sorting machines' })).toBeInTheDocument()
-    // Northbridge's fixture makes Alice an admin, so the members page is offered beside the reports.
-    expect(linkNames()).toEqual(['Organizations', 'Organization Reports', 'Users & Access'])
+    // Northbridge's fixture makes Alice an admin, so the organization's own configuration is offered beside the reports.
+    expect(linkNames()).toEqual(['Organizations', 'Organization Reports', 'Settings'])
     expect(main()).not.toHaveTextContent(/Central Branch|East Side Branch|Westside/)
   })
 
@@ -807,7 +807,7 @@ describe('the sorting machines of an organization', () => {
     // Westside is one of the organization's branches, and somewhere items are routed to. It has no machine.
     expect(NORTHBRIDGE_DETAIL.branches.map((branch) => branch.name)).toContain('Westside')
     expect(main()).not.toHaveTextContent('Westside')
-    expect(linkNames()).toEqual(['Organizations', 'Organization Reports', 'Users & Access', 'Central Library AMH', 'East Side AMH'])
+    expect(linkNames()).toEqual(['Organizations', 'Organization Reports', 'Settings', 'Central Library AMH', 'East Side AMH'])
   })
 
   it('shows an organization with one sorter as a list of one, not straight to its dashboard', async () => {
@@ -1226,7 +1226,7 @@ describe('how an organization is loaded', () => {
 
     try {
       connection('offline')
-      await user.click(link('Northbridge Library'))
+      await user.click(await screen.findByRole('link', { name: 'Northbridge Library' }))
 
       expect(await screen.findByRole('alert')).toHaveTextContent('Could not reach the server. Check your connection and try again.')
       expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()

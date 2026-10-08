@@ -46,23 +46,33 @@ interface FieldSpec<F extends EfficiencyField> {
 const perHour = (rate: string) => `${formatMoney(rate)} per hour`
 const itemsPerHour = (rate: string) => `${formatDecimal(rate)} items per staff labor-hour`
 
-/** A form for one level. `onSave` resolves with what is then stored, as the form's own drafts. */
+/** The level a form's heading is at: under a report section, or as a section of a page of its own. */
+type HeadingLevel = 'h3' | 'h6'
+
+/**
+ * A form for one level. `onSave` resolves with what is then stored, as the form's own drafts.
+ *
+ * `today` is the latest date a date field may hold, and is read for a date field alone: a form that has none is
+ * given none.
+ */
 function AssumptionsForm<F extends EfficiencyField>({
   name,
   heading,
+  headingLevel: Heading = 'h6',
   intro,
   fields,
   initial,
-  today,
+  today = '',
   saving,
   onSave,
 }: {
   name: string
   heading: string
+  headingLevel?: HeadingLevel
   intro: ReactNode
   fields: ReadonlyArray<FieldSpec<F>>
   initial: Drafts<F>
-  today: string
+  today?: string
   saving: boolean
   onSave: (values: Record<F, string | null>) => Promise<Drafts<F>>
 }) {
@@ -113,7 +123,7 @@ function AssumptionsForm<F extends EfficiencyField>({
 
   return (
     <form className="assumptions-form" onSubmit={handleSubmit} aria-labelledby={`${name}-heading`} noValidate>
-      <h6 id={`${name}-heading`}>{heading}</h6>
+      <Heading id={`${name}-heading`}>{heading}</Heading>
       <div className="quiet">{intro}</div>
 
       {failure !== null && (
@@ -199,15 +209,59 @@ const UNREADABLE = (
   </p>
 )
 
-function OrganizationDefaults({ orgSlug, today }: { orgSlug: string; today: string }) {
+const ORGANIZATION_FORM = 'efficiency-organization'
+
+/**
+ * The organization's defaults: the two rates a sorting machine uses when it has none of its own.
+ *
+ * It is one form wherever it is shown -- beside a machine's Efficiency report, and on the organization's own page
+ * for it. It has no date in it, so it is told no date. `headingLevel` is where its heading sits on the page it is
+ * on.
+ *
+ * `readOnly` is for an organization that cannot be changed at present: what is stored is shown as it is, in
+ * words, with no field to type in and nothing to save it with.
+ */
+export function OrganizationDefaults({
+  orgSlug,
+  headingLevel: Heading = 'h6',
+  readOnly = false,
+}: {
+  orgSlug: string
+  headingLevel?: HeadingLevel
+  readOnly?: boolean
+}) {
   const { stored, retry } = useOrganizationAssumptions(orgSlug, true)
   const save = useSaveOrganizationAssumptions(orgSlug)
 
   if (stored.status !== 'ready' && stored.status !== 'unreadable') {
     return (
       <div className="assumptions-form">
-        <h6>Organization defaults</h6>
+        <Heading id={`${ORGANIZATION_FORM}-heading`}>Organization defaults</Heading>
         <Unloaded stored={stored} retry={retry} />
+      </div>
+    )
+  }
+  if (readOnly) {
+    const settings = stored.status === 'ready' ? stored.data : null
+    return (
+      <div className="assumptions-form">
+        <Heading id={`${ORGANIZATION_FORM}-heading`}>Organization defaults</Heading>
+        {stored.status === 'unreadable' ? (
+          <p className="notice" role="note">
+            What is stored here could not be read.
+          </p>
+        ) : (
+          <dl className="account-facts">
+            <div>
+              <dt>Hourly labor rate</dt>
+              <dd>{settings?.labor_rate == null ? 'Not set' : perHour(settings.labor_rate)}</dd>
+            </div>
+            <div>
+              <dt>Manual processing rate assumption</dt>
+              <dd>{settings?.manual_items_per_hour == null ? 'Not set' : itemsPerHour(settings.manual_items_per_hour)}</dd>
+            </div>
+          </dl>
+        )}
       </div>
     )
   }
@@ -220,8 +274,9 @@ function OrganizationDefaults({ orgSlug, today }: { orgSlug: string; today: stri
     <AssumptionsForm
       // What could not be read and then can is a different thing to edit: the form starts again from what is stored.
       key={stored.status}
-      name="efficiency-organization"
+      name={ORGANIZATION_FORM}
       heading="Organization defaults"
+      headingLevel={Heading}
       intro={
         <>
           <p>Organization defaults apply to sorting machines that do not have their own override.</p>
@@ -252,7 +307,6 @@ function OrganizationDefaults({ orgSlug, today }: { orgSlug: string; today: stri
         },
       ]}
       initial={drafts(stored.status === 'ready' ? stored.data : null)}
-      today={today}
       saving={save.isPending}
       onSave={async (values) => drafts(await save.mutateAsync(values))}
     />
@@ -376,7 +430,7 @@ export function EfficiencyAssumptionsPanel({ orgSlug, branchSlug, today }: { org
               Values are stored exactly as entered and are never rounded.
             </p>
             <div className="assumptions-forms">
-              <OrganizationDefaults orgSlug={orgSlug} today={today} />
+              <OrganizationDefaults orgSlug={orgSlug} />
               <ThisSorter orgSlug={orgSlug} branchSlug={branchSlug} today={today} />
             </div>
           </>

@@ -1412,7 +1412,9 @@ button[aria-disabled='true'] {
 }
 
 .members-table td,
-.members-table thead th:last-child {
+.members-table thead th:last-child,
+.text-table td,
+.text-table thead th:last-child {
   text-align: left;
   font-variant-numeric: normal;
   white-space: normal;
@@ -1440,4 +1442,27 @@ button[aria-disabled='true'] {
 
 .member-form > .field-help {
   margin-bottom: 1rem;
+}
+
+/*
+ * An organization's own configuration: a strip of sections, and under it a column of panels. A table of words
+ * (.text-table) reads from the left and wraps, like the members table.
+ */
+.settings-sections {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.settings-panel > h3,
+.settings-panel .assumptions-form > h3 {
+  margin: 0 0 0.75rem;
+}
+
+.settings-panel .table-scroll + .quiet {
+  margin-bottom: 0;
+}
+
+.settings-panel .assumptions-form .field input {
+  max-width: 24rem;
 }
