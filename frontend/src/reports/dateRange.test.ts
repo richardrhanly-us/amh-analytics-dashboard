@@ -5,12 +5,14 @@ import {
   datesInRange,
   daysInRange,
   DEFAULT_PRESET_DAYS,
+  earliestDate,
   HOLDS_MAX_RANGE_DAYS,
   isCalendarDate,
   lastDays,
   MAX_RANGE_DAYS,
   offersYearToDate,
   presetOf,
+  previousRange,
   PRESETS,
   rangeProblem,
   rangeProblemText,
@@ -164,5 +166,38 @@ describe('the Holds report (R9D2)', () => {
   it('covers up to 92 days, whatever a plan allows the other reports', () => {
     expect(HOLDS_MAX_RANGE_DAYS).toBe(92)
     expect(HOLDS_MAX_RANGE_DAYS).toBeLessThan(MAX_RANGE_DAYS)
+  })
+})
+
+describe('the previous period (R10B)', () => {
+  it('is the same number of days, ending the day before the range starts', () => {
+    expect(previousRange({ from: '2026-09-06', to: '2026-10-05' })).toEqual({ from: '2026-08-07', to: '2026-09-05' })
+    expect(previousRange({ from: '2026-09-29', to: '2026-10-05' })).toEqual({ from: '2026-09-22', to: '2026-09-28' })
+    // One day is compared with the day before.
+    expect(previousRange({ from: '2026-10-05', to: '2026-10-05' })).toEqual({ from: '2026-10-04', to: '2026-10-04' })
+  })
+
+  it('has exactly the range’s length and meets it, for every preset and across months, years and leap days', () => {
+    for (const range of [lastDays(7, TODAY), lastDays(30, TODAY), lastDays(90, TODAY), { from: '2024-03-01', to: '2024-03-31' }, { from: '2026-01-01', to: '2026-01-10' }]) {
+      const previous = previousRange(range)
+      expect(daysInRange(previous)).toBe(daysInRange(range))
+      expect(addDays(previous.to, 1)).toBe(range.from)
+    }
+    // March 2024: the 31 days before it run back through the leap day.
+    expect(previousRange({ from: '2024-03-01', to: '2024-03-31' })).toEqual({ from: '2024-01-30', to: '2024-02-29' })
+  })
+
+  it('is the days before, never the same dates a year earlier: Year to date is compared with the end of last year', () => {
+    expect(previousRange(yearToDate(TODAY))).toEqual({ from: '2025-03-29', to: '2025-12-31' })
+  })
+
+  it('is held to the plan’s window like any range: all of it, or it cannot be asked for', () => {
+    // 30 days back from 5 October is 6 September.
+    const earliest = earliestDate(TODAY, 30)
+    expect(rangeProblem(previousRange({ from: '2026-09-21', to: TODAY }), TODAY, earliest)).toBeNull()
+    expect(rangeProblem(previousRange({ from: '2026-09-20', to: TODAY }), TODAY, earliest)).toBe('before_history')
+    expect(rangeProblem(previousRange(lastDays(30, TODAY)), TODAY, earliest)).toBe('before_history')
+    // No limit: any previous period can be asked for.
+    expect(rangeProblem(previousRange(lastDays(90, TODAY)), TODAY, earliestDate(TODAY, null))).toBeNull()
   })
 })

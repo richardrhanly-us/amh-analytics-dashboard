@@ -182,6 +182,16 @@ export function useSorterReports(orgSlug: string, branchSlug: string, range: Dat
 }
 
 /**
+ * A sorter's Overview report over the period a range is being compared with:
+ * the same report, from the same endpoint, for another range. Read only
+ * while `enabled` -- the comparison is on and that period can be asked for --
+ * and on its own: whatever becomes of it, the range's own reports stand.
+ */
+export function usePreviousOverview(orgSlug: string, branchSlug: string, previous: DateRange, enabled: boolean): ReportRead<OverviewReport> {
+  return useReport('overview', getOverviewReport, orgSlug, branchSlug, previous, enabled)
+}
+
+/**
  * A sorter's Holds report over one range. Not one of the five above: it is
  * only for a plan that has it, so it is read only by the section that shows
  * it, and that section is only there when the plan has it. Whatever becomes

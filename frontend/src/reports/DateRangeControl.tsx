@@ -14,6 +14,7 @@ import {
   type DateRange,
 } from './dateRange.ts'
 import { formatDate } from './derive.ts'
+import type { RangeComparison } from './useReportRange.ts'
 
 /**
  * Chooses the range a report covers: one of the presets, or two dates.
@@ -30,17 +31,27 @@ import { formatDate } from './derive.ts'
  * limit): only the presets within it are offered -- "Year to date" only when
  * 1 January is inside it -- and no earlier start date can be chosen. The API
  * holds every range to the same rule.
+ *
+ * `comparison`, where a view has one, adds the choice to compare the range
+ * with the period before it (useReportRange). It applies at once, like a
+ * preset. When that whole period is not inside the plan's window the choice
+ * is still there, says why it cannot be made, and does nothing. A view with
+ * nothing to compare passes none, and has no such choice.
  */
 export function DateRangeControl({
   range,
   today,
   historyDays,
   onChange,
+  comparison,
+  onCompare,
 }: {
   range: DateRange
   today: string
   historyDays: number | null
   onChange: (range: DateRange) => void
+  comparison?: RangeComparison
+  onCompare?: (compare: boolean) => void
 }) {
   // What is in the two date boxes: the applied range until someone types.
   const [draft, setDraft] = useState<DateRange>(range)
@@ -144,6 +155,32 @@ export function DateRangeControl({
         <p className="error-message" role="alert">
           {problem}
         </p>
+      )}
+
+      {comparison !== undefined && (
+        <div className="range-presets" role="group" aria-label="Comparison">
+          <button
+            type="button"
+            className={comparison.active ? undefined : 'button-secondary'}
+            aria-pressed={comparison.active}
+            // Unavailable, but not `disabled`: a disabled button drops keyboard focus, and cannot be asked why.
+            aria-disabled={!comparison.available}
+            aria-describedby={comparison.available ? undefined : 'report-compare-reason'}
+            onClick={() => {
+              if (comparison.available) {
+                onCompare?.(!comparison.active)
+              }
+            }}
+          >
+            Compare with previous period
+          </button>
+          {!comparison.available && (
+            <p className="range-help" id="report-compare-reason">
+              Not available for this range: the previous period, {formatDate(comparison.previous.from)} to{' '}
+              {formatDate(comparison.previous.to)}, starts before this organization&rsquo;s available reporting window.
+            </p>
+          )}
+        </div>
       )}
     </div>
   )

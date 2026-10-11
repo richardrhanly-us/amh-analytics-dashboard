@@ -15,6 +15,11 @@
  *   transit rate               transit / check-ins
  *   reject rate                rejects / check-ins. A ratio of two counts, not a share: rejects are not check-ins.
  *
+ *   percent change             (this period - the previous one) / the previous one. For counts and averages.
+ *                              Null when the previous one is zero: there is no percentage of nothing.
+ *   point change               this period's rate - the previous one's, in percentage points. For rates.
+ *                              Null when either rate does not exist.
+ *
  * A FIGURE WITH NO DENOMINATOR DOES NOT EXIST. Every function that divides
  * returns null when there is nothing to divide by, and "busiest" is null
  * when nothing happened at all. Null is shown as words -- never as 0, 0% or
@@ -31,6 +36,16 @@ export function average(total: number, divisor: number): number | null {
 /** `part` as a percentage of `whole`, or null when `whole` is zero. */
 export function percentOf(part: number, whole: number): number | null {
   return whole > 0 ? (part / whole) * 100 : null
+}
+
+/** How far `current` is from `previous`, as a percentage of `previous` -- or null when `previous` is zero. */
+export function percentChange(current: number, previous: number): number | null {
+  return previous > 0 ? ((current - previous) / previous) * 100 : null
+}
+
+/** The difference between two rates, in percentage points -- or null when either rate does not exist. */
+export function pointChange(current: number | null, previous: number | null): number | null {
+  return current === null || previous === null ? null : current - previous
 }
 
 export interface DayCount {
@@ -172,4 +187,19 @@ export function formatShortDate(date: string): string {
   return new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' }).format(
     new Date(Date.UTC(year, month - 1, day, 12)),
   )
+}
+
+/**
+ * A change in words, to one decimal place: "Up 12.4%", "Down 0.8 points",
+ * "No change". Which way it went and by how much -- never whether that is
+ * good. A change too small to show at one decimal place is said to be so,
+ * not written as 0.0.
+ */
+export function formatChange(change: number, unit: '%' | ' points'): string {
+  if (change === 0) {
+    return 'No change'
+  }
+  const size = Math.abs(change)
+  const amount = size < 0.05 ? `less than 0.1${unit}` : `${size.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}${unit}`
+  return `${change > 0 ? 'Up' : 'Down'} ${amount}`
 }

@@ -21,7 +21,18 @@ import {
   percentOf,
   weekdayAverages,
 } from './derive.ts'
-import { count, days, derived, rejectNote, transitNote } from './figures.ts'
+import {
+  averageChange,
+  changeFrom,
+  type Comparison,
+  count,
+  countAndRateChange,
+  countChange,
+  days,
+  derived,
+  rejectNote,
+  transitNote,
+} from './figures.ts'
 import { timeSeries } from './months.ts'
 import type { ReportRead } from './useSorterReports.ts'
 
@@ -89,8 +100,91 @@ export function ReportSection<T>({
   )
 }
 
-/** `transits`: the organization's plan includes transit routing. Without it, the in-transit figure is not shown. */
-export function OverviewSection({ read, transits }: { read: ReportRead<OverviewReport>; transits: boolean }) {
+/**
+ * What an Overview is being compared with, said once above its cards -- or,
+ * when the previous period's report could not be read, that it could not,
+ * with a way to ask again. Nothing at all when nothing is being compared.
+ *
+ * `includesToday`: the range being reported on reaches today, which is not
+ * over. The previous period is complete, so the two are not yet alike.
+ *
+ * As for a section's own "Try again" (ReportSection), the button stays where
+ * it is while it is trying, so whoever pressed it keeps their place; when the
+ * comparison then arrives the button is gone, and focus moves to the sentence
+ * that says what the figures are compared with.
+ */
+export function ComparisonNote<T>({ comparison, includesToday }: { comparison: Comparison<T> | undefined; includesToday: boolean }) {
+  const status = comparison?.read.section.status
+  const note = useRef<HTMLParagraphElement>(null)
+  const [retried, setRetried] = useState(false)
+  const retrying = retried && status === 'loading'
+
+  // Switched off: a comparison switched on again later is a new one, and loads as one.
+  if (comparison === undefined && retried) {
+    setRetried(false)
+  }
+
+  useEffect(() => {
+    if (retried && status === 'ready') {
+      note.current?.focus()
+    }
+  }, [retried, status])
+
+  if (comparison === undefined) {
+    return null
+  }
+  const { range, read } = comparison
+  const period = `${formatDate(range.from)} to ${formatDate(range.to)}`
+
+  if (retrying || (status !== 'ready' && status !== 'loading')) {
+    return (
+      <div className="section-retry">
+        {retrying ? (
+          <p className="section-pending">Trying the comparison again…</p>
+        ) : (
+          <p className="quiet" role="note">
+            Comparison unavailable: the figures for the previous period, {period}, could not be loaded. The figures
+            below are not affected.
+          </p>
+        )}
+        <button
+          type="button"
+          className="button-secondary"
+          // Unavailable while trying again, but not `disabled`: a disabled button drops keyboard focus.
+          aria-disabled={read.loading}
+          onClick={() => {
+            if (!read.loading) {
+              setRetried(true)
+              read.retry()
+            }
+          }}
+        >
+          Try again<span className="visually-hidden">: comparison</span>
+        </button>
+      </div>
+    )
+  }
+  return (
+    <p className="quiet" role="note" ref={note} tabIndex={-1}>
+      Compared with the previous period, {period}.
+      {includesToday && ' This range includes today, which is not over yet: it may be partial beside the previous period, which is complete.'}
+    </p>
+  )
+}
+
+/**
+ * `transits`: the organization's plan includes transit routing. Without it, the in-transit figure is not shown.
+ * `comparison`: the previous period's Overview, when the range is being compared with it.
+ */
+export function OverviewSection({
+  read,
+  transits,
+  comparison,
+}: {
+  read: ReportRead<OverviewReport>
+  transits: boolean
+  comparison?: Comparison<OverviewReport>
+}) {
   return (
     <ReportSection name="report-overview" heading="Overview" read={read}>
       {(report) => {
@@ -100,20 +194,51 @@ export function OverviewSection({ read, transits }: { read: ReportRead<OverviewR
         const series = timeSeries(report.days, (day) => [day.checkin_count, day.reject_count])
         return (
           <>
+            <ComparisonNote comparison={comparison} includesToday={report.range.includes_today} />
             <dl className="metrics">
-              <MetricCard label="Check-ins" {...count(total, `Over ${days(report.range.days)}`)} />
+              <MetricCard
+                label="Check-ins"
+                {...count(total, `Over ${days(report.range.days)}`)}
+                change={changeFrom(comparison, (previous) => countChange(total, previous.checkin_count))}
+              />
               <MetricCard
                 label="Average per day"
                 {...derived(average(total, report.range.days), formatAverage, 'Every calendar day in the range')}
+                change={changeFrom(comparison, (previous) =>
+                  averageChange(average(total, report.range.days), average(previous.checkin_count, previous.range.days)),
+                )}
               />
-              <MetricCard label="Active days" {...count(report.active_days, `Of ${days(report.range.days)}`)} />
+              <MetricCard
+                label="Active days"
+                {...count(report.active_days, `Of ${days(report.range.days)}`)}
+                change={changeFrom(comparison, (previous) => countChange(report.active_days, previous.active_days))}
+              />
               {transits && (
                 <MetricCard
                   label="In transit"
                   {...count(report.transit_count, transitNote(percentOf(report.transit_count, total)))}
+                  change={changeFrom(comparison, (previous) =>
+                    countAndRateChange(
+                      report.transit_count,
+                      previous.transit_count,
+                      percentOf(report.transit_count, total),
+                      percentOf(previous.transit_count, previous.checkin_count),
+                    ),
+                  )}
                 />
               )}
-              <MetricCard label="Rejects" {...count(report.reject_count, rejectNote(percentOf(report.reject_count, total)))} />
+              <MetricCard
+                label="Rejects"
+                {...count(report.reject_count, rejectNote(percentOf(report.reject_count, total)))}
+                change={changeFrom(comparison, (previous) =>
+                  countAndRateChange(
+                    report.reject_count,
+                    previous.reject_count,
+                    percentOf(report.reject_count, total),
+                    percentOf(previous.reject_count, previous.checkin_count),
+                  ),
+                )}
+              />
               <MetricCard
                 label="Busiest day"
                 {...(busiest === null
