@@ -12,7 +12,7 @@ import {
   SorterComparisonSection,
   SystemReliabilitySection,
 } from './OrganizationReportSections.tsx'
-import { useOrganizationProductDay, useOrganizationReports } from './useOrganizationReports.ts'
+import { useOrganizationProductDay, useOrganizationReports, usePreviousOrganizationOverview } from './useOrganizationReports.ts'
 import { useReportRange } from './useReportRange.ts'
 
 const BEFORE_HISTORY = "The selected range starts before this organization's available reporting window. Choose a later start date."
@@ -32,8 +32,10 @@ function ReportsForDay({
   const transits = hasTransits(organization)
   const history = historyDays(organization)
   // The range is the address's: the same in every view of these reports, and after a reload.
-  const { range, setRange } = useReportRange(today, history)
+  const { range, setRange, comparison, setCompare } = useReportRange(today, history)
   const reports = useOrganizationReports(orgSlug, range, transits)
+  // The previous period's Overview, read only while the range is being compared with it.
+  const previous = usePreviousOrganizationOverview(orgSlug, comparison.previous, comparison.active)
 
   // A 404 for a report: the API no longer returns this organization to this user. The whole page says so.
   useEffect(() => {
@@ -48,7 +50,7 @@ function ReportsForDay({
 
   return (
     <>
-      <DateRangeControl range={range} today={today} historyDays={history} onChange={setRange} />
+      <DateRangeControl range={range} today={today} historyDays={history} onChange={setRange} comparison={comparison} onCompare={setCompare} />
       <RangeShown range={range} today={today} timeZone={timeZone} />
       {reports.beforeHistory ? (
         // The plan's window changed after this range was chosen: the API refuses it. A later start date is the answer.
@@ -58,7 +60,11 @@ function ReportsForDay({
       ) : (
         // Keyed by range, so a new range starts with nothing carried over.
         <div className="report-sections" key={`${range.from}/${range.to}`}>
-          <OrganizationOverviewSection read={reports.overview} transits={transits} />
+          <OrganizationOverviewSection
+            read={reports.overview}
+            transits={transits}
+            comparison={comparison.active ? { range: comparison.previous, read: previous } : undefined}
+          />
           <SorterComparisonSection orgSlug={orgSlug} read={reports.overview} transits={transits} />
           {/* Not asked for at all unless the plan includes transit routing. */}
           {transits && <RoutingNetworkSection read={reports.routingNetwork} />}

@@ -63,6 +63,16 @@ export function datesInRange(range: DateRange): string[] {
   return Array.from({ length: Math.max(daysInRange(range), 0) }, (_, index) => addDays(range.from, index))
 }
 
+/**
+ * The range a range is compared with: the same number of days, both ends
+ * included, ending the day before it starts. The 30 days to 5 October are
+ * compared with the 30 days to 5 September -- whatever kind of range it is,
+ * "Year to date" included: it is never the same dates a year earlier.
+ */
+export function previousRange(range: DateRange): DateRange {
+  return { from: addDays(range.from, -daysInRange(range)), to: addDays(range.from, -1) }
+}
+
 /** The ranges offered as one-click choices. Each ends on the product's current date. */
 export const PRESETS = [
   { days: 7, label: 'Last 7 days' },

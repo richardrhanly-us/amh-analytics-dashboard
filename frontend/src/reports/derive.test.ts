@@ -7,6 +7,7 @@ import {
   busiestHour,
   busiestWeekday,
   formatAverage,
+  formatChange,
   formatCount,
   formatDate,
   formatDayOfWeek,
@@ -14,7 +15,9 @@ import {
   formatShortDate,
   hourlyAverages,
   NOT_AVAILABLE,
+  percentChange,
   percentOf,
+  pointChange,
   weekdayAverages,
   weekdayOf,
   WEEKDAY_NAMES,
@@ -326,5 +329,50 @@ describe('an organization’s figures', () => {
     expect(average(0, 0)).toBeNull()
     // A sorter with nothing, in an organization with something, has a real share: none of it.
     expect(percentOf(0, checkins)).toBe(0)
+  })
+})
+
+describe('a figure beside the previous period’s (R10B)', () => {
+  it('a count’s change is a percentage of the previous count', () => {
+    expect(percentChange(300, 240)).toBe(25)
+    expect(percentChange(240, 300)).toBe(-20)
+    expect(percentChange(240, 240)).toBe(0)
+    expect(percentChange(0, 240)).toBe(-100)
+    // An average changes as its total does when both periods have the same number of days.
+    expect(percentChange(average(300, 30) as number, average(240, 30) as number)).toBeCloseTo(25, 10)
+  })
+
+  it('has no percentage of a previous figure of zero: never 0%, 100% or Infinity', () => {
+    expect(percentChange(300, 0)).toBeNull()
+    expect(percentChange(0, 0)).toBeNull()
+  })
+
+  it('a rate’s change is the difference in percentage points, not a percentage of a percentage', () => {
+    // 10.0% from 12.5% is down 2.5 points -- not down 20%.
+    expect(pointChange(percentOf(30, 300), percentOf(30, 240))).toBe(-2.5)
+    expect(pointChange(10, 0)).toBe(10)
+    expect(pointChange(5, 5)).toBe(0)
+  })
+
+  it('has no change in a rate that does not exist in either period: a missing rate is not 0%', () => {
+    expect(pointChange(percentOf(3, 0), 5)).toBeNull()
+    expect(pointChange(5, percentOf(0, 0))).toBeNull()
+    expect(pointChange(null, null)).toBeNull()
+  })
+
+  it('is written in words that say which way and how far, and nothing about better or worse', () => {
+    expect(formatChange(25, '%')).toBe('Up 25.0%')
+    expect(formatChange(-20, '%')).toBe('Down 20.0%')
+    expect(formatChange(1234.56, '%')).toBe('Up 1,234.6%')
+    expect(formatChange(-2.5, ' points')).toBe('Down 2.5 points')
+    expect(formatChange(10, ' points')).toBe('Up 10.0 points')
+    expect(formatChange(0, '%')).toBe('No change')
+    expect(formatChange(0, ' points')).toBe('No change')
+  })
+
+  it('does not write a change too small to show as 0.0, or as no change', () => {
+    expect(formatChange(0.04, '%')).toBe('Up less than 0.1%')
+    expect(formatChange(-0.004, ' points')).toBe('Down less than 0.1 points')
+    expect(formatChange(0.05, '%')).toBe('Up 0.1%')
   })
 })

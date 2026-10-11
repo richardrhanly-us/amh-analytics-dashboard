@@ -13,15 +13,18 @@ export interface Figure {
   text: string
   /** A short line under the figure, where it needs one: which hour, or why there is no figure. */
   note?: string
+  /** A last line, where a report is being compared with another period: how the figure changed. In words. */
+  change?: string
 }
 
 /** One figure in a summary: a term and its value in the surrounding `<dl>`. */
-export function MetricCard({ label, tone, text, note }: Figure & { label: string }) {
+export function MetricCard({ label, tone, text, note, change }: Figure & { label: string }) {
   return (
     <div className={`metric metric-${tone}`}>
       <dt>{label}</dt>
       <dd className="metric-value">{text}</dd>
       {note !== undefined && <dd className="metric-note">{note}</dd>}
+      {change !== undefined && <dd className="metric-note metric-change">{change}</dd>}
     </div>
   )
 }

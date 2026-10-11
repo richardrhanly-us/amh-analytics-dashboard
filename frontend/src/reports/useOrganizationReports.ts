@@ -83,3 +83,13 @@ export function useOrganizationReports(orgSlug: string, range: DateRange, transi
     beforeHistory: reads.some((read) => read.section.status === 'before_history'),
   }
 }
+
+/**
+ * The organization's Overview report over the period a range is being
+ * compared with: the same report, from the same endpoint, for another range.
+ * Read only while `enabled`, and on its own: whatever becomes of it, the
+ * range's own reports stand.
+ */
+export function usePreviousOrganizationOverview(orgSlug: string, previous: DateRange, enabled: boolean): ReportRead<OrganizationOverviewReport> {
+  return useReport('overview', getOrganizationOverviewReport, orgSlug, previous, enabled)
+}

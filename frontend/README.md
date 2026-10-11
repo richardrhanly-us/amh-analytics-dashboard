@@ -155,6 +155,27 @@ the address are held to the same rules as dates typed into the range control;
 ones that cannot be asked for never become the range and are taken out of the
 address. The API checks every range itself, whatever the address says.
 
+**Comparing with the previous period.** The Operations views (a sorter's and
+an organization's) can set the Overview beside the period before it: the same
+number of days, ending the day before the range starts
+(`previousRange` in `src/reports/dateRange.ts`). It is never the same dates a
+year earlier. It is kept in the address as `compare=previous`, by the same
+rules as the dates, and read as one more Overview report over that period
+from the same endpoint -- nothing else is read for it. Each Overview card
+then says, in words, how its figure changed: a count or an average as a
+percentage of the previous one, a rate in percentage points
+(`src/reports/derive.ts`). A previous figure of zero has no percentage and
+none is made up; a rate that does not exist in either period has no change.
+Nothing is coloured as better or worse. A range that includes today says it
+may be partial beside the previous period, which is complete.
+
+The whole previous period must be inside the plan's window. When it is not,
+the choice is still shown, says why, and does nothing: the period is never
+shortened and never asked for. If the previous period's report cannot be
+loaded, the Overview says so in one line, with a way to try again, and the
+report itself is unaffected. No other section, and neither the Efficiency nor
+the Value view, is compared.
+
 **The arithmetic.** The API returns whole-number counts only. Every rate and
 average is worked out in one place, `src/reports/derive.ts`, from totals: a
 rate is one total over another, never an average of daily rates. A figure with

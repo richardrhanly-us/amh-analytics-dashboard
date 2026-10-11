@@ -17,9 +17,9 @@ import {
   NOT_AVAILABLE,
   percentOf,
 } from './derive.ts'
-import { count, days, derived, rejectNote, transitNote } from './figures.ts'
+import { averageChange, changeFrom, type Comparison, count, countAndRateChange, countChange, days, derived, rejectNote, transitNote } from './figures.ts'
 import { timeSeries } from './months.ts'
-import { ReportSection } from './ReportSections.tsx'
+import { ComparisonNote, ReportSection } from './ReportSections.tsx'
 import type { ReportRead } from './useSorterReports.ts'
 
 /**
@@ -115,8 +115,19 @@ function DataTable({
   )
 }
 
-/** `transits`: the organization's plan includes transit routing. Without it, the in-transit figure is not shown. */
-export function OrganizationOverviewSection({ read, transits }: { read: ReportRead<OrganizationOverviewReport>; transits: boolean }) {
+/**
+ * `transits`: the organization's plan includes transit routing. Without it, the in-transit figure is not shown.
+ * `comparison`: the previous period's Overview, when the range is being compared with it.
+ */
+export function OrganizationOverviewSection({
+  read,
+  transits,
+  comparison,
+}: {
+  read: ReportRead<OrganizationOverviewReport>
+  transits: boolean
+  comparison?: Comparison<OrganizationOverviewReport>
+}) {
   return (
     <ReportSection name="org-overview" heading="Overview" read={read}>
       {(report) => {
@@ -135,13 +146,46 @@ export function OrganizationOverviewSection({ read, transits }: { read: ReportRe
               Check-ins are processing events, added up across the organization&rsquo;s sorting machines. An item
               handled at two machines is counted at each.
             </p>
+            <ComparisonNote comparison={comparison} includesToday={range.includes_today} />
             <dl className="metrics">
-              <MetricCard label="Check-ins" {...count(total, `Over ${days(range.days)}`)} />
-              <MetricCard label="Average per day" {...derived(average(total, range.days), formatAverage, 'Every calendar day in the range')} />
+              <MetricCard
+                label="Check-ins"
+                {...count(total, `Over ${days(range.days)}`)}
+                change={changeFrom(comparison, (previous) => countChange(total, previous.totals.checkin_count))}
+              />
+              <MetricCard
+                label="Average per day"
+                {...derived(average(total, range.days), formatAverage, 'Every calendar day in the range')}
+                change={changeFrom(comparison, (previous) =>
+                  averageChange(average(total, range.days), average(previous.totals.checkin_count, previous.range.days)),
+                )}
+              />
               {transits && (
-                <MetricCard label="In transit" {...count(totals.transit_count, transitNote(percentOf(totals.transit_count, total)))} />
+                <MetricCard
+                  label="In transit"
+                  {...count(totals.transit_count, transitNote(percentOf(totals.transit_count, total)))}
+                  change={changeFrom(comparison, (previous) =>
+                    countAndRateChange(
+                      totals.transit_count,
+                      previous.totals.transit_count,
+                      percentOf(totals.transit_count, total),
+                      percentOf(previous.totals.transit_count, previous.totals.checkin_count),
+                    ),
+                  )}
+                />
               )}
-              <MetricCard label="Rejects" {...count(totals.reject_count, rejectNote(percentOf(totals.reject_count, total)))} />
+              <MetricCard
+                label="Rejects"
+                {...count(totals.reject_count, rejectNote(percentOf(totals.reject_count, total)))}
+                change={changeFrom(comparison, (previous) =>
+                  countAndRateChange(
+                    totals.reject_count,
+                    previous.totals.reject_count,
+                    percentOf(totals.reject_count, total),
+                    percentOf(previous.totals.reject_count, previous.totals.checkin_count),
+                  ),
+                )}
+              />
               <MetricCard
                 label="Sorting machines"
                 {...count(
