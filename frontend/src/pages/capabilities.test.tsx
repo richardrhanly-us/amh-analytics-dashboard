@@ -21,7 +21,7 @@ import {
   serveApi,
 } from '../test/http.ts'
 import { renderApp } from '../test/render.tsx'
-import { DEFAULT_HISTORY_DAYS, hasTransits, historyDays } from './capabilities.ts'
+import { DEFAULT_HISTORY_DAYS, hasExports, hasTransits, historyDays } from './capabilities.ts'
 
 // 1:50 PM on Monday 5 October 2026 in Chicago: the fixtures' "today".
 const NOW = '2026-10-05T18:50:00Z'
@@ -115,6 +115,22 @@ describe('what the plan allows', () => {
     [{ transits_tab: on() }, false],
   ])('transit routing for %j is %s', (entitlements, expected) => {
     expect(hasTransits({ entitlements })).toBe(expected)
+  })
+
+  // R10C: taking a report out of the app. Like every plan feature it fails closed: only a feature that is there and
+  // switched on gives it -- not a missing one, one switched off, another by a similar name, or a malformed one.
+  it.each([
+    [{ exports: on() }, true],
+    [{ exports: on(5) }, true],
+    [{ exports: off() }, false],
+    [{}, false],
+    [{ export: on() }, false],
+    [{ csv_exports: on() }, false],
+    [{ advanced_reports: on() }, false],
+    [{ exports: { enabled: 'yes', limit_value: null } }, false],
+    [{ exports: { limit_value: null } }, false],
+  ])('exports for %j is %s', (entitlements, expected) => {
+    expect(hasExports({ entitlements } as unknown as Parameters<typeof hasExports>[0])).toBe(expected)
   })
 
   it.each([

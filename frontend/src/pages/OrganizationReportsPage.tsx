@@ -35,7 +35,10 @@ export function OrganizationReportsPage({ view }: { view: OrganizationReportView
         current="Reports"
       />
       <PageHeading>{organization.name}</PageHeading>
-      <h3 id="organization-reports-heading">Organization Reports</h3>
+      {/* `report-view`: what marks this page as a report for the print styles (index.css), and nothing else. */}
+      <h3 id="organization-reports-heading" className="report-view">
+        Organization Reports
+      </h3>
       <p className="page-context">What all of this organization&rsquo;s sorting machines processed, together</p>
       <ReportNav
         views={[

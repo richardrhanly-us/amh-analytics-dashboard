@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 
 import type { OrganizationDetail } from '../api/organizations.ts'
 import { LoadFailure } from '../components/LoadFailure.tsx'
-import { hasTransits, historyDays } from '../pages/capabilities.ts'
+import { hasExports, hasTransits, historyDays } from '../pages/capabilities.ts'
 import { NotFoundPage } from '../pages/NotFoundPage.tsx'
 import { DateRangeControl, RangeShown } from './DateRangeControl.tsx'
 import {
@@ -12,6 +12,8 @@ import {
   SorterComparisonSection,
   SystemReliabilitySection,
 } from './OrganizationReportSections.tsx'
+import { PrintButton } from './ReportActions.tsx'
+import { ReportExportsContext } from './reportExports.ts'
 import { useOrganizationProductDay, useOrganizationReports, usePreviousOrganizationOverview } from './useOrganizationReports.ts'
 import { useReportRange } from './useReportRange.ts'
 
@@ -49,9 +51,11 @@ function ReportsForDay({
   }
 
   return (
-    <>
+    // What a file or a printout of these reports is called by: the organization and this range.
+    <ReportExportsContext value={{ enabled: hasExports(organization), scope: [orgSlug], range }}>
       <DateRangeControl range={range} today={today} historyDays={history} onChange={setRange} comparison={comparison} onCompare={setCompare} />
       <RangeShown range={range} today={today} timeZone={timeZone} />
+      <PrintButton />
       {reports.beforeHistory ? (
         // The plan's window changed after this range was chosen: the API refuses it. A later start date is the answer.
         <p className="notice" role="note">
@@ -71,7 +75,7 @@ function ReportsForDay({
           <SystemReliabilitySection read={reports.reliability} />
         </div>
       )}
-    </>
+    </ReportExportsContext>
   )
 }
 

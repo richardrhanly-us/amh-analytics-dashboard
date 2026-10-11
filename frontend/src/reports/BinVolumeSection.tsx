@@ -4,8 +4,10 @@ import type { BinVolumeBin, BinVolumeReport } from '../api/reports.ts'
 import { MetricCard } from '../liveToday/MetricCard.tsx'
 import { formatHour } from '../time/productTime.ts'
 import { Figure } from './ChartFigure.tsx'
+import { rounded } from './csv.ts'
 import { formatCount, formatPercent, percentOf } from './derive.ts'
 import { count, derived } from './figures.ts'
+import { CsvButton } from './ReportActions.tsx'
 import { ReportSection } from './ReportSections.tsx'
 import type { ReportRead } from './useSorterReports.ts'
 
@@ -97,6 +99,14 @@ function BinHours({ bins, timeZone }: { bins: readonly BinVolumeBin[]; timeZone:
           </tbody>
         </table>
       </div>
+      <CsvButton
+        dataset="Bin volume by hour"
+        table={() => ({
+          // The bin as the sorter logs it; each hour as the local clock read it, 00 to 23.
+          columns: ['Bin', ...HOURS.map((hour) => `Hour ${String(hour).padStart(2, '0')}`), 'Total'],
+          rows: bins.map((bin) => [bin.key, ...bin.hours, bin.checkin_count]),
+        })}
+      />
     </>
   )
 }
@@ -136,6 +146,13 @@ function BinVolume({ report }: { report: BinVolumeReport }) {
         <>
           <Figure
             name="bin-checkins"
+            csv={{
+              dataset: 'Check-ins by bin',
+              table: () => ({
+                columns: ['Bin', 'Check-ins', 'Share of known-bin check-ins (%)'],
+                rows: bins.map((bin) => [bin.key, bin.checkin_count, rounded(percentOf(bin.checkin_count, known))]),
+              }),
+            }}
             heading="Check-ins by bin"
             summary={`${checkIns(known)} across ${formatCount(bins.length)} observed ${bins.length === 1 ? 'bin' : 'bins'}. Most in one bin: ${formatCount(busiest.checkin_count)}, in ${binLabel(busiest)}.`}
             columns={['Bin', 'Check-ins', 'Share of known-bin check-ins']}

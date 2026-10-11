@@ -1509,3 +1509,67 @@ button[aria-disabled='true'] {
 .routing-form .settings-panel > .form-actions + .field-help {
   margin-top: 0.75rem;
 }
+
+/* A table's "Download CSV", on a line of its own under the table; and beside a chart's "Show table". */
+.table-actions,
+.report-actions {
+  margin: 0.75rem 0 0;
+}
+
+.chart-figure > button + .csv-download {
+  margin-left: 0.5rem;
+}
+
+/*
+ * A REPORT on paper, or saved as a PDF by the browser's Print -- the app's "Print report" and the browser's own
+ * Print alike. Every rule here is under `.app:has(.report-view)`: `report-view` is on the heading every report view
+ * has (pages/SorterReportsPage, pages/OrganizationReportsPage) and on nothing else, so no other page of the app is
+ * printed any differently than it was.
+ *
+ * What is there to be read stays; what is there to be pressed -- the app's header, every strip of views, the range
+ * and comparison controls, and every button -- goes. The range the figures are for is the "Showing ..." line, which
+ * stays. A chart's table is put on the page for printing by the chart itself (reports/usePrinting).
+ */
+@media print {
+  .app:has(.report-view) :is(.app-header, .view-nav, .range-control, .table-actions, .report-actions, button) {
+    display: none !important;
+  }
+
+  /* Bars and tints are figures here, not decoration: print them as they are drawn. */
+  .app:has(.report-view) .report-sections {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  /* A wide table is cut off inside a box that scrolls; on paper it has to be all there. */
+  .app:has(.report-view) .table-scroll {
+    overflow: visible;
+  }
+
+  .app:has(.report-view) .table-scroll .data-table :is(th, td) {
+    white-space: normal;
+  }
+
+  /* A long table runs over pages with its headings repeated; a row, a card or a chart is not cut in two. */
+  .app:has(.report-view) .data-table thead {
+    display: table-header-group;
+  }
+
+  .app:has(.report-view) :is(.data-table tr, .metric, .notice, .chart, .bin-bar) {
+    break-inside: avoid;
+  }
+
+  .app:has(.report-view) :is(h2, h3, h4, h5, .chart-summary) {
+    break-after: avoid;
+  }
+
+  .app:has(.report-view) .panel {
+    border: 0;
+    padding: 0;
+  }
+
+  .app:has(.report-view) a {
+    color: inherit;
+    text-decoration: none;
+  }
+}
