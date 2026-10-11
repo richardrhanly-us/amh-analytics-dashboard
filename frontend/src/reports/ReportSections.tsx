@@ -6,6 +6,7 @@ import { MetricCard } from '../liveToday/MetricCard.tsx'
 import { SectionPlaceholder } from '../liveToday/SectionPlaceholder.tsx'
 import { formatHour, formatHourRange } from '../time/productTime.ts'
 import { ChartFigure } from './ChartFigure.tsx'
+import { rounded } from './csv.ts'
 import {
   activeDays,
   average,
@@ -34,6 +35,7 @@ import {
   transitNote,
 } from './figures.ts'
 import { timeSeries } from './months.ts'
+import { CsvButton } from './ReportActions.tsx'
 import type { ReportRead } from './useSorterReports.ts'
 
 const NO_CHECKINS = 'No check-ins in this range'
@@ -248,6 +250,13 @@ export function OverviewSection({
             </dl>
             <ChartFigure
               name="daily-checkins"
+              csv={{
+                dataset: 'Daily check-ins',
+                table: () => ({
+                  columns: ['Date', 'Check-ins', 'Rejects'],
+                  rows: report.days.map((day) => [day.date, day.checkin_count, day.reject_count]),
+                }),
+              }}
               heading={series.monthly ? 'Check-ins by month' : 'Daily check-ins'}
               summary={
                 busiest === null
@@ -309,6 +318,13 @@ export function VolumeSection({ read }: { read: ReportRead<VolumeReport> }) {
             </dl>
             <ChartFigure
               name="typical-week"
+              csv={{
+                dataset: 'Typical week',
+                table: () => ({
+                  columns: ['Weekday', 'Days in range', 'Check-ins', 'Average per day'],
+                  rows: weekdays.map((weekday) => [weekday.name, weekday.occurrences, weekday.checkin_count, rounded(weekday.average)]),
+                }),
+              }}
               heading="Typical week"
               summary={
                 topWeekday === null
@@ -328,6 +344,14 @@ export function VolumeSection({ read }: { read: ReportRead<VolumeReport> }) {
             />
             <ChartFigure
               name="typical-day"
+              csv={{
+                dataset: 'Typical day',
+                table: () => ({
+                  // The hour as the local clock read it, 0 to 23, in the report's zone.
+                  columns: ['Hour', 'Check-ins', 'Average per day'],
+                  rows: hours.map((hour) => [hour.hour, hour.checkin_count, rounded(hour.average)]),
+                }),
+              }}
               heading="Typical day"
               summary={
                 topHour === null
@@ -418,10 +442,24 @@ export function RoutingSection({ read }: { read: ReportRead<RoutingReport> }) {
                 ))}
               </tbody>
             </table>
+            <CsvButton
+              dataset="Where check-ins went"
+              table={() => ({
+                columns: ['Destination', 'Check-ins', 'Share of check-ins (%)'],
+                rows: rows.map((row) => [row.label, row.value, rounded(percentOf(row.value, total))]),
+              })}
+            />
 
             {report.transit.length > 0 && (
               <ChartFigure
                 name="daily-transit"
+                csv={{
+                  dataset: 'Daily transit',
+                  table: () => ({
+                    columns: ['Date', 'Total transit', ...report.transit.map((destination) => destination.label)],
+                    rows: report.days.map((day) => [day.date, day.transit_counts.reduce((sum, value) => sum + value, 0), ...day.transit_counts]),
+                  }),
+                }}
                 heading={transitSeries.monthly ? 'Transit by month' : 'Daily transit'}
                 summary={
                   topTransitDay === null
@@ -461,6 +499,13 @@ export function ReliabilitySection({ read }: { read: ReportRead<ReliabilityRepor
             </dl>
             <ChartFigure
               name="daily-rejects"
+              csv={{
+                dataset: 'Daily rejects',
+                table: () => ({
+                  columns: ['Date', 'Rejects', 'Check-ins'],
+                  rows: report.days.map((day) => [day.date, day.reject_count, day.checkin_count]),
+                }),
+              }}
               heading={series.monthly ? 'Rejects by month' : 'Daily rejects'}
               summary={
                 worstDay === null
@@ -496,6 +541,20 @@ export function ReliabilitySection({ read }: { read: ReportRead<ReliabilityRepor
                   ))}
                 </tbody>
               </table>
+            )}
+            {reasons.length > 0 && (
+              <CsvButton
+                dataset="Reject reasons"
+                table={() => ({
+                  columns: ['Reason code', 'Reason', 'Rejects', 'Share of rejects (%)'],
+                  rows: reasons.map((entry) => [
+                    entry.reason,
+                    reasonLabel(entry.reason),
+                    entry.reject_count,
+                    rounded(percentOf(entry.reject_count, report.reject_count)),
+                  ]),
+                })}
+              />
             )}
           </>
         )

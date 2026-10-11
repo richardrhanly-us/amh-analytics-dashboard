@@ -7,6 +7,7 @@ import { MetricCard } from '../liveToday/MetricCard.tsx'
 import { sorterStatusLabel } from '../pages/labels.ts'
 import { sorterReportsPath } from '../router/paths.ts'
 import { ChartFigure } from './ChartFigure.tsx'
+import { rounded } from './csv.ts'
 import {
   average,
   busiestDay,
@@ -19,6 +20,7 @@ import {
 } from './derive.ts'
 import { averageChange, changeFrom, type Comparison, count, countAndRateChange, countChange, days, derived, rejectNote, transitNote } from './figures.ts'
 import { timeSeries } from './months.ts'
+import { CsvButton } from './ReportActions.tsx'
 import { ComparisonNote, ReportSection } from './ReportSections.tsx'
 import type { ReportRead } from './useSorterReports.ts'
 
@@ -196,6 +198,13 @@ export function OrganizationOverviewSection({
             </dl>
             <ChartFigure
               name="org-daily-checkins"
+              csv={{
+                dataset: 'Daily check-ins',
+                table: () => ({
+                  columns: ['Date', 'Check-ins', 'Rejects'],
+                  rows: report.days.map((day) => [day.date, day.checkin_count, day.reject_count]),
+                }),
+              }}
               heading={series.monthly ? 'Check-ins by month' : 'Daily check-ins'}
               summary={
                 busiest === null
@@ -286,6 +295,46 @@ export function SorterComparisonSection({
                 }
               })}
             />
+            <CsvButton
+              dataset="Sorter comparison"
+              table={() => ({
+                columns: [
+                  'Sorter',
+                  'Location',
+                  'Status',
+                  'Reporting data',
+                  'Check-ins',
+                  'Share of check-ins (%)',
+                  ...(transits ? ['In transit', 'Transit rate (%)'] : []),
+                  'Rejects',
+                  'Reject rate (%)',
+                  'Active days',
+                  'Days in range',
+                  'Collectors',
+                ],
+                // A machine with no reporting data has no figures: empty cells, never zeros.
+                rows: report.sorters.map((sorter) => [
+                  sorter.name,
+                  sorter.host_branch.name,
+                  // As the page says it: a machine with no reporting data is unavailable, whatever else it is.
+                  sorter.available ? (sorterStatusLabel(sorter.status) ?? 'Active') : UNAVAILABLE,
+                  sorter.available ? 'Yes' : 'No',
+                  sorter.available ? sorter.checkin_count : null,
+                  sorter.available ? rounded(percentOf(sorter.checkin_count, total)) : null,
+                  ...(transits
+                    ? [
+                        sorter.available ? sorter.transit_count : null,
+                        sorter.available ? rounded(percentOf(sorter.transit_count, sorter.checkin_count)) : null,
+                      ]
+                    : []),
+                  sorter.available ? sorter.reject_count : null,
+                  sorter.available ? rounded(percentOf(sorter.reject_count, sorter.checkin_count)) : null,
+                  sorter.available ? sorter.active_days : null,
+                  report.range.days,
+                  sorter.collector_count,
+                ]),
+              })}
+            />
             <p className="quiet">
               Each rate is that machine&rsquo;s own count over its own check-ins. A machine&rsquo;s name opens its own
               reports.
@@ -343,6 +392,21 @@ export function RoutingNetworkSection({ read }: { read: ReportRead<RoutingNetwor
                 ],
               }))}
             />
+            <CsvButton
+              dataset="Routing by sorter"
+              table={() => ({
+                columns: ['Sorter', 'Check-ins', 'Home', 'Kept at home', 'In transit', 'Transit rate (%)', 'Other routing'],
+                rows: sources.map((source) => [
+                  source.sorter.name,
+                  source.checkin_count,
+                  source.home.label,
+                  source.home.checkin_count,
+                  source.transit_count,
+                  rounded(percentOf(source.transit_count, source.checkin_count)),
+                  source.other_count,
+                ]),
+              })}
+            />
 
             <h5 id="org-routing-destinations-heading">Destination totals</h5>
             {destinations.length === 0 ? (
@@ -363,6 +427,13 @@ export function RoutingNetworkSection({ read }: { read: ReportRead<RoutingNetwor
                       `${formatCount(destination.source_count)} of ${formatCount(sources.length)}`,
                     ],
                   }))}
+                />
+                <CsvButton
+                  dataset="Destination totals"
+                  table={() => ({
+                    columns: ['Destination', 'Check-ins routed', 'Sorters with this destination', 'Sorters with routing data'],
+                    rows: destinations.map((destination) => [destination.label, destination.checkin_count, destination.source_count, sources.length]),
+                  })}
                 />
 
                 <h5 id="org-routing-matrix-heading">Routing matrix</h5>
@@ -400,6 +471,17 @@ export function RoutingNetworkSection({ read }: { read: ReportRead<RoutingNetwor
                     </tbody>
                   </table>
                 </div>
+                <CsvButton
+                  dataset="Routing matrix"
+                  table={() => ({
+                    columns: ['From sorter', ...destinations.map((destination) => destination.label)],
+                    // A machine with no such destination has an empty cell: not configured is not zero.
+                    rows: sources.map((source) => [
+                      source.sorter.name,
+                      ...destinations.map((destination) => source.transit.find((candidate) => candidate.key === destination.key)?.checkin_count ?? null),
+                    ]),
+                  })}
+                />
               </>
             )}
           </>
@@ -432,6 +514,13 @@ export function SystemReliabilitySection({ read }: { read: ReportRead<Organizati
             </dl>
             <ChartFigure
               name="org-daily-rejects"
+              csv={{
+                dataset: 'Daily rejects',
+                table: () => ({
+                  columns: ['Date', 'Rejects', 'Check-ins'],
+                  rows: report.days.map((day) => [day.date, day.reject_count, day.checkin_count]),
+                }),
+              }}
               heading={rejectSeries.monthly ? 'Rejects by month' : 'Daily rejects'}
               summary={
                 worstDay === null
@@ -458,6 +547,20 @@ export function SystemReliabilitySection({ read }: { read: ReportRead<Organizati
                 }))}
               />
             )}
+            {reasons.length > 0 && (
+              <CsvButton
+                dataset="Reject reasons"
+                table={() => ({
+                  columns: ['Reason code', 'Reason', 'Rejects', 'Share of rejects (%)'],
+                  rows: reasons.map((entry) => [
+                    entry.reason,
+                    reasonLabel(entry.reason),
+                    entry.reject_count,
+                    rounded(percentOf(entry.reject_count, totals.reject_count)),
+                  ]),
+                })}
+              />
+            )}
 
             <h5 id="org-reliability-sorters-heading">Rejects by sorter</h5>
             <DataTable
@@ -475,6 +578,24 @@ export function SystemReliabilitySection({ read }: { read: ReportRead<Organizati
                     figure(entry.available, top === undefined ? 'No rejects' : reasonLabel(top.reason)),
                   ],
                 }
+              })}
+            />
+            <CsvButton
+              dataset="Rejects by sorter"
+              table={() => ({
+                columns: ['Sorter', 'Reporting data', 'Check-ins', 'Rejects', 'Reject rate (%)', 'Most frequent reason code', 'Most frequent reason'],
+                rows: report.sorters.map((entry) => {
+                  const [top] = topRejectReasons(entry.reasons)
+                  return [
+                    entry.sorter.name,
+                    entry.available ? 'Yes' : 'No',
+                    entry.available ? entry.checkin_count : null,
+                    entry.available ? entry.reject_count : null,
+                    entry.available ? rounded(percentOf(entry.reject_count, entry.checkin_count)) : null,
+                    entry.available && top !== undefined ? top.reason : null,
+                    entry.available && top !== undefined ? reasonLabel(top.reason) : null,
+                  ]
+                }),
               })}
             />
             {report.sorters.some((entry) => !entry.available) && <UnavailableNote />}

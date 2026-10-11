@@ -164,7 +164,23 @@ describe('scope of this block', () => {
     // Dates are chosen in two places: the report range control, and a sorter's in-service date.
     expect(offenders(/type="date"/)).toEqual(['../reports/DateRangeControl.tsx'])
     expect(offenders(/'date' : 'text'/)).toEqual(['../reports/EfficiencyAssumptionsPanel.tsx'])
-    expect(offenders(/datetime-local|download=|text\/csv|Blob\(|createObjectURL|\.pdf/)).toEqual([])
+    // R10C: a report table can be taken away as a CSV file. One module makes a file and hands it to the browser,
+    // and nothing else in the app does -- no other download, no other kind of file, and no PDF made here at all.
+    expect(offenders(/datetime-local|download=|text\/csv|Blob\(|createObjectURL|\.pdf/)).toEqual(['../reports/csv.ts'])
+    expect(offenders(/\.download|revokeObjectURL|data:text|document\.createElement\('a'\)/)).toEqual(['../reports/csv.ts'])
+    // That module is used from one place -- the two report controls -- which is also the only place that prints.
+    expect(offenders(/downloadCsv\(/).sort()).toEqual(['../reports/ReportActions.tsx', '../reports/csv.ts'])
+    expect(offenders(/window\.print|\.print\(\)/)).toEqual(['../reports/ReportActions.tsx'])
+    // The controls are for a plan with exports, read in the one place plan features are read; and a table's CSV is
+    // offered by the operational reports alone: not Efficiency, not Live Today, not settings.
+    expect(offenders(/entitlements\.exports/)).toEqual(['../pages/capabilities.ts'])
+    expect(offenders(/<CsvButton/).sort()).toEqual([
+      '../reports/BinVolumeSection.tsx',
+      '../reports/ChartFigure.tsx',
+      '../reports/OrganizationReportSections.tsx',
+      '../reports/ReportSections.tsx',
+    ])
+    expect(offenders(/<PrintButton/).sort()).toEqual(['../reports/OrganizationReports.tsx', '../reports/SorterReports.tsx'])
     // R8E: one thing is chosen from a list -- a member's role -- on the one page that manages members.
     expect(offenders(/<select/)).toEqual(['../members/MembersPage.tsx'])
     expect(offenders(/\b(Historical|Export|Administration)\b(?! dashboard data)/)).toEqual([])
@@ -359,7 +375,13 @@ describe('how the dashboard is drawn', () => {
   })
 
   it('has one timer, the refresh interval, with no countdown and nothing to configure', () => {
-    expect(offenders(/setInterval|setTimeout|Date\.now\(|countdown|secondsLeft|remaining/i)).toEqual([])
+    expect(offenders(/setInterval|Date\.now\(|countdown|secondsLeft|remaining/i)).toEqual([])
+    // R10C: one thing is put off, once, and it is not a timer anyone sees: a downloaded file's address is given up a
+    // moment after the click that started the download, so the browser has begun it. Nothing else waits on a clock.
+    expect(offenders(/setTimeout/i)).toEqual(['../reports/csv.ts'])
+    const csv = shipped.find(([path]) => path === '../reports/csv.ts')?.[1] ?? ''
+    expect(csv.match(/setTimeout/g)).toHaveLength(1)
+    expect(csv).toMatch(/setTimeout\(\(\) => URL\.revokeObjectURL\(address\), REVOKE_AFTER_MS\)/)
     expect(offenders(/refetchInterval/)).toEqual(['../liveToday/useLiveToday.ts'])
     expect(offenders(/REFRESH_INTERVAL_MS\s*=/)).toEqual(['../liveToday/useLiveToday.ts'])
   })

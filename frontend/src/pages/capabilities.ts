@@ -21,6 +21,11 @@ export function hasTransits(organization: WithEntitlements): boolean {
   return organization.entitlements.transits?.enabled === true
 }
 
+/** Taking a report out of the app: a table as a CSV file, and the "Print report" action. */
+export function hasExports(organization: WithEntitlements): boolean {
+  return organization.entitlements.exports?.enabled === true
+}
+
 /** How many calendar days back, today included, a report may start. Null: no earliest date. */
 export function historyDays(organization: WithEntitlements): number | null {
   const feature = organization.entitlements.history_days

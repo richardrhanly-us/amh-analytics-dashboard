@@ -5,6 +5,8 @@ import type { DateRange } from './dateRange.ts'
 import { BinVolumeSection } from './BinVolumeSection.tsx'
 import { EfficiencySection } from './EfficiencySection.tsx'
 import { HoldsSection } from './HoldsSection.tsx'
+import { PrintButton } from './ReportActions.tsx'
+import { ReportExportsContext } from './reportExports.ts'
 import { OverviewSection, ReliabilitySection, RoutingSection, VolumeSection } from './ReportSections.tsx'
 import { useReportRange, type RangeComparison } from './useReportRange.ts'
 import { usePreviousOverview, useProductDay, useSorterReports } from './useSorterReports.ts'
@@ -23,6 +25,8 @@ interface Sorter {
   transits: boolean
   /** How far back the organization's plan lets a report start (pages/capabilities' historyDays; null: no limit). */
   historyDays: number | null
+  /** The organization's plan includes exports: "Download CSV" beside the operational tables, and "Print report". */
+  exports: boolean
 }
 
 /**
@@ -78,7 +82,8 @@ function ReportsForDay({ timeZone, today, ...sorter }: Sorter & { timeZone: stri
   const compares = sorter.view === 'operations'
 
   return (
-    <>
+    // What a file or a printout of these reports is called by: the organization, the sorter, and this range.
+    <ReportExportsContext value={{ enabled: sorter.exports, scope: [sorter.orgSlug, sorter.branchSlug], range }}>
       <DateRangeControl
         range={range}
         today={today}
@@ -88,6 +93,7 @@ function ReportsForDay({ timeZone, today, ...sorter }: Sorter & { timeZone: stri
         onCompare={setCompare}
       />
       <RangeShown range={range} today={today} timeZone={timeZone} />
+      <PrintButton />
       {sorter.view === 'efficiency' ? (
         // Read on its own: none of the operational reports is asked for here. `today` is the product's date.
         <div className="report-sections" key={rangeKey}>
@@ -96,7 +102,7 @@ function ReportsForDay({ timeZone, today, ...sorter }: Sorter & { timeZone: stri
       ) : (
         <Reports key={rangeKey} {...sorter} range={range} comparison={comparison} />
       )}
-    </>
+    </ReportExportsContext>
   )
 }
 

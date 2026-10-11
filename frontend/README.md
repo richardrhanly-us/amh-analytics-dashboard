@@ -176,6 +176,37 @@ loaded, the Overview says so in one line, with a way to try again, and the
 report itself is unaffected. No other section, and neither the Efficiency nor
 the Value view, is compared.
 
+**Taking a report out.** For an organization whose plan includes the `exports`
+feature (`hasExports` in `src/pages/capabilities.ts`), the report pages offer
+two things. Without the feature neither control is shown. That is what the app
+offers and not a lock: the figures are already on the person's screen, and the
+API is not involved.
+
+- **Download CSV**, beside every table of the Operations views -- each chart's
+  table, and the destination, bin-by-hour, reject-reason, sorter-comparison and
+  routing tables. Not for cards, notes, the Efficiency view or the Value view.
+  The file is made in the browser from the report already loaded
+  (`src/reports/csv.ts`, the only module that makes a file); nothing is asked
+  of the API. Its cells are values, not the page's wording: a date is
+  `YYYY-MM-DD`, a count a plain integer, a rate a number in a column whose
+  heading says `(%)`, and a figure that does not exist an empty cell. A chart
+  that shows a long range a month at a time still gives its days. Text that a
+  spreadsheet would work out as a formula (starting `=`, `+`, `-` or `@`) is
+  written with an apostrophe in front; a number, a negative one included, is
+  left a number. The file is UTF-8 with a byte order mark, lines ended CRLF,
+  named for the organization, the sorter where it is one sorter's, the table
+  and the range: `northbridge_central_daily-check-ins_2026-09-06_to_2026-10-05.csv`.
+- **Print report**, on the Operations and Efficiency views: the browser's own
+  Print, which is also how a report is saved as a PDF. No PDF is made by the
+  app. The print styles (the one `@media print` block in `src/index.css`) apply
+  to report pages only -- every rule is under `.app:has(.report-view)`, and
+  `report-view` is on the heading of a report view and nothing else -- so no
+  other page prints any differently. On a report they take
+  off the page what is there to be pressed -- the header, the strips of views,
+  the range and comparison controls, every button -- and leave the headings,
+  the range, the figures and, when it is on, the comparison. Each chart's
+  table is put on the page while it prints (`src/reports/usePrinting.ts`).
+
 **The arithmetic.** The API returns whole-number counts only. Every rate and
 average is worked out in one place, `src/reports/derive.ts`, from totals: a
 rate is one total over another, never an average of daily rates. A figure with

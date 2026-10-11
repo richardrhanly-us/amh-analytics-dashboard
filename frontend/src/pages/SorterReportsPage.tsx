@@ -4,7 +4,7 @@ import { ReportNav } from '../reports/ReportNav.tsx'
 import { SorterReports } from '../reports/SorterReports.tsx'
 import { canSeeEfficiency, EFFICIENCY_FOR_ADMINS } from '../reports/useEfficiency.ts'
 import { sorterReportViewPath, type SorterReportView } from '../router/paths.ts'
-import { hasTransits, historyDays } from './capabilities.ts'
+import { hasExports, hasTransits, historyDays } from './capabilities.ts'
 import { sorterStatusLabel } from './labels.ts'
 import type { SorterContext } from './SorterLayout.tsx'
 
@@ -27,7 +27,10 @@ export function SorterReportsPage({ view }: { view: SorterReportView }) {
 
   return (
     <>
-      <h3 id="reports-heading">Reports</h3>
+      {/* `report-view`: what marks this page as a report for the print styles (index.css), and nothing else. */}
+      <h3 id="reports-heading" className="report-view">
+        Reports
+      </h3>
       {/* Processing events of this one sorter -- not distinct items, and not the returns that belong to one branch. */}
       <p className="page-context">
         What this sorter processed, at {sorter.host_branch.name}
@@ -60,6 +63,8 @@ export function SorterReportsPage({ view }: { view: SorterReportView }) {
           holds={organization.entitlements.internal_workflow?.enabled === true}
           transits={hasTransits(organization)}
           historyDays={historyDays(organization)}
+          // What the app offers, not a lock: the figures a file or a printout holds are the ones already shown.
+          exports={hasExports(organization)}
         />
       )}
     </>
