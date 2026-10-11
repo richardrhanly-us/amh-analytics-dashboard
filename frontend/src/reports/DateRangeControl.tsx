@@ -45,6 +45,13 @@ export function DateRangeControl({
   // What is in the two date boxes: the applied range until someone types.
   const [draft, setDraft] = useState<DateRange>(range)
   const [problem, setProblem] = useState<string | null>(null)
+  // The applied range can change from outside -- the address, by Back or Forward. The boxes then show it.
+  const [applied, setApplied] = useState<DateRange>(range)
+  if (applied.from !== range.from || applied.to !== range.to) {
+    setApplied(range)
+    setDraft(range)
+    setProblem(null)
+  }
   const activePreset = presetOf(range, today)
   const earliest = earliestDate(today, historyDays)
   const thisYear = yearToDate(today)

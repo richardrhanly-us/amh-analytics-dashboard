@@ -920,8 +920,10 @@ describe('an expired session (401)', () => {
     const overview = await screen.findByRole('region', { name: 'Overview' })
     expect(within(overview).getByText('Loading…')).toBeInTheDocument()
     expect(overview).not.toHaveTextContent(/3,140|760/)
-    // Back on the default range: the last person's choice of range went with them.
-    expect(preset('Last 30 days')).toHaveAttribute('aria-pressed', 'true')
+    // R10A: the range is part of the address, and the address is still the one that was open. Two dates say nothing
+    // of what the last person was shown; every figure under them is asked for again.
+    expect(screen.getByTestId('query')).toHaveTextContent('?from=2026-09-29&to=2026-10-05')
+    expect(preset('Last 7 days')).toHaveAttribute('aria-pressed', 'true')
   })
 })
 

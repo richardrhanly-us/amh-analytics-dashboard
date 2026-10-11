@@ -96,8 +96,22 @@ deferred.
 ## Reports
 
 A sorter has two views, linked from under its name: **Live Today** and
-**Reports**. Reports covers a range of days in five sections every member
-sees, each read from its own endpoint under the sorter's host branch
+**Reports**. Reports covers a range of days and has views of its own, each
+with an address:
+
+| Address | View |
+| --- | --- |
+| `/organizations/:org/sorters/:sorter/reports/operations` | A sorter's operational reports |
+| `/organizations/:org/sorters/:sorter/reports/efficiency` | A sorter's Efficiency report (owners and admins) |
+| `/organizations/:org/reports/operations` | The organization's reports: every sorter together |
+| `/organizations/:org/reports/value` | SortView Value (owners and admins). Not built yet: the page says so and reads nothing. |
+
+`.../reports` on its own redirects to `.../reports/operations`, keeping its
+query. A view that is for owners and admins is not offered to anyone else, and
+someone else who opens its address is told so without the API being asked.
+
+A sorter's **Operations** view has five sections every member sees, each read
+from its own endpoint under the sorter's host branch
 (`.../reports/{overview|volume|routing|bins|reliability}?from=&to=`), in this
 order:
 
@@ -117,17 +131,29 @@ order:
 - **Reliability**: rejects, the reject rate, daily rejects and reasons, under
   the API's own classification.
 
-A sixth section, **Efficiency**, follows for the organization's owners and
-admins only.
+A **Holds** section follows where the organization's plan includes it. The
+**Efficiency** report is the sorter's other view, on its own.
 
-**The range.** Presets for the last 7, 30 and 90 days, or two dates. It opens
-on the last 30 days ending today. Dates are calendar dates in the product's
+**The range.** Presets for the last 7, 30 and 90 days and the year to date, or
+two dates. It opens on the last 30 days ending today, or on the whole of the
+plan's window if that is shorter. Dates are calendar dates in the product's
 time zone (from pipeline status), never the browser's. A range may not be
-reversed, end after today, or cover more than 92 days; such a range is refused
-before anything is asked of the API. The 92 days are what the API accepts at
-present (`MAX_RANGE_DAYS` in `src/reports/dateRange.ts`), not a product rule.
-A range that includes today says its figures will still rise. The range is
-held by the page, not the address: reloading returns to the default.
+reversed, end after today, cover more than 3,660 days, or start before the
+organization's plan allows (its `history_days` feature; 30 days when the plan
+does not say); such a range is refused before anything is asked of the API,
+and only the presets inside the plan's window are offered. The 3,660 days are
+the API's guard on one request (`MAX_RANGE_DAYS` in
+`src/reports/dateRange.ts`), not a product rule and not how much history a
+plan has. The Holds report alone covers at most 92 days. A range that includes
+today says its figures will still rise.
+
+**The range is kept in the address**, as `?from=YYYY-MM-DD&to=YYYY-MM-DD`
+(`src/reports/useReportRange.ts`), and nowhere else: it survives a reload,
+goes with the person between a page's views, and can be bookmarked. An address
+with no dates is the range the page opens on, which moves with today. Dates in
+the address are held to the same rules as dates typed into the range control;
+ones that cannot be asked for never become the range and are taken out of the
+address. The API checks every range itself, whatever the address says.
 
 **The arithmetic.** The API returns whole-number counts only. Every rate and
 average is worked out in one place, `src/reports/derive.ts`, from totals: a

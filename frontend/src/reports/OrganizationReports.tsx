@@ -5,7 +5,6 @@ import { LoadFailure } from '../components/LoadFailure.tsx'
 import { hasTransits, historyDays } from '../pages/capabilities.ts'
 import { NotFoundPage } from '../pages/NotFoundPage.tsx'
 import { DateRangeControl, RangeShown } from './DateRangeControl.tsx'
-import { defaultRange, type DateRange } from './dateRange.ts'
 import {
   NO_SORTERS,
   OrganizationOverviewSection,
@@ -14,6 +13,7 @@ import {
   SystemReliabilitySection,
 } from './OrganizationReportSections.tsx'
 import { useOrganizationProductDay, useOrganizationReports } from './useOrganizationReports.ts'
+import { useReportRange } from './useReportRange.ts'
 
 const BEFORE_HISTORY = "The selected range starts before this organization's available reporting window. Choose a later start date."
 
@@ -31,7 +31,8 @@ function ReportsForDay({
   const orgSlug = organization.slug
   const transits = hasTransits(organization)
   const history = historyDays(organization)
-  const [range, setRange] = useState<DateRange>(() => defaultRange(today, history))
+  // The range is the address's: the same in every view of these reports, and after a reload.
+  const { range, setRange } = useReportRange(today, history)
   const reports = useOrganizationReports(orgSlug, range, transits)
 
   // A 404 for a report: the API no longer returns this organization to this user. The whole page says so.

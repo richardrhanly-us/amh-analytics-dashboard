@@ -123,13 +123,15 @@ describe('where Bin volume is', () => {
     ])
   })
 
-  it('comes before Efficiency for an owner, who has six', async () => {
+  it('is in the same place for an owner, whose Efficiency report is in a view of its own', async () => {
     serve(REPORT, {}, 'owner')
 
     await page()
 
     const headings = screen.getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent)
-    expect(headings).toEqual(['Overview', 'Volume & capacity', 'Routing', 'Bin volume', 'Reliability', 'Efficiency'])
+    expect(headings).toEqual(['Overview', 'Volume & capacity', 'Routing', 'Bin volume', 'Reliability'])
+    const views = within(screen.getByRole('navigation', { name: 'Report views' }))
+    expect(views.getAllByRole('link').map((link) => link.textContent)).toEqual(['Operations', 'Efficiency'])
   })
 
   it.each(['viewer', 'member', 'manager', 'admin', 'owner', ''])('is shown to a member with the role %j', async (role) => {

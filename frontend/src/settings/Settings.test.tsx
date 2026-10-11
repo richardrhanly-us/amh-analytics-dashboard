@@ -384,8 +384,9 @@ describe('Efficiency', () => {
     const list = within(screen.getByRole('list', { name: 'Sorting machine overrides' }))
 
     expect(list.getAllByRole('link').map((item) => [item.textContent, item.getAttribute('href')])).toEqual([
-      ['Central Library AMH reports', '/organizations/northbridge/sorters/central/reports'],
-      ['East Side AMH reports', '/organizations/northbridge/sorters/east-side/reports'],
+      // Reports R10A: a machine's own figures are beside its Efficiency report, which has an address of its own.
+      ['Central Library AMH reports', '/organizations/northbridge/sorters/central/reports/efficiency'],
+      ['East Side AMH reports', '/organizations/northbridge/sorters/east-side/reports/efficiency'],
     ])
     expect(list.getAllByRole('listitem').map((item) => item.textContent)).toEqual(['Central Library AMH reportsCentral Branch', 'East Side AMH reportsEast Side Branch'])
     await screen.findByRole('form', { name: 'Organization defaults' })

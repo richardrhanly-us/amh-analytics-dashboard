@@ -14,6 +14,7 @@ function Browser() {
   return (
     <div data-testid="browser">
       <span data-testid="address">{location.pathname}</span>
+      <span data-testid="query">{location.search}</span>
       <button onClick={() => navigate(-1)}>browser-back</button>
       <button onClick={() => navigate(1)}>browser-forward</button>
     </div>

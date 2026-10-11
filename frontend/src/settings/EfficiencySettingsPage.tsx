@@ -2,7 +2,7 @@ import { Link, useOutletContext } from 'react-router'
 
 import type { OrganizationDetail } from '../api/organizations.ts'
 import { OrganizationDefaults } from '../reports/EfficiencyAssumptionsPanel.tsx'
-import { sorterReportsPath } from '../router/paths.ts'
+import { sorterReportViewPath } from '../router/paths.ts'
 import { SettingsFrame } from './SettingsLayout.tsx'
 import { EFFICIENCY_NAME } from './settingsText.ts'
 
@@ -51,7 +51,7 @@ export function EfficiencySettingsPage() {
             <ul className="nav-list" aria-labelledby="efficiency-sorters-heading">
               {organization.sorters.map((sorter) => (
                 <li key={sorter.slug}>
-                  <Link className="nav-list-link" to={sorterReportsPath(organization.slug, sorter.slug)}>
+                  <Link className="nav-list-link" to={sorterReportViewPath(organization.slug, sorter.slug, 'efficiency')}>
                     {sorter.name} reports
                   </Link>
                   <span className="nav-list-meta">{sorter.host_branch.name}</span>

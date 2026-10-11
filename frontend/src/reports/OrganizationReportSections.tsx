@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Link } from 'react-router'
+import { Link, useLocation } from 'react-router'
 
 import type { OrganizationOverviewReport, OrganizationReliabilityReport, RoutingNetworkReport } from '../api/organizationReports.ts'
 import { reasonLabel, topRejectReasons } from '../liveToday/metrics.ts'
@@ -185,6 +185,8 @@ export function SorterComparisonSection({
   /** The organization's plan includes transit routing. Without it, the two transit columns are not shown. */
   transits: boolean
 }) {
+  // The address's query is the range being reported on: a sorter's own reports open on the same one.
+  const { search } = useLocation()
   return (
     <ReportSection name="org-comparison" heading="Sorter comparison" read={read}>
       {(report) => {
@@ -215,7 +217,7 @@ export function SorterComparisonSection({
                   key: sorter.slug,
                   cells: [
                     sorter.available ? (
-                      <Link to={sorterReportsPath(orgSlug, sorter.slug)}>
+                      <Link to={{ pathname: sorterReportsPath(orgSlug, sorter.slug), search }}>
                         {sorter.name}
                         <span className="visually-hidden">: sorter reports</span>
                       </Link>

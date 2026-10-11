@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useOutletContext, useParams } from 'react-router'
+import { NavLink, Outlet, useLocation, useMatch, useOutletContext, useParams } from 'react-router'
 
 import type { OrganizationDetail, SorterSummary } from '../api/organizations.ts'
 import { Breadcrumb } from '../components/Breadcrumb.tsx'
@@ -27,6 +27,10 @@ export interface SorterContext {
 export function SorterLayout() {
   const organization = useOutletContext<OrganizationDetail>()
   const { sorterSlug = '' } = useParams()
+  // Within this sorter's Reports the address's query is the range being reported on, and the Reports link keeps it.
+  // From Live Today there is no range to keep, and none is made up.
+  const { search } = useLocation()
+  const inReports = useMatch('/organizations/:orgSlug/sorters/:sorterSlug/reports/*') !== null
   const sorter = organization.sorters.find((candidate) => candidate.slug === sorterSlug)
 
   if (sorter === undefined) {
@@ -54,7 +58,7 @@ export function SorterLayout() {
             </NavLink>
           </li>
           <li>
-            <NavLink to={sorterReportsPath(organization.slug, sorter.slug)}>Reports</NavLink>
+            <NavLink to={{ pathname: sorterReportsPath(organization.slug, sorter.slug), search: inReports ? search : '' }}>Reports</NavLink>
           </li>
         </ul>
       </nav>

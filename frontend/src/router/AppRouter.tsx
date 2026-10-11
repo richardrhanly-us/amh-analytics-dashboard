@@ -21,6 +21,15 @@ import { PageArrivalContext } from './PageArrivalContext.ts'
 import { ORGANIZATIONS_PATH } from './paths.ts'
 
 /**
+ * The address a Reports page had before its views had addresses of their own: its first view, Operations, with
+ * whatever range the address carried.
+ */
+function ReportsIndexRedirect() {
+  const { search } = useLocation()
+  return <Navigate to={{ pathname: 'operations', search }} replace />
+}
+
+/**
  * The signed-in app's pages. Rendered only for an authenticated user, inside
  * whichever router the caller provides (the browser's in main.tsx, an
  * in-memory one in tests) -- so no page, and no request a page makes, exists
@@ -40,7 +49,11 @@ export function AppRouter() {
         <Route path="organizations/:orgSlug" element={<OrganizationLayout />}>
           <Route index element={<OrganizationPage />} />
           {/* The organization's own reports: every sorter together. A sorter's reports are under that sorter. */}
-          <Route path="reports" element={<OrganizationReportsPage />} />
+          <Route path="reports">
+            <Route index element={<ReportsIndexRedirect />} />
+            <Route path="operations" element={<OrganizationReportsPage view="operations" />} />
+            <Route path="value" element={<OrganizationReportsPage view="value" />} />
+          </Route>
           {/* Who belongs to the organization. The page itself says so to anyone it is not for. */}
           <Route path="members" element={<MembersPage />} />
           {/* The organization's own configuration, a section to an address. The first section is where it opens. */}
@@ -53,7 +66,11 @@ export function AppRouter() {
           </Route>
           <Route path="sorters/:sorterSlug" element={<SorterLayout />}>
             <Route index element={<SorterPage />} />
-            <Route path="reports" element={<SorterReportsPage />} />
+            <Route path="reports">
+              <Route index element={<ReportsIndexRedirect />} />
+              <Route path="operations" element={<SorterReportsPage view="operations" />} />
+              <Route path="efficiency" element={<SorterReportsPage view="efficiency" />} />
+            </Route>
           </Route>
           {/* The address a sorter's dashboard used to have: redirects to the sorter hosted there, if one is. */}
           <Route path="branches/:branchSlug" element={<LegacyBranchRedirect />} />

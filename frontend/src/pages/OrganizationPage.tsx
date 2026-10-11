@@ -3,7 +3,7 @@ import { Link, useOutletContext } from 'react-router'
 import type { OrganizationDetail, SorterSummary } from '../api/organizations.ts'
 import { Breadcrumb } from '../components/Breadcrumb.tsx'
 import { PageHeading } from '../components/PageHeading.tsx'
-import { ORGANIZATIONS_PATH, organizationReportsPath, organizationSettingsPath, sorterPath } from '../router/paths.ts'
+import { ORGANIZATIONS_PATH, organizationReportViewPath, organizationSettingsPath, sorterPath } from '../router/paths.ts'
 import { canManageOrganization, SETTINGS_NAME } from '../settings/settingsText.ts'
 import { sorterStatusLabel } from './labels.ts'
 
@@ -37,7 +37,7 @@ export function OrganizationPage() {
 
       {/* The organization's own reports -- every machine together. Each machine's reports are under that machine. */}
       <p className="page-links">
-        <Link to={organizationReportsPath(organization.slug)}>Organization Reports</Link>
+        <Link to={organizationReportViewPath(organization.slug, 'operations')}>Organization Reports</Link>
         {/* Offered to the organization's owners and admins only. The API decides who may actually use it. */}
         {canManageOrganization(organization.role) && <Link to={organizationSettingsPath(organization.slug)}>{SETTINGS_NAME}</Link>}
       </p>
