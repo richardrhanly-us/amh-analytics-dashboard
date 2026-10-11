@@ -18,8 +18,16 @@ export function organizationPath(orgSlug: string): string {
   return `${ORGANIZATIONS_PATH}/${encodeURIComponent(orgSlug)}`
 }
 
+/** The organization's reports. On its own it leads to the first of their views, Operations. */
 export function organizationReportsPath(orgSlug: string): string {
   return `${organizationPath(orgSlug)}/reports`
+}
+
+/** The views of an organization's reports, each with an address of its own. */
+export type OrganizationReportView = 'operations' | 'value'
+
+export function organizationReportViewPath(orgSlug: string, view: OrganizationReportView): string {
+  return `${organizationReportsPath(orgSlug)}/${view}`
 }
 
 /** Who belongs to the organization, and with what role. For its owners and admins. */
@@ -52,6 +60,14 @@ export function sorterPath(orgSlug: string, sorterSlug: string): string {
   return `${organizationPath(orgSlug)}/sorters/${encodeURIComponent(sorterSlug)}`
 }
 
+/** A sorter's reports. On its own it leads to the first of their views, Operations. */
 export function sorterReportsPath(orgSlug: string, sorterSlug: string): string {
   return `${sorterPath(orgSlug, sorterSlug)}/reports`
+}
+
+/** The views of a sorter's reports, each with an address of its own. */
+export type SorterReportView = 'operations' | 'efficiency'
+
+export function sorterReportViewPath(orgSlug: string, sorterSlug: string, view: SorterReportView): string {
+  return `${sorterReportsPath(orgSlug, sorterSlug)}/${view}`
 }

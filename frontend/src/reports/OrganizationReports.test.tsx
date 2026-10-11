@@ -177,7 +177,8 @@ describe('arriving at an organization’s reports', () => {
 
     renderApp(ORGANIZATION)
     const link = await screen.findByRole('link', { name: 'Organization Reports' })
-    expect(link).toHaveAttribute('href', REPORTS)
+    // R10A: straight to the first of the reports' views.
+    expect(link).toHaveAttribute('href', `${REPORTS}/operations`)
     // Not one of the machines: the list of sorting machines is still exactly the machines.
     expect(within(screen.getByRole('list', { name: 'Sorting machines' })).getAllByRole('link').map((machine) => machine.textContent)).toEqual([
       'Central Library AMH',
@@ -202,8 +203,9 @@ describe('arriving at an organization’s reports', () => {
     expect(breadcrumb.getByRole('link', { name: 'Organizations' })).toHaveAttribute('href', '/organizations')
     expect(breadcrumb.getByRole('link', { name: 'Northbridge Library' })).toHaveAttribute('href', ORGANIZATION)
     expect(breadcrumb.getByText('Reports')).toHaveAttribute('aria-current', 'page')
-    // It is the organization's page: no sorter's views are offered on it. ("Account" is the header's own.)
-    expect(screen.getAllByRole('navigation').map((nav) => nav.getAttribute('aria-label'))).toEqual(['Account', 'Breadcrumb'])
+    // It is the organization's page: no sorter's views are offered on it. ("Account" is the header's own; R10A:
+    // "Report views" is the reports' own, offered to Northbridge's admin, who has two.)
+    expect(screen.getAllByRole('navigation').map((nav) => nav.getAttribute('aria-label'))).toEqual(['Account', 'Breadcrumb', 'Report views'])
   })
 
   it('reads the product’s day from a sorter first, then asks for the three reports over the last 30 days', async () => {
@@ -416,9 +418,10 @@ describe('the figures of an organization with two sorters', () => {
 
   it('sorter comparison: a sorter’s name is a link to that sorter’s own reports', async () => {
     const comparison = within(table('Sorter comparison'))
+    // R10A: with the range being reported on, which is the address's, so the sorter's reports open on the same one.
     expect(comparison.getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual([
-      '/organizations/northbridge/sorters/central/reports',
-      '/organizations/northbridge/sorters/east-side/reports',
+      '/organizations/northbridge/sorters/central/reports?from=2026-09-28&to=2026-10-04',
+      '/organizations/northbridge/sorters/east-side/reports?from=2026-09-28&to=2026-10-04',
     ])
 
     await user().click(comparison.getByRole('link', { name: 'Central Library AMH: sorter reports' }))

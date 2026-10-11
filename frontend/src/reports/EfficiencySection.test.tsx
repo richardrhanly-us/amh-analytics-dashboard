@@ -30,11 +30,14 @@ import { renderApp } from '../test/render.tsx'
 
 /**
  * A sorter's Efficiency report and the form beside it, as an owner or admin
- * of the organization sees them on the sorter's Reports page -- and as
- * everyone else does not.
+ * of the organization sees them in the Efficiency view of the sorter's
+ * Reports -- and as everyone else does not.
  */
 
 const CENTRAL_REPORTS = '/organizations/northbridge/sorters/central/reports'
+// Reports R10A: Efficiency has a view, and an address, of its own. The operational reports are in the other.
+const CENTRAL_OPERATIONS = `${CENTRAL_REPORTS}/operations`
+const CENTRAL_EFFICIENCY = `${CENTRAL_REPORTS}/efficiency`
 const PATHS = efficiencyPaths('northbridge', 'central')
 // 1:50 PM on Monday 5 October 2026 in Chicago: the fixtures' "today". The default range is the 30 days ending then.
 const NOW = '2026-10-05T18:50:00Z'
@@ -92,12 +95,17 @@ function detail(label: string): string {
 const user = () => userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) })
 const pass = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms))
 
-/** The sorter's Reports page with every section, Efficiency included, loaded. */
+/** The Efficiency view of the sorter's Reports, loaded. */
 async function page() {
-  renderApp(CENTRAL_REPORTS)
-  await screen.findByRole('img', { name: /^Bar chart of rejects/ })
+  renderApp(CENTRAL_EFFICIENCY)
+  await screen.findByRole('region', { name: 'Efficiency' })
   await waitFor(() => expect(main()).not.toHaveTextContent('Loading…'))
 }
+/** Every report request made, as "kind?from=..&to=..". */
+const reportRequests = () =>
+  requestedUrls(fetchMock)
+    .filter((url) => url.includes('/reports/'))
+    .map((url) => url.split('/reports/')[1])
 
 async function openSettings() {
   fireEvent.click(within_().getByRole('button', { name: 'Efficiency settings' }))
@@ -126,10 +134,24 @@ afterEach(() => {
 // =====================================================================================================================
 
 describe('who sees Efficiency', () => {
-  it.each(['owner', 'admin'])('an %s sees it as the sixth section, after the five every member has', async (role) => {
+  it.each(['owner', 'admin'])('an %s sees it as the one section of its own view, and none of the operational reports is asked for', async (role) => {
     serve(efficiencyStore(), {}, role)
 
     await page()
+
+    expect(screen.getAllByRole('region').map((region) => region.getAttribute('aria-labelledby'))).toEqual(['report-efficiency-heading'])
+    expect(within_().getByRole('heading', { level: 4, name: 'Efficiency' })).toBeInTheDocument()
+    expect(within_().getByRole('button', { name: 'Efficiency settings' })).toBeInTheDocument()
+    expect(efficiencyRequests()).toEqual([`GET /branches/central/reports/efficiency?${DEFAULT_RANGE}`])
+    expect(reportRequests()).toEqual([`efficiency?${DEFAULT_RANGE}`])
+  })
+
+  it.each(['owner', 'admin'])('an %s is not shown it among the operational reports, and it is not asked for there', async (role) => {
+    serve(efficiencyStore(), {}, role)
+
+    renderApp(CENTRAL_OPERATIONS)
+    await screen.findByRole('img', { name: /^Bar chart of rejects/ })
+    await waitFor(() => expect(main()).not.toHaveTextContent('Loading…'))
 
     expect(screen.getAllByRole('region').map((region) => region.getAttribute('aria-labelledby'))).toEqual([
       'report-overview-heading',
@@ -137,20 +159,36 @@ describe('who sees Efficiency', () => {
       'report-routing-heading',
       'report-bins-heading',
       'report-reliability-heading',
-      'report-efficiency-heading',
     ])
-    expect(within_().getByRole('heading', { level: 4, name: 'Efficiency' })).toBeInTheDocument()
-    expect(within_().getByRole('button', { name: 'Efficiency settings' })).toBeInTheDocument()
-    expect(efficiencyRequests()).toEqual([`GET /branches/central/reports/efficiency?${DEFAULT_RANGE}`])
+    expect(efficiencyRequests()).toEqual([])
+  })
+
+  it.each(['manager', 'viewer', 'superuser', ''])('a member with the role %j is told so at its address, and nothing is asked for', async (role) => {
+    serve(efficiencyStore(), {}, role)
+
+    renderApp(CENTRAL_EFFICIENCY)
+
+    expect(await screen.findByText('Efficiency is available to this organization’s owners and administrators.')).toHaveRole('note')
+    await pass(500)
+    expect(screen.queryByRole('region')).not.toBeInTheDocument()
+    expect(screen.queryByRole('navigation', { name: 'Report views' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Last 30 days' })).not.toBeInTheDocument()
+    expect(main()).not.toHaveTextContent(/labor|assumption|\$/i)
+    // Nothing of the sorter's data at all: not Efficiency, not a report, not even the product's day.
+    expect(requestedUrls(fetchMock).filter((url) => url.includes('/branches/'))).toEqual([])
   })
 
   it.each(['manager', 'viewer', 'superuser', ''])('a member with the role %j does not see it, and nothing about it is asked for', async (role) => {
     serve(efficiencyStore(), {}, role)
 
-    await page()
+    renderApp(CENTRAL_OPERATIONS)
+    await screen.findByRole('img', { name: /^Bar chart of rejects/ })
+    await waitFor(() => expect(main()).not.toHaveTextContent('Loading…'))
     await pass(500)
 
     expect(screen.queryByRole('region', { name: 'Efficiency' })).not.toBeInTheDocument()
+    // With one view there is no strip of views to choose from.
+    expect(screen.queryByRole('navigation', { name: 'Report views' })).not.toBeInTheDocument()
     // The five every member has, Bin volume among them.
     expect(screen.getAllByRole('region')).toHaveLength(5)
     expect(screen.getByRole('region', { name: 'Bin volume' })).toBeInTheDocument()
@@ -167,9 +205,7 @@ describe('who sees Efficiency', () => {
     expect(efficiency()).not.toHaveTextContent(/\$|hours|assumption|Try again/)
     expect(within_().queryByRole('button')).not.toBeInTheDocument()
     expect(efficiencyRequests()).toHaveLength(1)
-    // The five reports every member has are untouched.
-    expect(screen.getAllByRole('region')).toHaveLength(6)
-    expect(within(screen.getByRole('region', { name: 'Overview' })).getByText('3,140')).toBeInTheDocument()
+    expect(screen.getAllByRole('region')).toHaveLength(1)
     expect(screen.queryByText('Could not load.')).not.toBeInTheDocument()
   })
 })
@@ -239,7 +275,10 @@ describe('a fully configured sorter', () => {
     expect(efficiency().textContent).not.toMatch(NOT_A_FIGURE)
   })
 
-  it('leaves the other four reports exactly as they are', () => {
+  it('leaves the operational reports as they are, a view away, over the same range', async () => {
+    await user().click(within(screen.getByRole('navigation', { name: 'Report views' })).getByRole('link', { name: 'Operations' }))
+    await screen.findByRole('img', { name: /^Bar chart of rejects/ })
+
     expect(within(screen.getByRole('region', { name: 'Overview' })).getByText('Check-ins', { selector: 'dt' }).nextElementSibling).toHaveTextContent(/^3,140$/)
     for (const name of ['Overview', 'Volume & capacity', 'Routing', 'Reliability']) {
       expect(within(screen.getByRole('region', { name })).getAllByRole('img').length).toBeGreaterThan(0)
@@ -396,7 +435,7 @@ describe('a range that starts before the in-service date', () => {
 // =====================================================================================================================
 
 describe('when the Efficiency report cannot be loaded', () => {
-  it('says so in its own section, with a way to try again, and leaves the other four alone', async () => {
+  it('says so in its own section, with a way to try again', async () => {
     serve(efficiencyStore(), { [PATHS.report]: SERVER_ERROR })
 
     await page()
@@ -404,9 +443,6 @@ describe('when the Efficiency report cannot be loaded', () => {
     expect(within_().getByText('Could not load.')).toBeInTheDocument()
     expect(screen.getAllByText('Could not load.')).toHaveLength(1)
     expect(efficiency()).not.toHaveTextContent(/\$|Internal server error/)
-    for (const name of ['Overview', 'Volume & capacity', 'Routing', 'Reliability']) {
-      expect(within(screen.getByRole('region', { name })).getAllByRole('img').length).toBeGreaterThan(0)
-    }
     expect(within_().getByRole('button', { name: 'Try again: Efficiency' })).toBeInTheDocument()
   })
 
@@ -437,7 +473,7 @@ describe('when the Efficiency report cannot be loaded', () => {
     // Asked once: the same answer would come back however often it was asked.
     await pass(5000)
     expect(efficiencyRequests()).toHaveLength(1)
-    expect(screen.getAllByRole('region')).toHaveLength(6)
+    expect(screen.getAllByRole('region')).toHaveLength(1)
   })
 
   it('says it is not available when there is no such report for the sorter', async () => {
@@ -447,7 +483,7 @@ describe('when the Efficiency report cannot be loaded', () => {
 
     expect(within_().getByText('Efficiency is not available for this sorter yet.')).toBeInTheDocument()
     expect(within_().queryByRole('button')).not.toBeInTheDocument()
-    expect(screen.getAllByRole('region')).toHaveLength(6)
+    expect(screen.getAllByRole('region')).toHaveLength(1)
   })
 
   it('treats a malformed answer as a failure and shows none of it', async () => {
@@ -463,24 +499,25 @@ describe('when the Efficiency report cannot be loaded', () => {
   it('returns to the sign-in form when the session has ended', async () => {
     serve(efficiencyStore(), { [PATHS.report]: () => jsonResponse(401, NOT_AUTHENTICATED) })
 
-    renderApp(CENTRAL_REPORTS)
+    renderApp(CENTRAL_EFFICIENCY)
 
     expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument()
     expect(screen.queryByRole('region')).not.toBeInTheDocument()
-    expect(screen.getByTestId('address')).toHaveTextContent(CENTRAL_REPORTS)
+    expect(screen.getByTestId('address')).toHaveTextContent(CENTRAL_EFFICIENCY)
   })
 
-  it('does not hold up the other reports while it is still loading', async () => {
+  it('does not hold up the operational reports while it is still loading', async () => {
     const slow = deferred<Response>()
     serve(efficiencyStore(), { [PATHS.report]: () => slow.promise })
 
-    renderApp(CENTRAL_REPORTS)
-    await screen.findByRole('img', { name: /^Bar chart of rejects/ })
+    renderApp(CENTRAL_EFFICIENCY)
+    await waitFor(() => expect(efficiency()).toHaveTextContent('Loading…'))
 
-    expect(efficiency()).toHaveTextContent('Loading…')
+    await user().click(within(screen.getByRole('navigation', { name: 'Report views' })).getByRole('link', { name: 'Operations' }))
+    await screen.findByRole('img', { name: /^Bar chart of rejects/ })
     expect(within(screen.getByRole('region', { name: 'Overview' })).getByText('3,140')).toBeInTheDocument()
-    slow.resolve(jsonResponse(200, efficiencyBody.report(efficiencyStore(), '2026-09-06', '2026-10-05')))
-    await waitFor(() => expect(metric('Items processed')).toHaveTextContent(/^3,140$/))
+
+    expect(efficiencyRequests()).toHaveLength(1)
   })
 })
 

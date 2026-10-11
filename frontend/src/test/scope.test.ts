@@ -398,8 +398,10 @@ describe('how the dashboard is drawn', () => {
       '<Route path="account"',
       '<Route path="organizations"',
       '<Route path="organizations/:orgSlug"',
-      // The organization's own reports, beside its sorters and under none of them.
+      // The organization's own reports, beside its sorters and under none of them. R10A: a view to an address.
       '<Route path="reports"',
+      '<Route path="operations"',
+      '<Route path="value"',
       // R8E: who belongs to the organization, beside its reports.
       '<Route path="members"',
       // R8F: the organization's own configuration, a section to an address.
@@ -411,6 +413,8 @@ describe('how the dashboard is drawn', () => {
       '<Route path="efficiency"',
       '<Route path="sorters/:sorterSlug"',
       '<Route path="reports"',
+      '<Route path="operations"',
+      '<Route path="efficiency"',
       '<Route path="branches/:branchSlug"',
       '<Route path="*"',
     ])

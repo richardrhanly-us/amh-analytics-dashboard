@@ -6,7 +6,7 @@ import { EfficiencyAssumptionsPanel } from './EfficiencyAssumptionsPanel.tsx'
 import { formatDecimal, formatHours, formatMoney } from './efficiencyText.ts'
 import { count, days } from './figures.ts'
 import { ReportSection } from './ReportSections.tsx'
-import { useEfficiencyReport } from './useEfficiency.ts'
+import { EFFICIENCY_FOR_ADMINS, useEfficiencyReport } from './useEfficiency.ts'
 
 /**
  * A sorter's Efficiency report: what was OBSERVED, and what is ESTIMATED
@@ -160,7 +160,7 @@ export function EfficiencySection({ orgSlug, branchSlug, range, today }: { orgSl
             // The API's answer, whatever this page thought the user's role was. Nothing of the report is shown.
             return (
               <p className="notice" role="note">
-                Efficiency is available to this organization&rsquo;s owners and administrators.
+                {EFFICIENCY_FOR_ADMINS}
               </p>
             )
           case 'not_available':

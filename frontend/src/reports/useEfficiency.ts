@@ -31,6 +31,9 @@ export function canSeeEfficiency(role: string): boolean {
   return EFFICIENCY_ROLES.includes(role)
 }
 
+/** What someone Efficiency is not for is told, whether this app or the API found that out. */
+export const EFFICIENCY_FOR_ADMINS = 'Efficiency is available to this organization’s owners and administrators.'
+
 /**
  * What the Efficiency section has to show once the API has answered -- the
  * report, or one of the answers that is not a report and is not worth

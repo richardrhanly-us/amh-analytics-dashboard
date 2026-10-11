@@ -13,26 +13,33 @@ const APP_TITLE = 'SortView'
  * heading shown for a new history entry takes focus -- whether it appears at
  * once or after the page's data has loaded. That covers links and Back and
  * Forward. It does not cover the page the app opened on, or a redirect:
- * nobody asked to be moved there, and focus is left alone.
+ * nobody asked to be moved there, and focus is left alone. Nor does it cover
+ * a new entry for the page this heading is already on -- the same path, with
+ * only its query changed, as when a report's range is chosen: that is not
+ * arriving anywhere, and focus stays on whatever was used.
  *
  * The heading can be focused from code but is not a tab stop. It also names
  * the page in the browser tab.
  */
 export function PageHeading({ children }: { children: string }) {
   const heading = useRef<HTMLHeadingElement>(null)
-  const { key } = useLocation()
+  const { key, pathname } = useLocation()
+  // The path this heading last introduced. Null until it has introduced one.
+  const introducedPath = useRef<string | null>(null)
   const navigationType = useNavigationType()
   const introducedRef = useContext(PageArrivalContext)
 
   useEffect(() => {
+    const samePage = introducedPath.current === pathname
+    introducedPath.current = pathname
     if (introducedRef === null || introducedRef.current === key) {
       return
     }
     introducedRef.current = key
-    if (navigationType !== 'REPLACE') {
+    if (navigationType !== 'REPLACE' && !samePage) {
       heading.current?.focus()
     }
-  }, [introducedRef, key, navigationType])
+  }, [introducedRef, key, pathname, navigationType])
 
   useEffect(() => {
     document.title = `${children} – ${APP_TITLE}`

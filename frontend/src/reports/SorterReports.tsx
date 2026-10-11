@@ -1,12 +1,12 @@
-import { useState } from 'react'
-
+import type { SorterReportView } from '../router/paths.ts'
 import { LoadFailure } from '../components/LoadFailure.tsx'
 import { DateRangeControl, RangeShown } from './DateRangeControl.tsx'
-import { defaultRange, type DateRange } from './dateRange.ts'
+import type { DateRange } from './dateRange.ts'
 import { BinVolumeSection } from './BinVolumeSection.tsx'
 import { EfficiencySection } from './EfficiencySection.tsx'
 import { HoldsSection } from './HoldsSection.tsx'
 import { OverviewSection, ReliabilitySection, RoutingSection, VolumeSection } from './ReportSections.tsx'
+import { useReportRange } from './useReportRange.ts'
 import { useProductDay, useSorterReports } from './useSorterReports.ts'
 
 const UNAVAILABLE = 'Reports are not available for this sorter yet.'
@@ -15,8 +15,8 @@ const BEFORE_HISTORY = "The selected range starts before this organization's ava
 interface Sorter {
   orgSlug: string
   branchSlug: string
-  /** The person may see the sorter's Efficiency report: a sixth section, read on its own. */
-  efficiency: boolean
+  /** Which of the sorter's report views this is: its operational reports, or its Efficiency report alone. */
+  view: SorterReportView
   /** The organization's plan includes the sorter's Holds report: another section, read on its own. */
   holds: boolean
   /** The organization's plan includes transit routing: the Routing report, and the in-transit figure. */
@@ -26,10 +26,10 @@ interface Sorter {
 }
 
 /**
- * The reports for one range. Keyed by range from outside, so a new range starts with nothing carried over.
- * `today` is the product's date.
+ * The operational reports for one range. Keyed by range from outside, so a new range starts with nothing carried
+ * over.
  */
-function Reports({ orgSlug, branchSlug, efficiency, holds, transits, range, today }: Sorter & { range: DateRange; today: string }) {
+function Reports({ orgSlug, branchSlug, holds, transits, range }: Sorter & { range: DateRange }) {
   const reports = useSorterReports(orgSlug, branchSlug, range, transits)
 
   if (reports.unavailable) {
@@ -60,29 +60,38 @@ function Reports({ orgSlug, branchSlug, efficiency, holds, transits, range, toda
       <ReliabilitySection read={reports.reliability} />
       {/* Not asked for at all unless the plan has it. Whatever becomes of it, the five above are untouched. */}
       {holds && <HoldsSection orgSlug={orgSlug} branchSlug={branchSlug} range={range} />}
-      {/* Not asked for at all unless the person may see it. Whatever becomes of it, the five above are untouched. */}
-      {efficiency && <EfficiencySection orgSlug={orgSlug} branchSlug={branchSlug} range={range} today={today} />}
     </div>
   )
 }
 
 function ReportsForDay({ timeZone, today, ...sorter }: Sorter & { timeZone: string; today: string }) {
-  const [range, setRange] = useState<DateRange>(() => defaultRange(today, sorter.historyDays))
+  // The range is the address's: the same in every view of these reports, and after a reload.
+  const { range, setRange } = useReportRange(today, sorter.historyDays)
+  const rangeKey = `${range.from}/${range.to}`
 
   return (
     <>
       <DateRangeControl range={range} today={today} historyDays={sorter.historyDays} onChange={setRange} />
       <RangeShown range={range} today={today} timeZone={timeZone} />
-      <Reports key={`${range.from}/${range.to}`} {...sorter} range={range} today={today} />
+      {sorter.view === 'efficiency' ? (
+        // Read on its own: none of the operational reports is asked for here. `today` is the product's date.
+        <div className="report-sections" key={rangeKey}>
+          <EfficiencySection orgSlug={sorter.orgSlug} branchSlug={sorter.branchSlug} range={range} today={today} />
+        </div>
+      ) : (
+        <Reports key={rangeKey} {...sorter} range={range} />
+      )}
     </>
   )
 }
 
 /**
- * The reports of one sorter the user can see: Overview, Volume & capacity,
- * Routing, Bin volume and Reliability -- and, where the plan has it, Holds,
- * and for the organization's owners and admins, Efficiency -- over a range of
- * days the person chooses.
+ * The reports of one sorter the user can see, over a range of days the person
+ * chooses, a view at a time: Operations is Overview, Volume & capacity,
+ * Routing, Bin volume and Reliability -- and, where the plan has it, Holds;
+ * Efficiency, for the organization's owners and admins, is the Efficiency
+ * report. The range is the same in both: it is kept in the address
+ * (useReportRange).
  * `branchSlug` is the sorter's host branch: the scope the API reads by.
  *
  * The product's zone, and its date today, are read first: a range is made
