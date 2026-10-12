@@ -407,6 +407,17 @@ def format_collector_install_parameters(
 
 COLLECTOR_INSTALLATION_STATUSES = ("provisioning", "active", "inactive", "retired")
 
+# The ingest contract an installation must be enrolled on (collector_installations.required_contract; see
+# services.collector_enrollment_service): 1 is the legacy contract, 2 is Contract v2.
+#
+# THE DEFAULT IS 1, DELIBERATELY (onboarding stage A1). A contract-2 installation can only be enrolled by an installer
+# that asks for Contract v2, and no released installer does yet -- so an installation is contract 2 only when a caller
+# says so explicitly. Making 2 the normal choice for a new installation belongs to the stage that ships that
+# installer, not this one.
+COLLECTOR_CONTRACT_LEGACY = 1
+COLLECTOR_CONTRACT_V2 = 2
+COLLECTOR_CONTRACTS = (COLLECTOR_CONTRACT_LEGACY, COLLECTOR_CONTRACT_V2)
+
 
 def _clean_optional(value: str | None) -> str | None:
     value = (value or "").strip()
@@ -432,8 +443,15 @@ def create_collector_installation(
     hostname: str | None = None,
     collector_version: str | None = None,
     status: str = "provisioning",
+    required_contract: int = COLLECTOR_CONTRACT_LEGACY,
 ) -> dict[str, Any]:
     name = _validate_installation_fields(name, status)
+    # Exactly an int: True, "2" and 2.0 all compare equal to a contract and are none of them one.
+    if type(required_contract) is not int or required_contract not in COLLECTOR_CONTRACTS:
+        raise ValueError(
+            f"Invalid required contract: {required_contract!r} "
+            f"(expected one of {', '.join(str(contract) for contract in COLLECTOR_CONTRACTS)})"
+        )
 
     # The organization's status comes back with the branch, so the cancelled
     # check below costs no extra statement.
@@ -449,12 +467,12 @@ def create_collector_installation(
 
     sql_insert = text("""
         INSERT INTO collector_installations
-            (organization_id, branch_id, name, hostname, collector_version, status)
+            (organization_id, branch_id, name, hostname, collector_version, status, required_contract)
         VALUES
-            (:organization_id, :branch_id, :name, :hostname, :collector_version, :status)
+            (:organization_id, :branch_id, :name, :hostname, :collector_version, :status, :required_contract)
         RETURNING
             id, organization_id, branch_id, name, hostname, collector_version,
-            status, installed_at, last_seen_at, created_at, updated_at
+            status, required_contract, installed_at, last_seen_at, created_at, updated_at
     """)
 
     engine = get_engine()
@@ -483,6 +501,7 @@ def create_collector_installation(
                 "hostname": _clean_optional(hostname),
                 "collector_version": _clean_optional(collector_version),
                 "status": status,
+                "required_contract": required_contract,
             },
         ).mappings().first()
 
@@ -501,6 +520,7 @@ def list_collector_installations_for_branch(branch_id: int) -> list[dict[str, An
             ci.hostname,
             ci.collector_version,
             ci.status,
+            ci.required_contract,
             ci.installed_at,
             ci.last_seen_at,
             ci.created_at,
@@ -530,6 +550,7 @@ def list_collector_installations_for_organization(organization_id: int) -> list[
             ci.hostname,
             ci.collector_version,
             ci.status,
+            ci.required_contract,
             ci.installed_at,
             ci.last_seen_at,
             ci.created_at,

@@ -85,7 +85,8 @@ def db(monkeypatch):
         """CREATE TABLE collector_installations (
             id INTEGER PRIMARY KEY, organization_id INTEGER, branch_id INTEGER, name TEXT,
             hostname TEXT, collector_version TEXT, status TEXT, installed_at TEXT,
-            last_seen_at TEXT, created_at TEXT, updated_at TEXT)""",
+            last_seen_at TEXT, created_at TEXT, updated_at TEXT,
+            required_contract INTEGER NOT NULL DEFAULT 1)""",
         """CREATE TABLE agent_tokens (
             id INTEGER PRIMARY KEY AUTOINCREMENT, token_hash TEXT NOT NULL UNIQUE,
             customer_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, description TEXT,
@@ -94,7 +95,8 @@ def db(monkeypatch):
         """CREATE TABLE collector_enrollment_codes (
             id INTEGER PRIMARY KEY AUTOINCREMENT, installation_id INTEGER NOT NULL,
             code_hash TEXT NOT NULL UNIQUE, expires_at TEXT NOT NULL, used_at TEXT, revoked_at TEXT,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, created_by_user_id INTEGER)""",
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, created_by_user_id INTEGER,
+            required_contract INTEGER NOT NULL DEFAULT 1)""",
         "CREATE TABLE pipeline_status (customer_id INTEGER, branch_id INTEGER, "
         + ", ".join(f"{c} TEXT" for c in _PIPELINE_STATUS_COLUMNS)
         # the two server-stamped report instants (migration 16b41d730e15)

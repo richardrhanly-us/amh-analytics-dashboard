@@ -59,7 +59,48 @@ def test_create_collector_installation_happy_path(monkeypatch):
         "hostname": "AMH-PC",
         "collector_version": "1.0.2",
         "status": "provisioning",
+        # Onboarding stage A1: the legacy contract, unless the caller says otherwise (below).
+        "required_contract": 1,
     }
+
+
+def test_a_new_installation_is_contract_1_unless_contract_2_is_asked_for_explicitly(monkeypatch):
+    # Deliberate, until an installer that can enroll on Contract v2 is released: nothing that creates an installation
+    # today -- Provision Library, Manage Libraries -- passes required_contract, so every one of them is still legacy.
+    assert tenant_service.COLLECTOR_CONTRACT_LEGACY == 1 and tenant_service.COLLECTOR_CONTRACTS == (1, 2)
+
+    engine = FakeEngine([FakeQueryResult(first={"id": 10}), FakeQueryResult(first=_installation_row(required_contract=2))])
+    monkeypatch.setattr(tenant_service, "get_engine", lambda: engine)
+
+    result = tenant_service.create_collector_installation(
+        organization_id=1, branch_id=10, name="Sorter", required_contract=tenant_service.COLLECTOR_CONTRACT_V2,
+    )
+
+    assert engine.calls[1]["params"]["required_contract"] == 2
+    assert ":required_contract" in engine.calls[1]["sql"] and result["required_contract"] == 2
+
+
+@pytest.mark.parametrize("contract", [0, 3, -1, "2", None, True, 2.0])
+def test_create_collector_installation_rejects_a_contract_that_is_not_1_or_2(monkeypatch, contract):
+    engine = FakeEngine([])
+    monkeypatch.setattr(tenant_service, "get_engine", lambda: engine)
+
+    with pytest.raises(ValueError, match="Invalid required contract"):
+        tenant_service.create_collector_installation(
+            organization_id=1, branch_id=10, name="Sorter", required_contract=contract,
+        )
+
+    assert engine.calls == []
+
+
+def test_the_installation_listings_say_which_contract_each_requires(monkeypatch):
+    for listing, argument in ((tenant_service.list_collector_installations_for_branch, 10),
+                              (tenant_service.list_collector_installations_for_organization, 1)):
+        engine = FakeEngine([FakeQueryResult(all_rows=[_installation_row(required_contract=2)])])
+        monkeypatch.setattr(tenant_service, "get_engine", lambda engine=engine: engine)
+
+        assert listing(argument)[0]["required_contract"] == 2
+        assert "ci.required_contract" in engine.calls[0]["sql"]
 
 
 def test_create_collector_installation_stores_blank_optionals_as_null(monkeypatch):

@@ -168,8 +168,12 @@ def test_the_cutoff_needs_nothing_the_baseline_does_not_already_grant():
 def test_sequence_usage_covers_exactly_the_tables_the_role_may_insert_into():
     assert "tenant_lifecycle_events_id_seq" in privileges.SEQUENCE_USAGE
     assert "pipeline_status_id_seq" not in privileges.SEQUENCE_USAGE  # composite key, no sequence
-    for unused in ("plans_id_seq", "feature_entitlements_id_seq", "v2_cutovers_id_seq"):
+    for unused in ("plans_id_seq", "feature_entitlements_id_seq"):
         assert unused not in privileges.SEQUENCE_USAGE
+    # Since migration f7b3d2c81a46 the role may INSERT a cutover (a Contract v2 enrollment records its branch's
+    # initial one), so it needs that table's sequence -- and still may not change or remove a cutover.
+    assert "v2_cutovers_id_seq" in privileges.SEQUENCE_USAGE
+    assert privileges.BASELINE["v2_cutovers"] == {"SELECT", "INSERT"}
     sql = privileges.provisioning_sql()
     assert sql.count("GRANT USAGE ON SEQUENCE") == len(privileges.SEQUENCE_USAGE)
     assert "SELECT ON SEQUENCE" not in sql.upper()

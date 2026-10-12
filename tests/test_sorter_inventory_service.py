@@ -151,7 +151,7 @@ _SCHEMA = (
     (
         "CREATE TABLE collector_installations (id INTEGER PRIMARY KEY, organization_id INTEGER, branch_id INTEGER, "
         "name TEXT, hostname TEXT, collector_version TEXT, status TEXT, installed_at TEXT, last_seen_at TEXT, "
-        "created_at TEXT, updated_at TEXT)"
+        "created_at TEXT, updated_at TEXT, required_contract INTEGER NOT NULL DEFAULT 1)"
     ),
     (
         "INSERT INTO organizations (id, slug, name, status) VALUES (1, 'acme', 'Acme', 'active'), "

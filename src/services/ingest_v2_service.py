@@ -201,6 +201,21 @@ def issue_ingest_key(conn, customer_id: int, branch_id: int) -> str:
     return key_id
 
 
+def has_active_ingest_key(conn, customer_id: int, branch_id: int) -> bool:
+    """True if the tenant already has an ACTIVE key. A retired key does not count. A key belongs to a (customer, branch)
+    and to nothing narrower: the registry does not say which installation uses it, so this is a statement about the
+    branch."""
+    return conn.execute(
+        text("""
+            SELECT 1
+            FROM ingest_key_ids
+            WHERE customer_id = :customer_id AND branch_id = :branch_id AND status = 'active'
+            LIMIT 1
+        """),
+        {"customer_id": customer_id, "branch_id": branch_id},
+    ).first() is not None
+
+
 def retire_ingest_key(conn, key_id: str) -> bool:
     """Retires an active key (it is rejected from then on). True if a key was retired."""
     result = conn.execute(
@@ -268,6 +283,37 @@ def record_v2_cutover(
         },
     ).first()
     return int(row[0])
+
+
+def has_any_v2_cutover(conn, customer_id: int, branch_id: int) -> bool:
+    """True if the tenant has ANY v2_cutovers row -- a cutover or a recorded rollback alike. Unlike
+    get_effective_v2_cutover, a rollback row counts: it is an operator's decision about this branch, and nothing
+    automatic may be layered on top of it."""
+    return conn.execute(
+        text("SELECT 1 FROM v2_cutovers WHERE customer_id = :customer_id AND branch_id = :branch_id LIMIT 1"),
+        {"customer_id": customer_id, "branch_id": branch_id},
+    ).first() is not None
+
+
+def record_initial_v2_cutover(
+    conn,
+    customer_id: int,
+    branch_id: int,
+    cutover_at: datetime,
+    set_by: str,
+    note: str | None = None,
+) -> int:
+    """Appends a branch's FIRST v2_cutovers row, for a branch that begins life on Contract v2 (collector enrollment).
+    Returns the new row's id.
+
+    It never moves a boundary: if the tenant has any row at all -- a cutover or a rollback -- nothing is written and
+    ValueError is raised. `cutover_at` must be an aware instant; a boundary with no offset would have to be guessed at.
+    The row itself is written by record_v2_cutover, with the same tenant guardrails."""
+    if not isinstance(cutover_at, datetime) or cutover_at.tzinfo is None:
+        raise ValueError("cutover_at must be an offset-aware datetime")
+    if has_any_v2_cutover(conn, customer_id, branch_id):
+        raise ValueError("the tenant already has a v2 cutover record")
+    return record_v2_cutover(conn, customer_id, branch_id, cutover_at, set_by, note)
 
 
 def get_effective_v2_cutover(conn, customer_id: int, branch_id: int) -> datetime | None:

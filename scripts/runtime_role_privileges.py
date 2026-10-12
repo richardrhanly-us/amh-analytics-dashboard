@@ -87,7 +87,11 @@ BASELINE: dict[str, frozenset[str]] = {
     "acs_item_events": frozenset({SEL, INS}),
     "ingest_key_ids": frozenset({SEL, INS, UPD}),
     "pipeline_status": frozenset({SEL, INS, UPD}),            # the heartbeat upsert
-    "v2_cutovers": frozenset({SEL}),                      # written only by an operator, as the owner
+    # INSERT (and USAGE on the id sequence) is granted by migration f7b3d2c81a46: a Contract v2 collector enrollment
+    # records its branch's INITIAL cutover in the enrollment transaction (services.collector_enrollment_service).
+    # Still no UPDATE and no DELETE: the table is append-only for the application. It has no row level security, so
+    # that insert is scoped by the code that makes it; database-level scoping is future hardening.
+    "v2_cutovers": frozenset({SEL, INS}),
     # --- lifecycle evidence: the application may append and nothing else, not even read. Granted by migration
     # a7c4e19d5b02 (INSERT, plus USAGE on the id sequence); required because the Super Admin app, which records a
     # cutoff, connects as this role (verified 2026-10-01). It is the one entry not yet observable in production: the table does not exist

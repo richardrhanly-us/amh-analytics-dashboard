@@ -56,7 +56,8 @@ _DDL = [
     """CREATE TABLE collector_installations (
         id INTEGER PRIMARY KEY AUTOINCREMENT, organization_id INTEGER, branch_id INTEGER, name TEXT, hostname TEXT,
         collector_version TEXT, status TEXT, installed_at TEXT, last_seen_at TEXT,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)""",
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        required_contract INTEGER NOT NULL DEFAULT 1)""",
     """CREATE TABLE agent_tokens (
         id INTEGER PRIMARY KEY AUTOINCREMENT, token_hash TEXT NOT NULL UNIQUE, customer_id INTEGER NOT NULL,
         branch_id INTEGER NOT NULL, description TEXT, is_active BOOLEAN NOT NULL DEFAULT 1,
@@ -64,7 +65,7 @@ _DDL = [
     """CREATE TABLE collector_enrollment_codes (
         id INTEGER PRIMARY KEY AUTOINCREMENT, installation_id INTEGER NOT NULL, code_hash TEXT NOT NULL UNIQUE,
         expires_at TEXT NOT NULL, used_at TEXT, revoked_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        created_by_user_id INTEGER)""",
+        created_by_user_id INTEGER, required_contract INTEGER NOT NULL DEFAULT 1)""",
     """CREATE TABLE ingest_key_ids (
         id INTEGER PRIMARY KEY AUTOINCREMENT, key_id TEXT NOT NULL UNIQUE, customer_id INTEGER NOT NULL,
         branch_id INTEGER NOT NULL, algorithm TEXT NOT NULL, status TEXT NOT NULL, retired_at TEXT)""",

@@ -14,7 +14,7 @@ from fastapi import APIRouter, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, StrictInt
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -25,6 +25,7 @@ from starlette.responses import JSONResponse, Response
 from src.services.collector_enrollment_service import (
     PUBLIC_ENROLLMENT_ERROR,
     EnrollmentError,
+    EnrollmentRefused,
     redeem_enrollment_code,
 )
 from src.services.ingest_v2_models import StatusV2Request, UploadV2Request
@@ -286,6 +287,10 @@ class CollectorEnrollRequest(BaseModel):
     enrollment_code: SecretStr = Field(max_length=64)
     hostname: str | None = Field(default=None, max_length=255)
     collector_version: str | None = Field(default=None, max_length=64)
+    # The ingest contract the installer can enroll on. Absent (every installer before Contract v2 enrollment) means
+    # the legacy contract. Strict: a string or a boolean is a malformed request (422), not a version. Whether a
+    # well-formed number is one the code permits is the enrollment service's decision, not this model's.
+    contract_version: StrictInt | None = None
 
 
 class PipelineStatusRequest(BaseModel):
@@ -1039,8 +1044,17 @@ def collector_enroll(request: Request, data: CollectorEnrollRequest):
     token: possession of an unexpired, unused code is the credential. One
     transaction covers locking the code, validating the tenant, marking the code
     used and inserting the token, so a failure anywhere leaves the code unused
-    and no token created. Every refusal is the same generic 400; the specific
-    reason is logged (never the code or a token) for operators."""
+    and no token created. Every refusal of the CODE (unknown, used, revoked,
+    expired, or for a tenant that cannot be enrolled) is the same generic 400;
+    the specific reason is logged (never the code or a token) for operators.
+
+    A code that IS valid can still be refused for the ingest contract it
+    requires -- an installer too old for it, a contract it does not permit, a
+    site not ready for Contract v2. Those are a 409 with one of four fixed
+    codes and a fixed sentence (collector_enrollment_service.REFUSAL_DETAILS);
+    only someone already holding a valid code can reach them, and the code is
+    not consumed. A Contract v2 enrollment also issues the branch's ingest key
+    and records its initial cutover, in the same transaction."""
     try:
         with engine.begin() as conn:
             result = redeem_enrollment_code(
@@ -1048,7 +1062,19 @@ def collector_enroll(request: Request, data: CollectorEnrollRequest):
                 data.enrollment_code.get_secret_value(),
                 hostname=data.hostname,
                 collector_version=data.collector_version,
+                contract_version=data.contract_version,
             )
+    except EnrollmentRefused as exc:
+        # A fixed reason code only -- never a setting, a rule or the code.
+        logger.warning(
+            "Collector enrollment refused | code=%s reason=%s client=%s",
+            exc.code, exc.reason, get_remote_address(request),
+        )
+        return JSONResponse(
+            status_code=409,
+            content={"code": exc.code, "detail": exc.detail},
+            headers={"Cache-Control": "no-store"},
+        )
     except EnrollmentError as exc:
         logger.warning(
             "Collector enrollment rejected | reason=%s client=%s",
