@@ -92,10 +92,10 @@ from services.efficiency_settings import (
     NOT_A_STRING,
     NOT_AN_OBJECT,
     UNKNOWN_FIELD,
+    DecimalField,
     OrganizationEfficiencySettings,
-    _date,
-    _decimal,
-    _DecimalField,
+    parse_date_text,
+    parse_decimal_text,
 )
 
 # The key of the block in an organization's settings document.
@@ -151,19 +151,19 @@ class SortViewValueError(ValueError):
 
 # How often something happens in a month, and how long it takes. Generous on purpose: these keep out a slip of the
 # keyboard, not an unusual library. Zero is a figure -- no tasks, or a task that now takes no time at all.
-_PER_MONTH = _DecimalField(places=1, minimum=Decimal(0), maximum=Decimal(100_000))
-_MINUTES = _DecimalField(places=1, minimum=Decimal(0), maximum=Decimal(10_000))
+_PER_MONTH = DecimalField(places=1, minimum=Decimal(0), maximum=Decimal(100_000))
+_MINUTES = DecimalField(places=1, minimum=Decimal(0), maximum=Decimal(10_000))
 
 # The two fields of the block itself. An hour of staff time costs something, as for Efficiency; a subscription can
 # cost nothing.
-_FIELDS: dict[str, _DecimalField] = {
-    "labor_rate": _DecimalField(places=2, minimum=Decimal(0), maximum=Decimal(10_000), above_minimum=True),
-    "subscription_annual_cost": _DecimalField(places=2, minimum=Decimal(0), maximum=Decimal(10_000_000)),
+_FIELDS: dict[str, DecimalField] = {
+    "labor_rate": DecimalField(places=2, minimum=Decimal(0), maximum=Decimal(10_000), above_minimum=True),
+    "subscription_annual_cost": DecimalField(places=2, minimum=Decimal(0), maximum=Decimal(10_000_000)),
 }
 
 # The figures of each kind of work, in the order they are serialized. An incident nobody attends is not an incident:
 # staff_per_incident is above zero.
-_CATEGORY_FIELDS: dict[str, dict[str, _DecimalField]] = {
+_CATEGORY_FIELDS: dict[str, dict[str, DecimalField]] = {
     REPORTING: {
         "tasks_per_month": _PER_MONTH,
         "baseline_minutes_per_task": _MINUTES,
@@ -171,7 +171,7 @@ _CATEGORY_FIELDS: dict[str, dict[str, _DecimalField]] = {
     },
     TROUBLESHOOTING: {
         "incidents_per_month": _PER_MONTH,
-        "staff_per_incident": _DecimalField(places=1, minimum=Decimal(0), maximum=Decimal(1_000), above_minimum=True),
+        "staff_per_incident": DecimalField(places=1, minimum=Decimal(0), maximum=Decimal(1_000), above_minimum=True),
         "baseline_minutes": _MINUTES,
         "current_minutes": _MINUTES,
     },
@@ -257,7 +257,7 @@ def _category(
             else:
                 values[name] = stored
             continue
-        parsed = _date(stored, not_after) if name == _AS_OF else _decimal(stored, fields[name])
+        parsed = parse_date_text(stored, not_after) if name == _AS_OF else parse_decimal_text(stored, fields[name])
         if isinstance(parsed, str):
             problems.append(SortViewValueProblem(f"{category}.{name}", parsed))
         else:
@@ -280,7 +280,7 @@ def _settings(block: object, *, refuse_unknown: bool, not_after: date | None) ->
     values: dict[str, Any] = {}
     for name, field in _FIELDS.items():
         stored = block.get(name)
-        parsed = None if stored is None else _decimal(stored, field)
+        parsed = None if stored is None else parse_decimal_text(stored, field)
         if isinstance(parsed, str):
             problems.append(SortViewValueProblem(name, parsed))
             parsed = None
@@ -325,7 +325,7 @@ def validate_sortview_value_settings(block: object, *, today: date) -> SortViewV
     return _settings(block, refuse_unknown=True, not_after=today)
 
 
-def _serialized(inputs: object, fields: Mapping[str, _DecimalField], names: tuple[str, ...]) -> dict[str, str]:
+def _serialized(inputs: object, fields: Mapping[str, DecimalField], names: tuple[str, ...]) -> dict[str, str]:
     block: dict[str, str] = {}
     for name in names:
         value = getattr(inputs, name)

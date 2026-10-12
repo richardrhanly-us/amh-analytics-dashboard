@@ -103,7 +103,7 @@ class EfficiencySettingsError(ValueError):
 # =====================================================================================================================
 
 @dataclass(frozen=True, slots=True)
-class _DecimalField:
+class DecimalField:
     """A money or rate field: how many decimal places it keeps, and the
     values it may hold. `minimum` is allowed unless `above_minimum`."""
 
@@ -113,11 +113,11 @@ class _DecimalField:
     above_minimum: bool = False
 
 
-_FIELDS: dict[str, _DecimalField] = {
-    "labor_rate": _DecimalField(places=2, minimum=Decimal(0), maximum=Decimal(1000), above_minimum=True),
-    "manual_items_per_hour": _DecimalField(places=1, minimum=Decimal(1), maximum=Decimal(1000)),
-    "one_time_cost": _DecimalField(places=2, minimum=Decimal(0), maximum=Decimal(100_000_000)),
-    "recurring_annual_cost": _DecimalField(places=2, minimum=Decimal(0), maximum=Decimal(10_000_000)),
+_FIELDS: dict[str, DecimalField] = {
+    "labor_rate": DecimalField(places=2, minimum=Decimal(0), maximum=Decimal(1000), above_minimum=True),
+    "manual_items_per_hour": DecimalField(places=1, minimum=Decimal(1), maximum=Decimal(1000)),
+    "one_time_cost": DecimalField(places=2, minimum=Decimal(0), maximum=Decimal(100_000_000)),
+    "recurring_annual_cost": DecimalField(places=2, minimum=Decimal(0), maximum=Decimal(10_000_000)),
 }
 _IN_SERVICE_DATE = "in_service_date"
 
@@ -132,7 +132,7 @@ _DATE_TEXT = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _MAX_TEXT_LENGTH = 32
 
 
-def _decimal(value: object, field: _DecimalField) -> Decimal | str:
+def parse_decimal_text(value: object, field: DecimalField) -> Decimal | str:
     """The field's value, or the code for why `value` is not one."""
     if not isinstance(value, str):
         return NOT_A_STRING
@@ -149,7 +149,7 @@ def _decimal(value: object, field: _DecimalField) -> Decimal | str:
     return number.quantize(Decimal(1).scaleb(-field.places))
 
 
-def _date(value: object, not_after: date | None) -> date | str:
+def parse_date_text(value: object, not_after: date | None) -> date | str:
     """A calendar date written YYYY-MM-DD, or the code for why `value` is
     not one. With `not_after`, a later date is refused."""
     if not isinstance(value, str):
@@ -180,7 +180,7 @@ def _fields(block: object, owned: tuple[str, ...], *, refuse_unknown: bool, not_
         if stored is None:
             values[name] = None
             continue
-        parsed = _date(stored, not_after) if name == _IN_SERVICE_DATE else _decimal(stored, _FIELDS[name])
+        parsed = parse_date_text(stored, not_after) if name == _IN_SERVICE_DATE else parse_decimal_text(stored, _FIELDS[name])
         if isinstance(parsed, str):
             problems.append(EfficiencySettingProblem(name, parsed))
         else:
