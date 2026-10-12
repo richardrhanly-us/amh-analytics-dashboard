@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import sys
+from datetime import UTC, datetime
 from typing import Any
 
 import streamlit as st
@@ -28,6 +29,13 @@ if ROOT_DIR not in sys.path:
 from super_auth import require_super_admin
 
 from collector import __version__ as COLLECTOR_VERSION
+from services.collector_rules import (
+    RULES_REVIEW_KEY,
+    TIMEZONE_KEY,
+    CollectorSettingsError,
+    collector_timezone,
+    rules_review_marker,
+)
 from services.privacy_hardening import (
     install_streamlit_log_scrubber,
     log_safe_exception,
@@ -110,6 +118,25 @@ def slugify(value: str) -> str:
 def lines_to_list(text: str) -> list[str]:
     return [line.strip() for line in text.splitlines() if line.strip()]
 
+
+def collector_site_settings(
+    timezone_input: str, rules_reviewed: bool, *, reviewer_user_id: int, now: datetime
+) -> dict[str, Any]:
+    """The two settings a Contract v2 Collector enrollment needs from a site (services.collector_rules), from what was
+    entered on this page. Each is stored only when it was actually given: a blank time zone stores none, and an
+    unticked confirmation stores no review record -- so a site nobody prepared is never mistaken for one that was.
+
+    Raises CollectorSettingsError if a time zone was entered that is not a known IANA name.
+
+    Neither changes anything about a legacy (contract 1) installation, which is what this page still creates: they are
+    read only by a contract-2 enrollment."""
+    settings: dict[str, Any] = {}
+    if timezone_input.strip():
+        settings[TIMEZONE_KEY] = collector_timezone({TIMEZONE_KEY: timezone_input})
+    if rules_reviewed:
+        settings[RULES_REVIEW_KEY] = rules_review_marker(reviewed_at=now, reviewed_by_user_id=reviewer_user_id)
+    return settings
+
 def run_operational_stage(
     organization_id: int, branch_id: int, config_inputs: dict[str, str]
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
@@ -188,6 +215,22 @@ with st.form("provision_library_form"):
         collection_services_names_text = st.text_area("Collection Services Names", height=140)
         collection_services_da_patterns_text = st.text_area("Collection Services DA Patterns", height=140)
 
+    st.subheader("Collector Site Settings (Contract v2)")
+    st.caption(
+        "Needed only to enroll a Collector on Contract v2, and read only then. The installation created below is "
+        "still a legacy (contract 1) installation: leaving these blank changes nothing about it. The time zone is "
+        "the one the library's Tech Logic machine keeps its clock in; it does not change how reports are drawn."
+    )
+    collector_timezone_input = st.text_input(
+        "Collector time zone (IANA name, e.g. America/New_York)",
+        help="The site's own zone. There is no default: leave blank if it is not known yet.",
+    )
+    collector_rules_reviewed = st.checkbox(
+        "I have reviewed the four Internal Routing lists above with this library, and they are correct "
+        "(including where a list is empty)",
+        value=False,
+    )
+
     st.subheader("Agent Config")
     api_base_url = st.text_input(
         "API base URL",
@@ -231,6 +274,20 @@ if submitted:
         st.error("Installation name is required to create an installation record.")
         st.stop()
 
+    try:
+        collector_settings = collector_site_settings(
+            collector_timezone_input,
+            collector_rules_reviewed,
+            reviewer_user_id=int(auth_user["id"]),
+            now=datetime.now(UTC),
+        )
+    except CollectorSettingsError:
+        st.error(
+            "Collector time zone is not a known IANA time zone name. Use a name such as America/New_York, "
+            "or leave it blank."
+        )
+        st.stop()
+
     org_settings: dict[str, Any] = dict(DEFAULT_ORG_SETTINGS)
     org_settings.update({
         "library_name": library_name.strip() or org_name.strip(),
@@ -256,6 +313,8 @@ if submitted:
             "notes": notes.strip(),
         },
     })
+    # Only what was actually entered: no time zone and no review record are ever stored by default.
+    org_settings.update(collector_settings)
     org_settings["transit"]["destinations"] = [
         d for d in org_settings["transit"]["destinations"] if d is not None
     ]

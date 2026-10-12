@@ -599,7 +599,8 @@ def _library_row(**overrides):
 
 def _installation(**overrides):
     row = {"id": 5, "name": "Main AMH Sorter", "organization_id": 10, "branch_id": 20, "branch_name": "Main",
-           "hostname": "amh-host", "collector_version": "1.0.4", "status": "active", "installed_at": None, "last_seen_at": None}
+           "hostname": "amh-host", "collector_version": "1.0.4", "status": "active", "required_contract": 1,
+           "installed_at": None, "last_seen_at": None}
     row.update(overrides)
     return row
 

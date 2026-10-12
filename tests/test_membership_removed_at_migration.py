@@ -57,7 +57,7 @@ def test_the_migration_is_the_one_new_head_and_the_history_stays_linear():
     script = _script_directory()
 
     assert script.get_revision(REVISION).down_revision == PREVIOUS_HEAD
-    assert script.get_heads() == [REVISION]
+    assert len(script.get_heads()) == 1  # later migrations extend the chain; this one just has to stay in it
     assert [r.revision for r in script.walk_revisions() if r.down_revision == PREVIOUS_HEAD] == [REVISION]
 
 

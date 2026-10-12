@@ -259,4 +259,56 @@ run reports.
   release-tooling-only NBPL pilot preparation and dry-run acceptance procedure (build-time rules generation, `tools\prepare_v2_pilot.ps1`),
   see [collector-1.0.9-v2-pilot-runbook.md](collector-1.0.9-v2-pilot-runbook.md).
 * No historical replay. A future cutover bootstraps the v2 cursor from the v1 cursor.
-* Deferred: installer/release integration, `collector_installations` status linkage, key enrollment, retiring v1, dashboard reads.
+* Deferred: installer/release integration, `collector_installations` status linkage, retiring v1, dashboard reads. (Server-side key
+  enrollment exists -- see below -- but no released installer asks for it yet.)
+
+## Server-enforced Contract v2 enrollment (onboarding stage A1)
+
+The server, not the installer, decides which contract an enrollment permits.
+
+* `collector_installations.required_contract` (`1` = the legacy contract, `2` = Contract v2) says what an installation must be enrolled
+  on. An enrollment code **snapshots** that value when it is generated (`collector_enrollment_codes.required_contract`); what a code
+  permits does not follow a later change to the installation.
+* `POST /collector/enroll` takes an optional `contract_version`. Absent means the legacy contract, which is what every installer
+  released so far sends.
+
+| Code requires | Request says | Result |
+|---|---|---|
+| 1 | nothing, or 1 | the legacy enrollment, exactly as before: the four fields |
+| 1 | 2 | `409 contract_not_permitted` |
+| 2 | nothing, or 1 | `409 collector_upgrade_required` -- an installer that cannot do v2 gets no token |
+| 2 | 2 | the Contract v2 enrollment |
+| any | a version that is not 1 or 2 | `409 unsupported_contract_version` |
+
+A code that is unknown, used, revoked or expired, or whose tenant cannot be enrolled, is still the one generic `400`, whatever was asked
+for. A `409` is reached only with a valid code, carries a fixed `code` and sentence, and **never consumes the code**.
+
+**A Contract v2 enrollment** returns the four legacy fields plus `contract_version` (2), `contract_mode` (`"v2"`), `key_id`,
+`timezone` and `classification_rules`, and in the same transaction:
+
+* issues the branch's ingest key (`ingest_key_ids`; the same `issue_ingest_key` the script uses). Only the non-secret `key_id` exists
+  on the server: the HMAC secret is still generated on the Collector's machine and is never created, returned or stored here;
+* records the branch's **initial cutover** (`v2_cutovers`, `set_by = collector-enrollment`) at the moment its **organization** was
+  created -- before any event the Collector can send. That row is also what closes the v1 `/upload` route for the branch, so a
+  newly enrolled branch cannot upload raw rows even with a hand-edited config.
+
+It is refused with `409 enrollment_not_ready` -- and nothing is written -- unless the site's organization settings hold
+
+* `collector_timezone`: an IANA zone name. There is no default. It configures the Collector only; it is not the zone reports are drawn in;
+* `collector_rules`: `{"reviewed_at": <aware ISO time>, "reviewed_by_user_id": <id>}`, the record that an administrator confirmed the
+  site's classification lists. Reviewed-and-empty lists are valid; unreviewed lists are not, however full;
+
+and the site's lists are well-formed, the branch has **no active ingest key**, and the branch has **no cutover record of any kind**
+(a recorded rollback included). The response never says which of those it was; the server logs a fixed reason code.
+
+`classification_rules` is the site's own rules document, in the schema of the local rules file above, built on the server from the
+site's effective settings (`src/services/collector_rules.py`, held to `collector/v2_rules.py` by `tests/test_collector_rules.py`).
+It contains patron account names and is never logged.
+
+**Still contract 1 by default.** A new installation is contract 2 only when it is created so explicitly; Super Admin does not do that
+yet, because no released installer can enroll on contract 2. Making it the normal choice belongs with that installer.
+
+**Deployment order.** (1) apply migration `f7b3d2c81a46` (the two `required_contract` columns, and `INSERT` on `v2_cutovers` for the
+runtime role -- no `UPDATE`, no `DELETE`); (2) deploy the API; (3) deploy Super Admin. The migration is safe against the previous API.
+`v2_cutovers` has no row level security, so that insert is scoped by the enrollment code path itself; database-level scoping is
+future hardening.

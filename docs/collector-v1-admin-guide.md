@@ -125,6 +125,14 @@ Setup never uses `-Force`, never overwrites or deletes an existing install, neve
 adopts an install that does not match the saved enrollment, and refuses to run on
 a machine with a running or enabled Collector (use `tools\update.ps1` there).
 
+**Enrollment codes and the ingest contract.** An enrollment code carries the
+contract its installation requires. This installer performs the legacy
+enrollment (it sends no `contract_version`), which is what every installation
+Super Admin creates today requires. A code for an installation that requires
+Contract v2 is refused here with an unexpected-status message (HTTP 409) and is
+**not** used up; it needs an installer that can enroll on Contract v2. See
+`docs/collector-v2.md`, *Server-enforced Contract v2 enrollment*.
+
 ## Fresh install
 
 From an elevated PowerShell session, in a checkout of this repository:

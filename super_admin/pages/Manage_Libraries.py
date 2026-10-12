@@ -384,6 +384,9 @@ if installations:
             "hostname": "Hostname",
             "collector_version": "Collector Version",
             "status": "Status",
+            # The ingest contract a code for this installation requires (1 = legacy, 2 = Contract v2). Shown, not
+            # chosen: a new installation is still contract 1 here until an installer that can enroll on 2 is released.
+            "required_contract": "Required Contract",
             "installed_at": "Installed At",
             "last_seen_at": "Last Seen At",
         }
@@ -397,6 +400,7 @@ if installations:
                 "Hostname",
                 "Collector Version",
                 "Status",
+                "Required Contract",
                 "Installed At",
                 "Last Seen At",
             ]

@@ -47,21 +47,92 @@ expired one, or learn anything about tenants, installations or their state.
 This module never modifies collector_installations (installed_at, last_seen_at,
 collector_version, hostname, status are all untouched): confirmed-contact
 lifecycle belongs to the authenticated heartbeat/preflight.
+
+THE CONTRACT IS THE SERVER'S DECISION (onboarding stage A1). An installation
+carries the ingest contract it must be enrolled on
+(collector_installations.required_contract: 1 = the legacy contract, 2 =
+Contract v2), a code SNAPSHOTS that value when it is generated, and redemption
+enforces the snapshot against what the installer says it can do
+(`contract_version` in the request; absent means 1):
+
+    code 1, request absent/1   the legacy enrollment, exactly as before: the four fields
+    code 1, request 2          refused -- contract_not_permitted
+    code 2, request absent/1   refused -- collector_upgrade_required (an installer that cannot do v2
+                               never gets a token it could only use for v1)
+    code 2, request 2          the Contract v2 enrollment (below)
+    request not 1 or 2         refused -- unsupported_contract_version
+
+Those refusals raise EnrollmentRefused, which the HTTP layer answers with a 409
+and a fixed code. They are reached only by a caller who presented a code that
+is known, unused, unrevoked, unexpired and belongs to a usable tenant -- who
+already holds the credential -- so they disclose nothing the generic refusal
+protects. NO REFUSAL CONSUMES THE CODE.
+
+A CONTRACT-2 ENROLLMENT also, in the SAME transaction: issues the branch's
+ingest key (a non-secret key_id; the HMAC secret behind it is generated on the
+Collector's machine and never exists here), records the branch's initial v2
+cutover -- which is also what closes the v1 /upload route for the branch -- and
+returns the site's Collector time zone and its classification rules document
+(services.collector_rules). Everything it needs is read and validated BEFORE
+the first write, and it is refused (enrollment_not_ready) if the site's
+settings are not ready, or if the branch already has an active ingest key or
+any cutover record: a second v2 identity for a branch is never created
+silently, and an existing cutover is never moved. Which of those it was is
+logged as a fixed reason code and never sent to the caller.
+
+A NEW INSTALLATION IS STILL CONTRACT 1 UNLESS IT IS CREATED AS 2, explicitly
+(services.tenant_service.create_collector_installation). Making 2 the normal
+choice waits for an installer that can enroll on it; until then a contract-2
+installation could not be enrolled by any released bundle.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import DateTime, bindparam, text
 
+from . import collector_rules
+from .ingest_v2_service import (
+    has_active_ingest_key,
+    has_any_v2_cutover,
+    issue_ingest_key,
+    record_initial_v2_cutover,
+)
+
 logger = logging.getLogger("sortview.enrollment")
+
+# --- ingest contracts --------------------------------------------------------------
+#
+# What an installation must be enrolled on, and what an installer may ask for.
+# The numbers are the wire contract's own (`contract_version` on the v2 routes).
+CONTRACT_LEGACY = 1
+CONTRACT_V2 = 2
+SUPPORTED_CONTRACTS = (CONTRACT_LEGACY, CONTRACT_V2)
+CONTRACT_MODE_V2 = "v2"  # the Collector config's `contract_mode`
+
+# The refusals a caller holding a VALID code can be told about. Each is a fixed
+# public code with one fixed sentence; nothing else about the refusal is sent.
+COLLECTOR_UPGRADE_REQUIRED = "collector_upgrade_required"
+CONTRACT_NOT_PERMITTED = "contract_not_permitted"
+UNSUPPORTED_CONTRACT_VERSION = "unsupported_contract_version"
+ENROLLMENT_NOT_READY = "enrollment_not_ready"
+REFUSAL_DETAILS = {
+    COLLECTOR_UPGRADE_REQUIRED: "This enrollment code requires a newer SortView Collector.",
+    CONTRACT_NOT_PERMITTED: "This enrollment code does not permit the requested contract.",
+    UNSUPPORTED_CONTRACT_VERSION: "The requested contract version is not supported.",
+    ENROLLMENT_NOT_READY: "This installation is not ready to enroll. Contact SortView support.",
+}
+
+# Who recorded an enrollment's cutover. Fixed text; the ids are in the row's note.
+INITIAL_CUTOVER_SET_BY = "collector-enrollment"
 
 # --- enrollment code format ---------------------------------------------------
 #
@@ -100,6 +171,23 @@ class EnrollmentError(Exception):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+class EnrollmentRefused(Exception):
+    """A VALID code was presented and the enrollment was still refused, for a
+    reason the caller may be told: `code` is one of REFUSAL_DETAILS' keys (the
+    whole of what is sent, with its fixed sentence). `reason` is INTERNAL -- a
+    fixed code for server logs and tests, never a settings value -- and must
+    never be sent to a client. The enrollment code is not consumed."""
+
+    def __init__(self, code: str, reason: str) -> None:
+        super().__init__(code)
+        self.code = code
+        self.reason = reason
+
+    @property
+    def detail(self) -> str:
+        return REFUSAL_DETAILS[self.code]
 
 
 # --- code and token primitives ----------------------------------------------------
@@ -193,6 +281,7 @@ class InstallationScope:
     branch_id: int
     customer_id: int  # organizations.operational_customer_id
     operational_branch_id: int  # branches.operational_branch_id
+    required_contract: int = CONTRACT_LEGACY  # collector_installations.required_contract
 
 
 _INSTALLATION_SCOPE_SQL = """
@@ -200,6 +289,7 @@ _INSTALLATION_SCOPE_SQL = """
         ci.id AS installation_id,
         ci.name AS installation_name,
         ci.status AS installation_status,
+        ci.required_contract AS required_contract,
         ci.organization_id AS organization_id,
         ci.branch_id AS branch_id,
         o.status AS organization_status,
@@ -275,6 +365,7 @@ def resolve_installation_scope(
         branch_id=int(row["branch_id"]),
         customer_id=int(customer_id),
         operational_branch_id=int(operational_branch_id),
+        required_contract=int(row["required_contract"]),
     )
 
 
@@ -290,9 +381,9 @@ _REVOKE_UNUSED_SQL = """
 
 _INSERT_CODE_SQL = """
     INSERT INTO collector_enrollment_codes
-        (installation_id, code_hash, expires_at, created_by_user_id)
+        (installation_id, code_hash, expires_at, created_by_user_id, required_contract)
     VALUES
-        (:installation_id, :code_hash, :expires_at, :created_by_user_id)
+        (:installation_id, :code_hash, :expires_at, :created_by_user_id, :required_contract)
     RETURNING id
 """
 
@@ -310,10 +401,15 @@ def create_enrollment_code(
     caller's transaction: validates the installation and its tenant, revokes the
     installation's earlier unused codes, stores the new code's SHA-256 hash, and
     returns the RAW code exactly once. Raises EnrollmentError if the
-    installation cannot be enrolled."""
+    installation cannot be enrolled.
+
+    The code SNAPSHOTS the installation's required contract: what it permits is
+    fixed here and does not follow a later change to the installation."""
     scope = resolve_installation_scope(
         conn, installation_id, lock=True, expected_organization_id=expected_organization_id
     )
+    if scope.required_contract not in SUPPORTED_CONTRACTS:
+        raise EnrollmentError("installation_contract_unsupported")
     issued_at = now or datetime.now(UTC)
     expires_at = issued_at + ttl
 
@@ -329,15 +425,16 @@ def create_enrollment_code(
             code_hash=hash_enrollment_code(raw_code),
             expires_at=expires_at,
             created_by_user_id=created_by_user_id,
+            required_contract=scope.required_contract,
         )
     ).scalar_one()
 
     # Never the code itself -- only ids and timing.
     logger.info(
         "Collector enrollment code generated | code_id=%s installation_id=%s organization_id=%s "
-        "created_by_user_id=%s expires_at=%s revoked_previous=%s",
+        "created_by_user_id=%s expires_at=%s revoked_previous=%s required_contract=%s",
         code_id, scope.installation_id, scope.organization_id, created_by_user_id,
-        expires_at.isoformat(), revoked_previous,
+        expires_at.isoformat(), revoked_previous, scope.required_contract,
     )
     return {
         "enrollment_code": raw_code,
@@ -345,6 +442,7 @@ def create_enrollment_code(
         "installation_id": scope.installation_id,
         "installation_name": scope.installation_name,
         "organization_id": scope.organization_id,
+        "required_contract": scope.required_contract,
         "expires_at": expires_at,
         "ttl_minutes": int(ttl.total_seconds() // 60),
         "revoked_previous_count": int(revoked_previous or 0),
@@ -383,6 +481,7 @@ _LOOKUP_CODE_SQL = """
         installation_id,
         used_at,
         revoked_at,
+        required_contract,
         expires_at <= :now AS is_expired
     FROM collector_enrollment_codes
     WHERE code_hash = :code_hash
@@ -425,18 +524,159 @@ def _token_description(scope: InstallationScope, hostname: str | None, collector
     return _CONTROL_CHARACTERS.sub("", " | ".join(parts))
 
 
+# --- what a Contract v2 enrollment needs, read and checked before anything is written ----------
+
+# Neither settings table is under row level security, so this statement's own
+# filter is the only thing scoping the read: both ids come from the validated
+# installation scope, never from the request.
+_V2_SITE_SQL = """
+    SELECT
+        o.created_at AS organization_created_at,
+        os.settings_json AS organization_settings,
+        bs.settings_json AS branch_settings
+    FROM organizations o
+    LEFT JOIN organization_settings os
+      ON os.organization_id = o.id
+    LEFT JOIN branch_settings bs
+      ON bs.branch_id = :branch_id
+    WHERE o.id = :organization_id
+"""
+
+_LOCK_BRANCH_SQL = "SELECT id FROM branches WHERE id = :branch_id"
+
+
+@dataclass(frozen=True)
+class _V2Site:
+    """What a contract-2 enrollment returns and records about its site. `repr` shows no rule: the rules document
+    holds patron account names."""
+
+    timezone: str
+    cutover_at: datetime
+    rules: dict[str, Any] = field(repr=False)
+
+
+def _set_tenant_context(conn: Any, scope: InstallationScope) -> None:
+    """The row level security context for the enrolling tenant, transaction-local -- what ingest_key_ids' policies
+    test. Set from the validated installation scope, never from the request (the same rule as
+    main._authenticate_agent). PostgreSQL only: SQLite (unit tests) has neither RLS nor set_config()."""
+    if getattr(getattr(conn, "dialect", None), "name", "") != "postgresql":
+        return
+    conn.execute(text("SELECT set_config('app.operational_customer_id', :v, true)"), {"v": str(scope.customer_id)})
+    conn.execute(text("SELECT set_config('app.operational_branch_id', :v, true)"), {"v": str(scope.operational_branch_id)})
+
+
+def _settings_document(value: object) -> dict[str, Any]:
+    """A stored settings_json as a dict. PostgreSQL hands JSONB back parsed; a driver that hands back text is parsed
+    here. Nothing stored is an empty document; text that is not JSON is refused."""
+    if isinstance(value, (str, bytes)):
+        unreadable = False
+        try:
+            value = json.loads(value)
+        except ValueError:  # the message quotes the document: it must not survive as an exception context
+            unreadable = True
+        if unreadable:
+            raise EnrollmentRefused(ENROLLMENT_NOT_READY, "settings_unreadable")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _aware_instant(value: object) -> datetime | None:
+    """A stored TIMESTAMPTZ as an aware datetime, or None if it is not one. A value with no offset is not guessed at."""
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        return None
+    return value
+
+
+def _prepare_v2_enrollment(conn: Any, scope: InstallationScope) -> _V2Site:
+    """Everything a contract-2 enrollment has to know and be sure of, BEFORE its first write. Reads only; raises
+    EnrollmentRefused(ENROLLMENT_NOT_READY, <fixed reason>) if the site cannot be enrolled on Contract v2 now.
+
+    Takes a row lock on the branch first (PostgreSQL), so two enrollments for one branch -- two installations of it --
+    cannot both pass the "no key, no cutover" checks below and each create an identity."""
+    _set_tenant_context(conn, scope)
+    conn.execute(text(_LOCK_BRANCH_SQL + _lock_suffix(conn)), {"branch_id": scope.branch_id})
+
+    row = conn.execute(
+        text(_V2_SITE_SQL), {"organization_id": scope.organization_id, "branch_id": scope.branch_id}
+    ).mappings().first()
+    if row is None:
+        raise EnrollmentRefused(ENROLLMENT_NOT_READY, "organization_missing")
+
+    organization_settings = _settings_document(row["organization_settings"])
+    effective = collector_rules.effective_settings(organization_settings, _settings_document(row["branch_settings"]))
+
+    # The reason is taken out of the except block and raised from outside it: a settings value must never ride along
+    # as an exception's context. (CollectorSettingsError itself carries only a fixed code.)
+    problem: str | None = None
+    timezone = ""
+    rules: dict[str, Any] = {}
+    try:
+        timezone = collector_rules.collector_timezone(organization_settings)
+        collector_rules.require_rules_reviewed(organization_settings)
+        rules = collector_rules.build_classification_rules(effective)
+    except collector_rules.CollectorSettingsError as exc:
+        problem = exc.reason
+    if problem is not None:
+        raise EnrollmentRefused(ENROLLMENT_NOT_READY, problem)
+
+    # The branch's v1 -> v2 boundary is the moment its organization came to exist: before any event the Collector can
+    # send, whatever the sorter's clock says. (organizations.created_at is TIMESTAMPTZ NOT NULL; branches.created_at
+    # is a nullable TIMESTAMP with no zone and is deliberately not used.)
+    cutover_at = _aware_instant(row["organization_created_at"])
+    if cutover_at is None:
+        raise EnrollmentRefused(ENROLLMENT_NOT_READY, "organization_created_at_unusable")
+
+    # One v2 identity per branch, and never a second cutover. The registry does not say which installation a key
+    # belongs to, so "this branch already has one" is the whole of what can be known -- and is refused, not resolved.
+    if has_active_ingest_key(conn, scope.customer_id, scope.operational_branch_id):
+        raise EnrollmentRefused(ENROLLMENT_NOT_READY, "active_ingest_key_exists")
+    if has_any_v2_cutover(conn, scope.customer_id, scope.operational_branch_id):
+        raise EnrollmentRefused(ENROLLMENT_NOT_READY, "cutover_exists")
+
+    return _V2Site(timezone=timezone, cutover_at=cutover_at, rules=rules)
+
+
+def _require_permitted_contract(required: int, requested: int | None) -> int:
+    """The contract this redemption enrolls on, or EnrollmentRefused. `required` is the code's snapshot; `requested`
+    is what the installer said it supports (None: it said nothing, which is the legacy contract)."""
+    asked = CONTRACT_LEGACY if requested is None else requested
+    if isinstance(asked, bool) or not isinstance(asked, int) or asked not in SUPPORTED_CONTRACTS:
+        raise EnrollmentRefused(UNSUPPORTED_CONTRACT_VERSION, "requested_contract_unsupported")
+    if required not in SUPPORTED_CONTRACTS:
+        # A requirement this server does not implement: whatever the installer is, it is not new enough.
+        raise EnrollmentRefused(COLLECTOR_UPGRADE_REQUIRED, "code_requires_unsupported_contract")
+    if required == CONTRACT_V2 and asked != CONTRACT_V2:
+        raise EnrollmentRefused(COLLECTOR_UPGRADE_REQUIRED, "code_requires_contract_2")
+    if required == CONTRACT_LEGACY and asked != CONTRACT_LEGACY:
+        raise EnrollmentRefused(CONTRACT_NOT_PERMITTED, "code_permits_contract_1_only")
+    return required
+
+
 def redeem_enrollment_code(
     conn: Any,
     raw_code: str,
     *,
     hostname: str | None = None,
     collector_version: str | None = None,
+    contract_version: int | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Redeems a one-time enrollment code inside the caller's transaction and
-    returns exactly {customer_id, branch_id, installation_id, agent_token}. The
-    caller commits; on any EnrollmentError (or other exception) it must roll
-    back, which leaves the code unused and no token created.
+    """Redeems a one-time enrollment code inside the caller's transaction. The
+    caller commits; on any EnrollmentError, EnrollmentRefused or other
+    exception it must roll back, which leaves the code unused and nothing
+    created.
+
+    A LEGACY enrollment (a contract-1 code, no `contract_version` or 1) returns
+    exactly {customer_id, branch_id, installation_id, agent_token}, as it
+    always has. A CONTRACT-2 enrollment (a contract-2 code and
+    `contract_version` 2) returns those four and contract_version,
+    contract_mode, key_id, timezone and classification_rules, having issued the
+    branch's ingest key and recorded its initial cutover in this transaction.
+    Any other pairing raises EnrollmentRefused (see the module docstring).
 
     `hostname` and `collector_version` are untrusted, informational metadata:
     they only appear (sanitized) in the new token's description and never
@@ -462,6 +702,11 @@ def redeem_enrollment_code(
 
     scope = resolve_installation_scope(conn, int(code_row["installation_id"]))
 
+    # The code is valid and its tenant usable: from here a refusal may say why (EnrollmentRefused), and still
+    # consumes nothing. The CODE's snapshot decides, not the installation's current value.
+    contract = _require_permitted_contract(int(code_row["required_contract"]), contract_version)
+    site = _prepare_v2_enrollment(conn, scope) if contract == CONTRACT_V2 else None
+
     claimed = conn.execute(
         _timestamped(_CLAIM_CODE_SQL, code_id=code_row["id"], now=checked_at)
     ).rowcount
@@ -484,15 +729,46 @@ def redeem_enrollment_code(
         },
     ).scalar_one()
 
-    # Ids only -- never the code or the token.
-    logger.info(
-        "Collector enrollment redeemed | code_id=%s token_id=%s installation_id=%s "
-        "customer_id=%s branch_id=%s",
-        code_row["id"], token_id, scope.installation_id, scope.customer_id, scope.operational_branch_id,
-    )
-    return {
+    result: dict[str, Any] = {
         "customer_id": scope.customer_id,
         "branch_id": scope.operational_branch_id,
         "installation_id": scope.installation_id,
         "agent_token": agent_token,
     }
+    if site is None:
+        # Ids only -- never the code or the token.
+        logger.info(
+            "Collector enrollment redeemed | code_id=%s token_id=%s installation_id=%s "
+            "customer_id=%s branch_id=%s",
+            code_row["id"], token_id, scope.installation_id, scope.customer_id, scope.operational_branch_id,
+        )
+        return result
+
+    # Contract v2: the branch's key and its cutover, in this same transaction. The key is a non-secret id -- the
+    # secret behind it is generated on the Collector's machine and never exists here.
+    key_id = issue_ingest_key(conn, scope.customer_id, scope.operational_branch_id)
+    cutover_id = record_initial_v2_cutover(
+        conn,
+        scope.customer_id,
+        scope.operational_branch_id,
+        site.cutover_at,
+        INITIAL_CUTOVER_SET_BY,
+        f"initial v2 cutover | enrollment_code_id={int(code_row['id'])} installation_id={scope.installation_id}",
+    )
+    result.update({
+        "contract_version": CONTRACT_V2,
+        "contract_mode": CONTRACT_MODE_V2,
+        "key_id": key_id,
+        "timezone": site.timezone,
+        "classification_rules": site.rules,
+    })
+
+    # Ids and counts only -- never the code, the token, a rule or a settings value.
+    logger.info(
+        "Collector enrollment redeemed | code_id=%s token_id=%s installation_id=%s customer_id=%s branch_id=%s "
+        "contract=%s key_id=%s cutover_id=%s rule_destinations=%s rule_entries=%s",
+        code_row["id"], token_id, scope.installation_id, scope.customer_id, scope.operational_branch_id,
+        CONTRACT_V2, key_id, cutover_id, len(site.rules["destinations"]),
+        sum(len(site.rules[name]) for name in collector_rules.NAME_LISTS),
+    )
+    return result
