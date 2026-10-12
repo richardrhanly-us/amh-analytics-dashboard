@@ -47,6 +47,42 @@ all and no DATABASE_URL configured -- directly closing the loop on a real
 finding from this project's own history (the live AMH agent venv was
 found to have psycopg2-binary/SQLAlchemy installed with no code that
 should need them).
+
+CONTRACT V2 (`contract_mode: "v2"`): every check above still runs, unchanged,
+and six more are appended (run_v2_checks). An absent `contract_mode` is v1 and
+gets none of them -- no v2 file is opened and no v2 endpoint is called. Any
+other value fails `config_loads` (exit 2). The v2 checks call the SAME
+primitives a scheduled v2 run does, so preflight fails where the run would:
+
+    v2_config_valid         v2_config.load_v2_config (key_id, timezone, limits)
+    v2_sources_recognized   the run's own source-name rule (`unknown_source`)
+    v2_data_dirs_writable   the folders of the v2 state/status/cache/quarantine
+    v2_secret_usable        the secret exists, its ACL is verified, THIS process
+                            can decrypt it, and it is bound to the config's key_id
+    v2_rules_valid          v2_rules.load_rules
+    v2_ingest_authorized    one POST /v2/status
+
+A failing v2 check's detail starts with a FIXED CODE (`secret_missing`,
+`rules_invalid`, `ingest_key_not_authorized`, `not_evaluated`, ...): a caller
+relies on `name`, `passed` and that code, never on the prose after it. Nothing
+here prints the key_id, the secret, a rule or a response body, and preflight
+never creates or replaces a secret.
+
+TWO SERVER PROBES. The POST /upload-pipeline-status probe stays exactly as it
+is -- it is what activates the installation and stamps installed_at /
+last_seen_at, which /v2/status never touches. POST /v2/status follows ONLY when
+that probe passed and every local v2 check passed, and proves what nothing
+else can: v2 ingest is enabled and the configured key is active for the
+token's tenant.
+
+A SECOND SERVER-SIDE EFFECT, v2 only: /v2/status stores a full heartbeat
+snapshot on the ingest key, which is what the dashboard shows for a branch on
+Contract v2. Preflight re-sends the health, error class, last success and
+quarantine count of the local status_v2.json when a run has written one (run
+and schedule diagnostics are omitted: they are not this invocation's to
+report). On a fresh install there is nothing to re-send, so it sends the
+smallest valid snapshot, `healthy`. THAT HEARTBEAT MEANS "v2 preflight
+passed", NOT "a production run has happened".
 """
 
 from __future__ import annotations
@@ -60,13 +96,18 @@ import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 import requests
 
 from . import uploader
 from .config import TOKEN_SOURCE_DPAPI, CollectorConfig, ConfigError, load_config
+
+if TYPE_CHECKING:  # the v2 modules are imported only inside the v2 checks: the v1 path never loads them
+    from .v2_config import V2Config
+    from .v2_keys import SecretStore
+    from .v2_status import StatusSnapshot
 
 
 @dataclass(frozen=True)
@@ -317,6 +358,170 @@ def run_preflight(cfg: CollectorConfig, *, session=None, is_importable=_default_
     return PreflightReport(results=results, generated_at=_now_iso())
 
 
+# --- Contract v2 (see the module docstring's CONTRACT V2 section) -----------
+
+V2_CHECK_NAMES = (
+    "v2_config_valid", "v2_sources_recognized", "v2_data_dirs_writable", "v2_secret_usable", "v2_rules_valid",
+    "v2_ingest_authorized",
+)
+_LEGACY_PROBE_CHECKS = ("api_authentication", "token_scope_matches", "installation_id_accepted")
+_STATUS_TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"  # v2_events.format_time: how status_v2.json spells an instant
+
+
+def _check_v2_sources(cfg: CollectorConfig) -> CheckResult:
+    from .v2_transform import SOURCE_ORDER
+
+    unknown = [s.name for s in cfg.sources if s.name not in SOURCE_ORDER]
+    if unknown:
+        return CheckResult("v2_sources_recognized", False, f"unknown_source: {', '.join(unknown)}")
+    return CheckResult("v2_sources_recognized", True, f"{len(cfg.sources)} source name(s) recognized by Contract v2")
+
+
+def _check_v2_data_dirs(v2: V2Config) -> CheckResult:
+    folders = sorted({p.parent for p in (v2.state_path, v2.status_path, v2.patron_cache_path, v2.quarantine_path)})
+    for folder in folders:
+        result = _check_dir_writable("v2_data_dirs_writable", folder)
+        if not result.passed:
+            return CheckResult("v2_data_dirs_writable", False, f"not_writable: {result.detail}")
+    return CheckResult("v2_data_dirs_writable", True, f"{len(folders)} v2 data folder(s) writable")
+
+
+def _check_v2_secret(v2: V2Config, store: SecretStore | None) -> CheckResult:
+    """The same three steps, in the same order, as v2_run.build_runtime. The secret itself is never bound to a name
+    here: it is loaded to prove it can be, and dropped."""
+    from .v2_keys import DpapiSecretStore, SecretStoreError, require_protected
+    from .v2_safe_errors import CollectorV2Error, describe
+
+    store = store or DpapiSecretStore(v2.secret_path)
+    try:
+        if not store.exists():
+            raise SecretStoreError("secret_missing")
+        require_protected(store.acl_state())
+        store.load(v2.key_id)
+    except CollectorV2Error as exc:
+        return CheckResult("v2_secret_usable", False, exc.code)
+    except Exception as exc:  # described by type and location only, never by message
+        return CheckResult("v2_secret_usable", False, f"secret_check_failed: {describe(exc)}")
+    return CheckResult(
+        "v2_secret_usable", True, "secret present, bound to the configured key_id, and its ACL is verified protected"
+    )
+
+
+def _check_v2_rules(v2: V2Config) -> CheckResult:
+    """v2_rules.load_rules itself -- the run's one reader, parser and validator -- with a throwaway key, as the dry run
+    does: whether a rules file is valid does not depend on the key, so this check needs no secret."""
+    import secrets
+
+    from .v2_identity import derive_subkeys
+    from .v2_rules import load_rules
+    from .v2_safe_errors import CollectorV2Error, describe
+
+    try:
+        load_rules(v2.rules_path, derive_subkeys(secrets.token_bytes(32)))
+    except CollectorV2Error as exc:
+        return CheckResult("v2_rules_valid", False, exc.code)
+    except Exception as exc:  # described by type and location only, never by message
+        return CheckResult("v2_rules_valid", False, f"rules_check_failed: {describe(exc)}")
+    return CheckResult("v2_rules_valid", True, "the local classification rules load and validate")
+
+
+def _v2_probe_snapshot(v2: V2Config) -> StatusSnapshot:
+    """What the /v2/status probe sends. The last run's own health, error class, last success, quarantine count and
+    start time when status_v2.json holds a usable one -- so an established install's dashboard state is re-sent, not
+    replaced -- and otherwise the smallest valid snapshot, `healthy`. Run and schedule diagnostics are never sent."""
+    from . import state
+    from .v2_events import HEALTH_STATUSES, LAST_ERROR_CLASSES
+    from .v2_status import MAX_COUNTER, StatusSnapshot, parse_prior
+
+    prior = state.load_status(v2.status_path)
+    health = prior.get("health_status")
+    if not isinstance(health, str) or health not in HEALTH_STATUSES:
+        return StatusSnapshot(status="healthy", last_error_class=None, quarantined_count=0, last_success_at=None,
+                              watcher_last_active_at=None)
+
+    error_class = prior.get("last_error_class")
+    quarantined = prior.get("quarantined_count")
+    last_attempt = prior.get("last_attempt")
+    try:
+        active_at = (datetime.strptime(last_attempt, _STATUS_TIME_FORMAT).replace(tzinfo=UTC)
+                     if isinstance(last_attempt, str) else None)
+    except ValueError:
+        active_at = None
+    return StatusSnapshot(
+        status=health,
+        last_error_class=error_class if isinstance(error_class, str) and error_class in LAST_ERROR_CLASSES else None,
+        quarantined_count=(quarantined if isinstance(quarantined, int) and not isinstance(quarantined, bool)
+                           and 0 <= quarantined <= MAX_COUNTER else 0),
+        last_success_at=parse_prior(prior)[1],
+        watcher_last_active_at=active_at,
+    )
+
+
+def _check_v2_ingest(cfg: CollectorConfig, v2: V2Config, session) -> CheckResult:
+    """One POST /v2/status through the run's own client, which classifies by status code alone and keeps no body. It is
+    only called after the /upload-pipeline-status probe proved the token, its scope, the tenant and the installation,
+    so a 403 here can only be the ingest key."""
+    from . import v2_uploader
+
+    name = "v2_ingest_authorized"
+    outcome = v2_uploader.post_status(session, cfg, v2, _v2_probe_snapshot(v2))
+    code = outcome.status_code
+    if outcome.ok:
+        return CheckResult(name, True, "authorized: v2 ingest is enabled and the configured ingest key is active for this tenant")
+    if code == 401:
+        return CheckResult(name, False, "authentication_failed: the server rejected the API token (HTTP 401)")
+    if code == 403:
+        return CheckResult(
+            name, False,
+            "ingest_key_not_authorized: the configured v2.key_id is not an active ingest key of this tenant (HTTP 403)",
+        )
+    if code in (404, 405):
+        return CheckResult(
+            name, False,
+            f"v2_unavailable: the server has no v2 ingest route -- Contract v2 is not enabled there, or api_url is wrong (HTTP {code})",
+        )
+    if code == 422:
+        return CheckResult(name, False, "status_request_invalid: the server refused the v2 status request (HTTP 422)")
+    if code is None or code == 200 or code == 429 or 500 <= code <= 599:
+        seen = "no response" if code is None else f"HTTP {code}"
+        return CheckResult(name, False, f"server_unavailable: could not evaluate -- {seen}")
+    return CheckResult(name, False, f"unexpected_response: could not evaluate -- HTTP {code}")
+
+
+def run_v2_checks(cfg: CollectorConfig, config_path: str | Path, *, session, legacy_probe_passed: bool,
+                  store: SecretStore | None = None) -> list[CheckResult]:
+    """The six Contract v2 checks, always all six and always in V2_CHECK_NAMES order. `legacy_probe_passed` is whether
+    the /upload-pipeline-status probe's three checks all passed; `store` is injectable for tests only."""
+    from .v2_config import load_v2_config
+
+    def not_evaluated(names: tuple[str, ...], why: str) -> list[CheckResult]:
+        return [CheckResult(name, False, f"not_evaluated: {why}") for name in names]
+
+    try:
+        v2 = load_v2_config(config_path, require=True)
+    except ConfigError as exc:  # names the setting, never its value
+        return [CheckResult("v2_config_valid", False, f"config_invalid: {exc}"),
+                *not_evaluated(V2_CHECK_NAMES[1:], "the v2 configuration is invalid")]
+    if v2 is None:  # unreachable with require=True; keeps the type honest without an assert
+        return not_evaluated(V2_CHECK_NAMES, "the v2 configuration is missing")
+
+    results = [
+        CheckResult("v2_config_valid", True, "the v2 section loads (key_id, timezone and limits are valid)"),
+        _check_v2_sources(cfg),
+        _check_v2_data_dirs(v2),
+        _check_v2_secret(v2, store),
+        _check_v2_rules(v2),
+    ]
+    # The heartbeat this probe stores says "v2 preflight passed": it is not sent for an install that did not.
+    if not legacy_probe_passed:
+        results += not_evaluated(V2_CHECK_NAMES[-1:], "the /upload-pipeline-status probe did not pass")
+    elif not all(r.passed for r in results):
+        results += not_evaluated(V2_CHECK_NAMES[-1:], "a local v2 check failed")
+    else:
+        results.append(_check_v2_ingest(cfg, v2, session))
+    return results
+
+
 def _print_report(report: PreflightReport) -> None:
     print(f"SortView Collector preflight -- {report.generated_at}")
     print("=" * 78)
@@ -335,6 +540,10 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         cfg = load_config(args.config)
+        # After load_config, so a v1 config's own errors are reported exactly as before. Absent means "v1".
+        from .v2_config import read_contract_mode
+
+        mode = read_contract_mode(args.config)
     except ConfigError as exc:
         # 2 = config problem, matching collector/run.py's own exit-code
         # convention -- distinct from 1 (checks ran, something failed).
@@ -346,7 +555,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     config_loads_result = CheckResult("config_loads", True, f"loaded {args.config}")
-    report = run_preflight(cfg)
+    if mode == "v2":
+        session = uploader.build_session()  # one session for both server probes
+        report = run_preflight(cfg, session=session)
+        legacy_probe_passed = all(r.passed for r in report.results if r.name in _LEGACY_PROBE_CHECKS)
+        v2_results = run_v2_checks(cfg, args.config, session=session, legacy_probe_passed=legacy_probe_passed)
+        report = PreflightReport(results=[*report.results, *v2_results], generated_at=report.generated_at)
+    else:
+        report = run_preflight(cfg)
     report = PreflightReport(results=[config_loads_result, *report.results], generated_at=report.generated_at)
     _print_report(report)
 

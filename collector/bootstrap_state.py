@@ -55,15 +55,40 @@ this module -- an operator who believes state.json is genuinely wrong
 as its own deliberate action (see collector/state.py's own
 quarantine_corrupt_file for the pattern that already exists for a
 corrupt file specifically), never by re-running this command over it.
+
+CONTRACT V2 (`contract_mode: "v2"`): the same command seeds the v2 cursor
+instead -- `v2.state_path` (default <root>\\data\\v2\\state_v2.json), in
+the same collector/state.py document, at the same complete-line-safe
+offsets. Everything above is v1 and is unchanged; an absent
+`contract_mode` is still v1. The v2 path differs in four ways:
+
+  - it REFUSES (exit 3) when the v2 state file already exists, AND when
+    it does not but the legacy v1 state.json does. The second case is a
+    machine that has run v1: it may be an in-place v1-to-v2 conversion
+    that needs continuity from the v1 cursor, and seeding at end-of-file
+    would silently skip every record between that cursor and the end of
+    the file. This tool does not guess which it is. Neither file is
+    read, changed or removed;
+  - only the v2 source names (acs, checkins, rejects) are accepted --
+    the same rule a v2 run enforces (`unknown_source`);
+  - each source is identified again after it was read, and a source that
+    was replaced or shrank in the meantime fails the bootstrap;
+  - it writes nothing but the cursor: no patron cache, quarantine, status
+    file, rules or secret, and it opens no network session.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+from pathlib import Path
 
 from . import reader, state
 from .config import CollectorConfig, ConfigError, load_config
+
+# v2 only: a state file that makes a fresh initialization unsafe (or already done). v1 keeps exit 2 for its own refusal.
+EXIT_REFUSED = 3
 
 
 def _source_state_from_cursor(cursor: reader.SourceCursor) -> state.SourceState:
@@ -130,6 +155,103 @@ def bootstrap_state(cfg: CollectorConfig) -> state.CollectorState:
     return new_state
 
 
+class UnsafeStateError(BootstrapError):
+    """Contract v2 only: an existing state file makes a fresh v2 initialization unsafe or already done. `reason` is a
+    fixed code -- `v2_state_exists` or `legacy_state_exists` -- and there is no override, exactly as for v1."""
+
+    def __init__(self, reason: str, message: str):
+        super().__init__(message)
+        self.reason = reason
+
+
+def bootstrap_v2_state(cfg: CollectorConfig, v2_state_path: Path) -> state.CollectorState:
+    """Contract v2's bootstrap_state: seeds `v2_state_path` -- and nothing else -- with every source in `cfg` at its
+    current complete-line-safe offset, found by the same reader call as v1. See the module docstring's CONTRACT V2
+    section. The whole document is built in memory and written once, atomically: any failure leaves no state file.
+
+    Raises ConfigError for a source name v2 does not know, UnsafeStateError when the v2 state or a legacy v1 state
+    already exists, and BootstrapError for a missing, unreadable or changing source or a failed write."""
+    # v2 only: the v1 path never loads a v2 module.
+    from .v2_transform import SOURCE_ORDER
+
+    unknown = [source_cfg.name for source_cfg in cfg.sources if source_cfg.name not in SOURCE_ORDER]
+    if unknown:
+        raise ConfigError(
+            f"config 'sources' has name(s) Contract v2 does not recognize: {', '.join(unknown)} "
+            f"(recognized: {', '.join(SOURCE_ORDER)})"
+        )
+
+    if v2_state_path.exists():
+        raise UnsafeStateError(
+            "v2_state_exists",
+            f"v2 state file already exists: {v2_state_path}\n"
+            "Contract v2 has already been initialized on this install. There is no override: re-seeding at\n"
+            "end-of-file would overwrite the committed cursor and could skip unprocessed records.",
+        )
+    if cfg.state_path.exists():
+        raise UnsafeStateError(
+            "legacy_state_exists",
+            f"a legacy v1 state file exists ({cfg.state_path}) and no v2 state file does ({v2_state_path}).\n"
+            "v2 bootstrap will not infer whether this is a fresh install or a v1-to-v2 conversion: a conversion\n"
+            "may need continuity from the v1 cursor, and seeding at end-of-file would skip every record between\n"
+            "that cursor and the end of each file. Neither state file was changed. There is no override.",
+        )
+
+    new_state = state.empty_state()
+    for source_cfg in cfg.sources:
+        result = reader.read_new_lines(source_cfg.path, None)
+        if not result.existed:
+            raise BootstrapError(
+                f"source {source_cfg.name!r} not found or unreadable: {source_cfg.path} -- "
+                "refusing to seed a partial bootstrap. Fix the source path and retry."
+            )
+        # The offset is only meaningful for the file it was read from: one that was replaced (rotated) or shrank
+        # (truncated) while it was being read would be seeded with a cursor that belongs to something else.
+        try:
+            size_now = os.path.getsize(source_cfg.path)
+        except OSError:
+            size_now = -1
+        if reader.identify(source_cfg.path) != result.cursor.identity or size_now < result.cursor.offset:
+            raise BootstrapError(
+                f"source {source_cfg.name!r} was replaced or truncated while it was being read: {source_cfg.path} -- "
+                "refusing to seed. Nothing was written; retry."
+            )
+        new_state = state.with_source(new_state, source_cfg.name, _source_state_from_cursor(result.cursor))
+
+    try:
+        state.save_state(v2_state_path, new_state)
+    except OSError as exc:
+        raise BootstrapError(
+            f"could not write the v2 state file {v2_state_path} ({type(exc).__name__}) -- nothing was seeded."
+        ) from None
+    return new_state
+
+
+def _main_v2(cfg: CollectorConfig, config_path: str) -> int:
+    """`bootstrap` for a `contract_mode: "v2"` config. 0 seeded, 1 failed, 2 configuration, 3 refused (EXIT_REFUSED)."""
+    try:
+        from .v2_config import load_v2_config  # v2 only
+
+        v2 = load_v2_config(config_path, require=True)
+        if v2 is None:  # unreachable with require=True; keeps the type honest without an assert
+            return 2
+        new_state = bootstrap_v2_state(cfg, v2.state_path)
+    except ConfigError as exc:
+        print(f"Configuration error: {exc}", file=sys.stderr)
+        return 2
+    except UnsafeStateError as exc:
+        print(f"Refusing to bootstrap (reason={exc.reason}): {exc}", file=sys.stderr)
+        return EXIT_REFUSED
+    except BootstrapError as exc:
+        print(f"Bootstrap failed: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"Seeded v2 state at {v2.state_path}:")
+    for name, source_state in new_state.sources.items():
+        print(f"  {name}: offset={source_state.offset} identity={source_state.identity}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="SortView Collector -- production first-run bootstrap. Seeds "
@@ -142,9 +264,16 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         cfg = load_config(args.config)
+        # After load_config, so a v1 config's own errors are reported exactly as before. Absent means "v1".
+        from .v2_config import read_contract_mode
+
+        mode = read_contract_mode(args.config)
     except ConfigError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
+
+    if mode == "v2":
+        return _main_v2(cfg, args.config)
 
     try:
         new_state = bootstrap_state(cfg)

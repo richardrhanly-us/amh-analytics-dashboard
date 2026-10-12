@@ -160,6 +160,7 @@ def test_makes_no_network_call(tmp_path):
 
     original_request = requests.Session.request
     original_post = requests.post
+    original_post_batch, original_post_status = v2_uploader.post_batch, v2_uploader.post_status
     try:
         requests.Session.request = forbidden  # type: ignore[method-assign]
         requests.post = forbidden  # type: ignore[assignment]
@@ -170,6 +171,8 @@ def test_makes_no_network_call(tmp_path):
     finally:
         requests.Session.request = original_request  # type: ignore[method-assign]
         requests.post = original_post  # type: ignore[assignment]
+        v2_uploader.post_batch = original_post_batch  # type: ignore[assignment]
+        v2_uploader.post_status = original_post_status  # type: ignore[assignment]
 
 
 # --- requirement 5: the persistent v2 secret is never read -----------------------------------------------------------------

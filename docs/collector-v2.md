@@ -258,9 +258,12 @@ run reports.
   include Contract v2" (exit 2) rather than crashing -- that fallback is now a safety net, not the normal case. For the exact,
   release-tooling-only NBPL pilot preparation and dry-run acceptance procedure (build-time rules generation, `tools\prepare_v2_pilot.ps1`),
   see [collector-1.0.9-v2-pilot-runbook.md](collector-1.0.9-v2-pilot-runbook.md).
-* No historical replay. A future cutover bootstraps the v2 cursor from the v1 cursor.
+* No historical replay. A **fresh** v2 install starts at the end of each file (`bootstrap`, see *Fresh-install bootstrap and v2
+  preflight* below). An in-place **v1-to-v2 conversion** is different: it needs the v2 cursor carried over from the v1 cursor, there
+  is no tool for that yet, and `bootstrap` refuses such a machine rather than seed it at end-of-file.
 * Deferred: installer/release integration, `collector_installations` status linkage, retiring v1, dashboard reads. (Server-side key
-  enrollment exists -- see below -- but no released installer asks for it yet.)
+  enrollment exists, and the collector can bootstrap and preflight a v2 install -- see below -- but no released installer uses either
+  yet.)
 
 ## Server-enforced Contract v2 enrollment (onboarding stage A1)
 
@@ -312,3 +315,70 @@ yet, because no released installer can enroll on contract 2. Making it the norma
 runtime role -- no `UPDATE`, no `DELETE`); (2) deploy the API; (3) deploy Super Admin. The migration is safe against the previous API.
 `v2_cutovers` has no row level security, so that insert is scoped by the enrollment code path itself; database-level scoping is
 future hardening.
+
+## Fresh-install bootstrap and v2 preflight (onboarding stage A2)
+
+Two things the collector runtime can now do for a `contract_mode: "v2"` config. **They are runtime capabilities only: no installer
+calls them for v2 yet, and a fresh Contract v2 customer installation is not available.** Both are the existing commands; a config
+without `contract_mode` (or with `"v1"`) behaves exactly as before, and any other value is a configuration error (exit 2).
+
+### `bootstrap` -- the starting cursor
+
+```
+SortViewCollector.exe bootstrap --config <config.json>       # or: python -m collector.bootstrap_state --config <config.json>
+```
+
+Without it, a v2 install with no state reads every Tech Logic file from byte 0 and uploads its history. With `contract_mode: "v2"`,
+`bootstrap` writes `v2.state_path` (default `<root>\data\v2\state_v2.json`) with each configured source at its **line-safe end**: the
+byte after the last complete line, found by the same reader call the v1 bootstrap uses and equal to where a v2 run would stop. A
+half-written last record is not skipped; an empty file, or one with no complete line, is seeded at 0.
+
+* It writes the cursor and nothing else -- no patron cache, quarantine, status file, rules or secret -- parses no record and opens no
+  network connection. The document is built in memory and written once, atomically: a failure leaves no state file.
+* **It refuses, and changes nothing, when starting fresh is not safe:** when the v2 state file already exists, and when it does not
+  but the legacy v1 `state.json` does. The second is a machine that has run v1 -- possibly a v1-to-v2 conversion that needs the v1
+  cursor carried over -- and seeding it at end-of-file would silently skip every record between that cursor and the end of each
+  file. There is no override flag.
+* Source names must be `acs`, `checkins` or `rejects` (the rule a run enforces). Each configured source must exist and be readable,
+  and is checked again after it was read: one that was replaced or shrank in the meantime fails the bootstrap.
+
+| Exit | Meaning (v2) |
+| --- | --- |
+| `0` | seeded |
+| `1` | a source is missing, unreadable or changed while it was read, or the state file could not be written |
+| `2` | configuration: the config, the token, the `v2` section, or a source name |
+| `3` | refused: v2 state already exists (`reason=v2_state_exists`) or legacy v1 state exists (`reason=legacy_state_exists`) |
+
+The v1 bootstrap keeps its own codes (`2` for both a configuration error and an existing state file). A caller should rely on the
+exit code and on the state file itself, not on the wording of a message. Retrying is safe whenever no state file was written.
+
+### `preflight` -- v2 checks
+
+With `contract_mode: "v2"`, `preflight` runs every existing check and then six more, each calling the same code a scheduled v2 run
+does, so it fails where the run would:
+
+| Check | What it proves | Failure code (start of `detail`) |
+| --- | --- | --- |
+| `v2_config_valid` | the `v2` section loads: `key_id`, `timezone`, limits | `config_invalid` |
+| `v2_sources_recognized` | every source name is one v2 knows | `unknown_source` |
+| `v2_data_dirs_writable` | the folders of the v2 state, status, patron cache and quarantine | `not_writable` |
+| `v2_secret_usable` | the secret exists, its ACL is verified, this process can decrypt it, and it is bound to the config's `key_id` | `secret_missing`, `secret_exposed`, `secret_acl_unverified`, `secret_unreadable`, `secret_key_mismatch`, `secret_store_unavailable`, `secret_check_failed` (any other error) |
+| `v2_rules_valid` | the local rules file loads and validates | `rules_missing`, `rules_invalid`, `rules_check_failed` (any other error) |
+| `v2_ingest_authorized` | the server has v2 ingest enabled and the configured key is active for the token's tenant | `authentication_failed` (401), `ingest_key_not_authorized` (403), `v2_unavailable` (404/405), `status_request_invalid` (422), `server_unavailable` (429, 5xx, no response), `unexpected_response` (any other status) |
+
+A check that could not run because an earlier one failed reports `not_evaluated`. Exit codes are unchanged (`0` all passed, `1` a
+check failed, `2` the config did not load or names an unsupported contract), and `--output` still writes one `{name, passed, detail}`
+row per check: rely on `name`, `passed` and the code, not on the prose. Preflight never creates or replaces a secret, and prints
+neither the `key_id`, the secret, a rule nor a server response. It runs the same checks interactively and as SYSTEM
+(`tools\preflight-system.ps1`); because the secret's folder is Administrators + SYSTEM only, the interactive run must be elevated.
+
+**Two server probes.** `POST /upload-pipeline-status` is sent exactly as before: it is what moves a `collector_installations` row
+to `active` and stamps `installed_at` / `last_seen_at`, which `/v2/status` never touches. `POST /v2/status` follows only when that
+probe passed **and** every local v2 check passed. No event is uploaded.
+
+**The v2 probe writes a heartbeat.** `/v2/status` stores a full snapshot on the ingest key, and that snapshot is what the dashboard
+shows for a branch on Contract v2. When a run has already written `status_v2.json`, preflight re-sends that run's health, error
+class, last success, quarantine count and start time (the run and schedule diagnostics are omitted, so the server holds NULL for
+them until the next scheduled run). On a fresh install there is nothing to re-send, so it sends the smallest valid snapshot,
+`healthy`. **That heartbeat means "v2 preflight passed", not "a production run has happened":** a fresh install can show a healthy
+state before its task has run once. A neutral, non-reporting validation endpoint would remove this and is not built.
