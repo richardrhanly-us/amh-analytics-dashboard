@@ -107,6 +107,9 @@ CUSTOMER_ROUTES = {
     ("PUT", "/api/organizations/{org_slug}/settings/routing"),
     # R8K: a sorter site's Holds report (customer_api.holds_report_routes).
     ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/reports/holds"),
+    # R10E: an organization's SortView Value settings (customer_api.sortview_value_routes).
+    ("GET", "/api/organizations/{org_slug}/settings/sortview-value"),
+    ("PUT", "/api/organizations/{org_slug}/settings/sortview-value"),
 }
 
 _PROBE = """

@@ -1103,7 +1103,7 @@ def test_the_branch_routes_are_exactly_the_seven_operational_endpoints_the_six_r
                      "settings/efficiency", "settings/efficiency"]
 
 
-def test_the_customer_api_has_exactly_thirty_eight_routes_and_every_one_that_is_not_a_get_is_named_here():
+def test_the_customer_api_has_exactly_forty_routes_and_every_one_that_is_not_a_get_is_named_here():
     customer = sorted((method, route.path) for route in main.customer_router.routes for method in route.methods)
 
     # Reports R4 added three: the organization-level reports (customer_api.organization_report_routes).
@@ -1120,7 +1120,10 @@ def test_the_customer_api_has_exactly_thirty_eight_routes_and_every_one_that_is_
     # customer_api.routing_settings_routes. The PUT requires an allowed Origin
     # (tests/test_customer_api_routing_settings.py pins that).
     # R8K added one: a sorter site's Holds report (customer_api.holds_report_routes), a GET.
-    assert len(customer) == 38
+    # R10E added two: an organization's SortView Value settings, read (a GET) and replaced (a PUT), in
+    # customer_api.sortview_value_routes. The PUT requires an allowed Origin
+    # (tests/test_customer_api_sortview_value_settings.py pins that).
+    assert len(customer) == 40
     assert [path for method, path in customer if method == "POST"] == [
         "/api/account/change-password",
         "/api/auth/login",
@@ -1136,8 +1139,9 @@ def test_the_customer_api_has_exactly_thirty_eight_routes_and_every_one_that_is_
         "/api/organizations/{org_slug}/members/role",
         "/api/organizations/{org_slug}/settings/efficiency",
         "/api/organizations/{org_slug}/settings/routing",
+        "/api/organizations/{org_slug}/settings/sortview-value",
     ]
-    assert sum(1 for method, _ in customer if method == "GET") == 26
+    assert sum(1 for method, _ in customer if method == "GET") == 27
     assert ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/pipeline-status") in customer
 
 

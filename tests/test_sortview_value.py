@@ -1119,9 +1119,9 @@ def test_the_module_is_pure():
 def test_it_uses_efficiencys_own_checks_as_they_are_and_changes_nothing_of_efficiency():
     from services import efficiency_settings
 
-    assert sortview_value._decimal is efficiency_settings._decimal
-    assert sortview_value._date is efficiency_settings._date
-    assert sortview_value._DecimalField is efficiency_settings._DecimalField
+    assert sortview_value.parse_decimal_text is efficiency_settings.parse_decimal_text
+    assert sortview_value.parse_date_text is efficiency_settings.parse_date_text
+    assert sortview_value.DecimalField is efficiency_settings.DecimalField
     assert sortview_value.NOT_AN_OBJECT == "not_an_object" and sortview_value.UNKNOWN_FIELD == "unknown_field"
     # Efficiency's own limits are its own: a labor rate there still stops at 1,000.
     assert efficiency_settings._FIELDS["labor_rate"].maximum == 1000
