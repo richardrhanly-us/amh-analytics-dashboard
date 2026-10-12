@@ -40,7 +40,7 @@ export function formatDecimal(decimal: string): string {
 
 export type EfficiencyField = 'labor_rate' | 'manual_items_per_hour' | 'one_time_cost' | 'recurring_annual_cost' | 'in_service_date'
 
-interface DecimalRule {
+export interface DecimalRule {
   places: number
   /** The smallest and largest value, as whole numbers. `aboveMinimum`: the smallest itself is not allowed. */
   minimum: number
@@ -61,7 +61,7 @@ export type ProblemCode = 'not_a_decimal' | 'too_many_decimal_places' | 'out_of_
 
 const DECIMAL_TEXT = /^(0|[1-9][0-9]*)(?:\.([0-9]+))?$/
 
-function decimalProblem(text: string, rule: DecimalRule): ProblemCode | null {
+export function decimalProblem(text: string, rule: DecimalRule): ProblemCode | null {
   const match = text.length <= 32 ? DECIMAL_TEXT.exec(text) : null
   if (match === null) {
     return 'not_a_decimal'

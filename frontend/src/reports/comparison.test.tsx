@@ -25,6 +25,7 @@ import {
   serveApi,
 } from '../test/http.ts'
 import { renderApp } from '../test/render.tsx'
+import { valueRoutes, valueStore } from '../test/sortviewValue.ts'
 
 /**
  * Reports R10B: an Operations Overview set beside the period before it.
@@ -77,6 +78,7 @@ function serve(fixture: ReportFixture = STEP, history: number | null = null, ove
     ...reportRoutes('northbridge', 'central', fixture),
     ...organizationReportRoutes('northbridge', sorters),
     ...efficiencyRoutes('northbridge', 'central', efficiencyStore(), () => fetchMock),
+    ...valueRoutes('northbridge', valueStore(), () => fetchMock),
     ...overrides,
   })
   return fetchMock
@@ -654,12 +656,19 @@ describe('an organization’s Overview beside the previous period', () => {
   it('is not offered in the Value view, where the address keeps it', async () => {
     serve()
 
-    renderApp(`${ORG_VALUE}?compare=previous`)
+    renderApp(`${ORG_VALUE}?from=2026-09-29&to=2026-10-05&compare=previous`)
 
-    expect(await screen.findByText('SortView Value reporting will be available in a later stage.')).toBeInTheDocument()
+    // R10G: the SortView Value report covers no range, and has nothing to compare.
+    expect(await screen.findByRole('region', { name: 'SortView Value' })).toBeInTheDocument()
+    await waitFor(() => expect(main()).not.toHaveTextContent('Loading…'))
     expect(screen.queryByRole('button', { name: COMPARE })).not.toBeInTheDocument()
-    expect(query()).toBe('?compare=previous')
-    expect(reportRequests()).toEqual([])
+    expect(screen.queryByRole('group', { name: 'Comparison' })).not.toBeInTheDocument()
+    expect(changeLines()).toEqual([])
+    expect(main()).not.toHaveTextContent(/previous period|Compared with/i)
+    // Not this view's to use, and not this view's to throw away: the address keeps all of it.
+    expect(query()).toBe('?from=2026-09-29&to=2026-10-05&compare=previous')
+    // One request, with no range and no comparison in it.
+    expect(reportRequests()).toEqual(['sortview-value'])
   })
 })
 

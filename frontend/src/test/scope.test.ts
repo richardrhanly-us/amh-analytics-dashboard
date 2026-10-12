@@ -117,11 +117,17 @@ describe('scope of this block', () => {
       '/api/organizations/${segment(orgSlug)}/members',
       // The organization's three range reports, built in the one module that reads them.
       '/api/organizations/${segment(orgSlug)}/reports/${kind}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}',
+      // R10G: the organization's SortView Value report -- no range -- read by the one module that knows it
+      // (api/sortviewValue.ts).
+      '/api/organizations/${segment(orgSlug)}/reports/sortview-value',
       // An organization's Efficiency defaults, read and replaced by the one module that knows them (api/efficiency.ts).
       '/api/organizations/${segment(orgSlug)}/settings/efficiency',
       // R8H: an organization's routing, read and replaced by the one module that knows it (api/routingSettings.ts).
       '/api/organizations/${segment(orgSlug)}/settings/routing',
+      // R10G: the organization's SortView Value settings, read and replaced by that same module.
+      '/api/organizations/${segment(orgSlug)}/settings/sortview-value',
     ])
+    expect(offenders(/\/sortview-value[`'"]/)).toEqual(['../api/sortviewValue.ts'])
     expect(offenders(/\/settings\/routing[`'"]/)).toEqual(['../api/routingSettings.ts'])
     expect(offenders(/\/api\/organizations\/[^'"`]*\/members/)).toEqual(['../api/members.ts'])
     expect(offenders(/\/reports\/\$\{kind\}/).sort()).toEqual(['../api/organizationReports.ts', '../api/reports.ts'])
@@ -163,7 +169,8 @@ describe('scope of this block', () => {
   it('offers reports, a date range and Efficiency assumptions, and still no exports or administration', () => {
     // Dates are chosen in two places: the report range control, and a sorter's in-service date.
     expect(offenders(/type="date"/)).toEqual(['../reports/DateRangeControl.tsx'])
-    expect(offenders(/'date' : 'text'/)).toEqual(['../reports/EfficiencyAssumptionsPanel.tsx'])
+    // R10G: and the date a kind of work's SortView Value figures are as of.
+    expect(offenders(/'date' : 'text'/).sort()).toEqual(['../reports/EfficiencyAssumptionsPanel.tsx', '../reports/SortViewValueForm.tsx'])
     // R10C: a report table can be taken away as a CSV file. One module makes a file and hands it to the browser,
     // and nothing else in the app does -- no other download, no other kind of file, and no PDF made here at all.
     expect(offenders(/datetime-local|download=|text\/csv|Blob\(|createObjectURL|\.pdf/)).toEqual(['../reports/csv.ts'])
@@ -180,9 +187,13 @@ describe('scope of this block', () => {
       '../reports/OrganizationReportSections.tsx',
       '../reports/ReportSections.tsx',
     ])
-    expect(offenders(/<PrintButton/).sort()).toEqual(['../reports/OrganizationReports.tsx', '../reports/SorterReports.tsx'])
+    // R10G: and the SortView Value report, which is a report like the others and has no range to give a file's name.
+    expect(offenders(/<PrintButton/).sort()).toEqual(['../reports/OrganizationReports.tsx', '../reports/SortViewValue.tsx', '../reports/SorterReports.tsx'])
+    // It has no file to take away: nothing of SortView Value offers a CSV.
+    expect(shipped.filter(([path]) => /sortviewvalue/i.test(path)).filter(([, text]) => /CsvButton|downloadCsv|csv/i.test(text)).map(([path]) => path)).toEqual([])
     // R8E: one thing is chosen from a list -- a member's role -- on the one page that manages members.
-    expect(offenders(/<select/)).toEqual(['../members/MembersPage.tsx'])
+    // R10G: and one more -- whether a kind of work's SortView Value figures are an estimate or were measured.
+    expect(offenders(/<select/).sort()).toEqual(['../members/MembersPage.tsx', '../reports/SortViewValueForm.tsx'])
     expect(offenders(/\b(Historical|Export|Administration)\b(?! dashboard data)/)).toEqual([])
     // R8F: an organization's owners and admins have one area for its own configuration. Its name is written once,
     // in the one module that names the area and its sections; everything of it is under settings/.
@@ -251,11 +262,27 @@ describe('scope of this block', () => {
     // Efficiency is shown as an ESTIMATE under assumptions -- a manual-workload equivalent and a labor-value
     // equivalent -- and never as time or money anyone is known to have been spared. None of these words is in the
     // app, in any form a person could read:
+    // R10G: SortView Value is another report, about another thing, and three of those words are its own: an
+    // "Estimated ROI", a "Payback period", and a disclosure that says its figures are not "guaranteed cost savings".
+    // They are in the files that are SortView Value's and in no other -- Efficiency says none of them, as before.
+    const VALUE_SOURCES = ['../api/sortviewValue.ts', '../reports/SortViewValue.tsx', '../reports/sortviewValueText.ts']
     expect(
       offenders(
         /\bROI\b|return on investment|payback|break[- ]?even|hours saved|labor savings|payroll savings|budget savings|net savings|cost savings|\bFTEs?\b|staff[- ]time equivalent|labor value|measured productivity|staff productivity/i,
-      ),
-    ).toEqual([])
+      ).sort(),
+    ).toEqual(VALUE_SOURCES)
+    // And of them, only those three: no source of SortView Value claims time or money was saved, or anything else
+    // on that list.
+    const valueSources = shipped.filter(([path]) => /sortviewvalue/i.test(path)).map(([, text]) => text).join('\n')
+    expect(valueSources).not.toMatch(
+      /return on investment|break[- ]?even|hours saved|labor savings|payroll savings|budget savings|net savings|\bFTEs?\b|staff[- ]time equivalent|labor value|measured productivity|staff productivity|time saved|money saved/i,
+    )
+    expect(valueSources.match(/cost savings/gi)).toHaveLength(1)
+    expect(valueSources).toMatch(/do not represent guaranteed cost savings/)
+    expect(valueSources).toMatch(/Estimated ROI/)
+    expect(valueSources).toMatch(/Payback period/)
+    // Nothing of it is worked out in the browser: no source of it does arithmetic on a figure.
+    expect(valueSources).not.toMatch(/parseFloat|\bNumber\(|Math\.|toFixed|parseInt/)
     // The API also works out a net figure. Setting an estimate against a cost is not something this app shows yet:
     // the field is read and checked where it arrives (api/efficiency.ts) and appears nowhere a person reads.
     expect(offenders(/net operational value|net value/i)).toEqual([])
@@ -366,6 +393,10 @@ describe('how the dashboard is drawn', () => {
       '../members/MembersPage.tsx',
       // A report section's heading takes focus when its "Try again" succeeds and the button goes.
       '../reports/ReportSections.tsx',
+      // R10G: the SortView Value estimate's heading takes focus once a save has been stored and answered again...
+      '../reports/SortViewValue.tsx',
+      // ...and its form's summary of what went wrong takes focus when a save fails and no field is at fault.
+      '../reports/SortViewValueForm.tsx',
     ])
     expect(offenders(/<(div|span|p|li|td|th|tr|svg|rect|section)\b[^>]*\bon(Click|KeyDown|KeyUp|KeyPress)=/)).toEqual([])
     expect(offenders(/role="(button|link|tab|menuitem|checkbox|switch)"/)).toEqual([])

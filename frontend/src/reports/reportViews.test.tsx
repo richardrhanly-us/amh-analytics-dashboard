@@ -19,6 +19,7 @@ import {
   serveApi,
 } from '../test/http.ts'
 import { renderApp } from '../test/render.tsx'
+import { valueRoutes, valueStore } from '../test/sortviewValue.ts'
 
 /**
  * Reports R10A: a Reports page's views have addresses of their own --
@@ -55,6 +56,8 @@ function serve(role = 'admin', history: number | null = null, overrides: ApiRout
     ...reportRoutes('northbridge', 'central'),
     ...organizationReportRoutes('northbridge', sorters),
     ...efficiencyRoutes('northbridge', 'central', efficiencyStore(), () => fetchMock),
+    // R10G: the organization's SortView Value report, which covers no range.
+    ...valueRoutes('northbridge', valueStore(), () => fetchMock),
     ...overrides,
   })
   return fetchMock
@@ -69,7 +72,8 @@ const reportRequests = () =>
     .filter((url) => url.includes('/reports/'))
     .map((url) => url.split('/reports/')[1])
 /** The ranges reports were asked for, each once. */
-const rangesAsked = () => [...new Set(reportRequests().map((request) => request.split('?')[1]))]
+// (R10G: the SortView Value report is asked for with no range at all, and is not one of these.)
+const rangesAsked = () => [...new Set(reportRequests().filter((request) => request.includes('?')).map((request) => request.split('?')[1]))]
 const views = () => within(screen.getByRole('navigation', { name: 'Report views' }))
 const view = (name: string) => views().getByRole('link', { name })
 const preset = (name: string) => screen.getByRole('button', { name })
@@ -204,20 +208,25 @@ describe('an organization’s report views', () => {
     expect(reportRequests().sort()).toEqual(['overview', 'reliability', 'routing-network'].map((kind) => `${kind}?${DEFAULT_RANGE}`))
   })
 
-  it.each(['owner', 'admin'])('Value has an address and says it is not built yet: no figure, no form and nothing asked, for an %s', async (role) => {
+  it.each(['owner', 'admin'])('Value is the SortView Value report, under the same heading, with no range and one request, for an %s', async (role) => {
     serve(role)
 
     renderApp(`${ORG_REPORTS}/value`)
 
-    expect(await screen.findByText('SortView Value reporting will be available in a later stage.')).toHaveRole('note')
+    // R10G: what the report says is tested in SortViewValue.test.tsx. Here: where it is, and what it is not.
+    expect(await screen.findByRole('region', { name: 'SortView Value' })).toBeInTheDocument()
+    await waitFor(() => expect(main()).not.toHaveTextContent('Loading…'))
     expect(screen.getByRole('heading', { level: 3, name: 'Organization Reports' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 4, name: 'SortView Value' })).toBeInTheDocument()
     expect(view('Value')).toHaveAttribute('aria-current', 'page')
-    expect(screen.queryByRole('region')).not.toBeInTheDocument()
-    expect(screen.queryByRole('form')).not.toBeInTheDocument()
+    expect(main()).not.toHaveTextContent('later stage')
+    // It covers no range of days: there is no range to choose, and none is asked for.
     expect(screen.queryByRole('button', { name: 'Last 30 days' })).not.toBeInTheDocument()
-    expect(main()).not.toHaveTextContent(/\$|\d+(\.\d+)?%|ROI|payback|hours/i)
-    // The organization itself, and nothing else: no report, no settings, not even the product's day.
-    expect(requestedUrls(fetchMock).filter((url) => url.startsWith('/api/organizations/northbridge/'))).toEqual([])
+    expect(screen.queryByLabelText('From')).not.toBeInTheDocument()
+    // The report, and nothing else of the organization: no settings until they are opened, no sorter, no product day.
+    expect(requestedUrls(fetchMock).filter((url) => url.startsWith('/api/organizations/northbridge/'))).toEqual([
+      '/api/organizations/northbridge/reports/sortview-value',
+    ])
   })
 
   it.each(['manager', 'viewer', ''])('Value is not offered to a member with the role %j, who is told so at its address', async (role) => {
@@ -351,7 +360,7 @@ describe('the range in the address', () => {
     await organizationOperations()
 
     await person.click(view('Value'))
-    expect(await screen.findByText('SortView Value reporting will be available in a later stage.')).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: 'SortView Value' })).toBeInTheDocument()
     expect(address()).toBe(`${ORG_REPORTS}/value`)
     expect(query()).toBe(`?${WEEK}`)
 

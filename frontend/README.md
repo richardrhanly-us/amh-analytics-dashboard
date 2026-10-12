@@ -104,7 +104,7 @@ with an address:
 | `/organizations/:org/sorters/:sorter/reports/operations` | A sorter's operational reports |
 | `/organizations/:org/sorters/:sorter/reports/efficiency` | A sorter's Efficiency report (owners and admins) |
 | `/organizations/:org/reports/operations` | The organization's reports: every sorter together |
-| `/organizations/:org/reports/value` | SortView Value (owners and admins). Not built yet: the page says so and reads nothing. |
+| `/organizations/:org/reports/value` | SortView Value: the organization's estimate (owners and admins) |
 
 `.../reports` on its own redirects to `.../reports/operations`, keeping its
 query. A view that is for owners and admins is not offered to anyone else, and
@@ -184,7 +184,8 @@ API is not involved.
 
 - **Download CSV**, beside every table of the Operations views -- each chart's
   table, and the destination, bin-by-hour, reject-reason, sorter-comparison and
-  routing tables. Not for cards, notes, the Efficiency view or the Value view.
+  routing tables. Not for cards, notes, the Efficiency view or the Value view
+  (SortView Value has no CSV at all).
   The file is made in the browser from the report already loaded
   (`src/reports/csv.ts`, the only module that makes a file); nothing is asked
   of the API. Its cells are values, not the page's wording: a date is
@@ -196,7 +197,7 @@ API is not involved.
   left a number. The file is UTF-8 with a byte order mark, lines ended CRLF,
   named for the organization, the sorter where it is one sorter's, the table
   and the range: `northbridge_central_daily-check-ins_2026-09-06_to_2026-10-05.csv`.
-- **Print report**, on the Operations and Efficiency views: the browser's own
+- **Print report**, on the Operations, Efficiency and Value views: the browser's own
   Print, which is also how a report is saved as a PDF. No PDF is made by the
   app. The print styles (the one `@media print` block in `src/index.css`) apply
   to report pages only -- every rule is under `.app:has(.report-view)`, and
@@ -206,6 +207,55 @@ API is not involved.
   the range and comparison controls, every button -- and leave the headings,
   the range, the figures and, when it is on, the comparison. Each chart's
   table is put on the page while it prints (`src/reports/usePrinting.ts`).
+  On the Value view the "Edit assumptions" panel (`.value-edit-panel`) is
+  left off too, open or not: the saved assumptions are in the report itself.
+
+**SortView Value** (`/organizations/:org/reports/value`, owners and admins)
+is an ESTIMATE, apart from everything above: it is not counted from a sorter's
+events. It sets what the organization's reporting and troubleshooting work
+takes now beside what it took before SortView, values the difference at a
+labor rate, and sets that beside the subscription's annual cost -- all from
+assumptions the organization enters itself. The page says so in these words:
+"SortView Value figures are estimates based on workflow assumptions entered by
+your organization. They are intended for planning and evaluation and do not
+represent guaranteed cost savings."
+
+- **Read from** `GET /api/organizations/:org/reports/sortview-value`, once, on
+  arrival (`src/api/sortviewValue.ts`, the only module that knows the
+  addresses; `src/reports/useSortViewValue.ts`). It covers no range of days:
+  there is no range control, no comparison and no CSV, and `from`, `to` and
+  `compare` in the address are neither used nor removed, so they are still
+  there for the Operations view.
+- **Every figure is the API's, as text.** Nothing is added, multiplied or
+  rounded in the browser, and no figure is turned into a JavaScript number
+  (`src/reports/sortviewValueText.ts`). A figure the API could not work out is
+  "Not available" with the reason under it, never 0, and what is not set is
+  listed once above the figures. A figure below zero is written as it is, with
+  its minus sign and no colour; a kind of work that takes longer now says
+  "Current time is higher than the baseline for this work."
+- **What it shows**: seven cards (recovered hours per month, monthly and
+  annual estimated value, subscription annual cost, net estimated annual
+  value, estimated ROI, payback period), a table by kind of work, and the
+  assumptions used -- including whose the labor rate is (SortView Value's own,
+  or the organization's Efficiency default) and whether each kind of work's
+  figures are an estimate or measured, and as of when.
+- **Edit assumptions** opens one form on the page
+  (`src/reports/SortViewValueForm.tsx`). The stored settings are read only
+  then (`GET /api/organizations/:org/settings/sortview-value`). Saving sends
+  the whole block (`PUT` to the same address), each value exactly as typed or
+  `null` for a blank; the form then shows what the API stored, the report is
+  asked for again, and focus moves to the "Estimated value" heading. The form
+  checks each field against the API's own limits first, keeps what was typed,
+  says what is wrong beside the field and in a list above, and moves focus to
+  the first field at fault; what the API refuses (`422`, by field and code) is
+  shown the same way. The Save button is never disabled.
+- **A suspended organization** can read the report and its stored assumptions
+  ("View assumptions") and is offered nothing to change them with.
+- **Anyone else** who opens the address is told it is for owners and
+  administrators, and the API is not asked. A `403` from the API after all
+  shows the same sentence and nothing of the report. Stored settings the API
+  cannot read (`500 sortview_value_settings_invalid`) are said to be so, and
+  the form is still offered, empty, so that saving repairs them.
 
 **The arithmetic.** The API returns whole-number counts only. Every rate and
 average is worked out in one place, `src/reports/derive.ts`, from totals: a
