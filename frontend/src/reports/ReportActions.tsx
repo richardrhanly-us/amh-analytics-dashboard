@@ -39,11 +39,15 @@ export function CsvButton({ dataset, table, inline = false }: { dataset: string;
  * Prints the report view that is open, by the browser's own Print -- which is
  * also how it is saved as a PDF. Shown only where the organization's plan
  * includes exports. The page's print styles decide what goes on paper.
+ *
+ * Whether the plan includes exports comes from the report it is in
+ * (ReportExportsContext) -- or, for a report that covers no range of days and
+ * so has no such context, from `enabled`, which the page passes itself.
  */
-export function PrintButton() {
+export function PrintButton({ enabled }: { enabled?: boolean } = {}) {
   const exports = useContext(ReportExportsContext)
 
-  if (exports === null || !exports.enabled) {
+  if (!(enabled ?? exports?.enabled === true)) {
     return null
   }
   return (

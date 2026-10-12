@@ -5,6 +5,7 @@ import { Breadcrumb } from '../components/Breadcrumb.tsx'
 import { PageHeading } from '../components/PageHeading.tsx'
 import { OrganizationReports } from '../reports/OrganizationReports.tsx'
 import { ReportNav } from '../reports/ReportNav.tsx'
+import { SortViewValue } from '../reports/SortViewValue.tsx'
 import { ORGANIZATIONS_PATH, organizationPath, organizationReportViewPath, type OrganizationReportView } from '../router/paths.ts'
 import { canManageOrganization } from '../settings/settingsText.ts'
 
@@ -16,10 +17,11 @@ import { canManageOrganization } from '../settings/settingsText.ts'
  * together, and side by side. It belongs to the organization, not to any one
  * sorter; a sorter's own reports are under that sorter.
  *
- * Value is where SortView Value will be reported. NOT BUILT YET: it has an
- * address and says so, and nothing is read, worked out or asked of the API
- * for it. It is for the organization's owners and admins: nobody else is
- * offered it, and someone else who opens its address is told so.
+ * Value is the organization's SortView Value report (reports/SortViewValue):
+ * an estimate from assumptions the organization entered, with no range of
+ * days. It is for the organization's owners and admins: nobody else is
+ * offered it, and someone else who opens its address is told so and nothing
+ * is asked of the API on their behalf.
  */
 export function OrganizationReportsPage({ view }: { view: OrganizationReportView }) {
   const organization = useOutletContext<OrganizationDetail>()
@@ -53,11 +55,14 @@ export function OrganizationReportsPage({ view }: { view: OrganizationReportView
     return (
       <>
         {header}
-        <p className="notice" role="note">
-          {value
-            ? 'SortView Value reporting will be available in a later stage.'
-            : 'SortView Value is available to this organization’s owners and administrators.'}
-        </p>
+        {value ? (
+          // Keyed by organization, so another organization starts as a new report, with nothing carried over.
+          <SortViewValue key={organization.slug} organization={organization} />
+        ) : (
+          <p className="notice" role="note">
+            SortView Value is available to this organization&rsquo;s owners and administrators.
+          </p>
+        )}
       </>
     )
   }

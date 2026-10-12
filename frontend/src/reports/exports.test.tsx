@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -21,6 +21,7 @@ import {
   serveApi,
 } from '../test/http.ts'
 import { renderApp } from '../test/render.tsx'
+import { valueRoutes, valueStore } from '../test/sortviewValue.ts'
 import { REVOKE_AFTER_MS } from './csv.ts'
 
 /**
@@ -78,6 +79,7 @@ function serve(entitlements: Record<string, FeatureEntitlement> = WITH_EXPORTS, 
     ...reportRoutes('northbridge', 'central', BUSY),
     ...organizationReportRoutes('northbridge', sorters),
     ...efficiencyRoutes('northbridge', 'central', efficiencyStore(), () => fetchMock),
+    ...valueRoutes('northbridge', valueStore(), () => fetchMock),
   })
   return fetchMock
 }
@@ -206,14 +208,26 @@ describe('what a plan with exports offers', () => {
     expect(csvButtons()).toEqual([])
   })
 
-  it.each([
-    ['the Value view', ORG_VALUE, 'SortView Value reporting will be available in a later stage.'],
-    ['Live Today', SORTER, 'Check-ins today'],
-  ])('%s offers neither', async (_label, path, landmark) => {
+  it('the Value view can be printed, and has no CSV', async () => {
+    // R10G: a report like the others, with nothing counted in it to take away as a file.
+    serve()
+    const person = user()
+
+    renderApp(ORG_VALUE)
+    await shown('SortView Value')
+
+    expect(printButton()).toBeInTheDocument()
+    expect(csvButtons()).toEqual([])
+    expect(screen.queryByRole('button', { name: /CSV/ })).not.toBeInTheDocument()
+    await person.click(printButton() as HTMLElement)
+    expect(print).toHaveBeenCalledTimes(1)
+  })
+
+  it('Live Today offers neither', async () => {
     serve()
 
-    renderApp(path)
-    await screen.findByText(landmark)
+    renderApp(SORTER)
+    await screen.findByText('Check-ins today')
 
     expect(csvButtons()).toEqual([])
     expect(printButton()).not.toBeInTheDocument()
@@ -249,6 +263,17 @@ describe('a plan without exports', () => {
     renderApp(SORTER_EFFICIENCY)
     await shown('Efficiency')
     expect(printButton()).not.toBeInTheDocument()
+  })
+
+  it('offers no Print report on the Value view either', async () => {
+    serve({ transits: on(), history_days: on() })
+
+    renderApp(ORG_VALUE)
+    await shown('SortView Value')
+
+    expect(printButton()).not.toBeInTheDocument()
+    expect(csvButtons()).toEqual([])
+    expect(main()).not.toHaveTextContent(/Download CSV|Print report/)
   })
 
   it('is about the plan, not the person: every role is offered them when the plan has exports', async () => {
@@ -654,9 +679,57 @@ describe('the page a report is printed from', () => {
     serve()
 
     renderApp(ORG_VALUE)
-    await screen.findByText('SortView Value reporting will be available in a later stage.')
+    await shown('SortView Value')
 
     expect(boundary()).toHaveLength(1)
+  })
+
+  it('the Value view’s edit panel is one marked boundary, with everything for editing inside it and the report outside', async () => {
+    serve()
+    renderApp(ORG_VALUE)
+    await shown('SortView Value')
+    const edit = () => document.querySelectorAll('.value-edit-panel')
+    const report = screen.getByRole('region', { name: 'SortView Value' })
+
+    // There before it is opened, once, inside the report page the print styles are scoped to.
+    expect(edit()).toHaveLength(1)
+    expect(edit()[0].closest('.app')?.querySelector('.report-view')).not.toBeNull()
+    expect(edit()[0]).toContainElement(screen.getByRole('button', { name: 'Edit assumptions' }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit assumptions' }))
+    const form = await screen.findByRole('form', { name: 'Assumptions' })
+    fireEvent.change(within(form).getByLabelText('Reporting tasks per month'), { target: { value: 'abc' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Save assumptions' }))
+    const failure = await within(form).findByRole('alert')
+
+    // Open, and with a save refused: the form, every field and its help, and what went wrong are all inside it...
+    expect(edit()).toHaveLength(1)
+    expect(edit()[0]).toContainElement(form)
+    expect(edit()[0]).toContainElement(failure)
+    for (const inside of report.querySelectorAll('input, select, .field-help, .field-problem, [role="alert"], [role="status"]')) {
+      expect(edit()[0]).toContainElement(inside as HTMLElement)
+    }
+    // ...and on screen it is all still there to be used.
+    expect(form).toBeVisible()
+    expect(failure).toBeVisible()
+    // What is read, not edited, is outside it: the disclosure, the cards, both tables.
+    expect(edit()[0]).not.toContainElement(within(report).getByRole('table', { name: 'Assumptions used' }))
+    expect(edit()[0]).not.toContainElement(within(report).getByRole('table', { name: 'By kind of work' }))
+    expect(edit()[0]).not.toContainElement(within(report).getByText('Estimated ROI'))
+    expect(edit()[0]).not.toContainElement(within(report).getByText(/^SortView Value figures are estimates/))
+    expect(edit()[0]).not.toContainElement(within(report).getByRole('heading', { name: 'Estimated value' }))
+  })
+
+  it('a sorter’s Efficiency has no such boundary: its settings panel prints as it did', async () => {
+    serve()
+    renderApp(SORTER_EFFICIENCY)
+    await shown('Efficiency')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Efficiency settings' }))
+    await screen.findAllByRole('form')
+
+    expect(document.querySelectorAll('.assumptions-panel')).toHaveLength(1)
+    expect(document.querySelectorAll('.value-edit-panel')).toHaveLength(0)
   })
 
   it.each([
@@ -728,8 +801,18 @@ describe('the print styles', () => {
   })
 
   it('take off a report what is there to be pressed, not read -- and only off a report', () => {
-    expect(hiding).toHaveLength(1)
+    // R10G: and one thing more, off the Value view alone -- its panel for editing assumptions (below).
+    expect(hiding).toHaveLength(2)
     expect(hiding[0].selector).toBe(`${SCOPE} :is(.app-header, .view-nav, .range-control, .table-actions, .report-actions, button)`)
+  })
+
+  it('take SortView Value’s edit panel off the paper, and nothing of Efficiency’s', () => {
+    expect(hiding[1].selector).toBe(`${SCOPE} .value-edit-panel`)
+    expect(hiding[1].declarations).toMatch(/display:\s*none\s*!important/)
+    // The class the two panels share, and everything of Efficiency's, is in no print rule: it prints as it did.
+    expect(printBlock).not.toMatch(/assumptions-(panel|form|forms|actions|saved)|efficiency/i)
+    // And on screen nothing hides the panel: the class is in the print block and nowhere else in the stylesheet.
+    expect(styles.slice(0, styles.indexOf('@media print')).replace(/\/\*[\s\S]*?\*\//g, '')).not.toContain('value-edit-panel')
   })
 
   it('leave on a report what says which report it is and what range it is for', () => {
