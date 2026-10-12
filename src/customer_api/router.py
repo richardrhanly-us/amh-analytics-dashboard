@@ -22,6 +22,9 @@ from customer_api.organization_report_routes import create_organization_report_r
 from customer_api.organization_routes import create_organization_router
 from customer_api.report_routes import create_report_router
 from customer_api.routing_settings_routes import create_routing_settings_router
+from customer_api.sortview_value_report_routes import (
+    create_sortview_value_report_router,
+)
 from customer_api.sortview_value_routes import create_sortview_value_router
 
 API_PREFIX = "/api"
@@ -46,4 +49,5 @@ def create_customer_router(limiter: Limiter) -> APIRouter:
     router.include_router(create_member_router())
     router.include_router(create_routing_settings_router())
     router.include_router(create_sortview_value_router())
+    router.include_router(create_sortview_value_report_router())
     return router

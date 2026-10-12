@@ -110,6 +110,8 @@ CUSTOMER_ROUTES = {
     # R10E: an organization's SortView Value settings (customer_api.sortview_value_routes).
     ("GET", "/api/organizations/{org_slug}/settings/sortview-value"),
     ("PUT", "/api/organizations/{org_slug}/settings/sortview-value"),
+    # R10F: an organization's SortView Value report (customer_api.sortview_value_report_routes).
+    ("GET", "/api/organizations/{org_slug}/reports/sortview-value"),
 }
 
 _PROBE = """

@@ -132,7 +132,12 @@ def _invalid(problems: tuple[SortViewValueProblem, ...]) -> Response:
     )
 
 
-def _body(org_slug: str, stored: StoredSortViewValue) -> Response:
+def sortview_value_view(org_slug: str, stored: StoredSortViewValue) -> SortViewValue:
+    """What an organization has entered and which labor rate applies, as
+    these routes answer it. The one reading of the stored settings for an
+    answer: the SortView Value report (customer_api
+    .sortview_value_report_routes) shows its assumptions by this same
+    function, so the two can never say different things."""
     if stored.efficiency_unreadable:
         # Not this route's fault to report, and not a reason to refuse the settings: there is no rate to fall back on.
         logger.warning("Stored efficiency settings are malformed; no fallback labor rate | org=%s", org_slug)
@@ -142,21 +147,23 @@ def _body(org_slug: str, stored: StoredSortViewValue) -> Response:
     resolved = resolve_labor_rate(stored.settings, stored.organization_efficiency)
     own_rate = block.get("labor_rate")
 
-    body = SortViewValueSettingsResponse(
-        sortview_value=SortViewValue(
-            labor_rate=ValueLaborRate(
-                sortview_value=own_rate,
-                organization_efficiency=efficiency_rate,
-                effective=None if resolved is None else {"sortview_value": own_rate, "organization_efficiency": efficiency_rate}[resolved.source],
-                source=None if resolved is None else resolved.source,
-            ),
-            subscription_annual_cost=block.get("subscription_annual_cost"),
-            reporting=ReportingSettings(**{name: block.get(REPORTING, {}).get(name) for name in ReportingSettings.model_fields}),
-            troubleshooting=TroubleshootingSettings(
-                **{name: block.get(TROUBLESHOOTING, {}).get(name) for name in TroubleshootingSettings.model_fields}
-            ),
-        )
+    return SortViewValue(
+        labor_rate=ValueLaborRate(
+            sortview_value=own_rate,
+            organization_efficiency=efficiency_rate,
+            effective=None if resolved is None else {"sortview_value": own_rate, "organization_efficiency": efficiency_rate}[resolved.source],
+            source=None if resolved is None else resolved.source,
+        ),
+        subscription_annual_cost=block.get("subscription_annual_cost"),
+        reporting=ReportingSettings(**{name: block.get(REPORTING, {}).get(name) for name in ReportingSettings.model_fields}),
+        troubleshooting=TroubleshootingSettings(
+            **{name: block.get(TROUBLESHOOTING, {}).get(name) for name in TroubleshootingSettings.model_fields}
+        ),
     )
+
+
+def _body(org_slug: str, stored: StoredSortViewValue) -> Response:
+    body = SortViewValueSettingsResponse(sortview_value=sortview_value_view(org_slug, stored))
     return JSONResponse(content=body.model_dump(mode="json"), headers=NO_STORE_HEADERS)
 
 

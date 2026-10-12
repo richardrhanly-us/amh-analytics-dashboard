@@ -1200,11 +1200,24 @@ def _range_of(days: int, *, ending: str = "2026-06-20") -> dict:
     return {"from": (end - timedelta(days=days - 1)).isoformat(), "to": end.isoformat()}
 
 
+# R10F: the one report of an organization that is not counted from its sorters' events, and so covers no range of
+# days: SortView Value, worked out from stored settings (customer_api.sortview_value_report_routes, and
+# tests/test_customer_api_sortview_value_report.py). Every other route under this prefix is a range report.
+VALUE_REPORT = "/api/organizations/{org_slug}/reports/sortview-value"
+
+
 def test_the_range_dependency_is_the_sorter_site_reports_own():
+    ranged = 0
     for route in main.app.routes:
         if getattr(route, "path", "").startswith("/api/organizations/{org_slug}/reports/"):
             calls = [dependency.call for dependency in get_flat_dependant(route.dependant).dependencies]
+            if route.path == VALUE_REPORT:
+                # Named, not skipped: it has no range, and must not quietly acquire one.
+                assert report_routes.require_report_range not in calls
+                continue
             assert report_routes.require_report_range in calls, route.path
+            ranged += 1
+    assert ranged == 3
     assert organization_report_routes.Range is report_routes.Range
     for word in ("validate_report_range", "MAX_REPORT_RANGE_DAYS", "datetime", "product_timezone", "local_range("):
         assert word not in inspect.getsource(organization_report_routes), word
@@ -1396,10 +1409,19 @@ def test_the_organization_report_routes_are_exactly_these_three_and_are_read_onl
         if getattr(route, "path", "").startswith("/api/organizations/{org_slug}/reports/")
     )
 
+    # The three range reports, which are this module's -- and, since R10F, one more address under the same prefix
+    # that is not a range report and not this module's: the SortView Value report. Nothing else, and nothing writes.
     assert routes == [
         ("/api/organizations/{org_slug}/reports/overview", ["GET"]),
         ("/api/organizations/{org_slug}/reports/reliability", ["GET"]),
         ("/api/organizations/{org_slug}/reports/routing-network", ["GET"]),
+        (VALUE_REPORT, ["GET"]),
+    ]
+    module_routes = sorted(route.path for route in organization_report_routes.create_organization_report_router().routes)
+    assert module_routes == [
+        "/organizations/{org_slug}/reports/overview",
+        "/organizations/{org_slug}/reports/reliability",
+        "/organizations/{org_slug}/reports/routing-network",
     ]
 
 
