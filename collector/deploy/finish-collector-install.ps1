@@ -62,6 +62,23 @@
     but invalid or incomplete -> refused. state.json is never deleted or
     overwritten, and bootstrap is never forced.
 
+    CONTRACT V2 (a config with `contract_mode: "v2"`; a legacy config takes
+    exactly the steps above, unchanged). Two things differ, and nothing is
+    validated here that the Collector does not validate itself:
+      - Step 1b, after the token: the local HMAC secret. `v2-key check` is
+        asked first. If it passes the secret is reused; if there is no secret
+        file `v2-key init` creates one ON THIS MACHINE (never sent, never
+        shown) and it is checked again; if a secret file exists but the check
+        fails it is NEVER overwritten -- the script stops (exit 2).
+      - Step 4 is about the v2 cursor: `v2.state_path` if the config sets it,
+        otherwise <root>\data\v2\state_v2.json. The legacy state.json is not
+        inspected, verified or created. Bootstrap's exit code 3 (a state file
+        already on this machine makes a fresh v2 start unsafe) stops the
+        script (exit 2); a valid v2 state file from an earlier run of this
+        script skips bootstrap, exactly as a valid state.json does for v1.
+    Both preflights are the Collector's own v2-aware preflight; this script
+    adds no check of its own to them.
+
     TASK: register-task.ps1 reports "already exists" with a bare return
     (no exit code), so the task is verified afterwards: it must exist, be
     Disabled, and run this install's executable against this config.
@@ -285,6 +302,52 @@ function Get-FinishStateProblems {
     return $problems
 }
 
+function Get-FinishContractMode {
+    # The contract the installed config selects, by the Collector's own rule
+    # (collector/v2_config.py::read_contract_mode): an absent `contract_mode`
+    # is "v1"; "v1" and "v2" are themselves; anything else is $null (invalid).
+    param($Config)
+    $property = $Config.PSObject.Properties["contract_mode"]
+    if ($null -eq $property) { return "v1" }
+    if ($property.Value -is [string] -and @("v1", "v2") -ccontains $property.Value) { return [string]$property.Value }
+    return $null
+}
+
+function Get-FinishV2Paths {
+    # Where a Contract v2 Collector keeps its cursor and its secret, by the
+    # Collector's own rule (collector/v2_config.py::load_v2_config): an explicit
+    # `v2.state_path` / `v2.secret_path` if the config has one, otherwise
+    # <root>\data\v2\state_v2.json and <root>\secrets\v2_key.dpapi, where <root>
+    # is two levels above the config's `state_path`. String logic only.
+    param($Config)
+    # (.NET path functions, not Split-Path/Join-Path: those need the drive to exist, and this is string logic.)
+    $root = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetDirectoryName([string]$Config.state_path))
+    $statePath = [System.IO.Path]::Combine($root, "data\v2\state_v2.json")
+    $secretPath = [System.IO.Path]::Combine($root, "secrets\v2_key.dpapi")
+    $section = $Config.PSObject.Properties["v2"]
+    if ($null -ne $section -and $section.Value -is [System.Management.Automation.PSCustomObject]) {
+        $explicitState = $section.Value.PSObject.Properties["state_path"]
+        if ($null -ne $explicitState -and -not [string]::IsNullOrWhiteSpace([string]$explicitState.Value)) { $statePath = [string]$explicitState.Value }
+        $explicitSecret = $section.Value.PSObject.Properties["secret_path"]
+        if ($null -ne $explicitSecret -and -not [string]::IsNullOrWhiteSpace([string]$explicitSecret.Value)) { $secretPath = [string]$explicitSecret.Value }
+    }
+    return [pscustomobject]@{ StatePath = $statePath; SecretPath = $secretPath }
+}
+
+function Get-V2SecretStepAction {
+    # What the Contract v2 secret step does, from the Collector's own
+    # `v2-key check` (0 = present, bound to the config's key_id, ACL verified)
+    # and whether a secret file is there at all.
+    #   UseExisting -> the check passed: the secret is reused, never recreated
+    #   Create      -> no secret file: `v2-key init` creates one, then it is checked
+    #   Refuse      -> a secret file exists but the check failed (another key_id,
+    #                  damaged, or an ACL that is not verified): never overwritten
+    param([int]$CheckExitCode, [bool]$SecretFilePresent)
+    if ($CheckExitCode -eq 0) { return "UseExisting" }
+    if ($SecretFilePresent) { return "Refuse" }
+    return "Create"
+}
+
 function Get-ExistingTaskDecision {
     # Decides what an existing task means for a FIRST install. $TaskState is
     # empty/null when no task exists. $Actions are the task's action objects
@@ -400,6 +463,22 @@ if ($configProblems.Count -gt 0) {
 $SourceNames = @($config.sources | ForEach-Object { [string]$_.name })
 $StatePath = [string]$config.state_path
 
+# Which contract this install runs on decides which cursor file step 4 is about, and whether there is a
+# local secret to create (Contract v2 only). A legacy config takes exactly the path it always has.
+$ContractMode = Get-FinishContractMode -Config $config
+if ($null -eq $ContractMode) {
+    Stop-Setup -Step "step 0 (checks)" -Problem "'contract_mode' in '$ConfigPath' must be `"v1`" or `"v2`" (or absent)." `
+        -Unchanged "nothing was touched" -Fix "Correct the config file, or regenerate it by re-running install.ps1 from this bundle." -ExitCode 1
+}
+$IsV2 = ($ContractMode -eq "v2")
+$LegacyStatePath = $StatePath
+$V2SecretPath = $null
+if ($IsV2) {
+    $v2Paths = Get-FinishV2Paths -Config $config
+    $StatePath = $v2Paths.StatePath     # the v2 cursor; the legacy state.json is never created for a v2 install
+    $V2SecretPath = $v2Paths.SecretPath
+}
+
 # Read-only lookup of the Scheduled Task. Failing to look it up is "cannot
 # prove it is safe", so it is refused rather than assumed absent.
 $existingTask = $null
@@ -485,6 +564,41 @@ if ($storedTokenCheck -ne 0) {
 }
 Write-Host "  OK: token stored in api_token.dpapi (DPAPI, Administrators + SYSTEM only)." -ForegroundColor Green
 
+# === STEP 1b (Contract v2 only): the local HMAC secret ===================
+# Generated ON THIS MACHINE by the Collector itself (`v2-key init`: 32 random bytes, DPAPI machine scope,
+# bound to the config's key_id, in the Administrators + SYSTEM only secrets folder). It is never sent
+# anywhere and never shown; this script never sees it. An existing secret is reused if the Collector's own
+# check accepts it, and is NEVER overwritten if it does not.
+$secretCreatedNow = $false
+if ($IsV2) {
+    Write-Host ""
+    Write-Host "=== Step 1b: Contract v2 secret ===" -ForegroundColor Cyan
+    & $ExePath v2-key check --config $ConfigPath | Out-Host
+    $secretAction = Get-V2SecretStepAction -CheckExitCode $LASTEXITCODE -SecretFilePresent (Test-Path -LiteralPath $V2SecretPath)
+    if ($secretAction -eq "Refuse") {
+        Stop-Setup -Step "step 1b (Contract v2 secret)" -Problem "A Contract v2 secret already exists at '$V2SecretPath' but the Collector cannot use it for this installation (reason above). It is never overwritten." `
+            -Unchanged "the existing secret; no preflight, bootstrap, or Scheduled Task step was run" `
+            -Fix "Do not delete it blindly: it may belong to another installation of this machine. Contact SortView support." -ExitCode 2
+    }
+    if ($secretAction -eq "Create") {
+        Write-Host "No Contract v2 secret yet (the line above is expected on a first install) -- creating one on this machine."
+        & $ExePath v2-key init --config $ConfigPath | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            Stop-Setup -Step "step 1b (Contract v2 secret)" -Problem "The Collector could not create the Contract v2 secret (v2-key init exit code $LASTEXITCODE; reason above)." `
+                -Unchanged "no preflight, bootstrap, or Scheduled Task step was run" `
+                -Fix "Resolve what the reason names (usually the permissions of the secrets folder), then re-run." -ExitCode 1
+        }
+        & $ExePath v2-key check --config $ConfigPath | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            Stop-Setup -Step "step 1b (Contract v2 secret)" -Problem "The Contract v2 secret was created but the Collector could not verify it (v2-key check exit code $LASTEXITCODE; reason above)." `
+                -Unchanged "no preflight, bootstrap, or Scheduled Task step was run" `
+                -Fix "Contact SortView support; do not delete the secret blindly." -ExitCode 1
+        }
+        $secretCreatedNow = $true
+    }
+    Write-Host "  OK: Contract v2 secret $(if ($secretCreatedNow) { 'created' } else { 'already present' }) and verified (generated on this machine; never sent, never shown)." -ForegroundColor Green
+}
+
 # === STEP 2: interactive preflight ======================================
 Write-Host ""
 Write-Host "=== Step 2 of 5: interactive preflight ===" -ForegroundColor Cyan
@@ -542,6 +656,13 @@ if (Test-Path -LiteralPath $StatePath) {
     Write-Host "  OK: state file already exists and covers every configured source -- bootstrap skipped." -ForegroundColor Green
 } else {
     & $ExePath bootstrap --config $ConfigPath
+    if ($LASTEXITCODE -eq 3) {
+        # Contract v2 only (collector/bootstrap_state.py's EXIT_REFUSED): a state file already on this
+        # machine makes a fresh start unsafe -- typically the legacy state.json of an earlier v1 install.
+        Stop-Setup -Step "step 4 of 5 (bootstrap)" -Problem "Bootstrap REFUSED to start a fresh Contract v2 cursor (exit code 3): a Collector state file already exists on this machine -- see the reason above." `
+            -Unchanged "every state file; no Scheduled Task was created by this run" `
+            -Fix "Do not delete a state file blindly. This machine has run a Collector before: contact SortView support." -ExitCode 2
+    }
     if ($LASTEXITCODE -ne 0) {
         Stop-Setup -Step "step 4 of 5 (bootstrap)" -Problem "Bootstrap failed (exit code $LASTEXITCODE) -- see the message above." `
             -Unchanged "no Scheduled Task was created by this run" -Fix "Correct what the message names (usually a missing/unreadable source file), then re-run." -ExitCode 1
@@ -604,6 +725,9 @@ Write-Host ""
 Write-Host "=== SortView Collector setup COMPLETE. The task is registered DISABLED. ===" -ForegroundColor Green
 Write-Host ""
 Write-Host "  [OK] API token stored in api_token.dpapi (DPAPI; Administrators + SYSTEM only; value never shown)"
+if ($IsV2) {
+    Write-Host "  [OK] Contract v2 secret $(if ($secretCreatedNow) { 'created on this machine' } else { 'already present' }) and verified (never sent, never shown)"
+}
 Write-Host "  [OK] Interactive preflight passed"
 Write-Host "  [OK] SYSTEM-context preflight passed"
 if ($seededNow) {

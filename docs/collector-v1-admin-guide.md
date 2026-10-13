@@ -105,9 +105,12 @@ left (or put back) disabled.
   address and IDs just issued before installing starts. If it cannot be saved or
   verified, setup **stops before `install.ps1`** (it does not continue with a
   warning), removes the unverified record, and leaves the stored token in place
-  and the Scheduled Task untouched; fix the cause it names, get a **new** code,
-  and run setup again (it asks before replacing the token already stored, or use
-  `-ReplaceExistingToken`).
+  and the Scheduled Task untouched; fix the cause it names and get a **new** code.
+  Setup never replaces a stored token, so remove the abandoned enrollment's
+  `<DataRoot>\secrets\api_token.dpapi` yourself before running setup again.
+  (This is the legacy-contract behavior. A Contract v2 enrollment saves the record
+  *before* the token and is never recovered with a new code -- see
+  `docs/collector-v2.md`, *Fresh Contract v2 installation*.)
   Otherwise, run `setup.ps1` again: it finds that record and the stored token and offers to
   **resume** (Enter = resume). No enrollment request is made; the saved IDs are
   given to `install.ps1` (or, if the matching install is already in place,
@@ -118,8 +121,10 @@ left (or put back) disabled.
   enrollment and the stored token are kept.
 - Without a saved enrollment: an unfinished manual setup is completed with
   `tools\finish-install.ps1`; starting over needs `tools\uninstall.ps1` and a new
-  code. Setup replaces an existing token only after an explicit yes, or with
-  `-ReplaceExistingToken`.
+  code. Setup never installs onto a machine that already holds an API token, a
+  Contract v2 secret, a state file or a classification rules file from an earlier
+  install: it lists what it found and stops before the code is requested
+  (1.0.14; the `-ReplaceExistingToken` switch is gone).
 
 Setup never uses `-Force`, never overwrites or deletes an existing install, never
 adopts an install that does not match the saved enrollment, and refuses to run on

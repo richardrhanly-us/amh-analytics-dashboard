@@ -98,30 +98,52 @@ def test_setup_ships_from_a_source_file_named_for_the_bundle_setup_ps1():
     assert ("collector/deploy/setup-collector.ps1", "setup.ps1") in build_release.FROZEN_ONLY_SUPPORT_FILES
 
 
-def test_the_only_file_setup_writes_is_the_non_secret_resume_record():
+def test_setup_writes_only_the_resume_record_and_the_servers_rules_and_only_through_two_writers():
     for forbidden in ("Set-Content", "Add-Content", "Out-File", "Export-", "[IO.File]::Write", "Start-Transcript", "Tee-Object",
-                      "New-Item", "Remove-Item", "Move-Item", "Copy-Item", "Rename-Item"):
+                      "New-Item", "Remove-Item", "Move-Item", "Copy-Item", "Rename-Item", "WriteAllBytes", "WriteAllLines",
+                      "AppendAllText"):
         assert forbidden not in SETUP_BODY, forbidden
     assert ">>" not in "\n".join(_code_lines(SETUP_BODY))
-    # The single write, and it is inside Save-SetupRecovery -- whose only inputs are the data root and the record JSON.
-    assert SETUP_BODY.count("WriteAllText") == 1
+    # Two writers, and no other write anywhere. (1) Save-SetupRecovery -- whose only inputs are the data root and the
+    # record JSON; (2) Write-SetupFileAtomically, used for exactly two things: the staged rules and the write probe.
+    assert SETUP_BODY.count("WriteAllText") == 2
     save = _ps_function("Save-SetupRecovery")
     assert "WriteAllText" in save and "param([string]$DataRoot, [string]$Json)" in save
-    # ...and the JSON comes only from the typed, allow-listed builder (no free-form field can carry a secret).
+    atomic = _ps_function("Write-SetupFileAtomically")
+    assert "WriteAllText" in atomic and atomic.index("WriteAllText") < atomic.index("[System.IO.File]::Move")
+    callers = [m.start() for m in re.finditer(r"Write-SetupFileAtomically -Path", SETUP_BODY)]
+    assert len(callers) == 2
+    assert "Write-SetupFileAtomically -Path $path -Text (ConvertTo-ClassificationRulesJson -Rules $Rules)" in _ps_function("Save-StagedRules")
+    assert 'Write-SetupFileAtomically -Path $probe -Text "probe"' in _ps_function("Initialize-SetupStaging")
+    # The only other way a file comes to exist: the staged rules COPIED into the config folder, then renamed into place.
+    assert SETUP_BODY.count("[System.IO.File]::Copy") == 1 and "[System.IO.File]::Copy" in _ps_function("Install-ClassificationRules")
+    assert SETUP_BODY.count("[System.IO.File]::Move") == 2
+    # ...and the record's JSON comes only from the typed, allow-listed builder (no free-form field can carry a secret).
     builder = _ps_function("ConvertTo-SetupRecoveryJson")
-    assert "param([int]$CustomerId, [int]$BranchId, [int]$InstallationId, [string]$ApiUrl, [string]$ReleaseVersion)" in builder
+    assert ("param([int]$CustomerId, [int]$BranchId, [int]$InstallationId, [string]$ApiUrl, [string]$ReleaseVersion,\n"
+            "        [int]$ContractVersion = 1, [string]$KeyId, [string]$Timezone, [string]$RulesSha256)") in builder
     builder_code = chr(10).join(_code_lines(builder)).lower()
-    for secret_word in ("token", "code", "secret", "password"):
-        assert secret_word not in builder_code  # no field or parameter that could carry either secret
+    for secret_word in ("token", "code", "secret", "password", "rules ="):
+        assert secret_word not in builder_code  # no field or parameter that could carry a secret, or a rule
     assert len(re.findall(r"\$script:RecoveryKeys = @\(", SETUP_BODY)) == 1
+    assert len(re.findall(r"\$script:RecoveryKeysV2 = \$script:RecoveryKeys \+ @\(", SETUP_BODY)) == 1
 
 
-def test_the_only_deletions_are_the_record_file_and_its_empty_folder():
-    assert SETUP_BODY.count("[System.IO.File]::Delete") == 1 and SETUP_BODY.count("[System.IO.Directory]::Delete") == 1
+def test_the_only_deletions_are_setups_own_files_and_its_empty_folder():
+    # Four places delete a file, each one a file setup itself wrote: the record and the staged rules (when setup
+    # completes), an unrenamed temporary file (twice), and the write probe. One place removes a folder, only if empty.
+    assert SETUP_BODY.count("[System.IO.File]::Delete") == 4 and SETUP_BODY.count("[System.IO.Directory]::Delete") == 1
     remove = _ps_function("Remove-SetupRecovery")
-    assert "[System.IO.File]::Delete" in remove and "[System.IO.Directory]::Delete($directory)" in remove
+    assert "[System.IO.File]::Delete($file)" in remove and "[System.IO.Directory]::Delete($directory)" in remove
+    assert "foreach ($file in @($path, (Get-StagedRulesPath -DataRoot $DataRoot)))" in remove  # exactly those two files
+    assert "[System.IO.File]::Delete($temporary)" in _ps_function("Write-SetupFileAtomically")
+    assert "[System.IO.File]::Delete($temporary)" in _ps_function("Install-ClassificationRules")
+    assert "[System.IO.File]::Delete($probe)" in _ps_function("Initialize-SetupStaging")
     assert "-Recurse" not in SETUP_BODY and "recurse" not in SETUP_BODY.lower().replace("never recursive", "")
     assert '.Count -eq 0' in remove  # the folder goes only if nothing else is in it
+    # No rules file, secret, token, state file or config is ever deleted or overwritten by setup.
+    install = _ps_function("Install-ClassificationRules")
+    assert "Delete($live)" not in install and "Delete((Get-StagedRulesPath" not in install
 
 
 def test_the_resume_record_folder_is_locked_down_before_the_record_is_written():
@@ -234,8 +256,9 @@ def test_the_production_url_and_standard_paths_have_one_canonical_home():
 
 def test_setup_identifies_nothing_by_hostname():
     # The host name is sent as informational metadata and never used to choose anything.
-    assert SETUP_BODY.count("Get-LocalHostName") == 2  # its definition and its single use in the enrollment call
-    assert "-HostName (Get-LocalHostName)" in SETUP_BODY
+    # its definition, and the two enrollment calls (the Contract v2 request and the one legacy retry) -- nowhere else
+    assert SETUP_BODY.count("Get-LocalHostName") == 3
+    assert SETUP_BODY.count("-HostName (Get-LocalHostName)") == 2
     for line in _code_lines(SETUP_BODY):
         if "$HostName" in line or "hostname" in line.lower():
             assert "InstallationId" not in line and "customer_id" not in line.replace("enrollment_code", ""), line
@@ -248,9 +271,9 @@ def test_setup_parameters_and_the_main_functions_parameters_match():
     declared_script = set(re.findall(r"\]\$([A-Za-z]+)", script_block))
     declared_function = set(re.findall(r"\]\$([A-Za-z]+)", function_block))
     assert declared_script == declared_function == {
-        "EnrollmentCode", "ApiUrl", "CheckinsPath", "RejectsPath", "AcsPath", "InstallRoot", "DataRoot",
-        "ReplaceExistingToken", "EnableTask",
+        "EnrollmentCode", "ApiUrl", "CheckinsPath", "RejectsPath", "AcsPath", "InstallRoot", "DataRoot", "EnableTask",
     }
+    assert "ReplaceExistingToken" not in SETUP_TEXT  # a first install never replaces a stored token, by any switch
 
 
 def test_the_enrollment_code_parameter_is_a_secure_string_so_plain_text_cannot_be_passed_by_accident():
@@ -280,17 +303,29 @@ def test_the_enrollment_code_is_requested_only_after_every_local_check_and_the_c
     assert run.index("Invoke-Enrollment -ApiUrl") > code_prompt
 
 
-def test_the_token_is_stored_before_anything_is_installed():
+def test_each_contract_saves_and_stores_in_its_own_order_before_anything_is_installed():
     run = SETUP_BODY[SETUP_BODY.index("function Invoke-SetupMain"):]
     enroll = run.index("Invoke-Enrollment -ApiUrl")
-    store = run.index("Invoke-SetupTool -Path $setTokenScript")
-    save_record = run.index("Save-SetupRecovery -DataRoot")
-    verify_record = run.index("Confirm-SetupRecovery -DataRoot")
-    gate = run.index("if ($null -ne $recoveryFailure)")
+    branch = run.index("\n          if ($enrollment.Contract -eq 2) {")
+    legacy = run.index("# === STEP 6: store the token, immediately; then save what a resume needs ====")
     install = run.index("Invoke-SetupTool -Path $installScript -Parameters $installParameters")
     finish = run.index("Invoke-SetupTool -Path $finishScript")
-    # the record is saved right after the token, read back and checked, and only then may anything be installed
-    assert enroll < store < save_record < verify_record < gate < install < finish
+    assert enroll < branch < legacy < install < finish
+
+    # CONTRACT V2: the rules and the record are saved, read back and checked FIRST; only then is the token stored.
+    v2 = run[branch:legacy]
+    order = [v2.index(step) for step in ("Save-StagedRules -DataRoot", "Save-SetupRecovery -DataRoot", "Confirm-SetupRecovery -DataRoot",
+                                         "if ($null -ne $recoveryFailure)", "Invoke-SetupTool -Path $setTokenScript",
+                                         "Invoke-ApiTokenCheck")]
+    assert order == sorted(order)
+    assert v2.count("Invoke-SetupTool -Path $setTokenScript") == 1
+
+    # LEGACY: exactly as before -- the token first, then the record, read back and checked.
+    old = run[legacy:install]
+    order = [old.index(step) for step in ("Invoke-SetupTool -Path $setTokenScript", "Save-SetupRecovery -DataRoot",
+                                          "Confirm-SetupRecovery -DataRoot", "if ($null -ne $recoveryFailure)")]
+    assert order == sorted(order)
+    assert "Save-StagedRules" not in old and "ContractVersion" not in old  # the legacy record is the legacy record
 
 
 def test_a_record_that_cannot_be_saved_or_verified_stops_setup_and_is_never_only_a_warning():
@@ -777,6 +812,13 @@ function Invoke-SetupHttp {
     $entry = $script.PSObject.Properties[$key]
     if ($null -eq $entry) { return [pscustomobject]@{ StatusCode = 0; Content = $null; Failure = "no scripted response for $key" } }
     $e = $entry.Value
+    if ($e -is [array]) {
+        # A SEQUENCE of answers for one route: the 1st call gets the 1st, ... and the last one repeats.
+        $counter = Join-Path $FakeDir ("http_count_" + ($key -replace '[^A-Za-z0-9]', '_') + ".txt")
+        $seen = 0; if (Test-Path -LiteralPath $counter) { $seen = [int](Get-Content -LiteralPath $counter -Raw) }
+        Set-Content -LiteralPath $counter -Value ($seen + 1)
+        $e = $e[[Math]::Min($seen, $e.Count - 1)]
+    }
     return [pscustomobject]@{ StatusCode = [int]$e.status; Content = [string]$e.content; Failure = $e.failure }
 }
 @@EXTRA@@
@@ -810,6 +852,7 @@ $config = [ordered]@{
         [ordered]@{ name = 'acs'; path = $AcsPath })
     state_path = (Join-Path $DataRoot 'data\state.json')
 }
+if ($ContractMode) { $config['contract_mode'] = $ContractMode; $config['v2'] = [ordered]@{ key_id = $KeyId; timezone = $Timezone } }
 Set-Content -LiteralPath (Join-Path $DataRoot 'config\collector_config.json') -Value ($config | ConvertTo-Json -Depth 5)
 Write-Host 'STUB install.ps1: installed'
 exit 0
@@ -936,10 +979,51 @@ def _valid_enroll_body(**overrides) -> str:
     return json.dumps({**IDS, "agent_token": SENTINEL_TOKEN, **overrides})
 
 
+ENROLL = "Post /collector/enroll"
+KEY_ID = "3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e"
+TIMEZONE = "America/New_York"
+# Synthetic account names and patterns: recognisable CANARIES, so a test can sweep every byte setup printed or wrote.
+RULE_NAME_BRANCH = "CANARY BRANCH SERVICES ACCOUNT"
+RULE_NAME_COLLECTION = "CANARY COLLECTION SERVICES ACCOUNT"
+RULE_PATTERN = "DACANARY DEPARTMENT PATTERN"
+RULE_DESTINATION = "CANARY ANNEX"
+RULES_DOC = {
+    "schema_version": 1,
+    "destinations": [{"slug": "canary_annex", "contains": RULE_DESTINATION}],
+    "branch_services_names": [RULE_NAME_BRANCH],
+    "collection_services_names": [RULE_NAME_COLLECTION, "CANARY SECOND ACCOUNT"],
+    "branch_services_da_patterns": [],
+    "collection_services_da_patterns": [RULE_PATTERN],
+}
+RULE_CANARIES = (RULE_NAME_BRANCH, RULE_NAME_COLLECTION, "CANARY SECOND ACCOUNT", RULE_PATTERN, RULE_DESTINATION, "canary_annex")
+
+
+def refusal(code: str) -> dict:
+    """The API's 409 for a valid code it will not enroll (collector_enrollment_service.REFUSAL_DETAILS). Never consumes the code."""
+    return {"status": 409, "content": json.dumps({"code": code, "detail": "A fixed sentence from the server."})}
+
+
+def _v2_enroll_body(rules: dict | None = None, **overrides) -> str:
+    return json.dumps({**IDS, "agent_token": SENTINEL_TOKEN, "contract_version": 2, "contract_mode": "v2", "key_id": KEY_ID,
+                       "timezone": TIMEZONE, "classification_rules": RULES_DOC if rules is None else rules, **overrides})
+
+
 def default_http(**overrides) -> dict:
+    """A server holding a LEGACY (contract 1) code, as the real API answers this release: the first request asks for
+    Contract v2 and is refused `contract_not_permitted` (the code is not used), the second -- the legacy request -- enrolls."""
     script = {
         "Get /": {"status": 200, "content": json.dumps({"status": "SortView API running"})},
-        "Post /collector/enroll": {"status": 200, "content": _valid_enroll_body()},
+        ENROLL: [refusal("contract_not_permitted"), {"status": 200, "content": _valid_enroll_body()}],
+    }
+    script.update(overrides)
+    return script
+
+
+def v2_http(rules: dict | None = None, **overrides) -> dict:
+    """A server holding a CONTRACT 2 code: the first (and only) request enrolls on Contract v2."""
+    script = {
+        "Get /": {"status": 200, "content": json.dumps({"status": "SortView API running"})},
+        ENROLL: {"status": 200, "content": _v2_enroll_body(rules)},
     }
     script.update(overrides)
     return script
@@ -998,6 +1082,8 @@ def run_scenario(bundle: Bundle, *, args: str = "", admin: bool = True, http: di
                  extra_ps: str = "", env: dict | None = None, runtime_version: str | None = None,
                  machine_token: str | None = None, task_state: str | None = None) -> Result:
     (bundle.fake / "http.json").write_text(json.dumps(http if http is not None else default_http()), encoding="utf-8")
+    for counter in bundle.fake.glob("http_count_*.txt"):  # each run starts a scripted SEQUENCE of answers from its first
+        counter.unlink()
     if answers:
         (bundle.fake / "answers.txt").write_text(
             "\n".join("<ENTER>" if a == "" else a for a in answers) + "\n", encoding="utf-8"
@@ -1066,7 +1152,7 @@ def test_successful_frozen_setup_runs_every_step_in_order_and_leaves_the_task_di
 
     assert result.exit_code == 0, result.output
     assert result.tools() == [
-        "install-verify", "runtime-version", "http:GET", "read-code", "http:POST", "set-api-token", "install", "finish-install",
+        "install-verify", "runtime-version", "http:GET", "read-code", "http:POST", "http:POST", "set-api-token", "install", "finish-install",
     ]
     assert result.task == {"State": "Disabled"}
     assert result.calls_to("enable-task") == []
@@ -1153,14 +1239,19 @@ def test_neither_secret_is_in_the_config_or_any_installed_file_or_the_output(tmp
 
 
 @needs_windows_powershell
-def test_the_enrollment_request_carries_the_code_the_host_name_and_the_canonical_version_only(tmp_path):
+def test_the_enrollment_request_carries_the_code_the_host_name_the_canonical_version_and_the_contract_only(tmp_path):
     bundle = make_bundle(tmp_path)
 
     result = run_scenario(bundle, answers=["", ""])
 
-    (post,) = [c for c in result.calls_to("http") if c["method"] == "Post"]
-    assert post["url"] == json.loads(_read(EXAMPLE_CONFIG))["api_url"].rstrip("/") + "/collector/enroll"
-    assert post["body"] == {"enrollment_code": SENTINEL_CODE, "hostname": "TEST-PC", "collector_version": RELEASE_VERSION}
+    first, second = [c for c in result.calls_to("http") if c["method"] == "Post"]
+    url = json.loads(_read(EXAMPLE_CONFIG))["api_url"].rstrip("/") + "/collector/enroll"
+    assert first["url"] == second["url"] == url
+    # The first request asks for Contract v2 ...
+    assert first["body"] == {"enrollment_code": SENTINEL_CODE, "hostname": "TEST-PC", "collector_version": RELEASE_VERSION,
+                             "contract_version": 2}
+    # ... and the single retry for a legacy code is the LEGACY request, key for key: no contract_version at all.
+    assert second["body"] == {"enrollment_code": SENTINEL_CODE, "hostname": "TEST-PC", "collector_version": RELEASE_VERSION}
     assert SENTINEL_CODE not in result.output  # entered once, sent, never echoed
 
 
@@ -1470,7 +1561,7 @@ def test_an_unreachable_api_stops_before_the_code_is_requested_or_consumed(tmp_p
 
 
 @needs_windows_powershell
-def test_a_tls_failure_during_enrollment_is_reported_without_installing_anything(tmp_path):
+def test_no_response_during_enrollment_is_reported_without_installing_anything(tmp_path):
     bundle = make_bundle(tmp_path)
     http = default_http(**{"Post /collector/enroll": {"status": 0, "content": None, "failure": "no response (WebException)"}})
 
@@ -1478,7 +1569,7 @@ def test_a_tls_failure_during_enrollment_is_reported_without_installing_anything
 
     assert result.exit_code == 1
     assert result.calls_to("set-api-token") == [] and result.calls_to("install") == []
-    assert "secure connection" in result.output and result.machine_token is None
+    assert "No response was received from SortView" in result.output and result.machine_token is None
     assert_no_secret_anywhere_visible(result)
 
 
@@ -1502,15 +1593,21 @@ def test_error_statuses_fail_closed_with_a_useful_message_and_install_nothing(tm
 
 
 @needs_windows_powershell
-def test_an_invalid_or_expired_code_is_reported_as_not_consumed_by_setup(tmp_path):
+def test_a_rejected_code_enrolled_nothing_and_a_new_code_is_advised_only_if_no_earlier_attempt_was_unknown(tmp_path):
     bundle = make_bundle(tmp_path)
     http = default_http(**{"Post /collector/enroll": {"status": 400, "content": "{}", "failure": "HTTP 400"}})
 
     result = run_scenario(bundle, answers=[""], http=http)
 
-    assert "new enrollment code" in result.output
-    assert "no token was stored" in result.output
-    assert "The enrollment code was NOT used." in result.output
+    assert result.exit_code == 1 and "no token was stored" in result.output
+    # What is known: THIS request enrolled nothing. What is not claimed: that the code was never used -- a 400 is also
+    # what a code already used by an EARLIER request (whose answer was lost) gets.
+    assert "SortView did not accept the enrollment code; this request enrolled nothing." in result.output
+    assert "The enrollment code was NOT used." not in result.output
+    # A new code is still the right advice for a mistyped or expired code -- but only after the other case is ruled out.
+    advice = result.output[result.output.index("What to do:"):]
+    assert advice.index("If an earlier setup attempt with this code") < advice.index("ask your SortView administrator for a new enrollment code")
+    assert "contact SortView support and do NOT ask for a new enrollment code" in advice
 
 
 @needs_windows_powershell
@@ -1734,7 +1831,7 @@ def test_even_when_enabling_setup_starts_no_collector_run(tmp_path):
 
     result = run_scenario(bundle, answers=["", "y"])
 
-    assert result.tools() == ["install-verify", "runtime-version", "http:GET", "read-code", "http:POST", "set-api-token",
+    assert result.tools() == ["install-verify", "runtime-version", "http:GET", "read-code", "http:POST", "http:POST", "set-api-token",
                               "install", "finish-install", "enable-task"]
     assert "Start-ScheduledTask" in result.output  # only ever printed as optional guidance
 
@@ -1808,36 +1905,31 @@ def test_an_unreadable_machine_state_is_refused_not_assumed_clean(tmp_path):
 
 
 @needs_windows_powershell
-def test_an_existing_machine_token_is_not_replaced_without_confirmation(tmp_path):
+def test_an_existing_api_token_is_refused_on_a_fresh_run_and_never_offered_for_replacement(tmp_path):
     bundle = make_bundle(tmp_path)
 
-    result = run_scenario(bundle, answers=[""], machine_token="another-components-token")  # Enter = no
+    result = run_scenario(bundle, answers=["y", "y", "y"], machine_token="another-installations-token")  # "y" to anything asked
 
     assert result.exit_code == 2
-    assert result.machine_token == "another-components-token"
-    assert result.calls_to("http") == [] and result.calls_to("read-code") == []
-    assert "Replace the existing token?" in " ".join(result.prompts())
-    assert "another-components-token" not in result.output  # the existing value is never shown either
+    assert result.machine_token == "another-installations-token"  # untouched
+    assert result.calls_to("http") == [] and result.calls_to("read-code") == []  # before the network and the code
+    assert not any("eplace" in prompt for prompt in result.prompts())  # replacing it is not even offered
+    assert "an API token at" in result.output and "the enrollment code was not requested" in result.output
+    assert "another-installations-token" not in result.output  # the existing value is never shown
+    assert result.calls_to("set-api-token") == [] and not bundle.install_root.exists()
 
 
 @needs_windows_powershell
-def test_an_existing_machine_token_is_replaced_after_an_explicit_yes(tmp_path):
-    bundle = make_bundle(tmp_path)
-
-    result = run_scenario(bundle, answers=["y", "", ""], machine_token="leftover-from-an-unfinished-setup")
-
-    assert result.exit_code == 0, result.output
-    assert result.machine_token == SENTINEL_TOKEN
-
-
-@needs_windows_powershell
-def test_an_existing_machine_token_is_replaced_with_the_explicit_switch_and_no_prompt(tmp_path):
+def test_there_is_no_switch_that_makes_a_fresh_run_replace_a_stored_token(tmp_path):
     bundle = make_bundle(tmp_path)
 
     result = run_scenario(bundle, answers=["", ""], machine_token="leftover", args="-ReplaceExistingToken")
 
-    assert result.exit_code == 0 and result.machine_token == SENTINEL_TOKEN
-    assert not any("Replace the existing token?" in p for p in result.prompts())
+    assert result.exit_code != 0 and result.machine_token == "leftover"
+    assert result.calls_to("read-code") == [] and result.calls_to("set-api-token") == []
+
+
+
 
 
 @needs_windows_powershell
@@ -1964,8 +2056,16 @@ TEMPLATE_URL = json.loads(_read(EXAMPLE_CONFIG))["api_url"].rstrip("/")
 
 
 def test_setup_has_no_manifest_verification_of_its_own():
-    assert "Get-FileHash" not in SETUP_BODY and "function Test-ReleaseManifest" not in SETUP_BODY
-    assert "sha256" not in SETUP_BODY.lower().replace("get-sha256hex", "").replace("[security.cryptography.sha256]", "")
+    assert "function Test-ReleaseManifest" not in SETUP_BODY
+    # The one hash setup computes is of the classification rules FILE it staged (to tie that file to the saved
+    # enrollment): a single wrapper, called only by the rules functions -- never on anything in the bundle.
+    assert SETUP_BODY.count("Get-FileHash") == 1 and "Get-FileHash" in _ps_function("Get-FileSha256")
+    hashed = re.findall(r"Get-FileSha256 -Path (\$\w+)", SETUP_BODY)
+    assert hashed and set(hashed) <= {"$path", "$live", "$staged"}, hashed
+    for name in ("Save-StagedRules", "Get-RulesResumeState", "Install-ClassificationRules"):
+        assert "Get-FileSha256" in _ps_function(name)
+    assert "bundleRoot" not in "".join(_ps_function(name) for name in ("Get-FileSha256", "Save-StagedRules", "Get-RulesResumeState",
+                                                                        "Install-ClassificationRules"))
     # MANIFEST.json is read for one thing only -- the version -- and only AFTER the real verifier has passed.
     reads = [m.start() for m in re.finditer(r"MANIFEST\.json", SETUP_BODY)]
     code_reads = [i for i in reads if "Get-Content" in SETUP_BODY[max(0, i - 120): i + 20]]
@@ -2227,8 +2327,10 @@ def test_the_record_is_saved_right_after_redemption_and_holds_only_non_secret_de
     assert_no_secret_anywhere_visible(result)
     # It is in the ProgramData hierarchy, and its folder was locked down BEFORE anything was written into it.
     assert result.recovery_path.parent == bundle.data_root / "setup"
-    (protect,) = result.calls_to("protect-recovery")
-    assert protect["path"] == str(bundle.data_root / "setup")
+    # (twice: when the folder was prepared and probed BEFORE the code was requested, and again when the record was saved)
+    protects = result.calls_to("protect-recovery")
+    assert len(protects) == 2 and {p["path"] for p in protects} == {str(bundle.data_root / "setup")}
+    assert result.tools().index("install-verify") < [c["tool"] for c in result.calls].index("protect-recovery")
     assert result.tools().index("set-api-token") < result.tools().index("install")  # (token first, then install)
 
 
@@ -2313,7 +2415,7 @@ def _tampered_save(transform: str) -> str:
 
 
 _RECORD_STEP = "step 6 (saving the enrollment details)"
-_TOKEN_STORED_ONLY = ["install-verify", "runtime-version", "http:GET", "read-code", "http:POST", "set-api-token"]
+_TOKEN_STORED_ONLY = ["install-verify", "runtime-version", "http:GET", "read-code", "http:POST", "http:POST", "set-api-token"]
 
 
 def _assert_stopped_at_the_record_gate(result: Result, *, problem: str) -> None:
@@ -2345,18 +2447,21 @@ def test_a_failure_to_write_the_record_stops_setup_before_install_and_keeps_the_
 
 
 @needs_windows_powershell
-def test_a_failure_to_restrict_the_recovery_folder_stops_setup_and_nothing_is_written_into_it(tmp_path):
+def test_a_setup_folder_that_cannot_be_restricted_stops_setup_before_the_code_is_requested(tmp_path):
     bundle = make_bundle(tmp_path)
 
     result = run_scenario(bundle, answers=[""], env={"SETUPTEST_PROTECT_FAILS": "1"})
 
-    _assert_stopped_at_the_record_gate(result, problem="could not be saved (could not restrict the folder)")
+    assert result.exit_code == 1 and "SETUP STOPPED at step 4 (setup folder)" in result.output
+    assert "could not restrict the folder" in result.output and "the enrollment code was NOT requested" in result.output
+    assert result.calls_to("read-code") == [] and [c for c in result.calls_to("http") if c["method"] == "Post"] == []
     assert len(result.calls_to("protect-recovery")) == 1
-    assert not result.recovery_path.exists() and not result.recovery_path.parent.exists()  # no file, no leftover folder
+    assert result.machine_token is None and result.calls_to("install") == []
+    assert not result.recovery_path.exists()  # nothing was written into a folder that is not locked down
 
 
 @needs_windows_powershell
-def test_a_real_filesystem_failure_creating_the_recovery_folder_stops_setup_and_touches_nothing_else(tmp_path):
+def test_a_real_filesystem_failure_creating_the_setup_folder_stops_before_the_code_and_touches_nothing_else(tmp_path):
     bundle = make_bundle(tmp_path)
     bundle.data_root.mkdir(parents=True, exist_ok=True)
     blocker = bundle.data_root / "setup"
@@ -2364,7 +2469,10 @@ def test_a_real_filesystem_failure_creating_the_recovery_folder_stops_setup_and_
 
     result = run_scenario(bundle, answers=[""])
 
-    _assert_stopped_at_the_record_gate(result, problem="could not be saved")
+    assert result.exit_code == 1 and "SETUP STOPPED at step 4 (setup folder)" in result.output
+    assert result.calls_to("read-code") == [] and [c for c in result.calls_to("http") if c["method"] == "Post"] == []
+    assert "The enrollment code was NOT used." in result.output
+    assert result.machine_token is None and not bundle.install_root.exists()
     assert blocker.read_text(encoding="utf-8") == "something else that lives here"  # never deleted or overwritten
 
 
@@ -2423,18 +2531,23 @@ def test_a_verification_failure_whose_cleanup_also_fails_still_stops_and_names_t
 
 
 @needs_windows_powershell
-def test_a_new_code_recovers_from_a_record_gate_stop_by_replacing_the_stored_token_on_request(tmp_path):
+def test_after_a_legacy_record_gate_stop_the_stored_token_is_never_replaced_until_the_operator_removes_it(tmp_path):
     bundle = make_bundle(tmp_path)
     first = run_scenario(bundle, answers=[""], extra_ps="function Save-SetupRecovery { throw 'disk full' }\n")
     assert first.exit_code == 1 and first.machine_token == SENTINEL_TOKEN
-    before = len(first.calls)
+    assert "setup will not replace it" in first.output and "api_token.dpapi" in first.output
 
-    second = run_scenario(bundle, args="-ReplaceExistingToken", answers=["", ""])  # a new code; the fault is gone
+    second = run_scenario(bundle, answers=["", ""])  # a new code in hand; the fault is gone -- but the old token is still there
+    assert second.exit_code == 2 and second.machine_token == SENTINEL_TOKEN
+    assert "an API token at" in second.output and "the enrollment code was not requested" in second.output
 
-    assert second.exit_code == 0, second.output
-    later = [c["tool"] for c in new_calls(second, before) if c["tool"] != "protect-recovery"]
+    (bundle.fake / "machine_token.txt").unlink()  # the operator removes the abandoned enrollment's token, deliberately
+    before = len(second.calls)
+    third = run_scenario(bundle, answers=["", ""])
+    assert third.exit_code == 0, third.output
+    later = [c["tool"] for c in new_calls(third, before) if c["tool"] != "protect-recovery"]
     assert later[-3:] == ["set-api-token", "install", "finish-install"]
-    assert second.task == {"State": "Disabled"} and not second.recovery_path.exists()  # completed, so the record is cleared
+    assert third.task == {"State": "Disabled"} and not third.recovery_path.exists()  # completed, so the record is cleared
 
 
 @needs_windows_powershell
@@ -2443,7 +2556,7 @@ def test_a_saved_and_verified_record_lets_setup_proceed_to_install(tmp_path):
 
     stopped = run_scenario(bundle, answers=[""], env={"SETUPTEST_INSTALL_MODE": "fail"})  # fails only AFTER the gate
 
-    assert stopped.tools() == ["install-verify", "runtime-version", "http:GET", "read-code", "http:POST", "set-api-token", "install"]
+    assert stopped.tools() == ["install-verify", "runtime-version", "http:GET", "read-code", "http:POST", "http:POST", "set-api-token", "install"]
     assert "saved and verified" in stopped.output
     recovery = stopped.recovery
     assert recovery is not None
@@ -2464,7 +2577,7 @@ def test_a_saved_and_verified_record_lets_setup_proceed_to_install(tmp_path):
 
     ok = run_scenario(make_bundle(tmp_path / "ok"), answers=["", ""])  # and the whole run, unchanged, still completes
     assert ok.exit_code == 0, ok.output
-    assert ok.tools() == ["install-verify", "runtime-version", "http:GET", "read-code", "http:POST", "set-api-token", "install", "finish-install"]
+    assert ok.tools() == ["install-verify", "runtime-version", "http:GET", "read-code", "http:POST", "http:POST", "set-api-token", "install", "finish-install"]
     assert ok.task == {"State": "Disabled"}
 
 
@@ -2475,7 +2588,8 @@ def test_no_record_is_saved_when_the_token_could_not_be_stored(tmp_path):
     result = run_scenario(bundle, answers=[""], env={"SETUPTEST_TOKEN_MODE": "fail"})
 
     assert result.exit_code == 1
-    assert result.recovery is None and result.calls_to("protect-recovery") == []  # a record without a token is useless
+    assert result.recovery is None  # (legacy order: token first) a record without a token is useless
+    assert len(result.calls_to("protect-recovery")) == 1  # only the folder check made BEFORE the code was requested
     assert "NEW enrollment code" in result.output
 
 
@@ -2866,3 +2980,1029 @@ def test_install_matching_compares_the_ids_and_api_address_of_the_installed_conf
     )
 
     assert result.stdout.strip() == expected
+
+
+# =====================================================================================
+# CONTRACT V2 (stage A3a): the fresh-install path, and the legacy fallback
+#
+# This release asks for Contract v2 first. `default_http()` above is a server holding a LEGACY
+# code, so every scenario before this point already runs through the fallback; the scenarios
+# below use `v2_http()`, a server holding a CONTRACT 2 code.
+# =====================================================================================
+
+import hashlib
+
+RECOVERY_KEYS_V2 = RECOVERY_KEYS | {"contract_version", "contract_mode", "key_id", "timezone", "rules_sha256"}
+V2_HAPPY_TOOLS = ["install-verify", "runtime-version", "http:GET", "read-code", "http:POST", "set-api-token", "install",
+                  "finish-install", "enable-task"]
+
+
+def enroll_posts(result: Result) -> list[dict]:
+    return [c for c in result.calls_to("http") if c["method"] == "Post"]
+
+
+def staged_rules_path(bundle: Bundle) -> Path:
+    return bundle.data_root / "setup" / "classification_rules.json"
+
+
+def live_rules_path(bundle: Bundle) -> Path:
+    return bundle.data_root / "config" / "classification_rules.json"
+
+
+def assert_nothing_sensitive_was_printed(result: Result, rules: dict | None = None) -> None:
+    """Console output holds neither secret, nor the key id, nor a single account name, pattern or destination."""
+    values = [SENTINEL_TOKEN, SENTINEL_CODE, KEY_ID]
+    document = RULES_DOC if rules is None else rules
+    for entries in document.values():
+        if isinstance(entries, list):
+            for entry in entries:
+                values.extend(entry.values() if isinstance(entry, dict) else [entry])
+    for value in values:
+        assert str(value) not in result.output, "a sensitive value was printed"
+    # The tools were handed the token only as a SecureString, and never a rule.
+    tool_records = json.dumps([c for c in result.calls if c["tool"] != "http"])
+    assert SENTINEL_TOKEN not in tool_records and SENTINEL_CODE not in tool_records
+    for canary in RULE_CANARIES:
+        assert canary not in tool_records
+
+
+# ---- response validation (pure) ------------------------------------------------------------
+
+def _parse_v2(body: str, requested: int = 2) -> dict:
+    script = (
+        f"$r = ConvertTo-EnrollmentResult -Content {ps_quote(body)} -RequestedContract {requested}\n"
+        "[pscustomobject]@{ Valid = $r.Valid; Problem = $r.Problem; Contract = $r.Contract; KeyId = $r.KeyId; Timezone = $r.Timezone; "
+        "RulesIsObject = ($r.Rules -is [System.Management.Automation.PSCustomObject]); Customer = $r.CustomerId } | ConvertTo-Json -Compress"
+    )
+    completed = _dot_source_and_run(script)
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout.strip().splitlines()[-1])
+
+
+@needs_windows_powershell
+def test_v2_response_validation_accepts_exactly_the_nine_field_object():
+    parsed = _parse_v2(_v2_enroll_body())
+
+    assert parsed == {"Valid": True, "Problem": None, "Contract": 2, "KeyId": KEY_ID, "Timezone": TIMEZONE, "RulesIsObject": True,
+                      "Customer": 7}
+
+
+_BAD_V2_BODIES = {
+    "four_fields_for_a_v2_request": _valid_enroll_body(),
+    "missing_contract_version": json.dumps({k: v for k, v in json.loads(_v2_enroll_body()).items() if k != "contract_version"}),
+    "missing_contract_mode": json.dumps({k: v for k, v in json.loads(_v2_enroll_body()).items() if k != "contract_mode"}),
+    "missing_key_id": json.dumps({k: v for k, v in json.loads(_v2_enroll_body()).items() if k != "key_id"}),
+    "missing_timezone": json.dumps({k: v for k, v in json.loads(_v2_enroll_body()).items() if k != "timezone"}),
+    "missing_rules": json.dumps({k: v for k, v in json.loads(_v2_enroll_body()).items() if k != "classification_rules"}),
+    "an_extra_field": _v2_enroll_body(hmac_secret="CANARY-EXTRA-FIELD-VALUE"),
+    "contract_version_1": _v2_enroll_body(contract_version=1),
+    "contract_version_as_text": _v2_enroll_body(contract_version="2"),
+    "contract_version_true": _v2_enroll_body(contract_version=True),
+    "contract_mode_v1": _v2_enroll_body(contract_mode="v1"),
+    "contract_mode_upper_case": _v2_enroll_body(contract_mode="V2"),
+    "key_id_upper_case": _v2_enroll_body(key_id=KEY_ID.upper()),
+    "key_id_not_a_uuid": _v2_enroll_body(key_id="CANARY-NOT-A-KEY-ID"),
+    "key_id_a_number": _v2_enroll_body(key_id=12345),
+    "timezone_empty": _v2_enroll_body(timezone=""),
+    "timezone_with_spaces": _v2_enroll_body(timezone="New York"),
+    "timezone_a_number": _v2_enroll_body(timezone=5),
+    "timezone_far_too_long": _v2_enroll_body(timezone="A" * 80),
+    "rules_a_list": _v2_enroll_body(classification_rules=[]),
+    "rules_a_string": _v2_enroll_body(classification_rules="CANARY-RULES-AS-TEXT"),
+    "rules_null": _v2_enroll_body(classification_rules=None),
+    "a_bad_token": _v2_enroll_body(agent_token="short"),
+    "a_zero_id": _v2_enroll_body(customer_id=0),
+}
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("case", sorted(_BAD_V2_BODIES))
+def test_v2_response_validation_rejects_every_malformed_body_without_repeating_a_value(case):
+    parsed = _parse_v2(_BAD_V2_BODIES[case])
+
+    assert parsed["Valid"] is False and parsed["Problem"]
+    assert (parsed["KeyId"], parsed["Timezone"], parsed["RulesIsObject"], parsed["Customer"]) == (None, None, False, None)
+    for value in (SENTINEL_TOKEN, KEY_ID, KEY_ID.upper(), "CANARY", *RULE_CANARIES):
+        assert value not in parsed["Problem"], parsed["Problem"]
+
+
+@needs_windows_powershell
+def test_the_two_response_shapes_are_never_mixed():
+    assert _parse_v2(_v2_enroll_body(), requested=1)["Valid"] is False  # nine fields answering a LEGACY request
+    assert _parse_v2(_valid_enroll_body(), requested=2)["Valid"] is False  # four fields answering a V2 request
+    assert _parse_v2(_valid_enroll_body(), requested=1)["Valid"] is True
+
+
+@needs_windows_powershell
+def test_the_refusal_code_reader_accepts_only_the_four_fixed_codes():
+    cases = {
+        json.dumps({"code": "collector_upgrade_required", "detail": "x"}): "collector_upgrade_required",
+        json.dumps({"code": "contract_not_permitted", "detail": "x"}): "contract_not_permitted",
+        json.dumps({"code": "unsupported_contract_version"}): "unsupported_contract_version",
+        json.dumps({"code": "enrollment_not_ready", "detail": "x", "more": 1}): "enrollment_not_ready",
+        json.dumps({"code": "Contract_Not_Permitted"}): "",          # exact, case-sensitive
+        json.dumps({"code": "something_else"}): "",
+        json.dumps({"code": ["contract_not_permitted"]}): "",
+        json.dumps({"detail": "contract_not_permitted"}): "",          # the code is read from `code` and nowhere else
+        json.dumps(["contract_not_permitted"]): "",
+        "contract_not_permitted": "",
+        "{ not json": "",
+        "": "",
+    }
+    script = "\n".join(f"'[' + (Get-EnrollmentRefusalCode -Content {ps_quote(body)}) + ']'" for body in cases)
+
+    assert _dot_source_and_run(script).stdout.split() == [f"[{expected}]" for expected in cases.values()]
+
+
+# ---- the happy path ------------------------------------------------------------------------
+
+@needs_windows_powershell
+def test_a_fresh_v2_setup_enrolls_once_installs_the_servers_rules_and_enables_the_task_itself(tmp_path):
+    bundle = make_bundle(tmp_path)
+
+    result = run_scenario(bundle, http=v2_http(), answers=[""])  # accept the standard files; nothing else is asked
+
+    assert result.exit_code == 0, result.output
+    assert result.tools() == V2_HAPPY_TOOLS
+    # ONE enrollment request, asking for Contract v2. No fallback, no second request.
+    (post,) = enroll_posts(result)
+    assert post["body"] == {"enrollment_code": SENTINEL_CODE, "hostname": "TEST-PC", "collector_version": RELEASE_VERSION,
+                            "contract_version": 2}
+    # The task was registered Disabled by finish-install and enabled by setup as its LAST action, without a question.
+    assert result.task == {"State": "Ready"}
+    assert not any("Enable the scheduled task" in prompt for prompt in result.prompts())
+    assert result.tools()[-1] == "enable-task" and result.tools().index("finish-install") < result.tools().index("enable-task")
+    assert "did not start a Collector run" in result.output
+    # The server's rules are where the Collector reads them, exactly as sent, and the staging area is gone.
+    assert json.loads(live_rules_path(bundle).read_text(encoding="utf-8")) == RULES_DOC
+    assert not staged_rules_path(bundle).exists() and not result.recovery_path.exists()
+    assert not (bundle.data_root / "setup").exists()
+    assert_nothing_sensitive_was_printed(result)
+
+
+@needs_windows_powershell
+def test_a_v2_setup_passes_the_contract_the_key_id_and_the_time_zone_to_the_installer_and_nothing_else_new(tmp_path):
+    bundle = make_bundle(tmp_path)
+
+    result = run_scenario(bundle, http=v2_http(), answers=[""])
+
+    (install,) = result.calls_to("install")
+    params = install["params"]
+    assert (params["ContractMode"], params["KeyId"], params["Timezone"]) == ("v2", KEY_ID, TIMEZONE)
+    assert (params["CustomerId"], params["BranchId"], params["InstallationId"]) == (7, 3, 41)
+    assert set(params) == {"InstallRoot", "DataRoot", "CustomerId", "BranchId", "InstallationId", "ApiUrl", "CheckinsPath",
+                           "RejectsPath", "AcsPath", "SuppressNextSteps", "ContractMode", "KeyId", "Timezone"}
+    config = json.loads(bundle.config_path.read_text(encoding="utf-8-sig"))
+    assert config["contract_mode"] == "v2" and config["v2"] == {"key_id": KEY_ID, "timezone": TIMEZONE}
+    assert SENTINEL_TOKEN not in bundle.config_path.read_text(encoding="utf-8-sig")
+    for canary in RULE_CANARIES:
+        assert canary not in bundle.config_path.read_text(encoding="utf-8-sig")  # no rule is ever in the config
+
+
+@needs_windows_powershell
+def test_a_legacy_setup_passes_no_contract_setting_to_the_installer(tmp_path):
+    bundle = make_bundle(tmp_path)
+
+    result = run_scenario(bundle, answers=["", ""])
+
+    (install,) = result.calls_to("install")
+    assert not {"ContractMode", "KeyId", "Timezone"} & set(install["params"])
+    assert "contract_mode" not in json.loads(bundle.config_path.read_text(encoding="utf-8-sig"))
+    assert not live_rules_path(bundle).exists() and not staged_rules_path(bundle).exists()  # a legacy install has no rules file
+
+
+@needs_windows_powershell
+def test_the_enable_switch_is_not_needed_for_v2_and_changes_nothing(tmp_path):
+    bundle = make_bundle(tmp_path)
+
+    result = run_scenario(bundle, http=v2_http(), answers=[""], args="-EnableTask")
+
+    assert result.exit_code == 0 and result.tools() == V2_HAPPY_TOOLS and result.task == {"State": "Ready"}
+
+
+# ---- the legacy fallback, and what is never retried ------------------------------------------
+
+@needs_windows_powershell
+def test_a_legacy_code_is_retried_exactly_once_without_a_contract_version_and_takes_the_legacy_path(tmp_path):
+    bundle = make_bundle(tmp_path)
+
+    result = run_scenario(bundle, answers=["", ""])  # default_http: refused contract_not_permitted, then enrolled
+
+    assert result.exit_code == 0, result.output
+    first, second = enroll_posts(result)
+    assert first["body"]["contract_version"] == 2 and "contract_version" not in second["body"]
+    assert result.calls_to("read-code") and len(result.calls_to("read-code")) == 1  # the code is asked for ONCE
+    # The legacy path, unchanged: its own enable question, whose default leaves the task disabled.
+    assert any("Enable the scheduled task now?" in prompt for prompt in result.prompts())
+    assert result.task == {"State": "Disabled"} and result.calls_to("enable-task") == []
+    assert "legacy contract" in result.output
+
+
+@needs_windows_powershell
+def test_the_fallback_never_loops_when_the_server_keeps_refusing(tmp_path):
+    bundle = make_bundle(tmp_path)
+
+    result = run_scenario(bundle, http=default_http(**{ENROLL: refusal("contract_not_permitted")}), answers=[""])
+
+    assert result.exit_code == 1 and len(enroll_posts(result)) == 2  # the v2 request and ONE legacy retry, never a third
+    assert "The enrollment code was NOT used." in result.output and "may or may not" not in result.output
+    assert result.machine_token is None and result.calls_to("install") == []
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize(("code", "advice"), [
+    ("collector_upgrade_required", "current SortView Collector release bundle"),
+    ("unsupported_contract_version", "do not agree on a contract"),
+    ("enrollment_not_ready", "finish preparing this installation"),
+])
+def test_every_other_fixed_refusal_stops_at_once_and_says_the_code_was_not_used(tmp_path, code, advice):
+    bundle = make_bundle(tmp_path)
+
+    result = run_scenario(bundle, http=default_http(**{ENROLL: refusal(code)}), answers=[""])
+
+    assert result.exit_code == 1 and "SETUP STOPPED at step 5 (enrollment)" in result.output
+    assert len(enroll_posts(result)) == 1  # NO fallback to the legacy contract for any of these
+    assert "The enrollment code was NOT used." in result.output and advice in result.output
+    assert "may or may not" not in result.output and "HAS BEEN USED" not in result.output
+    assert "still valid until it expires" in result.output  # the same code can be used again
+    assert result.machine_token is None and result.calls_to("install") == [] and result.task is None
+    assert not (bundle.data_root / "setup").exists()  # the folder prepared for the enrollment is taken away again
+    assert "A fixed sentence from the server." not in result.output  # the response body is never shown
+    assert_no_secret_anywhere_visible(result)
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("content", [
+    json.dumps({"code": "some_future_refusal", "detail": "CANARY-SERVER-TEXT"}),
+    json.dumps({"detail": "CANARY-SERVER-TEXT"}),
+    "CANARY-SERVER-TEXT not json",
+    "",
+])
+def test_an_unknown_409_is_never_retried_and_stays_conservative_about_the_code(tmp_path, content):
+    bundle = make_bundle(tmp_path)
+
+    result = run_scenario(bundle, http=default_http(**{ENROLL: {"status": 409, "content": content}}), answers=[""])
+
+    assert result.exit_code == 1 and len(enroll_posts(result)) == 1
+    assert_ambiguous_outcome_guidance(result)  # not known to be a non-consuming refusal
+    assert "CANARY-SERVER-TEXT" not in result.output and "some_future_refusal" not in result.output
+    assert result.machine_token is None and result.calls_to("install") == []
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 422, 429, 500, 503])
+def test_no_other_status_ever_triggers_the_legacy_retry(tmp_path, status):
+    bundle = make_bundle(tmp_path)
+    answer = {"status": status, "content": json.dumps({"code": "contract_not_permitted"})}  # the code only counts on a 409
+
+    result = run_scenario(bundle, http=default_http(**{ENROLL: answer}), answers=[""])
+
+    assert result.exit_code == 1 and len(enroll_posts(result)) == 1
+    assert result.machine_token is None and result.calls_to("install") == []
+
+
+@needs_windows_powershell
+def test_a_malformed_v2_success_fails_closed_and_shows_nothing_from_the_response(tmp_path):
+    bundle = make_bundle(tmp_path)
+    body = _v2_enroll_body(key_id="CANARY-NOT-A-KEY-ID")
+
+    result = run_scenario(bundle, http=v2_http(**{ENROLL: {"status": 200, "content": body}}), answers=[""])
+
+    assert result.exit_code == 1 and len(enroll_posts(result)) == 1
+    assert "the response was not valid" in result.output
+    assert result.machine_token is None and result.calls_to("install") == [] and result.recovery is None
+    assert not staged_rules_path(bundle).exists()
+    assert "CANARY-NOT-A-KEY-ID" not in result.output
+    assert_nothing_sensitive_was_printed(result)
+
+
+# ---- what is saved, and in what order ---------------------------------------------------------
+
+@needs_windows_powershell
+def test_the_v2_record_and_rules_are_saved_and_verified_before_the_token_is_stored(tmp_path):
+    bundle = make_bundle(tmp_path)
+
+    result = run_scenario(bundle, http=v2_http(), answers=[""], env={"SETUPTEST_TOKEN_MODE": "fail"})
+
+    # The token could not be stored -- and everything a resume needs was ALREADY on disk when that happened.
+    assert result.exit_code == 1 and "SETUP STOPPED at step 6b (API token)" in result.output
+    assert result.machine_token is None
+    record = result.recovery
+    assert record is not None and set(record) == RECOVERY_KEYS_V2
+    assert json.loads(staged_rules_path(bundle).read_text(encoding="utf-8")) == RULES_DOC
+    assert result.calls_to("install") == [] and result.calls_to("finish-install") == [] and result.task is None
+    # The advice: support issues a replacement token and setup resumes. A new code is never the advice.
+    assert "Do NOT ask for another enrollment code" in result.output
+    assert "replacement API token must be issued for installation 41" in result.output
+    assert "NEW enrollment code" not in result.output and "new enrollment code" not in result.output.replace("Do NOT ask for another enrollment code", "")
+    assert "The one-time enrollment code HAS BEEN USED" in result.output
+    assert "the permanent API token is NOT stored" in result.output
+    assert_nothing_sensitive_was_printed(result)
+
+
+@needs_windows_powershell
+def test_the_v2_record_holds_only_the_approved_non_secret_fields_and_no_rule(tmp_path):
+    bundle = make_bundle(tmp_path)
+
+    result = run_scenario(bundle, http=v2_http(), answers=[""], env={"SETUPTEST_INSTALL_MODE": "fail"})
+
+    assert result.exit_code == 3
+    record = result.recovery
+    assert record is not None
+    staged = staged_rules_path(bundle).read_bytes()
+    assert record == {
+        "schema_version": 2,
+        "created_utc": record["created_utc"],
+        "release_version": RELEASE_VERSION,
+        "api_url": TEMPLATE_URL,
+        "customer_id": 7,
+        "branch_id": 3,
+        "installation_id": 41,
+        "contract_version": 2,
+        "contract_mode": "v2",
+        "key_id": KEY_ID,
+        "timezone": TIMEZONE,
+        "rules_sha256": hashlib.sha256(staged).hexdigest(),  # the staged FILE's hash: ties it to this enrollment
+    }
+    raw = result.recovery_path.read_text(encoding="utf-8")
+    for forbidden in (SENTINEL_TOKEN, SENTINEL_CODE, "agent_token", "enrollment_code", "classification_rules", "secret",
+                      *RULE_CANARIES):
+        assert forbidden not in raw, forbidden
+    assert result.machine_token == SENTINEL_TOKEN  # (and by now the token is stored too)
+    assert result.tools().index("set-api-token") < result.tools().index("install")
+
+
+@needs_windows_powershell
+def test_a_v2_record_that_cannot_be_saved_stops_before_the_token_and_points_to_support(tmp_path):
+    bundle = make_bundle(tmp_path)
+
+    result = run_scenario(bundle, http=v2_http(), answers=[""], extra_ps="function Save-SetupRecovery { throw 'disk full' }\n")
+
+    assert result.exit_code == 1 and "SETUP STOPPED at step 6 (saving the enrollment)" in result.output
+    assert "could not be saved (disk full)" in result.output
+    assert result.calls_to("set-api-token") == [] and result.machine_token is None and result.calls_to("install") == []
+    assert not result.recovery_path.exists() and not staged_rules_path(bundle).exists()  # nothing unverified is left to steer a resume
+    assert "Do NOT ask for another enrollment code" in result.output and "installation number 41" in result.output
+    assert "NEW enrollment code" not in result.output
+
+
+@needs_windows_powershell
+def test_staged_rules_that_do_not_read_back_as_the_servers_stop_setup_before_the_token(tmp_path):
+    bundle = make_bundle(tmp_path)
+    # A writer that silently drops a list entry, as a truncating disk or a serialization bug would.
+    lossy = ("function ConvertTo-ClassificationRulesJson { param($Rules, [switch]$Compress)\n"
+             "  if ($Compress) { return (ConvertTo-Json -InputObject $Rules -Depth 20 -Compress) }\n"
+             "  return '{\"schema_version\":1,\"destinations\":[],\"branch_services_names\":[],\"collection_services_names\":[],"
+             "\"branch_services_da_patterns\":[],\"collection_services_da_patterns\":[]}' }\n")
+
+    result = run_scenario(bundle, http=v2_http(), answers=[""], extra_ps=lossy)
+
+    assert result.exit_code == 1 and "SETUP STOPPED at step 6 (saving the enrollment)" in result.output
+    assert "do not have the structure the server sent" in result.output
+    # The problem is described by SHAPE (list sizes), never by content.
+    assert "branch_services_names=1" in result.output and "branch_services_names=0" in result.output
+    assert result.calls_to("set-api-token") == [] and not staged_rules_path(bundle).exists()
+    assert_nothing_sensitive_was_printed(result)
+
+
+# ---- the rules document reaches disk exactly as the server sent it -----------------------------
+
+_RULES_DOCUMENTS = {
+    "reviewed_and_empty": {"schema_version": 1, "destinations": [], "branch_services_names": [], "collection_services_names": [],
+                           "branch_services_da_patterns": [], "collection_services_da_patterns": []},
+    "one_entry_per_list": {"schema_version": 1, "destinations": [{"slug": "annex", "contains": "ANNEX"}],
+                           "branch_services_names": ["ONLY ONE"], "collection_services_names": ["ONLY ONE TOO"],
+                           "branch_services_da_patterns": ["DAONE"], "collection_services_da_patterns": ["DATWO"]},
+    "non_ascii_and_awkward_characters": {
+        "schema_version": 1,
+        "destinations": [{"slug": "sodra", "contains": "SÖDRA FILIALEN"}, {"slug": "west", "contains": "WEST <A&B>"}],
+        "branch_services_names": ["ÅSA ÖBERG-ÇELIK", "O'BRIEN \"QUOTED\" \\ SLASH", "名前 テスト"],
+        "collection_services_names": ["JOSÉ NUÑEZ", "MÜLLER, STRAßE"],
+        "branch_services_da_patterns": ["DA ÉTÉ"],
+        "collection_services_da_patterns": [],
+    },
+    "many_entries": {"schema_version": 1, "destinations": [{"slug": f"d{i}", "contains": f"DEST {i}"} for i in range(40)],
+                     "branch_services_names": [f"ACCOUNT {i}" for i in range(300)], "collection_services_names": [],
+                     "branch_services_da_patterns": [], "collection_services_da_patterns": [f"DA{i}" for i in range(50)]},
+}
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("name", sorted(_RULES_DOCUMENTS))
+def test_the_servers_rules_are_installed_exactly_as_sent_utf8_without_a_bom(tmp_path, name):
+    document = _RULES_DOCUMENTS[name]
+    bundle = make_bundle(tmp_path)
+
+    result = run_scenario(bundle, http=v2_http(document), answers=[""])
+
+    assert result.exit_code == 0, result.output
+    raw = live_rules_path(bundle).read_bytes()
+    assert not raw.startswith(b"\xef\xbb\xbf")  # no BOM: the Collector reads strict UTF-8
+    assert json.loads(raw.decode("utf-8")) == document  # nothing added, dropped, merged, reordered or re-encoded
+    # ... and the Collector's own validator accepts the installed file unchanged.
+    from collector import v2_rules
+    assert v2_rules.normalize_document(json.loads(raw.decode("utf-8"))) is not None
+    assert not [p for p in live_rules_path(bundle).parent.iterdir() if p.suffix == ".tmp"]  # no temporary file left behind
+    assert_nothing_sensitive_was_printed(result, document)
+
+
+@needs_windows_powershell
+def test_the_rules_shape_describes_structure_and_never_content():
+    shape = _dot_source_and_run(
+        f"Get-ClassificationRulesShape -Rules ({ps_quote(json.dumps(RULES_DOC))} | ConvertFrom-Json)\n"
+        "'[' + (Get-ClassificationRulesShape -Rules 'text') + ']'\n"
+        "Get-ClassificationRulesShape -Rules ('{\"schema_version\":1,\"destinations\":\"x\"}' | ConvertFrom-Json)"
+    ).stdout.splitlines()
+
+    assert shape[0] == ("fields=branch_services_da_patterns,branch_services_names,collection_services_da_patterns,"
+                        "collection_services_names,destinations,schema_version; schema_version=1; destinations=1; "
+                        "branch_services_names=1; collection_services_names=2; branch_services_da_patterns=0; "
+                        "collection_services_da_patterns=1")
+    assert shape[1] == "[]"  # not an object: no shape
+    assert "destinations=not-a-list" in shape[2] and "branch_services_names=absent" in shape[2]
+    for canary in RULE_CANARIES:
+        assert canary not in "\n".join(shape)
+
+
+# ---- a first install starts from a clean machine -----------------------------------------------
+
+_LEFTOVERS = {
+    "a_v2_secret": ("secrets/v2_key.dpapi", "a Contract v2 secret"),
+    "a_legacy_state_file": ("data/state.json", "a Collector state file (the legacy cursor)"),
+    "a_v2_state_file": ("data/v2/state_v2.json", "a Contract v2 state file (cursor)"),
+    "a_live_rules_file": ("config/classification_rules.json", "a classification rules file"),
+    "staged_rules_with_no_record": ("setup/classification_rules.json", "classification rules staged by an earlier setup"),
+}
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("leftover", sorted(_LEFTOVERS))
+def test_a_fresh_run_refuses_collector_data_left_by_an_earlier_install_before_the_code(tmp_path, leftover):
+    relative, description = _LEFTOVERS[leftover]
+    bundle = make_bundle(tmp_path)
+    path = bundle.data_root / relative
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"left here by an earlier install")
+
+    result = run_scenario(bundle, http=v2_http(), answers=["y", "y", "y"])
+
+    assert result.exit_code == 2 and "SETUP STOPPED at step 2 (machine)" in result.output
+    assert description in result.output and "the enrollment code was not requested" in result.output
+    assert result.calls_to("read-code") == [] and result.calls_to("http") == []  # before the code AND before any network request
+    assert path.read_bytes() == b"left here by an earlier install"  # never adopted, replaced or deleted
+    assert result.machine_token is None and not bundle.install_root.exists() and result.task is None
+    assert [c["tool"] for c in result.calls if c["tool"] not in ("prompt",)] == ["install-verify", "runtime-version"]
+
+
+@needs_windows_powershell
+def test_every_leftover_is_listed_at_once(tmp_path):
+    bundle = make_bundle(tmp_path)
+    for relative, _description in _LEFTOVERS.values():
+        path = bundle.data_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x")
+
+    result = run_scenario(bundle, http=v2_http(), answers=[""], machine_token="an-earlier-installations-token")
+
+    assert result.exit_code == 2
+    for _relative, description in _LEFTOVERS.values():
+        assert description in result.output
+    assert "an API token at" in result.output and "an-earlier-installations-token" not in result.output
+
+
+@needs_windows_powershell
+def test_a_clean_machine_reports_no_leftovers():
+    out = _dot_source_and_run(
+        f"'[' + (@(Get-LeftoverArtifacts -DataRoot {ps_quote(REPO_ROOT / 'no-such-data-root')}).Count) + ']'"
+    ).stdout.strip()
+
+    assert out == "[0]"
+
+
+# ---- resume: an interrupted v2 setup is finished from disk, with no enrollment request -------
+
+def _interrupt_v2(tmp_path: Path, *, env: dict) -> tuple[Bundle, Result]:
+    bundle = make_bundle(tmp_path)
+    first = run_scenario(bundle, http=v2_http(), answers=[""], env=env)
+    assert first.exit_code not in (0, None), first.output
+    assert first.recovery is not None and first.recovery["schema_version"] == 2
+    assert first.machine_token == SENTINEL_TOKEN
+    assert first.task is None or first.task == {"State": "Disabled"}  # an interrupted setup never leaves an active task
+    return bundle, first
+
+
+#: After the first run the server would REFUSE this code (the branch's v2 identity exists). Any enrollment request a
+#: resume made would be answered with this -- so a resume that completes proves it made none.
+_ALREADY_ENROLLED = {
+    "Get /": {"status": 200, "content": json.dumps({"status": "SortView API running"})},
+    ENROLL: refusal("enrollment_not_ready"),
+}
+
+
+@needs_windows_powershell
+def test_a_v2_setup_interrupted_before_the_install_resumes_without_an_enrollment_request(tmp_path):
+    bundle, first = _interrupt_v2(tmp_path, env={"SETUPTEST_INSTALL_MODE": "fail"})
+    assert first.exit_code == 3 and not live_rules_path(bundle).exists() and staged_rules_path(bundle).exists()
+    assert "run setup.ps1 again to RESUME -- no enrollment code is needed" in first.output
+    assert "Do NOT ask for another enrollment code" in first.output
+    before = len(first.calls)
+
+    second = run_scenario(bundle, http=_ALREADY_ENROLLED, answers=["", ""])  # Enter = resume; Enter = use the standard files
+
+    assert second.exit_code == 0, second.output
+    later = new_calls(second, before)
+    names = [c["tool"] for c in later if c["tool"] != "protect-recovery"]
+    assert names == ["install-verify", "runtime-version", "http", "install", "finish-install", "enable-task"]
+    assert [c for c in later if c["tool"] == "http" and c["method"] == "Post"] == []  # NO enrollment request
+    assert [c for c in later if c["tool"] in ("read-code", "set-api-token")] == []  # no code asked for; the stored token is reused
+    install = next(c for c in later if c["tool"] == "install")["params"]
+    assert (install["ContractMode"], install["KeyId"], install["Timezone"]) == ("v2", KEY_ID, TIMEZONE)  # from the saved record
+    assert (install["CustomerId"], install["BranchId"], install["InstallationId"]) == (7, 3, 41)
+    assert json.loads(live_rules_path(bundle).read_text(encoding="utf-8")) == RULES_DOC
+    assert second.task == {"State": "Ready"}  # completed: enabled, as a fresh v2 setup is
+    assert not second.recovery_path.exists() and not staged_rules_path(bundle).exists()
+    assert second.machine_token == SENTINEL_TOKEN
+    assert "no enrollment request will be made" in second.output
+    assert_nothing_sensitive_was_printed(second)
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("mode", ["fail_interactive_preflight", "fail_system_preflight", "fail_bootstrap", "fail_task_registration"])
+def test_a_v2_setup_interrupted_after_the_install_resumes_at_verification_without_reinstalling(tmp_path, mode):
+    bundle, first = _interrupt_v2(tmp_path, env={"SETUPTEST_FINISH_MODE": mode})
+    assert first.calls_to("enable-task") == [] and first.task is None
+    assert json.loads(live_rules_path(bundle).read_text(encoding="utf-8")) == RULES_DOC  # already installed by the first run
+    rules_before = live_rules_path(bundle).read_bytes()
+    config_before = bundle.config_path.read_bytes()
+    before = len(first.calls)
+
+    second = run_scenario(bundle, http=_ALREADY_ENROLLED, answers=[""])  # Enter = resume
+
+    assert second.exit_code == 0, second.output
+    names = [c["tool"] for c in new_calls(second, before) if c["tool"] != "protect-recovery"]
+    assert names == ["install-verify", "runtime-version", "http", "finish-install", "enable-task"]  # no install, no enrollment
+    assert live_rules_path(bundle).read_bytes() == rules_before and bundle.config_path.read_bytes() == config_before  # reused, not rewritten
+    assert second.task == {"State": "Ready"} and not second.recovery_path.exists()
+    assert "the classification rules from SortView are already installed" in second.output
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("tamper", ["staged_rules_changed", "staged_rules_missing", "live_rules_changed"])
+def test_a_resume_whose_rules_are_not_the_saved_enrollments_refuses_and_points_to_support(tmp_path, tamper):
+    env = {"SETUPTEST_FINISH_MODE": "fail_bootstrap"} if tamper == "live_rules_changed" else {"SETUPTEST_INSTALL_MODE": "fail"}
+    bundle, first = _interrupt_v2(tmp_path, env=env)
+    if tamper == "staged_rules_changed":
+        staged_rules_path(bundle).write_text(json.dumps({**RULES_DOC, "branch_services_names": ["SOMEONE ELSE"]}), encoding="utf-8")
+    elif tamper == "staged_rules_missing":
+        staged_rules_path(bundle).unlink()
+    else:
+        live_rules_path(bundle).write_text(json.dumps({**RULES_DOC, "branch_services_names": ["SOMEONE ELSE"]}), encoding="utf-8")
+    record_before = first.recovery_path.read_bytes()
+    before = len(first.calls)
+
+    second = run_scenario(bundle, http=_ALREADY_ENROLLED, answers=["", ""])
+
+    assert second.exit_code == 2 and "cannot be resumed safely" in second.output
+    assert "Do NOT ask for another enrollment code" in second.output and "Contact SortView support" in second.output
+    names = [c["tool"] for c in new_calls(second, before)]
+    assert names == ["install-verify", "runtime-version"]  # stopped before the network, the code, the install and the task
+    assert first.recovery_path.read_bytes() == record_before and second.machine_token == SENTINEL_TOKEN  # nothing deleted or replaced
+    assert "SOMEONE ELSE" not in second.output
+    assert second.task is None or second.task == {"State": "Disabled"}
+
+
+@needs_windows_powershell
+def test_a_saved_v2_enrollment_with_no_token_keeps_the_record_and_never_suggests_a_new_code(tmp_path):
+    bundle, first = _interrupt_v2(tmp_path, env={"SETUPTEST_INSTALL_MODE": "fail"})
+    (bundle.fake / "machine_token.txt").unlink()  # the token is gone
+    record_before = first.recovery_path.read_bytes()
+    before = len(first.calls)
+
+    second = run_scenario(bundle, http=_ALREADY_ENROLLED, answers=["", ""])
+
+    assert second.exit_code == 2
+    assert "no API token" in second.output and "replacement API token for installation 41" in second.output
+    assert "Do NOT ask for another enrollment code" in second.output and "do NOT delete the saved record" in second.output
+    assert "NEW enrollment code" not in second.output
+    assert first.recovery_path.read_bytes() == record_before and staged_rules_path(bundle).exists()
+    assert [c["tool"] for c in new_calls(second, before)] == ["install-verify", "runtime-version"]
+
+
+@needs_windows_powershell
+def test_a_legacy_saved_enrollment_with_no_token_still_gets_the_legacy_advice(tmp_path):
+    bundle = make_bundle(tmp_path)
+    first = run_scenario(bundle, answers=[""], env={"SETUPTEST_INSTALL_MODE": "fail"})
+    assert first.recovery is not None and first.recovery["schema_version"] == 1
+    (bundle.fake / "machine_token.txt").unlink()
+
+    second = run_scenario(bundle, answers=["", ""])
+
+    assert second.exit_code == 2 and "NEW enrollment code" in second.output  # unchanged: a legacy code CAN simply be reissued
+
+
+@needs_windows_powershell
+def test_a_declined_v2_resume_does_not_suggest_starting_over_with_a_new_code(tmp_path):
+    bundle, _first = _interrupt_v2(tmp_path, env={"SETUPTEST_INSTALL_MODE": "fail"})
+
+    second = run_scenario(bundle, http=_ALREADY_ENROLLED, answers=["n"])
+
+    assert second.exit_code == 2 and "Resuming the unfinished setup was declined" in second.output
+    assert "cannot be started over with a new enrollment code" in second.output and "get a NEW enrollment code" not in second.output
+    assert second.recovery is not None and staged_rules_path(bundle).exists()
+
+
+@needs_windows_powershell
+def test_the_recovery_reader_accepts_a_v2_record_and_rejects_every_mix_of_the_two_shapes():
+    v1 = {"schema_version": 1, "created_utc": "2026-01-01T00:00:00Z", "release_version": "1.0.14", "api_url": "https://api.example.org",
+          "customer_id": 7, "branch_id": 3, "installation_id": 41}
+    v2 = {**v1, "schema_version": 2, "contract_version": 2, "contract_mode": "v2", "key_id": KEY_ID, "timezone": TIMEZONE,
+          "rules_sha256": "a" * 64}
+    cases = {
+        "v1": (v1, True), "v2": (v2, True),
+        "v1_claiming_schema_2": ({**v1, "schema_version": 2}, False),
+        "v2_fields_on_a_schema_1_record": ({**v2, "schema_version": 1}, False),
+        "v2_without_the_rules_hash": ({k: v for k, v in v2.items() if k != "rules_sha256"}, False),
+        "v2_with_an_extra_field": ({**v2, "classification_rules": {"branch_services_names": ["X"]}}, False),
+        "v2_with_a_token_field": ({**v2, "agent_token": "x" * 30}, False),
+        "v2_bad_key_id": ({**v2, "key_id": "NOT-A-KEY"}, False),
+        "v2_bad_hash": ({**v2, "rules_sha256": "zz"}, False),
+        "v2_bad_mode": ({**v2, "contract_mode": "v1"}, False),
+        "v2_bad_version": ({**v2, "contract_version": 1}, False),
+        "v2_bad_timezone": ({**v2, "timezone": "not a zone"}, False),
+        "schema_3": ({**v1, "schema_version": 3}, False),
+    }
+    script = "\n".join(
+        f"$c = Test-SetupRecoveryContent -Content {ps_quote(json.dumps(doc))}; '{name}=' + $c.Valid + '/' + $(if ($c.Valid) {{ $c.Record.Contract }} else {{ 0 }})"
+        for name, (doc, _valid) in cases.items()
+    )
+
+    lines = dict(line.split("=") for line in _dot_source_and_run(script).stdout.split())
+    for name, (doc, valid) in cases.items():
+        expected = f"True/{2 if doc.get('schema_version') == 2 else 1}" if valid else "False/0"
+        assert lines[name] == expected, name
+
+
+@needs_windows_powershell
+def test_an_installed_config_matches_a_saved_enrollment_only_on_the_same_contract_key_and_zone(tmp_path):
+    install_root = tmp_path / "install"
+    install_root.mkdir()
+    (install_root / "SortViewCollector.exe").write_bytes(b"fake")
+    base = {"customer_id": 7, "branch_id": 3, "installation_id": 41, "api_url": "https://api.example.org"}
+    configs = {
+        "legacy": base,
+        "v2_same": {**base, "contract_mode": "v2", "v2": {"key_id": KEY_ID, "timezone": TIMEZONE}},
+        "v2_other_key": {**base, "contract_mode": "v2", "v2": {"key_id": KEY_ID.replace("3f", "4a"), "timezone": TIMEZONE}},
+        "v2_other_zone": {**base, "contract_mode": "v2", "v2": {"key_id": KEY_ID, "timezone": "America/Chicago"}},
+        "v2_no_section": {**base, "contract_mode": "v2"},
+    }
+    record = ("[pscustomobject]@{{ CustomerId = 7; BranchId = 3; InstallationId = 41; ApiUrl = 'https://api.example.org'; "
+              "Contract = {contract}; KeyId = {key}; Timezone = {zone} }}")
+    lines = []
+    for name, config in configs.items():
+        path = tmp_path / f"{name}.json"
+        path.write_text(json.dumps(config), encoding="utf-8")
+        for label, rec in (("v2", record.format(contract=2, key=ps_quote(KEY_ID), zone=ps_quote(TIMEZONE))),
+                           ("v1", record.format(contract=1, key="$null", zone="$null"))):
+            lines.append(f"'{name}/{label}=' + (Test-InstallMatchesRecovery -InstallRoot {ps_quote(install_root)} "
+                         f"-ConfigPath {ps_quote(path)} -Record ({rec})).Matches")
+
+    results = dict(line.split("=") for line in _dot_source_and_run("\n".join(lines)).stdout.split())
+
+    assert results == {
+        "legacy/v2": "False", "legacy/v1": "True",
+        "v2_same/v2": "True", "v2_same/v1": "False",
+        "v2_other_key/v2": "False", "v2_other_key/v1": "False",
+        "v2_other_zone/v2": "False", "v2_other_zone/v1": "False",
+        "v2_no_section/v2": "False", "v2_no_section/v1": "False",
+    }
+
+
+# ---- the task: enabled only at the very end, and never by a failed v2 setup --------------------
+
+@needs_windows_powershell
+@pytest.mark.parametrize("mode", sorted(_FINISH_FAILURES))
+def test_no_v2_verification_failure_ever_enables_the_task(tmp_path, mode):
+    bundle = make_bundle(tmp_path)
+
+    result = run_scenario(bundle, http=v2_http(), answers=[""], env={"SETUPTEST_FINISH_MODE": mode})
+
+    assert result.exit_code == _FINISH_FAILURES[mode]
+    assert result.calls_to("enable-task") == [] and result.task is None  # never enabled; none was even registered
+    assert "SETUP STOPPED at step 8 (verification)" in result.output
+    assert result.recovery is not None  # resumable
+    assert "Do NOT ask for another enrollment code" in result.output
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("mode", ["rogue_enabled_task_then_fail", "ok_but_task_enabled"])
+def test_a_task_found_enabled_before_the_final_step_of_a_v2_setup_is_disabled_and_setup_fails(tmp_path, mode):
+    bundle = make_bundle(tmp_path)
+
+    result = run_scenario(bundle, http=v2_http(), answers=[""], env={"SETUPTEST_FINISH_MODE": mode})
+
+    assert result.exit_code != 0 and result.task == {"State": "Disabled"}
+    assert result.calls_to("enable-task") == [] and len(result.calls_to("disable-task")) == 1
+
+
+@needs_windows_powershell
+def test_a_v2_setup_whose_final_enable_fails_leaves_the_task_disabled_and_reports_failure(tmp_path):
+    bundle = make_bundle(tmp_path)
+
+    result = run_scenario(bundle, http=v2_http(), answers=[""], env={"SETUPTEST_ENABLE_FAILS": "1"})
+
+    assert result.exit_code == 1 and "SETUP STOPPED at step 9 (enable)" in result.output
+    assert result.task == {"State": "Disabled"}
+    assert "Enable-ScheduledTask" in result.output  # how to enable it by hand
+
+
+@needs_windows_powershell
+def test_a_v2_setup_that_finishes_registers_no_task_is_a_failure_and_enables_nothing(tmp_path):
+    bundle = make_bundle(tmp_path)
+
+    result = run_scenario(bundle, http=v2_http(), answers=[""], env={"SETUPTEST_FINISH_MODE": "ok_but_no_task"})
+
+    assert result.exit_code == 1 and result.calls_to("enable-task") == [] and result.task is None
+
+
+def test_the_v2_automatic_enable_is_the_same_single_guarded_call_site():
+    run = SETUP_BODY[SETUP_BODY.index("function Invoke-SetupMain"):]
+    assert run.count("Enable-SortViewTask") == 1  # one call site for both contracts
+    decision = run.index("$enableNow = ([bool]$EnableTask -or $isV2Install)")
+    # It is decided only after the verification succeeded AND the task was confirmed Disabled.
+    assert run.index("Invoke-SetupTool -Path $finishScript") < run.index('if ([string]$task.State -ne "Disabled")') < decision
+    assert decision < run.index("Enable-SortViewTask")
+    # Nothing starts a run: the cmdlet's name appears only inside text that is printed as guidance.
+    assert all("Write-Host" in line for line in _code_lines(run) if "Start-ScheduledTask" in line)
+
+
+def test_setup_never_prints_a_rule_a_key_id_or_the_response():
+    printing = re.compile(r"(Write-(Host|Output|Verbose|Debug|Warning|Information|Error)\b[^\n]*|Stop-Setup\b[^\n]*(\n\s+-[^\n]*)*)")
+    for match in printing.finditer(SETUP_BODY):
+        statement = match.group(0)
+        for sensitive in ("$keyId", "$KeyId", ".KeyId", "$enrollment.Rules", "$Rules", "$rulesJson", "$http.Content", "$Content",
+                          "$readBack", "$timezone", "$record.Timezone"):
+            assert sensitive not in statement, (sensitive, statement[:120])
+    # The rules object is dropped from memory as soon as it has been staged, whatever happened.
+    main = SETUP_BODY[SETUP_BODY.index("function Invoke-SetupMain"):]
+    assert "} finally {\n                $enrollment.Rules = $null" in main
+
+
+@needs_windows_powershell
+def test_a_staged_rules_file_that_is_not_json_is_reported_without_quoting_it(tmp_path):
+    """A JSON parser's own error message quotes the text it could not read -- here, that would be a piece of the rules."""
+    bundle = make_bundle(tmp_path)
+    broken = ("function ConvertTo-ClassificationRulesJson { param($Rules, [switch]$Compress)\n"
+              "  if ($Compress) { return (ConvertTo-Json -InputObject $Rules -Depth 20 -Compress) }\n"
+              "  return '{ \"branch_services_names\": [ CANARY-UNQUOTED-ACCOUNT-NAME ' }\n")
+
+    result = run_scenario(bundle, http=v2_http(), answers=[""], extra_ps=broken)
+
+    assert result.exit_code == 1 and "SETUP STOPPED at step 6 (saving the enrollment)" in result.output
+    assert "could not be read back as JSON" in result.output
+    assert "CANARY-UNQUOTED-ACCOUNT-NAME" not in result.output
+    assert result.calls_to("set-api-token") == [] and not staged_rules_path(bundle).exists()
+    assert_nothing_sensitive_was_printed(result)
+
+
+# =====================================================================================
+# AMBIGUOUS ENROLLMENT OUTCOMES: what setup may and may not say about the single-use code
+#
+# A Contract v2 enrollment creates the branch's v2 identity on the server exactly once; a second code is refused. So
+# "ask for a new enrollment code" is safe advice ONLY when the server is known not to have enrolled this computer.
+#
+#   known A1 refusals (409 + fixed code), 429, a redirect   the code was NOT used -- said plainly
+#   400                                                     this request enrolled nothing; nothing is claimed about
+#                                                           an earlier one
+#   no response, 5xx, an unexpected status, an unreadable   UNKNOWN: never "not used", never "get a new code" --
+#   200                                                     retry with the SAME code; if that is refused, support
+# =====================================================================================
+
+_NEW_CODE_ADVICE = re.compile(r"ask (your SortView administrator )?for a new enrollment code", re.IGNORECASE)
+
+
+def assert_ambiguous_outcome_guidance(result: Result) -> None:
+    """The conservative guidance, and none of the unsafe claims."""
+    out = result.output
+    assert result.exit_code == 1 and "SETUP STOPPED at step 5 (enrollment)" in out
+    assert "The enrollment code may or may not have been used: the result of the enrollment request is UNKNOWN." in out
+    assert "Do NOT ask for a new enrollment code yet. Run setup.ps1 again with the SAME code." in out
+    assert "If the same code is then refused as invalid or already used, the first request may have completed: contact SortView support" in out
+    # Never the two unsafe statements:
+    assert "The enrollment code was NOT used" not in out and "HAS BEEN USED" not in out
+    # "new enrollment code" appears only inside "Do NOT ask for a new enrollment code": nothing ADVISES getting one.
+    assert _NEW_CODE_ADVICE.sub("", out.replace("Do NOT ask for a new enrollment code", "")) == out.replace("Do NOT ask for a new enrollment code", "")
+    assert "NEW enrollment code" not in out
+    # And setup did not retry by itself, stored nothing and installed nothing.
+    assert len(enroll_posts(result)) == 1
+    assert result.machine_token is None and result.calls_to("install") == [] and result.task is None
+    assert result.recovery is None
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("failure", [
+    "no response (WebException)",          # a timeout while waiting for the answer
+    "no response (IOException)",           # the connection was reset / closed after the request was sent
+    "no response (TaskCanceledException)", # PowerShell 7's timeout
+    "no response (HttpRequestException)",
+])
+def test_no_response_never_says_the_code_was_unused_and_says_to_retry_the_same_code(tmp_path, failure):
+    bundle = make_bundle(tmp_path)
+    http = v2_http(**{ENROLL: {"status": 0, "content": None, "failure": failure}})
+
+    result = run_scenario(bundle, http=http, answers=[""])
+
+    assert_ambiguous_outcome_guidance(result)
+    assert "No response was received from SortView" in result.output
+    assert "the result of the enrollment request is unknown" in result.output
+    assert "Could not complete a secure connection" not in result.output  # no claim that the request failed to arrive
+    assert_nothing_sensitive_was_printed(result)
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+def test_a_5xx_never_suggests_a_new_code(tmp_path, status):
+    bundle = make_bundle(tmp_path)
+    http = v2_http(**{ENROLL: {"status": status, "content": json.dumps({"detail": "CANARY-SERVER-TEXT"}), "failure": f"HTTP {status}"}})
+
+    result = run_scenario(bundle, http=http, answers=[""])
+
+    assert_ambiguous_outcome_guidance(result)
+    assert "CANARY-SERVER-TEXT" not in result.output
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("status", [401, 403, 404, 418, 422])
+def test_an_unknown_status_never_suggests_a_new_code(tmp_path, status):
+    bundle = make_bundle(tmp_path)
+    http = v2_http(**{ENROLL: {"status": status, "content": json.dumps({"detail": "CANARY-SERVER-TEXT"}), "failure": f"HTTP {status}"}})
+
+    result = run_scenario(bundle, http=http, answers=[""])
+
+    assert_ambiguous_outcome_guidance(result)
+    assert "unexpected status" in result.output and "CANARY-SERVER-TEXT" not in result.output
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("body", [
+    _v2_enroll_body(key_id="CANARY-NOT-A-KEY-ID"),   # the server enrolled; the answer cannot be used
+    _valid_enroll_body(),                             # a legacy answer to the Contract v2 request
+    "CANARY-SERVER-TEXT not json at all",
+    "",
+])
+def test_a_malformed_200_never_suggests_a_new_code(tmp_path, body):
+    bundle = make_bundle(tmp_path)
+
+    result = run_scenario(bundle, http=v2_http(**{ENROLL: {"status": 200, "content": body}}), answers=[""])
+
+    assert_ambiguous_outcome_guidance(result)
+    assert "the response was not valid" in result.output
+    assert "CANARY" not in result.output and SENTINEL_TOKEN not in result.output and KEY_ID not in result.output
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("code", ["collector_upgrade_required", "unsupported_contract_version", "enrollment_not_ready"])
+def test_a_known_refusal_still_says_plainly_that_the_code_was_not_used(tmp_path, code):
+    bundle = make_bundle(tmp_path)
+
+    result = run_scenario(bundle, http=default_http(**{ENROLL: refusal(code)}), answers=[""])
+
+    assert result.exit_code == 1
+    assert "The enrollment code was NOT used." in result.output and "still valid until it expires" in result.output
+    assert "UNKNOWN" not in result.output and "may or may not" not in result.output
+
+
+@needs_windows_powershell
+def test_a_rate_limit_and_a_redirect_still_say_the_code_was_not_used(tmp_path):
+    for status in (429, 302):
+        bundle = make_bundle(tmp_path / str(status))
+        http = default_http(**{ENROLL: {"status": status, "content": "", "failure": f"HTTP {status}"}})
+
+        result = run_scenario(bundle, http=http, answers=[""])
+
+        assert result.exit_code == 1 and "The enrollment code was NOT used." in result.output, status
+        assert "UNKNOWN" not in result.output
+
+
+@needs_windows_powershell
+def test_a_retry_refused_as_already_used_after_an_unknown_result_directs_to_support(tmp_path):
+    """The whole lost-response story: the first request gets no answer (the server may have enrolled), the operator
+    retries with the same code as told, and the server now refuses it as already used."""
+    bundle = make_bundle(tmp_path)
+    first = run_scenario(bundle, http=v2_http(**{ENROLL: {"status": 0, "content": None, "failure": "no response (WebException)"}}),
+                         answers=[""])
+    assert_ambiguous_outcome_guidance(first)
+
+    already_used = {"status": 400, "content": json.dumps({"detail": "Invalid or expired enrollment code"}), "failure": "HTTP 400"}
+    second = run_scenario(bundle, http=v2_http(**{ENROLL: already_used}), answers=[""])
+
+    assert second.exit_code == 1 and len(enroll_posts(second)) == 2  # one request per run: no automatic retry in either
+    advice = second.output[second.output.rindex("What to do:"):]
+    # The FIRST thing the operator is told covers exactly this case, and it is support -- not a new code.
+    assert advice.strip().startswith("What to do:       If an earlier setup attempt with this code on this computer ended with an unknown result")
+    assert "that attempt may have completed: contact SortView support and do NOT ask for a new enrollment code" in advice
+    assert "The enrollment code was NOT used." not in second.output
+    assert second.machine_token is None and second.calls_to("install") == [] and second.task is None
+    assert "Invalid or expired enrollment code" not in second.output  # the server's text is not shown
+
+
+@needs_windows_powershell
+def test_a_new_code_refused_as_not_ready_after_an_unknown_result_directs_to_support(tmp_path):
+    """If a new code was obtained anyway, the server refuses it (the branch's v2 identity exists): support comes first."""
+    bundle = make_bundle(tmp_path)
+
+    result = run_scenario(bundle, http=default_http(**{ENROLL: refusal("enrollment_not_ready")}), answers=[""])
+
+    advice = result.output[result.output.rindex("What to do:"):]
+    assert advice.index("If an earlier setup attempt for this installation ended with an unknown result") < advice.index("Otherwise ask your SortView administrator")
+    assert "contact SortView support and do NOT ask for another enrollment code: the enrollment may already exist" in advice
+    assert "The enrollment code was NOT used." in result.output  # (this request's code was not used -- that much is known)
+
+
+def test_only_proven_non_consuming_outcomes_are_classified_as_not_used():
+    run = SETUP_BODY[SETUP_BODY.index("function Invoke-SetupMain"):]
+    assert '$definitelyNotUsed = @("RateLimited", "Redirected") -contains $enrollment.Outcome' in run
+    assert '"Unreachable"' not in run[run.index("$definitelyNotUsed = @("):run.index("-contains $enrollment.Outcome")]
+    # The ambiguous outcomes share ONE piece of advice, and it never contains the unsafe one.
+    same_code = run[run.index("$sameCode = "):run.index("$fix = switch ($enrollment.Outcome) {")]
+    assert "Run setup.ps1 again with the SAME code" in same_code and "contact SortView support" in same_code
+    switch = run[run.index("$fix = switch ($enrollment.Outcome) {"):run.index("if ($definitelyNotUsed) { $script:State.CodeAttempted = $false }")]
+    assert 'default { $sameCode }' in switch and '"Unreachable" { "Check this computer\'s network/proxy. $sameCode" }' in switch
+    # No automatic retry was added: still exactly two enrollment call sites (the v2 request and the one legacy fallback).
+    assert run.count("Invoke-Enrollment -ApiUrl") == 2
+    assert "while (" not in run[run.index("=== STEP 5: redeem"):run.index("$script:State.CodeConsumed = $true")]
+
+
+# ---- a damaged recovery record ---------------------------------------------------------------
+
+def _damage_record(bundle: Bundle, text: str) -> None:
+    (bundle.data_root / "setup" / "enrollment-recovery.json").write_text(text, encoding="utf-8")
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("damage", ["truncated", "extra_field", "rules_missing_too_but_text_says_v2", "not_json_with_staged_rules"])
+def test_a_malformed_v2_recovery_record_directs_to_support_and_never_to_a_new_code(tmp_path, damage):
+    bundle, first = _interrupt_v2(tmp_path, env={"SETUPTEST_INSTALL_MODE": "fail"})
+    raw = first.recovery_path.read_text(encoding="utf-8")
+    if damage == "truncated":
+        _damage_record(bundle, raw[: len(raw) // 2])                      # a write cut short; the staged rules are beside it
+    elif damage == "extra_field":
+        _damage_record(bundle, json.dumps({**json.loads(raw), "unexpected": 1}))
+    elif damage == "rules_missing_too_but_text_says_v2":
+        staged_rules_path(bundle).unlink()
+        _damage_record(bundle, raw.replace('"customer_id"', '"customer"'))
+    else:
+        _damage_record(bundle, "this is not json")
+    record_before = first.recovery_path.read_bytes()
+    before = len(first.calls)
+
+    second = run_scenario(bundle, http=_ALREADY_ENROLLED, answers=["", ""])
+
+    assert second.exit_code == 2 and "SETUP STOPPED at step 2 (machine)" in second.output and "not valid" in second.output
+    assert "This is the record of a Contract v2 enrollment" in second.output
+    assert "Do NOT ask for another enrollment code (it would be refused)" in second.output and "Contact SortView support." in second.output
+    assert "NEW enrollment code" not in second.output and "If you are sure it is stale" not in second.output
+    # Stopped safely: nothing read from the network, nothing asked for, nothing deleted or rewritten.
+    assert [c["tool"] for c in new_calls(second, before)] == ["install-verify", "runtime-version"]
+    assert first.recovery_path.read_bytes() == record_before and second.machine_token == SENTINEL_TOKEN
+    assert_nothing_sensitive_was_printed(second)
+
+
+@needs_windows_powershell
+def test_a_malformed_legacy_recovery_record_keeps_the_legacy_advice(tmp_path):
+    bundle = make_bundle(tmp_path)
+    first = run_scenario(bundle, answers=[""], env={"SETUPTEST_INSTALL_MODE": "fail"})
+    assert first.recovery is not None and first.recovery["schema_version"] == 1
+    raw = first.recovery_path.read_text(encoding="utf-8")
+    _damage_record(bundle, raw[: len(raw) // 2])
+
+    second = run_scenario(bundle, answers=["", ""])
+
+    assert second.exit_code == 2 and "not valid" in second.output
+    # Unchanged: a legacy enrollment CAN simply be redone with a new code.
+    assert "If you are sure it is stale, delete that one file and run setup.ps1 again (a NEW enrollment code will then be needed)" in second.output
+    assert "Contract v2" not in second.output[second.output.index("SETUP STOPPED"):]
+
+
+@needs_windows_powershell
+def test_the_v2_record_detector_reads_only_and_never_throws(tmp_path):
+    cases = {}
+    for name, (record, staged) in {
+        "legacy_record": ('{"schema_version": 1, "customer_id": 7', False),
+        "v2_by_text": ('{"schema_version": 2, "customer_id": 7', False),
+        "v2_by_field": ('{"key_id": "x"', False),
+        "v2_by_staged_rules": ("garbage", True),
+        "no_record_at_all": (None, False),
+    }.items():
+        root = tmp_path / name
+        (root / "setup").mkdir(parents=True)
+        if record is not None:
+            (root / "setup" / "enrollment-recovery.json").write_text(record, encoding="utf-8")
+        if staged:
+            (root / "setup" / "classification_rules.json").write_text("{}", encoding="utf-8")
+        cases[name] = root
+    script = "\n".join(f"'{name}=' + (Test-RecoveryLooksContractV2 -DataRoot {ps_quote(root)})" for name, root in cases.items())
+
+    results = dict(line.split("=") for line in _dot_source_and_run(script).stdout.split())
+
+    assert results == {"legacy_record": "False", "v2_by_text": "True", "v2_by_field": "True", "v2_by_staged_rules": "True",
+                       "no_record_at_all": "False"}

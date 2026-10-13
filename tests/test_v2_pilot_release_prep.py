@@ -37,7 +37,7 @@ from pathlib import Path
 import pytest
 
 from collector import __version__ as RELEASE_VERSION
-from collector import build_release, v2_rules
+from collector import build_release
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PREP_SOURCE = REPO_ROOT / "collector" / "deploy" / "prepare_v2_pilot.ps1"
@@ -76,88 +76,113 @@ PREP_CODE = _code_only(PREP_BODY)
 
 
 # =====================================================================================
-# 1. BUILD-TIME artifact: collector/build_release.py
+# 1. THE RELEASE BUNDLE: neither the pilot's rules nor its tool is shipped (1.0.14)
+#
+# Releases 1.0.6 - 1.0.13 packaged pilot/classification_rules.json -- generated from
+# src/branch_settings.json, one library's own account names and DA patterns -- and
+# tools/prepare_v2_pilot.ps1, whose default destination is the live rules path. A bundle
+# now goes to other libraries' machines: neither may be in it, by any path.
 # =====================================================================================
 
-
-@pytest.fixture(scope="module")
-def built_bundle(tmp_path_factory):
-    out = tmp_path_factory.mktemp("pilot-bundle-out")
-    return build_release.build_release(REPO_ROOT, out, RELEASE_VERSION, built_at="2026-01-01T00:00:00.000000Z")
+_BUILT_AT = "2026-01-01T00:00:00.000000Z"  # freshness: allow FRESH004 -- a fixed manifest stamp passed as built_at=, never compared with the clock
 
 
-def test_release_contains_the_pilot_rules_artifact(built_bundle):
-    assert (built_bundle.bundle_dir / build_release.PILOT_RULES_DEST).is_file()
+def _source_bundle(out: Path):
+    return build_release.build_release(REPO_ROOT, out, RELEASE_VERSION, built_at=_BUILT_AT)
 
 
-def test_release_contains_the_prepare_tool():
-    assert ("collector/deploy/prepare_v2_pilot.ps1", "tools/prepare_v2_pilot.ps1") in build_release.DEPLOY_TOOL_FILES
-
-
-def test_pilot_rules_artifact_matches_seed_from_settings_of_branch_settings(built_bundle):
-    settings = json.loads(BRANCH_SETTINGS.read_text(encoding="utf-8"))
-    expected = v2_rules.seed_from_settings(settings)
-    actual = json.loads((built_bundle.bundle_dir / build_release.PILOT_RULES_DEST).read_text(encoding="utf-8"))
-    assert actual == expected
-
-
-def test_pilot_rules_artifact_matches_the_documented_nbpl_counts(built_bundle):
-    # The exact counts an operator already verified onsite (`python -m collector.v2_rules
-    # seed`) against src/branch_settings.json -- pinned here so a future settings edit that
-    # silently changes what ships is caught immediately, not discovered onsite.
-    doc = json.loads((built_bundle.bundle_dir / build_release.PILOT_RULES_DEST).read_text(encoding="utf-8"))
-    assert len(doc["destinations"]) == 2
-    assert len(doc["branch_services_names"]) == 3
-    assert len(doc["collection_services_names"]) == 8
-    assert len(doc["branch_services_da_patterns"]) + len(doc["collection_services_da_patterns"]) == 11
-
-
-def test_pilot_rules_artifact_is_deterministic_given_fixed_settings(tmp_path):
-    r1 = build_release.build_release(REPO_ROOT, tmp_path / "a", RELEASE_VERSION, built_at="x")
-    r2 = build_release.build_release(REPO_ROOT, tmp_path / "b", RELEASE_VERSION, built_at="x")
-    p1 = (r1.bundle_dir / build_release.PILOT_RULES_DEST).read_text(encoding="utf-8")
-    p2 = (r2.bundle_dir / build_release.PILOT_RULES_DEST).read_text(encoding="utf-8")
-    assert p1 == p2
-
-
-def test_pilot_rules_artifact_carries_no_patron_or_credential_data(built_bundle):
-    text = (built_bundle.bundle_dir / build_release.PILOT_RULES_DEST).read_text(encoding="utf-8")
-    for forbidden in ("api_token", "SORTVIEW_API_TOKEN", "key_id", "secret", "password", "barcode"):
-        assert forbidden.lower() not in text.lower()
-
-
-def test_pilot_rules_artifact_is_listed_in_manifest_with_correct_hash(built_bundle):
-    import hashlib
-
-    manifest = json.loads(built_bundle.manifest_path.read_text(encoding="utf-8"))
-    entry = next(e for e in manifest["files"] if e["path"] == build_release.PILOT_RULES_DEST)
-    actual_bytes = (built_bundle.bundle_dir / build_release.PILOT_RULES_DEST).read_bytes()
-    assert entry["sha256"] == hashlib.sha256(actual_bytes).hexdigest()
-    assert entry["size_bytes"] == len(actual_bytes)
-
-
-def test_build_refuses_loudly_if_branch_settings_is_missing(tmp_path):
-    fake_repo = tmp_path / "fake_repo"
-    shutil.copytree(REPO_ROOT / "collector", fake_repo / "collector")
-    shutil.copytree(REPO_ROOT / "agent", fake_repo / "agent")
-    shutil.copytree(REPO_ROOT / "src", fake_repo / "src")
-    (fake_repo / "src" / "branch_settings.json").unlink()
-    output = tmp_path / "out"
-    with pytest.raises(build_release.BuildError):
-        build_release.build_release(fake_repo, output, RELEASE_VERSION, built_at="x")
-    assert not output.exists()
-
-
-def test_frozen_bundle_also_contains_the_pilot_artifact_and_tool(tmp_path):
+def _frozen_bundle(tmp_path: Path):
     runtime = tmp_path / "rt" / "SortViewCollector"
     (runtime / "_internal").mkdir(parents=True)
     (runtime / "SortViewCollector.exe").write_bytes(b"fake-exe")
-    result = build_release.build_frozen_release(
-        REPO_ROOT, tmp_path / "out", RELEASE_VERSION, runtime,
-        built_at="2026-01-01T00:00:00.000000Z", version_probe=lambda _p: RELEASE_VERSION,
+    return build_release.build_frozen_release(
+        REPO_ROOT, tmp_path / "out", RELEASE_VERSION, runtime, built_at=_BUILT_AT, version_probe=lambda _p: RELEASE_VERSION,
     )
-    assert (result.bundle_dir / build_release.PILOT_RULES_DEST).is_file()
-    assert (result.bundle_dir / "tools" / "prepare_v2_pilot.ps1").is_file()
+
+
+@pytest.fixture(scope="module", params=["source", "frozen"])
+def built_bundle(request, tmp_path_factory):
+    out = tmp_path_factory.mktemp(f"bundle-{request.param}")
+    return _source_bundle(out) if request.param == "source" else _frozen_bundle(out)
+
+
+def _bundle_files(result) -> list[Path]:
+    return sorted(path for path in result.bundle_dir.rglob("*") if path.is_file())
+
+
+def _site_rule_values() -> list[str]:
+    """Every account name and DA pattern in src/branch_settings.json -- the values the pilot artifact was made of."""
+    internal = json.loads(BRANCH_SETTINGS.read_text(encoding="utf-8"))["internal_routing"]
+    values = [value.strip() for entries in internal.values() if isinstance(entries, list) for value in entries]
+    values = [value for value in values if value]
+    assert len(values) >= 20, "the settings file no longer holds the lists this test sweeps for"
+    return values
+
+
+def test_the_pilot_tool_is_not_in_the_packaging_lists():
+    shipped_sources = {source for source, _dest in build_release.DEPLOY_TOOL_FILES + build_release.SUPPORT_FILES
+                       + build_release.FROZEN_ONLY_SUPPORT_FILES}
+    shipped_destinations = {dest for _source, dest in build_release.DEPLOY_TOOL_FILES + build_release.SUPPORT_FILES
+                            + build_release.FROZEN_ONLY_SUPPORT_FILES}
+    assert "collector/deploy/prepare_v2_pilot.ps1" not in shipped_sources
+    assert not shipped_destinations & set(build_release.NEVER_BUNDLED)
+    assert set(build_release.NEVER_BUNDLED) == {"pilot/classification_rules.json", "tools/prepare_v2_pilot.ps1"}
+
+
+def test_the_build_no_longer_reads_any_site_settings_or_generates_rules():
+    source = (REPO_ROOT / "collector" / "build_release.py").read_text(encoding="utf-8")
+    code = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("#"))
+    assert "branch_settings" not in code
+    assert "seed_from_settings" not in code and "v2_rules" not in code.replace('"collector/v2_rules.py"', "")
+    assert not hasattr(build_release, "PILOT_RULES_DEST") and not hasattr(build_release, "_write_pilot_rules_artifact")
+
+
+def test_no_bundle_ships_the_pilot_rules_or_the_pilot_tool(built_bundle):
+    relative = {path.relative_to(built_bundle.bundle_dir).as_posix() for path in _bundle_files(built_bundle)}
+    assert not relative & set(build_release.NEVER_BUNDLED)
+    assert not [path for path in relative if path.startswith("pilot/")]
+    assert not (built_bundle.bundle_dir / "pilot").exists()
+    # No classification rules document under ANY name or folder, and no copy of the pilot tool.
+    assert not [path for path in relative if "classification_rules" in path.lower()]
+    assert not [path for path in relative if "prepare_v2_pilot" in path.lower()]
+
+
+def test_no_bundle_manifest_lists_them_and_the_manifest_still_matches_the_bundle(built_bundle):
+    import hashlib
+
+    manifest = json.loads(built_bundle.manifest_path.read_text(encoding="utf-8"))
+    listed = {entry["path"] for entry in manifest["files"]}
+    assert not listed & set(build_release.NEVER_BUNDLED)
+    assert not [path for path in listed if path.startswith("pilot/") or "prepare_v2_pilot" in path]
+    # The manifest is still exact: every file but itself is listed, with its real hash and size.
+    on_disk = {path.relative_to(built_bundle.bundle_dir).as_posix(): path for path in _bundle_files(built_bundle)}
+    on_disk.pop("MANIFEST.json")
+    assert listed == set(on_disk)
+    for entry in manifest["files"]:
+        data = on_disk[entry["path"]].read_bytes()
+        assert (entry["sha256"], entry["size_bytes"]) == (hashlib.sha256(data).hexdigest(), len(data)), entry["path"]
+
+
+def test_no_account_name_or_da_pattern_from_the_site_settings_is_anywhere_in_a_bundle(built_bundle):
+    """Not just "that file is gone": no byte of any shipped file holds one of those values, however it got there."""
+    needles = [(value, value.lower().encode("utf-8"), value.lower().encode("utf-16-le")) for value in _site_rule_values()]
+    for path in _bundle_files(built_bundle):
+        blob = path.read_bytes().lower()
+        found = [index for index, (_value, utf8, utf16) in enumerate(needles) if utf8 in blob or utf16 in blob]
+        # The position in the settings lists, never the value: a failure message must not print an account name.
+        assert not found, (path.relative_to(built_bundle.bundle_dir).as_posix(), found)
+
+
+def test_a_build_needs_no_file_from_the_dashboards_settings_or_source_tree():
+    """What a build requires to exist -- for either bundle kind -- is under collector/ and agent/ only: nothing of
+    src/ (where the site settings live) is read, so nothing from it can be packaged."""
+    required = build_release._required_source_files(REPO_ROOT) + build_release._required_frozen_deploy_files(REPO_ROOT)
+    roots = {source.relative_to(REPO_ROOT).parts[0] for source, _dest in required}
+    assert roots <= {"collector", "agent"}, roots
+
+
+def test_the_conversion_tool_is_still_shipped():
+    assert ("collector/deploy/configure_v2.ps1", "tools/configure_v2.ps1") in build_release.DEPLOY_TOOL_FILES
 
 
 # =====================================================================================

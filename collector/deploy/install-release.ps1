@@ -133,6 +133,16 @@ param(
     [string]$CheckinsPath,
     [string]$RejectsPath,
     [string]$AcsPath,
+    # Contract v2 (optional; used by the guided setup.ps1 for a Contract v2
+    # enrollment). Omitted, the config written is exactly the legacy one --
+    # no `contract_mode`, no `v2` section. -ContractMode "v2" needs -KeyId
+    # (the server-issued key_id) and -Timezone (the site's IANA zone), both
+    # from the enrollment; they are written as `contract_mode` and
+    # `v2.key_id` / `v2.timezone`, and every other v2 setting is left to the
+    # Collector's own defaults. Neither is a secret.
+    [string]$ContractMode,
+    [string]$KeyId,
+    [string]$Timezone,
     [switch]$Force,
     # Used by the guided setup.ps1, which performs every one of the "next
     # steps" printed below itself: suppresses ONLY that closing text (nothing
@@ -214,11 +224,46 @@ function Get-InstallInputProblems {
     return $problems
 }
 
+function Get-ContractInputProblems {
+    # Pure validation of the optional Contract v2 inputs -- returns a list of
+    # problems (empty = valid). Nothing given = the legacy config. The key_id
+    # is checked for SHAPE only (a lower-case UUIDv4, as the Collector's own
+    # loader requires) and is never echoed.
+    param($ContractMode, $KeyId, $Timezone)
+
+    $problems = @()
+    $mode = if ($null -eq $ContractMode) { "" } else { ([string]$ContractMode).Trim() }
+    $hasKey = -not [string]::IsNullOrWhiteSpace([string]$KeyId)
+    $hasZone = -not [string]::IsNullOrWhiteSpace([string]$Timezone)
+
+    if ($mode -eq "") {
+        if ($hasKey -or $hasZone) { $problems += "-KeyId and -Timezone are only valid together with -ContractMode v2." }
+        return $problems
+    }
+    if ($mode -cne "v2") {
+        $problems += "-ContractMode must be 'v2' when given (omit it for the legacy contract)."
+        return $problems
+    }
+    if (-not $hasKey) {
+        $problems += "-KeyId is required with -ContractMode v2."
+    } elseif (([string]$KeyId).Trim() -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
+        $problems += "-KeyId is not a server-issued key_id (a lower-case UUID)."
+    }
+    if (-not $hasZone) {
+        $problems += "-Timezone is required with -ContractMode v2 (an IANA name such as America/New_York)."
+    }
+    return $problems
+}
+
 function New-CollectorConfigJson {
     # Builds collector_config.json's text from the supplied values -- pure,
     # writes nothing. Never includes a token (it lives in
     # -DataRoot\secrets\api_token.dpapi). state/status/log paths sit under -DataRoot.
-    param($CustomerId, $BranchId, $InstallationId, $ApiUrl, $CheckinsPath, $RejectsPath, $AcsPath, $DataRoot)
+    # With -ContractMode v2 it adds `contract_mode` and a `v2` section holding
+    # the key_id and time zone ONLY; without it the document is the legacy one,
+    # key for key.
+    param($CustomerId, $BranchId, $InstallationId, $ApiUrl, $CheckinsPath, $RejectsPath, $AcsPath, $DataRoot,
+        $ContractMode, $KeyId, $Timezone)
 
     $dataRootTrimmed = $DataRoot.TrimEnd('\', '/')
     $config = [ordered]@{
@@ -235,6 +280,10 @@ function New-CollectorConfigJson {
         status_path = "$dataRootTrimmed\data\status.json"
         log_path    = "$dataRootTrimmed\logs\collector.log"
     }
+    if (-not [string]::IsNullOrWhiteSpace([string]$ContractMode)) {
+        $config["contract_mode"] = ([string]$ContractMode).Trim()
+        $config["v2"] = [ordered]@{ key_id = ([string]$KeyId).Trim(); timezone = ([string]$Timezone).Trim() }
+    }
     return ($config | ConvertTo-Json -Depth 5)
 }
 
@@ -245,6 +294,7 @@ $inputProblems = @()
 if (-not $VerifyBundleOnly) {
     $inputProblems = @(Get-InstallInputProblems -CustomerId $CustomerId -BranchId $BranchId -InstallationId $InstallationId -ApiUrl $ApiUrl `
             -CheckinsPath $CheckinsPath -RejectsPath $RejectsPath -AcsPath $AcsPath)
+    $inputProblems += @(Get-ContractInputProblems -ContractMode $ContractMode -KeyId $KeyId -Timezone $Timezone)
 }
 if ($inputProblems.Count -gt 0) {
     Write-Host "Missing or invalid required input:" -ForegroundColor Red
@@ -542,6 +592,22 @@ if (-not $isFrozenBundle) {
     Write-Host "=== 3. Python virtual environment: SKIPPED (frozen bundle -- no Python/pip/venv required) ===" -ForegroundColor Cyan
 }
 
+function Write-TextFileAtomically {
+    # Writes UTF-8 (no BOM) text to a temporary file in the SAME folder, then
+    # renames it into place: a crash or power loss leaves either no file or
+    # the complete one, never a truncated config. The destination must not
+    # exist (this installer never replaces a config). The temporary file is
+    # removed if the rename does not happen.
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Text)
+    $temporary = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
+    try {
+        [System.IO.File]::WriteAllText($temporary, $Text, (New-Object System.Text.UTF8Encoding($false)))
+        [System.IO.File]::Move($temporary, $Path)
+    } finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 Write-Host "=== 4. Configuration ===" -ForegroundColor Cyan
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 if (Test-Path $ConfigPath -PathType Leaf) {
@@ -556,9 +622,13 @@ if (Test-Path $ConfigPath -PathType Leaf) {
     # immediately. [System.Text.UTF8Encoding($false)] writes UTF-8 with NO
     # BOM. Identical for both bundle kinds.
     $jsonText = New-CollectorConfigJson -CustomerId $CustomerId -BranchId $BranchId -InstallationId $InstallationId -ApiUrl $ApiUrl `
-        -CheckinsPath $CheckinsPath -RejectsPath $RejectsPath -AcsPath $AcsPath -DataRoot $DataRoot
-    [System.IO.File]::WriteAllText($ConfigPath, $jsonText, $utf8NoBom)
+        -CheckinsPath $CheckinsPath -RejectsPath $RejectsPath -AcsPath $AcsPath -DataRoot $DataRoot `
+        -ContractMode $ContractMode -KeyId $KeyId -Timezone $Timezone
+    Write-TextFileAtomically -Path $ConfigPath -Text $jsonText
     Write-Host "Wrote $ConfigPath from the supplied -CustomerId/-BranchId/-InstallationId/-ApiUrl/-CheckinsPath/-RejectsPath/-AcsPath." -ForegroundColor Green
+    if (-not [string]::IsNullOrWhiteSpace($ContractMode)) {
+        Write-Host "The config selects Contract v2 (contract_mode, and the v2 key_id and time zone from the enrollment)." -ForegroundColor Green
+    }
 }
 Write-Host "Config never contains the API token -- see TOKEN SETUP below."
 

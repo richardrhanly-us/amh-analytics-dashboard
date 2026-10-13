@@ -1915,7 +1915,11 @@ def test_finish_runs_the_token_tool_only_when_needed_and_verifies_with_the_colle
     verify = main.index("& $ExePath api-token check --config $ConfigPath | Out-Host", call)
 
     assert run_tool < call < verify < main.index("& $ExePath preflight")
-    after = main[verify : main.index("& $ExePath preflight")]
+    # (A Contract v2 config has one more step between the two -- the local secret, step 1b, which starts at
+    # `if ($IsV2) {` and is covered by tests/test_collector_install_v2.py. The token gate ends before it.)
+    secret_step = main.index("if ($IsV2) {", verify)
+    assert verify < secret_step < main.index("& $ExePath v2-key check") < main.index("& $ExePath preflight")
+    after = main[verify : secret_step]
     # After the token step the Collector's own check MUST exit 0 -- whether the token was kept or just stored. Exit 3
     # (no api_token.dpapi at all) is a stop like any other non-zero: nothing else can stand in for the file.
     gate = after.index("if ($storedTokenCheck -ne 0) {")
