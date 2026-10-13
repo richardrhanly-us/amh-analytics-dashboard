@@ -89,14 +89,16 @@ def load_app_settings_from_file(settings_file: Path) -> dict:
     library_settings = branch_settings.get("library", {})
     transit_settings = branch_settings.get("transit", {})
 
-    transit_home_label = transit_settings.get("home_branch_label", "Main")
+    # No home label configured: the branch's own name, never another library's label.
+    branch_name = library_settings.get("branch_name", "Main Branch")
+    transit_home_label = str(transit_settings.get("home_branch_label") or "").strip() or branch_name
     transit_destinations = transit_settings.get("destinations", [])
 
     enabled_transit_destinations = _dedupe_transit_destinations([
         d for d in transit_destinations
         if bool(d.get("enabled", True)) and str(d.get("label", "")).strip()
     ])
-    
+
     transit_labels = [
         str(d.get("label", "")).strip()
         for d in enabled_transit_destinations
@@ -108,8 +110,8 @@ def load_app_settings_from_file(settings_file: Path) -> dict:
         "branch_settings": branch_settings,
         "LIBRARY_SETTINGS": library_settings,
         "TRANSIT_SETTINGS": transit_settings,
-        "LIBRARY_NAME": library_settings.get("library_name", "New Braunfels Public Library"),
-        "BRANCH_NAME": library_settings.get("branch_name", "Main Branch"),
+        "LIBRARY_NAME": library_settings.get("library_name", "Library"),
+        "BRANCH_NAME": branch_name,
         "SYSTEM_NAME": library_settings.get("system_name", "Tech Logic UltraSort"),
         "TRANSIT_HOME_LABEL": transit_home_label,
         "TRANSIT_DESTINATIONS": transit_destinations,
@@ -134,14 +136,13 @@ def load_app_settings_from_db(org_slug: str, branch_slug: str | None = None) -> 
 
     transit_settings = settings.get("transit", {})
 
-    transit_home_label = transit_settings.get("home_branch_label", "Main")
     transit_destinations = transit_settings.get("destinations", [])
 
     enabled_transit_destinations = _dedupe_transit_destinations([
         d for d in transit_destinations
         if bool(d.get("enabled", True)) and str(d.get("label", "")).strip()
     ])
-    
+
     transit_labels = [
         str(d.get("label", "")).strip()
         for d in enabled_transit_destinations
@@ -151,6 +152,8 @@ def load_app_settings_from_db(org_slug: str, branch_slug: str | None = None) -> 
     library_name = settings.get("library_name", effective["organization"]["name"])
     branch_name = settings.get("branch_name", effective["branch"]["name"])
     system_name = settings.get("system_name", "Tech Logic UltraSort")
+    # No home label configured (absent or blank): the branch's own name, never another library's label.
+    transit_home_label = str(transit_settings.get("home_branch_label") or "").strip() or branch_name
 
     return {
         "source": "database",

@@ -77,8 +77,51 @@ def test_unknown_stays_unknown():
     assert destination_key("Unknown") == UNKNOWN_DESTINATION_KEY
 
 
+# Text whose plain slug form is NOT a destination slug the collector contract allows: it starts with a digit, or is
+# longer than 32. The key is what the collector's own rule makes of such a label (collector/v2_rules.py::_slugify).
+CONTRACT_SHAPED = [
+    ("3rd Street Branch", "d_3rd_street_branch"),
+    ("3RD  street-branch", "d_3rd_street_branch"),
+    ("d_3rd_street_branch", "d_3rd_street_branch"),  # the slug a collector stored for it
+    ("#1", "d_1"),  # no longer mistaken for the sorter's home label "1"
+    ("24 Hour Lockers", "d_24_hour_lockers"),
+    ("The Very Long Named Regional Library Annex", "the_very_long_named_regional_lib"),
+    ("the_very_long_named_regional_lib", "the_very_long_named_regional_lib"),
+    ("A" * 31 + " Annex", "a" * 31),  # an underscore left at the cut is trimmed
+    ("1234567890 1234567890 1234567890 12", "d_1234567890_1234567890_12345678"),
+]
+
+
+@pytest.mark.parametrize(("stored", "key"), CONTRACT_SHAPED)
+def test_a_key_is_always_a_destination_slug_the_collector_contract_allows(stored, key):
+    import re
+
+    from collector import v2_rules
+    from services import collector_rules
+    from services.ingest_v2_models import DESTINATION_PATTERN
+
+    assert destination_key(stored) == key
+    assert re.fullmatch(DESTINATION_PATTERN, key) and len(key) <= 32
+    assert destination_key(key) == key  # keyed again, it is the same key
+    # Stored as a destination's `key`, it reaches the Collector unchanged -- through the server's rules builder and
+    # through the Collector's own.
+    assert collector_rules._slugify(key) == v2_rules._slugify(key) == key
+
+
+def test_the_longest_key_is_the_longest_slug_the_contract_allows():
+    import re
+
+    from services import routing_destination
+    from services.ingest_v2_models import DESTINATION_PATTERN
+
+    longest = routing_destination._MAX_SLUG_LENGTH
+    assert longest == 32
+    assert re.fullmatch(DESTINATION_PATTERN, "a" * longest) and not re.fullmatch(DESTINATION_PATTERN, "a" * (longest + 1))
+
+
 def test_a_key_is_stable_under_being_keyed_again():
-    for stored in ("Library Express", "WESTSIDE BRANCH", "Northgate Annex", "1", "No Agency Destination", "", "Bin 7"):
+    for stored in ("Library Express", "WESTSIDE BRANCH", "Northgate Annex", "1", "No Agency Destination", "", "Bin 7",
+                   "3rd Street Branch", "The Very Long Named Regional Library Annex", "A" * 31 + " Annex", "#1"):
         key = destination_key(stored)
 
         assert destination_key(key) == key
@@ -89,7 +132,8 @@ def test_every_key_fits_the_contracts_destination_slug_shape():
 
     from services.ingest_v2_models import DESTINATION_PATTERN
 
-    for stored in ("Library Express", "Westside", "Northgate Annex", "Main", "No Agency Destination", "A"):
+    for stored in ("Library Express", "Westside", "Northgate Annex", "Main", "No Agency Destination", "A",
+                   "3rd Street Branch", "The Very Long Named Regional Library Annex", "7", "St. Mary's   Branch", "???"):
         assert re.fullmatch(DESTINATION_PATTERN, destination_key(stored)), stored
 
 

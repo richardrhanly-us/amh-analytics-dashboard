@@ -1,10 +1,21 @@
 from __future__ import annotations
 
+import json
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import text
 
 from database import get_engine
+
+from . import collector_rules
+from .routing_destination import destination_key
+from .routing_settings import (
+    MEANS_HOME,
+    RoutingSettingsError,
+    validate_routing_settings,
+)
 
 
 def create_organization_with_primary_branch(
@@ -57,8 +68,6 @@ def create_organization_with_primary_branch(
         RETURNING id
     """)
 
-    import json
-
     engine = get_engine()
     with engine.begin() as conn:
         plan = conn.execute(sql_find_plan, {"plan_code": plan_code}).mappings().first()
@@ -109,6 +118,22 @@ def create_organization_with_primary_branch(
         "plan": dict(plan),
         "subscription": dict(subscription),
     }
+
+
+def list_active_plans() -> list[dict[str, Any]]:
+    """The plans a new organization can be put on: every active row of `plans`, as {code, name}, in id order. The same
+    `is_active` rule create_organization_with_primary_branch looks a plan code up under."""
+    sql = text("""
+        SELECT code, name
+        FROM plans
+        WHERE is_active = TRUE
+        ORDER BY id
+    """)
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(sql).mappings().all()
+        return [dict(row) for row in rows]
 
 
 def get_organization_by_slug(org_slug: str) -> dict[str, Any] | None:
@@ -410,10 +435,9 @@ COLLECTOR_INSTALLATION_STATUSES = ("provisioning", "active", "inactive", "retire
 # The ingest contract an installation must be enrolled on (collector_installations.required_contract; see
 # services.collector_enrollment_service): 1 is the legacy contract, 2 is Contract v2.
 #
-# THE DEFAULT IS 1, DELIBERATELY (onboarding stage A1). A contract-2 installation can only be enrolled by an installer
-# that asks for Contract v2, and no released installer does yet -- so an installation is contract 2 only when a caller
-# says so explicitly. Making 2 the normal choice for a new installation belongs to the stage that ships that
-# installer, not this one.
+# THIS MODULE'S DEFAULT IS 1, DELIBERATELY: an installation is contract 2 only when a caller says so explicitly.
+# Super Admin's two creation forms always do say -- they pass the contract their selector holds, and since onboarding
+# stage A3b that selector starts on Contract v2 -- so this default is what every OTHER caller gets, and is unchanged.
 COLLECTOR_CONTRACT_LEGACY = 1
 COLLECTOR_CONTRACT_V2 = 2
 COLLECTOR_CONTRACTS = (COLLECTOR_CONTRACT_LEGACY, COLLECTOR_CONTRACT_V2)
@@ -763,3 +787,241 @@ def get_effective_settings(org_slug: str, branch_slug: str | None = None) -> dic
         "settings": effective_settings,
         "entitlements": entitlements,
     }
+
+
+# --- collector site settings (Contract v2) ------------------------------------
+#
+# What a Contract v2 enrollment reads from a site (services.collector_enrollment_service._prepare_v2_enrollment):
+# the ORGANIZATION's own `collector_timezone` and `collector_rules` review record, and the classification rules built
+# from its `transit.destinations` and `internal_routing` lists. These functions read and write the organization's
+# document, never a branch's and never the merged ("effective") settings -- so "ready here" is "ready there".
+#
+# The `internal_routing` lists hold patron account names, some of them a staff member's own. They are never returned
+# from here -- only how many entries each list has -- and are edited on the Admin Settings page alone.
+
+
+def _transit_labels(labels: Iterable[object]) -> list[str]:
+    """The given labels, in order: each trimmed, a blank or a repeat (whatever its case) left out."""
+    kept: list[str] = []
+    seen: set[str] = set()
+    for label in labels:
+        text_label = label.strip() if isinstance(label, str) else ""
+        if not text_label or text_label.lower() in seen:
+            continue
+        seen.add(text_label.lower())
+        kept.append(text_label)
+    return kept
+
+
+def transit_destination_entries(labels: Iterable[object]) -> list[dict[str, Any]]:
+    """`transit.destinations` entries for the given labels, in order: each trimmed, a blank or a repeat (whatever its
+    case) left out, each enabled.
+
+    EACH IS STORED WITH ITS CANONICAL KEY: services.routing_destination.destination_key(label) -- the one key the
+    reports look a destination up by, and a valid collector destination slug, so services.collector_rules hands the
+    Collector that same key unchanged. A key that is not the label's own (a "dest_1") would file that destination's
+    check-ins where the reports cannot find them."""
+    return [{"key": destination_key(label), "label": label, "enabled": True} for label in _transit_labels(labels)]
+
+
+def transit_destination_key_collisions(labels: Iterable[object]) -> list[list[str]]:
+    """Each group of DIFFERENT labels among those given that share one canonical key (destination_key), in the order
+    first seen; empty when every label is a destination of its own. The same label twice is one label, not a
+    collision. Two labels that share a key would be one destination to the Collector and to the reports, so a set
+    with a collision is refused where it is saved -- never silently collapsed, and no key is invented to tell them
+    apart."""
+    by_key: dict[str, list[str]] = {}
+    for label in _transit_labels(labels):
+        by_key.setdefault(destination_key(label), []).append(label)
+    return [group for group in by_key.values() if len(group) > 1]
+
+
+def transit_destination_collision_messages(labels: Iterable[object]) -> list[str]:
+    """One sentence for each collision among the labels (transit_destination_key_collisions), for the form that is
+    saving them. Labels are a library's branch names, not patron data."""
+    return [
+        "These transit destinations would be the same destination (they share one key): "
+        + ", ".join(f'"{label}"' for label in group)
+        + ". Change one so that they differ in their first 32 letters and digits."
+        for group in transit_destination_key_collisions(labels)
+    ]
+
+
+def transit_destination_home_messages(home_branch_label: object, labels: Iterable[object]) -> list[str]:
+    """One sentence for each label that MEANS HOME -- the collector contract's home ("Main", "Local", "1") or the
+    library's own home label -- and so cannot be a transit destination: its check-ins are counted as staying put.
+
+    The rule is not decided here. It is the customer API's own (services.routing_settings.validate_routing_settings,
+    which refuses such a label as `means_home`); this only says, in words, which labels it refused."""
+    kept = _transit_labels(labels)
+    block = {
+        "home_branch_label": home_branch_label.strip() if isinstance(home_branch_label, str) else "",
+        "destinations": [{"label": label, "enabled": True} for label in kept],
+    }
+    try:
+        validate_routing_settings(block)
+    except RoutingSettingsError as refused:
+        problems = refused.problems
+    else:
+        return []
+    return [
+        f'"{kept[int(problem.field.split(".")[1])]}" means this library\'s own (home) branch, so it cannot be a transit '
+        "destination. Remove it, or change the Home branch label."
+        for problem in problems
+        if problem.code == MEANS_HOME
+    ]
+
+
+def transit_destination_problems(home_branch_label: object, labels: Iterable[object]) -> list[str]:
+    """Everything that stops a set of ENABLED transit destination labels being saved, as sentences for the form saving
+    them (empty = nothing): a label that means home, and different labels that share one canonical key."""
+    labels = list(labels)
+    return transit_destination_home_messages(home_branch_label, labels) + transit_destination_collision_messages(labels)
+
+
+def _organization_settings_document(value: object) -> dict[str, Any]:
+    """A stored organization settings_json as a dict (PostgreSQL hands JSONB back parsed; text is parsed here)."""
+    if isinstance(value, (str, bytes)):
+        value = json.loads(value)
+    return dict(value) if isinstance(value, dict) else {}
+
+
+_COLLECTOR_SITE_SQL = """
+    SELECT o.status AS organization_status, os.settings_json AS settings_json
+    FROM organizations o
+    LEFT JOIN organization_settings os
+      ON os.organization_id = o.id
+    WHERE o.id = :organization_id
+"""
+
+# Sets the two enrollment keys and the `transit` block of the organization's document, creating the row if there is
+# none. Every other key of the document is left exactly as it is, by the statement itself. A cancelled organization
+# is not written to, whatever was read a moment earlier: the statement then touches no row.
+_SET_COLLECTOR_SITE_SQL = """
+    INSERT INTO organization_settings (organization_id, settings_json)
+    SELECT o.id, CAST(:document AS JSONB)
+    FROM organizations o
+    WHERE o.id = :organization_id
+      AND o.status <> 'cancelled'
+    ON CONFLICT (organization_id) DO UPDATE
+    SET settings_json = jsonb_set(
+            organization_settings.settings_json || CAST(:site AS JSONB), '{transit}', CAST(:transit AS JSONB), true
+        ),
+        updated_at = NOW()
+    RETURNING organization_id
+"""
+
+
+def get_collector_site_settings(organization_id: int) -> dict[str, Any]:
+    """What an organization has stored of the settings a Contract v2 enrollment needs -- and nothing else of its
+    document:
+
+        collector_timezone          the stored value (None if there is none)
+        collector_rules             the stored review record (None if there is none)
+        home_branch_label           its stored home label ("" if there is none)
+        transit_destination_labels  the labels of its enabled transit destinations, in stored order
+        internal_routing_counts     {list name: how many entries} for the four classification lists -- never an entry
+
+    The first two are under the keys services.collector_rules reads, so its own checks can be run on the result."""
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(text(_COLLECTOR_SITE_SQL), {"organization_id": organization_id}).mappings().first()
+    if not row:
+        raise RuntimeError(f"Organization {organization_id} not found")
+
+    stored = _organization_settings_document(row["settings_json"])
+    transit = stored.get("transit")
+    destinations = transit.get("destinations") if isinstance(transit, dict) else None
+    home_branch_label = transit.get("home_branch_label") if isinstance(transit, dict) else None
+    internal_routing = stored.get("internal_routing")
+    lists = internal_routing if isinstance(internal_routing, dict) else {}
+
+    def entry_count(name: str) -> int:
+        values = lists.get(name)
+        return sum(1 for value in values if str(value).strip()) if isinstance(values, list) else 0
+
+    return {
+        collector_rules.TIMEZONE_KEY: stored.get(collector_rules.TIMEZONE_KEY),
+        collector_rules.RULES_REVIEW_KEY: stored.get(collector_rules.RULES_REVIEW_KEY),
+        "home_branch_label": home_branch_label.strip() if isinstance(home_branch_label, str) else "",
+        "transit_destination_labels": [
+            entry["label"] for entry in transit_destination_entries(
+                entry.get("label") for entry in (destinations if isinstance(destinations, list) else [])
+                if isinstance(entry, dict) and bool(entry.get("enabled", True))
+            )
+        ],
+        "internal_routing_counts": {name: entry_count(name) for name in collector_rules.NAME_LISTS},
+    }
+
+
+def set_collector_site_settings(
+    organization_id: int,
+    *,
+    timezone: str,
+    transit_destination_labels: Iterable[object],
+    reviewed_by_user_id: int,
+    reviewed_at: datetime | None = None,
+) -> dict[str, Any]:
+    """Records, on the ORGANIZATION's own settings, what a Contract v2 enrollment needs from a site: its Collector time
+    zone, its enabled transit destinations, and the record that an administrator reviewed its collector routing
+    configuration -- `reviewed_by_user_id` (the signed-in Super Admin; never a made-up id) at `reviewed_at` (now, if
+    not given). Returns the two enrollment keys as stored.
+
+    Validated BEFORE anything is read or written: a time zone that is not a known IANA name raises
+    CollectorSettingsError; a reviewer id that is not a positive integer, or two different labels that share one
+    canonical key (transit_destination_key_collisions), raises ValueError. A label that means home -- by the
+    contract, or by the organization's STORED home label -- raises ValueError too, once that label has been read
+    and before anything is written (transit_destination_home_messages).
+
+    The enabled destinations become exactly the given labels (transit_destination_entries). A stored destination
+    that is DISABLED is kept as it is, and so is the rest of the `transit` block (the home label). Every other key
+    of the document -- the admin lock, the `internal_routing` lists, account settings -- is untouched.
+
+    A cancelled (permanently offboarded) organization is refused, and so is one that does not exist: RuntimeError,
+    with nothing written."""
+    zone = collector_rules.collector_timezone({collector_rules.TIMEZONE_KEY: timezone})
+    marker = collector_rules.rules_review_marker(
+        reviewed_at=reviewed_at or datetime.now(UTC), reviewed_by_user_id=reviewed_by_user_id
+    )
+    site = {collector_rules.TIMEZONE_KEY: zone, collector_rules.RULES_REVIEW_KEY: marker}
+    transit_destination_labels = list(transit_destination_labels)
+    if transit_destination_key_collisions(transit_destination_labels):
+        raise ValueError("transit destination labels share a canonical key")
+    enabled = transit_destination_entries(transit_destination_labels)
+    enabled_labels = {entry["label"].lower() for entry in enabled}
+
+    engine = get_engine()
+    with engine.begin() as conn:
+        row = conn.execute(text(_COLLECTOR_SITE_SQL), {"organization_id": organization_id}).mappings().first()
+        if not row:
+            raise RuntimeError(f"Organization {organization_id} not found")
+        if row["organization_status"] == "cancelled":
+            raise RuntimeError(f"Organization {organization_id} is cancelled; its collector site settings cannot be changed")
+
+        stored_transit = _organization_settings_document(row["settings_json"]).get("transit")
+        transit = dict(stored_transit) if isinstance(stored_transit, dict) else {}
+        # Against the home label that is STORED, which only this read knows: nothing is written for a label that
+        # means home.
+        if transit_destination_home_messages(transit.get("home_branch_label"), transit_destination_labels):
+            raise ValueError("a transit destination label means home")
+        stored_destinations = transit.get("destinations")
+        disabled = [
+            entry for entry in (stored_destinations if isinstance(stored_destinations, list) else [])
+            if isinstance(entry, dict) and not bool(entry.get("enabled", True))
+            and str(entry.get("label", "")).strip().lower() not in enabled_labels
+        ]
+        transit["destinations"] = enabled + disabled
+
+        written = conn.execute(
+            text(_SET_COLLECTOR_SITE_SQL),
+            {
+                "organization_id": organization_id,
+                "document": json.dumps({**site, "transit": transit}),
+                "site": json.dumps(site),
+                "transit": json.dumps(transit),
+            },
+        ).mappings().first()
+        if not written:
+            raise RuntimeError(f"Organization {organization_id} is cancelled; its collector site settings cannot be changed")
+
+    return site

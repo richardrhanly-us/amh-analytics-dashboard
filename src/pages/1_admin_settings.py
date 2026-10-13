@@ -22,6 +22,7 @@ from services.privacy_hardening import (
     install_streamlit_log_scrubber,
     log_safe_exception,
 )
+from services.routing_destination import destination_key as canonical_destination_key
 from services.settings_service import public_internal_routing_view
 from services.sidebar_service import render_main_sidebar
 from services.streamlit_access_adapter import (
@@ -29,7 +30,10 @@ from services.streamlit_access_adapter import (
     get_user_memberships,
 )
 from services.streamlit_entitlement_adapter import build_entitlement_context
-from services.tenant_service import get_effective_settings
+from services.tenant_service import (
+    get_effective_settings,
+    transit_destination_problems,
+)
 
 logger = logging.getLogger("sortview.admin_settings")
 
@@ -53,8 +57,10 @@ st.set_page_config(
 apply_page_chrome()
 
 DEFAULT_SETTINGS = {
+    # No library's own name, home label or destinations: an organization whose settings are missing is shown blanks,
+    # never another library's values -- and so can never save them as its own.
     "library": {
-        "library_name": "New Braunfels Public Library",
+        "library_name": "",
         "branch_name": "Main Branch",
         "system_name": "Tech Logic UltraSort",
     },
@@ -63,19 +69,8 @@ DEFAULT_SETTINGS = {
         "admin_enabled": True,
     },
     "transit": {
-        "home_branch_label": "Main",
-        "destinations": [
-            {
-                "key": "westside",
-                "label": "Westside",
-                "enabled": True,
-            },
-            {
-                "key": "library_express",
-                "label": "Library Express",
-                "enabled": True,
-            },
-        ],
+        "home_branch_label": "",
+        "destinations": [],
     },
     "internal_routing": {
         "branch_services_names": [],
@@ -514,11 +509,12 @@ with st.form("admin_settings_form"):
 
     home_branch_label = st.text_input(
         "Home branch label",
-        value=transit_settings.get("home_branch_label", "Main"),
+        value=transit_settings.get("home_branch_label", ""),
         help="This is the label used for the main/home branch.",
     )
 
     existing_destinations = transit_settings.get("destinations", [])
+    # A library with no destinations yet is offered two EMPTY rows. An empty row is never saved.
     existing_count = len(existing_destinations) if len(existing_destinations) > 0 else 2
 
     destination_count = st.number_input(
@@ -527,7 +523,10 @@ with st.form("admin_settings_form"):
         max_value=20,
         value=existing_count,
         step=1,
-        help="How many non-home transit destinations this library system uses.",
+        help=(
+            "How many non-home transit destinations this library system uses. Added rows appear, empty, after the "
+            "next save; a row with no label is not saved."
+        ),
     )
 
     transit_destinations_form = []
@@ -536,11 +535,8 @@ with st.form("admin_settings_form"):
         if i < len(existing_destinations):
             existing_destination = existing_destinations[i]
         else:
-            existing_destination = {
-                "key": f"branch_{i+1}",
-                "label": f"Branch {i+1}",
-                "enabled": True,
-            }
+            # A new row is blank: a placeholder here would be saved as this library's own destination.
+            existing_destination = {"key": "", "label": "", "enabled": True}
 
         st.markdown(f"##### Transit Destination {i + 1}")
         dest_col1, dest_col2, dest_col3 = st.columns([2, 3, 1])
@@ -548,15 +544,18 @@ with st.form("admin_settings_form"):
         with dest_col1:
             destination_key = st.text_input(
                 f"Key {i + 1}",
-                value=str(existing_destination.get("key", f"branch_{i+1}")),
-                help="Lowercase key with underscores, like westside or north_branch.",
+                value=str(existing_destination.get("key", "")),
+                help=(
+                    "Leave blank: the key is worked out from the label. A key entered here must be exactly that "
+                    "key, or the settings are not saved."
+                ),
                 key=f"transit_key_{i}",
             )
 
         with dest_col2:
             destination_label = st.text_input(
                 f"Label {i + 1}",
-                value=str(existing_destination.get("label", f"Branch {i+1}")),
+                value=str(existing_destination.get("label", "")),
                 key=f"transit_label_{i}",
             )
 
@@ -569,7 +568,11 @@ with st.form("admin_settings_form"):
 
         transit_destinations_form.append(
             {
-                "key": destination_key.strip().lower().replace(" ", "_"),
+                # ALWAYS the label's canonical key -- the one the reports and the Collector use
+                # (services.routing_destination). `typed_key` is what was entered, tidied as a key always was here:
+                # it is only ever COMPARED with the canonical key (below), never saved in its place.
+                "key": canonical_destination_key(destination_label) if destination_label.strip() else "",
+                "typed_key": destination_key.strip().lower().replace(" ", "_"),
                 "label": destination_label.strip(),
                 "enabled": bool(destination_enabled),
             }
@@ -657,7 +660,8 @@ with st.form("admin_settings_form"):
             "transit": {
                 "home_branch_label": home_branch_label.strip(),
                 "destinations": [
-                    d for d in transit_destinations_form
+                    {"key": d["key"], "label": d["label"], "enabled": d["enabled"]}
+                    for d in transit_destinations_form
                     if d["key"] and d["label"]
                 ],
             },
@@ -676,17 +680,37 @@ with st.form("admin_settings_form"):
             },
         }
 
-        try:
-            save_settings(
-                org_slug=selected_org_slug,
-                branch_slug=selected_branch_slug,
-                settings=updated_settings,
-            )
-            st.success("Settings saved to database.")
-            st.rerun()
-        except Exception as exc:
-            log_safe_exception(logger, "Admin settings save failed", exc)
-            st.error(SETTINGS_SAVE_FAILED_MESSAGE)
+        # A key that was typed must BE its label's canonical key. One that is not is refused -- never silently
+        # rewritten, and never saved: the Collector would file that destination under a key the reports do not use.
+        destination_problems = [
+            f'Transit destination {number}: the key "{d["typed_key"]}" is not the key for the label "{d["label"]}", '
+            f'which is "{d["key"]}". Clear the Key field to use it, or enter exactly that key.'
+            for number, d in enumerate(transit_destinations_form, start=1)
+            if d["label"] and d["typed_key"] and d["typed_key"] != d["key"]
+        ]
+        # A label that means home is not a transit destination, and two different enabled labels that share one
+        # canonical key would be ONE destination to the Collector and the reports. Refused, never collapsed.
+        destination_problems += transit_destination_problems(
+            updated_settings["transit"]["home_branch_label"],
+            (d["label"] for d in updated_settings["transit"]["destinations"] if d["enabled"]),
+        )
+
+        if destination_problems:
+            for destination_problem in destination_problems:
+                st.error(destination_problem)
+            st.error("Settings were not saved.")
+        else:
+            try:
+                save_settings(
+                    org_slug=selected_org_slug,
+                    branch_slug=selected_branch_slug,
+                    settings=updated_settings,
+                )
+                st.success("Settings saved to database.")
+                st.rerun()
+            except Exception as exc:
+                log_safe_exception(logger, "Admin settings save failed", exc)
+                st.error(SETTINGS_SAVE_FAILED_MESSAGE)
 
 with st.expander("Current DB Preview", expanded=False):
     try:

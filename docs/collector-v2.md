@@ -324,9 +324,10 @@ and the site's lists are well-formed, the branch has **no active ingest key**, a
 site's effective settings (`src/services/collector_rules.py`, held to `collector/v2_rules.py` by `tests/test_collector_rules.py`).
 It contains patron account names and is never logged.
 
-**Still contract 1 by default.** A new installation is contract 2 only when it is created so explicitly. Super Admin can now do
-that -- a contract selector on both creation forms, defaulting to 1 (see *Fresh Contract v2 installation*) -- but 2 is not yet the
-normal choice: that follows the rehearsal and publication of the first bundle that can install it (Collector 1.0.14).
+**Contract 1 is still the server's default.** A new installation is contract 2 only when it is created so explicitly: the
+`required_contract` column, `create_collector_installation` and an enrollment request that names no contract all still mean 1.
+Super Admin always says which it wants -- a contract selector on both creation forms, which since onboarding stage A3b starts on
+**Contract v2** (see *Fresh Contract v2 installation* > *Provisioning*). The legacy contract stays selectable and supported.
 
 **Deployment order.** (1) apply migration `f7b3d2c81a46` (the two `required_contract` columns, and `INSERT` on `v2_cutovers` for the
 runtime role -- no `UPDATE`, no `DELETE`); (2) deploy the API; (3) deploy Super Admin. The migration is safe against the previous API.
@@ -404,9 +405,9 @@ state before its task has run once. A neutral, non-reporting validation endpoint
 
 Collector **1.0.14**'s guided setup (`setup.ps1`, frozen bundles) installs a new machine directly on Contract v2 when the
 enrollment code was generated for a **contract 2 installation**. Nothing about an existing install changes, and the same
-bundle still installs a contract 1 code on the legacy contract. **Contract 2 is not the provisioning default:** Super Admin
-creates a contract 1 installation unless Contract v2 is selected explicitly (see *Provisioning* below). The steps and
-every stop are the script's own text; this is the order and the guarantees.
+bundle still installs a contract 1 code on the legacy contract. **Contract 2 is the provisioning default (onboarding stage
+A3b):** Super Admin's contract selector starts on Contract v2, and the legacy contract is chosen explicitly (see
+*Provisioning* below). The steps and every stop are the script's own text; this is the order and the guarantees.
 
 | Step | What happens | If it fails |
 | --- | --- | --- |
@@ -486,9 +487,33 @@ rule. A legacy enrollment's record is unchanged.
 ### Provisioning
 
 Super Admin's two creation paths -- *Provision Library* and *Manage Libraries > Add installation* -- have an explicit
-contract selector. **Its default is 1 (legacy).** Choosing 2 requires the site's Collector time zone and its reviewed
-classification lists (and, when provisioning, a confirmation that the pre-filled transit labels are the library's own,
-because for Contract v2 they become its classification rules), and is labelled as needing Collector 1.0.14 or later. The
-choice is made once, when the installation is created; an existing installation's contract cannot be changed. A branch
-has one Contract v2 Collector: adding a second or replacement installation to a branch that has already enrolled on
-Contract v2 is not supported yet.
+contract selector. **Its default is 2 (Contract v2)** since onboarding stage A3b; 1 (legacy) stays selectable and needs
+none of what follows. Contract 2 requires the site's Collector time zone and its reviewed classification lists (and, when
+provisioning, a confirmation that the transit destinations entered are complete, because for Contract v2 they become its
+classification rules), and is labelled as needing Collector 1.0.14 or later. The choice is made once, when the
+installation is created; an existing installation's contract cannot be changed. A branch has one Contract v2 Collector:
+adding a second or replacement installation to a branch that has already enrolled on Contract v2 is not supported yet.
+
+*Provision Library* (A3b):
+
+* The contract selector is the first field, and the form is submitted only by its button -- pressing Enter in a field
+  does nothing.
+* Everything is checked before anything is created: the names, a chosen plan, and for Contract v2 the three Collector
+  Site Settings entries (marked `*`). Every problem is listed at once and no organization, installation or operational
+  identity exists until there is none.
+* The plan is chosen from the active rows of `plans`; none is pre-selected and none can be typed. (`trial` is a
+  subscription status, not a plan.)
+* No transit label is pre-filled. Destinations are entered one per line and each is stored with its **canonical key**,
+  `services.routing_destination.destination_key(label)`: the one key the reports look a destination up by, and always a
+  valid destination slug (a letter first, at most 32 characters -- a label that starts with a digit gets `d_` before
+  it), so the rules the Collector is given carry that same key. Two different labels that share a key are refused
+  where they are saved (here, in *Collector Site Settings*, and in Admin Settings) rather than treated as one.
+
+*Manage Libraries > Collector Site Settings* (A3b) shows whether an existing library is ready for Contract v2 and
+repairs it: the Collector time zone, the enabled transit destination labels, and a review confirmation that records the
+signed-in Super Admin and the time. It reads and writes the **organization's** own settings -- where the enrollment
+reads them -- and leaves every other setting as it is. The four Internal Routing lists hold patron account names: this
+page shows only how many entries each has, and they are edited in the library's Admin Settings.
+
+Admin Settings no longer offers another library's values where an organization has none: a missing home label or
+destination list is shown blank, and an empty destination row is not saved.
