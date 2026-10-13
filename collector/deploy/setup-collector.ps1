@@ -30,18 +30,48 @@
          unlisted file may be present. Then: a frozen bundle, every sibling tool
          present, and the bundled runtime's own `version` command agreeing
          with MANIFEST.json (the canonical release version).
-      2. Read-only machine checks: an existing install, Scheduled Task or
-         stored API token (api_token.dpapi) is never adopted, replaced or
-         touched silently. A
+      2. Read-only machine checks: a first install needs a CLEAN machine. An
+         existing install, config or Scheduled Task -- or, left behind in the
+         data root by an earlier install, an API token (api_token.dpapi), a
+         Contract v2 secret, a state file of either contract or a
+         classification rules file -- is listed and setup stops: none is ever
+         adopted, replaced or deleted, and replacing a token is never offered. A
          saved enrollment from an interrupted setup is recognised here (see
          RESUME).
       3. The three Tech Logic source files are located and must EXIST.
-      4. The SortView API is reached over HTTPS (nothing is consumed by this).
+      4. The SortView API is reached over HTTPS (nothing is consumed by this),
+         and the setup folder <DataRoot>\setup is created, restricted to
+         Administrators and SYSTEM, and proved writable.
          Steps 1-4 all happen BEFORE the enrollment code is requested, so an
          avoidable local problem never burns a single-use code.
       5. The enrollment code is read as a hidden SecureString and redeemed with
-         POST /collector/enroll (sending the code, this computer's name and the
-         bundle's canonical version). The response is validated strictly.
+         POST /collector/enroll (sending the code, this computer's name, the
+         bundle's canonical version, and `contract_version: 2`: this release
+         enrolls on Contract v2). The response is validated strictly. A code
+         issued for the LEGACY contract is refused `contract_not_permitted`
+         without being used; setup then sends the legacy request ONCE with the
+         same code and follows the legacy steps below unchanged. No other
+         refusal, error or status is retried (see REFUSALS).
+
+    CONTRACT V2 (the code was issued for a contract 2 installation). Steps 6-9
+    are these instead; see docs/collector-v2.md, "Fresh Contract v2 installation":
+
+      6. FIRST, before anything else is attempted, everything non-secret the
+         server just said is saved to <DataRoot>\setup, read back and verified:
+         the resume record (the IDs, the API address, the key id, the time zone)
+         and the site's classification rules, exactly as the server sent them.
+         THEN the token is stored and verified (api_token.dpapi), as below.
+      7. install.ps1 is run with the returned IDs and -ContractMode v2 with the
+         key id and time zone (a v2 collector_config.json); then the staged
+         rules are installed as <DataRoot>\config\classification_rules.json.
+      8. tools\finish-install.ps1: the local secret (created ON THIS MACHINE by
+         the Collector, never sent, never shown), both v2 preflights, the cursor
+         seeded at the end of each source file, the task registered DISABLED.
+      9. The Scheduled Task is ENABLED -- setup's last action, with no question,
+         and only because every step above succeeded. No run is started.
+
+    LEGACY (the code was issued for a contract 1 installation), unchanged:
+
       6. The returned token is stored IMMEDIATELY in
          <DataRoot>\secrets\api_token.dpapi (DPAPI, Administrators + SYSTEM
          only) by tools\set-api-token.ps1, which pipes it on STDIN to the
@@ -64,19 +94,48 @@
       9. Only then, and only on explicit confirmation, may the task be enabled.
          The saved enrollment details are removed once setup has completed.
 
-    THE SCHEDULED TASK STAYS DISABLED unless step 9's explicit confirmation
-    (or -EnableTask) happens after every step above succeeded. Pressing Enter
-    does not enable it. On any failure this script also disables the task if
-    anything left it enabled. It never starts a Collector run.
+    THE SCHEDULED TASK STAYS DISABLED until every step above succeeded. For a
+    legacy enrollment it is then enabled only on step 9's explicit confirmation
+    (or -EnableTask); pressing Enter does not enable it. For a Contract v2
+    enrollment it is then enabled by setup itself. On any failure this script
+    also disables the task if anything left it enabled. It never starts a
+    Collector run.
+
+    REFUSALS. The API answers a VALID code it will not enroll with HTTP 409 and
+    one of four fixed codes -- contract_not_permitted, collector_upgrade_required,
+    enrollment_not_ready, unsupported_contract_version -- and guarantees none of
+    them used the code. Setup reads that code (and nothing else in the body, which
+    is never shown) and says so. A rate limit (429) and a redirect never
+    reached the API either, and are reported the same way.
+
+    UNKNOWN RESULTS. Any other failure of the enrollment request leaves it
+    UNKNOWN whether the server enrolled this computer: no response at all (a
+    timeout, a reset, a connection closed after the request was sent), a 5xx,
+    an unexpected status, an unrecognized 409, or a 200 that could not be read.
+    Setup never says the code "was not used" for these and never advises
+    getting a new one -- a Contract v2 enrollment exists exactly once, so a
+    new code would be refused. It says: run setup.ps1 again with the SAME
+    code; if that code is then refused as invalid or already used, the first
+    request may have completed -- contact SortView support. A 400 means only
+    that THIS request enrolled nothing; its advice puts that case first. Setup
+    never retries by itself (the one legacy fallback above is not a retry of
+    an unknown result).
 
     SECRETS. The enrollment code is entered as a SecureString and converted to
     text only for the one request body, then cleared. The agent token is
     converted to a SecureString the moment the response is validated and the
     plain copy is cleared; it is handed to tools\set-api-token.ps1 as a
     SecureString parameter (in-process -- never a command-line argument). Neither
-    value is written to the console, a file, a log or the config. The only file
-    this script writes is the resume record above, which has no field that could
-    hold either.
+    value is written to the console, a file, a log or the config. This script
+    writes two files, both under <DataRoot> in folders restricted to
+    Administrators and SYSTEM: the resume record, which has no field that could
+    hold either secret, and -- for Contract v2 -- the site's classification rules
+    as the server sent them (staged in <DataRoot>\setup, then installed in
+    <DataRoot>\config). The rules hold the site's own account names: they are
+    never printed and never in the resume record. The Contract v2 HMAC secret is
+    generated by the Collector on this machine; this script never holds it. The
+    key id (not a secret) is written to the resume record and the config, and is
+    not printed.
 
     RESUME. Enrollment is single-use, and the code is never made reusable -- so
     a local failure after the code was redeemed must not need a new one. Right
@@ -98,8 +157,20 @@
     saved enrollment. A record that is malformed, or a record whose token is gone,
     stops safely (nothing is touched or deleted) with instructions.
 
+    A CONTRACT V2 ENROLLMENT IS NEVER RECOVERED WITH A NEW CODE. It created the
+    branch's one v2 identity on the server, and a second code would be refused. Its
+    record (schema_version 2) is saved BEFORE the token and also holds the
+    contract, the key id, the time zone and the SHA-256 of the staged rules file;
+    a resume completes only what is unfinished, reusing the token, the rules, and
+    a valid existing secret and cursor, and refuses if the config or a rules file
+    on the machine is not that enrollment's. Three cases need SortView support:
+    the server enrolled but its response never arrived; the token could not be
+    stored after enrollment (support issues a replacement; setup then resumes);
+    the enrolled machine is lost or replaced.
+
     RE-RUNS WITHOUT A SAVED ENROLLMENT. An existing install (files, config or
-    Scheduled Task) is refused, never overwritten and never deleted: an
+    Scheduled Task) or leftover Collector data (see step 2) is refused, never
+    overwritten and never deleted: an
     unfinished manual setup is completed with tools\finish-install.ps1 (safe to
     re-run); a live install is updated with tools\update.ps1; starting over needs
     tools\uninstall.ps1 and a NEW enrollment code.
@@ -129,14 +200,11 @@
 .PARAMETER DataRoot
     Same as install.ps1.
 
-.PARAMETER ReplaceExistingToken
-    Allow replacing an API token already stored on this machine
-    (api_token.dpapi). Without it, an existing token is replaced only after an
-    interactive confirmation.
-
 .PARAMETER EnableTask
-    After EVERY step succeeded, enable the Scheduled Task without asking.
-    Never enables on any failure.
+    Legacy (contract 1) enrollments only: after EVERY step succeeded, enable
+    the Scheduled Task without asking. Never enables on any failure. A
+    Contract v2 enrollment enables the task itself once every step succeeded,
+    with or without this switch.
 
 .EXAMPLE
     .\setup.ps1
@@ -151,7 +219,6 @@ param(
     [string]$AcsPath,
     [string]$InstallRoot = "C:\SortView\Collector",
     [string]$DataRoot = "C:\ProgramData\SortViewCollector",
-    [switch]$ReplaceExistingToken,
     [switch]$EnableTask
 )
 
@@ -162,8 +229,21 @@ $script:TaskName = "SortView Collector"
 # The three source names the Collector's parser recognizes -- what install.ps1 writes.
 $script:SourceNames = @("checkins", "rejects", "acs")
 $script:ExpectedResponseKeys = @("customer_id", "branch_id", "installation_id", "agent_token")
+# A Contract v2 enrollment returns those four and exactly these five more (the API's stage-A1 contract).
+$script:V2ResponseKeys = $script:ExpectedResponseKeys + @("contract_version", "contract_mode", "key_id", "timezone", "classification_rules")
+# The refusals the API may give a caller holding a VALID code (HTTP 409, a fixed `code`). None of them consumes the code.
+$script:EnrollmentRefusalCodes = @("collector_upgrade_required", "contract_not_permitted", "unsupported_contract_version", "enrollment_not_ready")
+# A server-issued key_id (a lower-case UUIDv4) -- the Collector's own rule (collector/v2_events.py UUID4_PATTERN).
+$script:KeyIdPattern = '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+# An IANA time zone NAME is made of these characters; whether it is a real zone is the server's and the Collector's to say.
+$script:TimezonePattern = '^[A-Za-z0-9_+\-]+(/[A-Za-z0-9_+\-]+)*$'
+# The five lists of a classification rules document (collector/v2_rules.py), used only to compare SHAPES -- never shown.
+$script:RulesListNames = @("destinations", "branch_services_names", "collection_services_names", "branch_services_da_patterns", "collection_services_da_patterns")
 # The complete, closed set of fields the resume record may contain. Nothing secret is on it.
 $script:RecoveryKeys = @("schema_version", "created_utc", "release_version", "api_url", "customer_id", "branch_id", "installation_id")
+# A Contract v2 enrollment's record (schema_version 2) holds those and exactly these: still nothing secret, and no rule
+# (`rules_sha256` is the hash of the staged rules FILE, which ties that file to this enrollment without holding a word of it).
+$script:RecoveryKeysV2 = $script:RecoveryKeys + @("contract_version", "contract_mode", "key_id", "timezone", "rules_sha256")
 # install.ps1 binds these as [Nullable[int]] (Int32); a larger value could not be passed.
 $script:MaxInstallerId = [int]::MaxValue
 $script:State = $null
@@ -246,11 +326,54 @@ function Disable-SortViewTask {
     Disable-ScheduledTask -TaskName $script:TaskName | Out-Null
 }
 
+function Get-ResponseBodyText {
+    # A successful response's body, decoded as UTF-8 from its raw bytes. (Windows PowerShell 5.1 decodes
+    # `application/json` with no charset as ISO-8859-1, which would corrupt any non-ASCII character in the
+    # classification rules; the API sends UTF-8.) Never logged.
+    param($Response)
+    try {
+        $stream = $Response.RawContentStream
+        if ($null -ne $stream) { return [System.Text.Encoding]::UTF8.GetString($stream.ToArray()) }
+    } catch {
+        $null = $_
+    }
+    return [string]$Response.Content
+}
+
+function Get-ErrorBodyText {
+    # The body of an HTTP error response, or $null. Read ONLY for a 409 (see Invoke-SetupHttp), bounded,
+    # and used only to pick out one fixed refusal code -- it is never shown or kept.
+    param($ErrorRecord)
+    $text = $null
+    try {
+        if ($null -ne $ErrorRecord.ErrorDetails -and -not [string]::IsNullOrEmpty($ErrorRecord.ErrorDetails.Message)) {
+            $text = [string]$ErrorRecord.ErrorDetails.Message
+        }
+    } catch {
+        $text = $null
+    }
+    if ($null -eq $text) {
+        try {
+            $stream = $ErrorRecord.Exception.Response.GetResponseStream()
+            if ($stream.CanSeek) { $stream.Position = 0 }
+            $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8)
+            $text = $reader.ReadToEnd()
+        } catch {
+            $text = $null
+        }
+    }
+    if ($null -ne $text -and $text.Length -gt 4096) { return $null }
+    return $text
+}
+
 function Invoke-SetupHttp {
     # One HTTPS request. Never throws: returns StatusCode (0 = none), Content
     # (the response body text, or $null) and Failure ($null, or a short
     # non-secret reason). Redirects are NOT followed -- a redirect would carry
     # the request body (the code) to wherever it points. Never logs a body.
+    # An error response's body is discarded, with one exception: a 409 (the
+    # API's fixed enrollment refusals), whose body is returned for the caller
+    # to read a refusal code from and nothing else.
     param([string]$Method, [string]$Url, [string]$Body)
 
     $result = [pscustomobject]@{ StatusCode = 0; Content = $null; Failure = $null }
@@ -276,12 +399,13 @@ function Invoke-SetupHttp {
         }
         $response = Invoke-WebRequest @request
         $result.StatusCode = [int]$response.StatusCode
-        $result.Content = [string]$response.Content
+        $result.Content = Get-ResponseBodyText -Response $response
     } catch {
         $response = $_.Exception.Response
         if ($null -ne $response) {
             $result.StatusCode = [int]$response.StatusCode
             $result.Failure = "HTTP $($result.StatusCode)"
+            if ($result.StatusCode -eq 409) { $result.Content = Get-ErrorBodyText -ErrorRecord $_ }
         } else {
             $result.Failure = "no response ($($_.Exception.GetType().Name))"
         }
@@ -380,8 +504,17 @@ function ConvertTo-EnrollmentResult {
     # object with EXACTLY customer_id, branch_id, installation_id and agent_token;
     # the three IDs are genuine positive integers the installer can take, and the
     # token is a plausible URL-safe token. Anything else is rejected whole.
-    param([string]$Content)
-    $fail = { param($reason) return [pscustomobject]@{ Valid = $false; Problem = $reason; CustomerId = $null; BranchId = $null; InstallationId = $null; AgentToken = $null } }
+    #
+    # -RequestedContract 2 (a Contract v2 enrollment was asked for) expects the
+    # OTHER exact shape instead -- those four and contract_version (2),
+    # contract_mode ("v2"), key_id (a lower-case UUID), timezone (an IANA-shaped
+    # name) and classification_rules (a JSON object) -- and nothing else. The
+    # two shapes are never mixed: a four-field answer to a v2 request, or a
+    # nine-field answer to a legacy one, is rejected. No problem text ever
+    # repeats a value.
+    param([string]$Content, [int]$RequestedContract = 1)
+    $fail = { param($reason) return [pscustomobject]@{ Valid = $false; Problem = $reason; CustomerId = $null; BranchId = $null; InstallationId = $null; AgentToken = $null; Contract = $null; KeyId = $null; Timezone = $null; Rules = $null } }
+    $expectedKeys = if ($RequestedContract -eq 2) { $script:V2ResponseKeys } else { $script:ExpectedResponseKeys }
 
     if ([string]::IsNullOrWhiteSpace($Content)) { return (& $fail "the response body is empty") }
     $doc = $null
@@ -393,10 +526,10 @@ function ConvertTo-EnrollmentResult {
     if ($doc -isnot [System.Management.Automation.PSCustomObject]) { return (& $fail "the response body is not a JSON object") }
 
     $names = @($doc.PSObject.Properties | ForEach-Object { $_.Name })
-    foreach ($required in $script:ExpectedResponseKeys) {
+    foreach ($required in $expectedKeys) {
         if (-not ($names -ccontains $required)) { return (& $fail "the response is missing '$required'") }
     }
-    if ($names.Count -ne $script:ExpectedResponseKeys.Count) { return (& $fail "the response has unexpected fields") }
+    if ($names.Count -ne $expectedKeys.Count) { return (& $fail "the response has unexpected fields") }
 
     $ids = @{}
     foreach ($name in @("customer_id", "branch_id", "installation_id")) {
@@ -409,11 +542,74 @@ function ConvertTo-EnrollmentResult {
     $token = $doc.PSObject.Properties["agent_token"].Value
     if ($token -isnot [string] -or $token -notmatch '^[A-Za-z0-9_\-]{20,256}$') { return (& $fail "'agent_token' is not a plausible token") }
 
+    $contract = 1
+    $keyId = $null
+    $timezone = $null
+    $rules = $null
+    if ($RequestedContract -eq 2) {
+        $version = $doc.PSObject.Properties["contract_version"].Value
+        if (($version -isnot [int] -and $version -isnot [long]) -or $version -ne 2) { return (& $fail "'contract_version' is not 2") }
+        $modeValue = $doc.PSObject.Properties["contract_mode"].Value
+        if ($modeValue -isnot [string] -or $modeValue -cne "v2") { return (& $fail "'contract_mode' is not `"v2`"") }
+        $keyId = $doc.PSObject.Properties["key_id"].Value
+        if ($keyId -isnot [string] -or $keyId -cnotmatch $script:KeyIdPattern) { return (& $fail "'key_id' is not a server-issued key id") }
+        $timezone = $doc.PSObject.Properties["timezone"].Value
+        if ($timezone -isnot [string] -or $timezone.Length -gt 64 -or $timezone -cnotmatch $script:TimezonePattern) {
+            return (& $fail "'timezone' is not a time zone name")
+        }
+        $rules = $doc.PSObject.Properties["classification_rules"].Value
+        if ($rules -isnot [System.Management.Automation.PSCustomObject]) { return (& $fail "'classification_rules' is not a JSON object") }
+        $contract = 2
+    }
+
     return [pscustomobject]@{
         Valid = $true; Problem = $null
         CustomerId = $ids["customer_id"]; BranchId = $ids["branch_id"]; InstallationId = $ids["installation_id"]
         AgentToken = $token
+        Contract = $contract; KeyId = $keyId; Timezone = $timezone; Rules = $rules
     }
+}
+
+function Get-EnrollmentRefusalCode {
+    # The fixed refusal code of a 409 from /collector/enroll, or $null. The body must be a JSON object
+    # whose `code` is EXACTLY one of the four the API defines; anything else is not a known refusal and is
+    # treated conservatively by the caller. Nothing else in the body is read, and none of it is shown.
+    param([string]$Content)
+    if ([string]::IsNullOrWhiteSpace($Content)) { return $null }
+    $doc = $null
+    try {
+        $doc = $Content | ConvertFrom-Json
+    } catch {
+        return $null
+    }
+    if ($doc -isnot [System.Management.Automation.PSCustomObject]) { return $null }
+    $property = $doc.PSObject.Properties["code"]
+    if ($null -eq $property -or $property.Value -isnot [string]) { return $null }
+    foreach ($known in $script:EnrollmentRefusalCodes) {
+        if ($property.Value -ceq $known) { return $known }
+    }
+    return $null
+}
+
+function Get-LeftoverArtifacts {
+    # Collector DATA left on this machine by an earlier install, which a first install must never adopt
+    # or overwrite: a Contract v2 secret (bound to another key), a cursor of either contract, or a
+    # classification rules file. tools\uninstall.ps1 keeps the data root by default, so these outlive an
+    # uninstall. Reads only (Test-Path); returns what was found, empty for a clean machine.
+    param([string]$DataRoot)
+    $candidates = [ordered]@{
+        "secrets\v2_key.dpapi"               = "a Contract v2 secret"
+        "data\state.json"                    = "a Collector state file (the legacy cursor)"
+        "data\v2\state_v2.json"              = "a Contract v2 state file (cursor)"
+        "config\classification_rules.json"   = "a classification rules file"
+        "setup\classification_rules.json"    = "classification rules staged by an earlier setup"
+    }
+    $found = @()
+    foreach ($relative in $candidates.Keys) {
+        $path = Join-Path $DataRoot $relative
+        if (Test-Path -LiteralPath $path) { $found += "$($candidates[$relative]) at '$path'" }
+    }
+    return $found
 }
 
 function Get-ExistingInstallProblem {
@@ -452,7 +648,12 @@ function Get-SetupRecoveryPath {
 function ConvertTo-SetupRecoveryJson {
     # The ONLY way the record's content is produced. Every field is typed and named here,
     # and there is no parameter that could carry the enrollment code or the token.
-    param([int]$CustomerId, [int]$BranchId, [int]$InstallationId, [string]$ApiUrl, [string]$ReleaseVersion)
+    #
+    # A Contract v2 enrollment (-ContractVersion 2) adds what a resume needs to finish without the server:
+    # the contract, the non-secret key id, the site's time zone, and the SHA-256 of the staged rules file.
+    # The rules themselves are never in the record.
+    param([int]$CustomerId, [int]$BranchId, [int]$InstallationId, [string]$ApiUrl, [string]$ReleaseVersion,
+        [int]$ContractVersion = 1, [string]$KeyId, [string]$Timezone, [string]$RulesSha256)
     $record = [ordered]@{
         schema_version  = 1
         created_utc     = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -461,6 +662,14 @@ function ConvertTo-SetupRecoveryJson {
         customer_id     = $CustomerId
         branch_id       = $BranchId
         installation_id = $InstallationId
+    }
+    if ($ContractVersion -eq 2) {
+        $record["schema_version"] = 2
+        $record["contract_version"] = 2
+        $record["contract_mode"] = "v2"
+        $record["key_id"] = $KeyId
+        $record["timezone"] = $Timezone
+        $record["rules_sha256"] = $RulesSha256
     }
     return ($record | ConvertTo-Json)
 }
@@ -483,14 +692,26 @@ function Test-SetupRecoveryContent {
 
     $problems = @()
     $names = @($doc.PSObject.Properties | ForEach-Object { $_.Name })
-    foreach ($key in $script:RecoveryKeys) {
+    # schema_version 2 is a Contract v2 enrollment's record: the same fields and exactly five more. Either
+    # way the field set is closed -- a record is never a mix of the two.
+    $schema = $doc.schema_version
+    $isV2 = (($schema -is [int] -or $schema -is [long]) -and $schema -eq 2)
+    $allowedKeys = if ($isV2) { $script:RecoveryKeysV2 } else { $script:RecoveryKeys }
+    foreach ($key in $allowedKeys) {
         if (-not ($names -ccontains $key)) { $problems += "'$key' is missing" }
     }
-    if ($names.Count -ne $script:RecoveryKeys.Count) { $problems += "it has unexpected fields (only these are allowed: $($script:RecoveryKeys -join ', '))" }
+    if ($names.Count -ne $allowedKeys.Count) { $problems += "it has unexpected fields (only these are allowed: $($allowedKeys -join ', '))" }
     if ($problems.Count -gt 0) { return (& $fail $problems) }
 
-    $schema = $doc.schema_version
-    if (($schema -isnot [int] -and $schema -isnot [long]) -or $schema -ne 1) { $problems += "'schema_version' must be 1" }
+    if (($schema -isnot [int] -and $schema -isnot [long]) -or ($schema -ne 1 -and $schema -ne 2)) { $problems += "'schema_version' must be 1 or 2" }
+    if ($isV2) {
+        $version = $doc.contract_version
+        if (($version -isnot [int] -and $version -isnot [long]) -or $version -ne 2) { $problems += "'contract_version' must be 2" }
+        if ($doc.contract_mode -isnot [string] -or $doc.contract_mode -cne "v2") { $problems += "'contract_mode' must be `"v2`"" }
+        if ($doc.key_id -isnot [string] -or $doc.key_id -cnotmatch $script:KeyIdPattern) { $problems += "'key_id' is not a key id" }
+        if ($doc.timezone -isnot [string] -or $doc.timezone.Length -gt 64 -or $doc.timezone -cnotmatch $script:TimezonePattern) { $problems += "'timezone' is not a time zone name" }
+        if ($doc.rules_sha256 -isnot [string] -or $doc.rules_sha256 -cnotmatch '^[0-9a-f]{64}$') { $problems += "'rules_sha256' is not a SHA-256 hash" }
+    }
     $ids = @{}
     foreach ($name in @("customer_id", "branch_id", "installation_id")) {
         $value = $doc.PSObject.Properties[$name].Value
@@ -516,6 +737,10 @@ function Test-SetupRecoveryContent {
         Record = [pscustomobject]@{
             CustomerId = $ids["customer_id"]; BranchId = $ids["branch_id"]; InstallationId = $ids["installation_id"]
             ApiUrl = $apiUrl; ReleaseVersion = [string]$doc.release_version; CreatedUtc = [string]$doc.created_utc
+            Contract = $(if ($isV2) { 2 } else { 1 })
+            KeyId = $(if ($isV2) { [string]$doc.key_id } else { $null })
+            Timezone = $(if ($isV2) { [string]$doc.timezone } else { $null })
+            RulesSha256 = $(if ($isV2) { [string]$doc.rules_sha256 } else { $null })
         }
     }
 }
@@ -583,7 +808,8 @@ function Save-SetupRecovery {
 function Confirm-SetupRecovery {
     # Reads the record back from disk -- through the same strict reader a resume uses -- and
     # checks that it holds exactly what was just enrolled. Returns the problems (none = verified).
-    param([string]$DataRoot, [int]$CustomerId, [int]$BranchId, [int]$InstallationId, [string]$ApiUrl, [string]$ReleaseVersion)
+    param([string]$DataRoot, [int]$CustomerId, [int]$BranchId, [int]$InstallationId, [string]$ApiUrl, [string]$ReleaseVersion,
+        [int]$ContractVersion = 1, [string]$KeyId, [string]$Timezone, [string]$RulesSha256)
     $read = Get-SetupRecovery -DataRoot $DataRoot
     if ($read.Status -eq "Absent") { return @("the record is not there after it was written") }
     if ($read.Status -ne "Valid") { return @("the record read back is not valid: $($read.Problems -join '; ')") }
@@ -594,6 +820,12 @@ function Confirm-SetupRecovery {
     if ($saved.CustomerId -ne $CustomerId) { $problems += "the saved customer ID differs from the one issued" }
     if ($saved.BranchId -ne $BranchId) { $problems += "the saved branch ID differs from the one issued" }
     if ($saved.InstallationId -ne $InstallationId) { $problems += "the saved installation ID differs from the one issued" }
+    if ($saved.Contract -ne $ContractVersion) { $problems += "the saved contract differs from the one enrolled" }
+    if ($ContractVersion -eq 2) {
+        if ($saved.KeyId -cne $KeyId) { $problems += "the saved key id differs from the one issued" }
+        if ($saved.Timezone -cne $Timezone) { $problems += "the saved time zone differs from the one issued" }
+        if ($saved.RulesSha256 -cne $RulesSha256) { $problems += "the saved rules hash differs from the staged rules" }
+    }
     return $problems
 }
 
@@ -601,12 +833,183 @@ function Remove-SetupRecovery {
     # Deletes exactly the record file and then its folder if (and only if) the folder
     # is empty -- never recursive, never anything else.
     param([string]$DataRoot)
+    # (A Contract v2 enrollment's staged rules file sits beside the record and goes with it.)
     $path = Get-SetupRecoveryPath -DataRoot $DataRoot
-    if (Test-Path -LiteralPath $path -PathType Leaf) { [System.IO.File]::Delete($path) }
+    foreach ($file in @($path, (Get-StagedRulesPath -DataRoot $DataRoot))) {
+        if (Test-Path -LiteralPath $file -PathType Leaf) { [System.IO.File]::Delete($file) }
+    }
     $directory = Split-Path -Parent $path
     if ((Test-Path -LiteralPath $directory -PathType Container) -and @(Get-ChildItem -LiteralPath $directory -Force).Count -eq 0) {
         [System.IO.Directory]::Delete($directory)
     }
+}
+
+# === Contract v2: the setup folder, and the site's classification rules ========================
+#
+# The rules document comes from the SortView API in the enrollment response and from nowhere else: nothing
+# is merged into it, no default is added, and no rule is written by hand here. It holds the site's own
+# account names, so it exists only in this process's memory and in two Administrators + SYSTEM only
+# folders (<DataRoot>\setup while setup is unfinished, then <DataRoot>\config) -- it is never printed,
+# and is not in the resume record (only its file's SHA-256 is).
+
+function Get-StagedRulesPath {
+    param([string]$DataRoot)
+    return (Join-Path (Join-Path $DataRoot "setup") "classification_rules.json")
+}
+
+function Get-LiveRulesPath {
+    # Where the Collector reads its rules when the config does not say otherwise (collector/v2_config.py).
+    param([string]$DataRoot)
+    return (Join-Path (Join-Path $DataRoot "config") "classification_rules.json")
+}
+
+function Get-FileSha256 {
+    # Lower-case hex SHA-256 of a file's bytes.
+    param([string]$Path)
+    return ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash).ToLowerInvariant()
+}
+
+function Write-SetupFileAtomically {
+    # UTF-8 (no BOM) text into a temporary file in the SAME folder, then a rename into place: a crash leaves
+    # no file or the whole file, never part of one. The destination must not already exist. The temporary
+    # file is removed if the rename did not happen.
+    param([string]$Path, [string]$Text)
+    $temporary = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
+    try {
+        [System.IO.File]::WriteAllText($temporary, $Text, (New-Object System.Text.UTF8Encoding($false)))
+        [System.IO.File]::Move($temporary, $Path)
+    } finally {
+        if (Test-Path -LiteralPath $temporary -PathType Leaf) { [System.IO.File]::Delete($temporary) }
+    }
+}
+
+function Initialize-SetupStaging {
+    # BEFORE the enrollment code is requested: creates <DataRoot>\setup, restricts it to Administrators and
+    # SYSTEM, and proves a file can be written into it and removed -- so the one thing that must not fail
+    # after the code is used (saving what a resume needs) has already been shown to work. Nothing secret is
+    # ever put in this folder. Throws on any failure.
+    param([string]$DataRoot)
+    $directory = Join-Path $DataRoot "setup"
+    [System.IO.Directory]::CreateDirectory($directory) | Out-Null
+    Protect-SetupRecoveryDirectory -Path $directory
+    $probe = Join-Path $directory "write-probe-$([guid]::NewGuid().ToString('N')).txt"
+    Write-SetupFileAtomically -Path $probe -Text "probe"
+    if (-not (Test-Path -LiteralPath $probe -PathType Leaf)) { throw "a file written to '$directory' was not there afterwards" }
+    [System.IO.File]::Delete($probe)
+    return $directory
+}
+
+function ConvertTo-ClassificationRulesJson {
+    # The server's rules object as JSON text, with enough depth that nothing is cut off (the default depth
+    # would flatten the destinations list). Compressed form is used only for comparisons.
+    param($Rules, [switch]$Compress)
+    if ($Compress) { return (ConvertTo-Json -InputObject $Rules -Depth 20 -Compress) }
+    return (ConvertTo-Json -InputObject $Rules -Depth 20)
+}
+
+function Get-ClassificationRulesShape {
+    # A description of a rules document's STRUCTURE only -- its field names, its schema_version and how
+    # many entries each list has -- so two documents can be compared, and a problem reported, without a
+    # single name or pattern ever being printed. $null if it is not an object.
+    param($Rules)
+    if ($Rules -isnot [System.Management.Automation.PSCustomObject]) { return $null }
+    $parts = @("fields=" + ((@($Rules.PSObject.Properties | ForEach-Object { $_.Name }) | Sort-Object) -join ","))
+    $schema = $Rules.PSObject.Properties["schema_version"]
+    $parts += "schema_version=" + $(if ($null -ne $schema) { [string]$schema.Value } else { "absent" })
+    foreach ($name in $script:RulesListNames) {
+        $property = $Rules.PSObject.Properties[$name]
+        if ($null -eq $property) { $parts += "$name=absent" }
+        elseif ($property.Value -is [array]) { $parts += "$name=$(@($property.Value).Count)" }
+        else { $parts += "$name=not-a-list" }
+    }
+    return ($parts -join "; ")
+}
+
+function Save-StagedRules {
+    # Writes the server's rules document into the (already restricted) setup folder, atomically, then reads
+    # the file back and proves it is the same document: same structure, same list sizes, same values. Returns
+    # the file's SHA-256. Throws on any difference -- with the SHAPES in the message, never the content.
+    param([string]$DataRoot, $Rules)
+    $path = Get-StagedRulesPath -DataRoot $DataRoot
+    if (Test-Path -LiteralPath $path) { throw "staged classification rules already exist at '$path'" }
+    Write-SetupFileAtomically -Path $path -Text (ConvertTo-ClassificationRulesJson -Rules $Rules)
+
+    # A parser's own error text can quote the document it choked on, so it is never passed on: a fixed message instead.
+    $readBack = $null
+    $unreadable = $false
+    try {
+        $readBack = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+    } catch {
+        $unreadable = $true
+    }
+    if ($unreadable) { throw "the staged classification rules could not be read back as JSON" }
+    $expectedShape = Get-ClassificationRulesShape -Rules $Rules
+    $actualShape = Get-ClassificationRulesShape -Rules $readBack
+    if ($null -eq $actualShape -or $actualShape -cne $expectedShape) {
+        throw "the staged classification rules do not have the structure the server sent (expected: $expectedShape; found: $actualShape)"
+    }
+    if ((ConvertTo-ClassificationRulesJson -Rules $readBack -Compress) -cne (ConvertTo-ClassificationRulesJson -Rules $Rules -Compress)) {
+        throw "the staged classification rules do not read back as the document the server sent"
+    }
+    return (Get-FileSha256 -Path $path)
+}
+
+function Get-RulesResumeState {
+    # For a RESUMED Contract v2 setup: are the rules of the saved enrollment on this machine? The record
+    # holds the SHA-256 of the rules file it was saved with; a rules file with any other content is not
+    # this enrollment's and is never used or replaced.
+    #   Live          -> installed in the config folder, and it is this enrollment's
+    #   Staged        -> still in the setup folder (and it is this enrollment's): will be installed
+    #   Contradiction -> a rules file is there that is NOT this enrollment's, or there is none at all
+    param([string]$DataRoot, [string]$ExpectedSha256)
+    $result = { param($state, $reason) return [pscustomobject]@{ State = $state; Reason = $reason } }
+    $live = Get-LiveRulesPath -DataRoot $DataRoot
+    $staged = Get-StagedRulesPath -DataRoot $DataRoot
+    if (Test-Path -LiteralPath $live) {
+        if (-not (Test-Path -LiteralPath $live -PathType Leaf)) { return (& $result "Contradiction" "'$live' is not a file") }
+        if ((Get-FileSha256 -Path $live) -cne $ExpectedSha256) { return (& $result "Contradiction" "the installed classification rules are not the ones this enrollment was saved with") }
+        return (& $result "Live" "the installed classification rules belong to the saved enrollment")
+    }
+    if (-not (Test-Path -LiteralPath $staged -PathType Leaf)) { return (& $result "Contradiction" "the classification rules saved with this enrollment are missing") }
+    if ((Get-FileSha256 -Path $staged) -cne $ExpectedSha256) { return (& $result "Contradiction" "the staged classification rules are not the ones this enrollment was saved with") }
+    return (& $result "Staged" "the classification rules are staged and belong to the saved enrollment")
+}
+
+function Install-ClassificationRules {
+    # Puts this enrollment's staged rules where the Collector reads them -- a copy into a temporary file in
+    # the config folder (which install.ps1 has created and restricted), then a rename -- and proves the
+    # installed file is byte-for-byte the staged one. A rules file that is already there is kept if it is
+    # this enrollment's and refused if it is not; it is never overwritten. Returns the state it ended in
+    # (Live), or throws.
+    param([string]$DataRoot, [string]$ExpectedSha256)
+    $state = Get-RulesResumeState -DataRoot $DataRoot -ExpectedSha256 $ExpectedSha256
+    if ($state.State -eq "Contradiction") { throw $state.Reason }
+    if ($state.State -eq "Live") { return "AlreadyInstalled" }
+
+    $live = Get-LiveRulesPath -DataRoot $DataRoot
+    $temporary = "$live.$([guid]::NewGuid().ToString('N')).tmp"
+    try {
+        [System.IO.File]::Copy((Get-StagedRulesPath -DataRoot $DataRoot), $temporary)
+        [System.IO.File]::Move($temporary, $live)
+    } finally {
+        if (Test-Path -LiteralPath $temporary -PathType Leaf) { [System.IO.File]::Delete($temporary) }
+    }
+    if ((Get-FileSha256 -Path $live) -cne $ExpectedSha256) { throw "the installed classification rules are not the staged ones" }
+    return "Installed"
+}
+
+function Test-RecoveryLooksContractV2 {
+    # For a record that could NOT be validated: does anything say it belongs to a Contract v2 enrollment? Either the
+    # rules such an enrollment stages are beside it, or its text names a field only a v2 record has. Reads only, never
+    # throws, and decides nothing but which advice is given.
+    param([string]$DataRoot)
+    if (Test-Path -LiteralPath (Get-StagedRulesPath -DataRoot $DataRoot)) { return $true }
+    try {
+        $content = Get-Content -LiteralPath (Get-SetupRecoveryPath -DataRoot $DataRoot) -Raw -Encoding UTF8 -ErrorAction Stop
+    } catch {
+        return $false
+    }
+    return ([string]$content -match 'contract_version|contract_mode|key_id|rules_sha256|"schema_version"\s*:\s*2')
 }
 
 function Test-InstallMatchesRecovery {
@@ -632,6 +1035,19 @@ function Test-InstallMatchesRecovery {
     }
     $configUrl = ([string]$config.api_url).Trim().TrimEnd('/')
     if ($configUrl -ne $Record.ApiUrl) { return (& $result $false "collector_config.json has a different api_url") }
+    # The contract too: a Contract v2 enrollment's config selects v2 with the SAME key id and time zone, and
+    # a legacy enrollment's config does not select v2 at all.
+    $modeProperty = $config.PSObject.Properties["contract_mode"]
+    $configIsV2 = ($null -ne $modeProperty -and $modeProperty.Value -is [string] -and $modeProperty.Value -ceq "v2")
+    if ($Record.Contract -eq 2) {
+        if (-not $configIsV2) { return (& $result $false "collector_config.json does not select Contract v2") }
+        $section = $config.PSObject.Properties["v2"]
+        if ($null -eq $section -or $section.Value -isnot [System.Management.Automation.PSCustomObject]) { return (& $result $false "collector_config.json has no v2 section") }
+        if ([string]$section.Value.key_id -cne $Record.KeyId) { return (& $result $false "collector_config.json has a different v2 key id") }
+        if ([string]$section.Value.timezone -cne $Record.Timezone) { return (& $result $false "collector_config.json has a different v2 time zone") }
+    } elseif ($configIsV2) {
+        return (& $result $false "collector_config.json selects Contract v2 but the saved enrollment is a legacy one")
+    }
     return (& $result $true "the installed config matches the saved enrollment")
 }
 
@@ -639,7 +1055,22 @@ function Get-EnrollmentStateLines {
     # What the operator needs to know about the single-use code, the token and the saved
     # enrollment, given how far this run got. Shown on every stop.
     $lines = @()
-    if ($null -ne $script:State -and $script:State.CodeConsumed) {
+    if ($null -ne $script:State -and $script:State.CodeConsumed -and $script:State.Contract -eq 2) {
+        # Contract v2: the enrollment also created this branch's v2 identity on the server (its ingest key and its
+        # cutover), which exists exactly once. A NEW enrollment code would be refused, so it is never the advice.
+        $lines += "The one-time enrollment code HAS BEEN USED and cannot be used again."
+        $lines += "Do NOT ask for another enrollment code: this installation's Contract v2 identity already exists on the server, and a new code would be refused."
+        if ($script:State.RecoveryOnDisk -and $script:State.TokenStored) {
+            $lines += "The permanent API token IS stored on this machine (api_token.dpapi; never shown)."
+            $lines += "The non-secret enrollment details and the classification rules are saved under '$(Split-Path -Parent $script:State.RecoveryPath)': run setup.ps1 again to RESUME -- no enrollment code is needed."
+        } elseif ($script:State.RecoveryOnDisk) {
+            $lines += "The non-secret enrollment details and the classification rules ARE saved, but the permanent API token is NOT stored on this machine."
+            $lines += "Contact SortView support: a replacement API token must be issued for this installation. Setup can then resume without a new code."
+        } else {
+            $lines += "The enrollment details could NOT be saved on this machine, so this setup cannot be resumed here."
+            $lines += "Contact SortView support and give them the installation number shown above."
+        }
+    } elseif ($null -ne $script:State -and $script:State.CodeConsumed) {
         $lines += "The one-time enrollment code HAS BEEN USED and cannot be used again."
         if ($script:State.TokenStored) {
             $lines += "The permanent API token IS stored on this machine (api_token.dpapi; never shown)."
@@ -652,7 +1083,14 @@ function Get-EnrollmentStateLines {
             $lines += "The permanent API token was NOT stored. Ask your SortView administrator for a NEW enrollment code."
         }
     } elseif ($null -ne $script:State -and $script:State.CodeAttempted) {
-        $lines += "The enrollment code may or may not have been used. If the next attempt is refused, ask for a new one."
+        # No answer, or an answer that does not say what the server did: it may have enrolled this computer before
+        # the answer was lost. A Contract v2 enrollment exists once, so a NEW code is never the next step here.
+        $lines += "The enrollment code may or may not have been used: the result of the enrollment request is UNKNOWN."
+        $lines += "Do NOT ask for a new enrollment code yet. Run setup.ps1 again with the SAME code."
+        $lines += "If the same code is then refused as invalid or already used, the first request may have completed: contact SortView support."
+    } elseif ($null -ne $script:State -and $script:State.CodeRejected) {
+        # A 400: this request enrolled nothing -- but that says nothing about an EARLIER request with the same code.
+        $lines += "SortView did not accept the enrollment code; this request enrolled nothing."
     } else {
         $lines += "The enrollment code was NOT used."
     }
@@ -689,14 +1127,23 @@ function Invoke-Enrollment {
     # Unreachable / Redirected / BadResponse / ServerError), a non-secret Detail,
     # and -- only when Enrolled -- the three IDs and the token as a SecureString.
     # The plain token and the plain code never leave this function.
-    param([string]$ApiUrl, [SecureString]$Code, [string]$HostName, [string]$Version)
+    #
+    # -ContractVersion 2 asks for a Contract v2 enrollment (`contract_version: 2` in the request) and expects the
+    # nine-field answer; then KeyId, Timezone and Rules are returned too. -ContractVersion 1 sends NO
+    # `contract_version` at all -- the legacy request, byte for byte -- and expects the four-field answer.
+    # A 409 carrying one of the API's fixed refusal codes is the outcome Refused (RefusalCode says which): the API
+    # guarantees none of them consumed the code. ONE request is made per call; the caller decides about a retry.
+    param([string]$ApiUrl, [SecureString]$Code, [string]$HostName, [string]$Version, [int]$ContractVersion = 1)
 
-    $outcome = { param($name, $detail) return [pscustomobject]@{ Outcome = $name; Detail = $detail; CustomerId = $null; BranchId = $null; InstallationId = $null; Token = $null } }
+    $outcome = { param($name, $detail) return [pscustomobject]@{ Outcome = $name; Detail = $detail; RefusalCode = $null; CustomerId = $null; BranchId = $null; InstallationId = $null; Token = $null; Contract = $null; KeyId = $null; Timezone = $null; Rules = $null } }
 
     $plainCode = ConvertFrom-SecureStringPlain -Secure $Code
     $body = $null
     try {
-        $body = (@{ enrollment_code = $plainCode; hostname = $HostName; collector_version = $Version } | ConvertTo-Json -Compress)
+        $request = [ordered]@{ enrollment_code = $plainCode; hostname = $HostName; collector_version = $Version }
+        if ($ContractVersion -eq 2) { $request["contract_version"] = 2 }
+        $body = ($request | ConvertTo-Json -Compress)
+        $request = $null
     } finally {
         $plainCode = $null
     }
@@ -709,7 +1156,7 @@ function Invoke-Enrollment {
 
     switch ($http.StatusCode) {
         200 {
-            $parsed = ConvertTo-EnrollmentResult -Content $http.Content
+            $parsed = ConvertTo-EnrollmentResult -Content $http.Content -RequestedContract $ContractVersion
             $http.Content = $null
             if (-not $parsed.Valid) {
                 return (& $outcome "BadResponse" "SortView answered, but the response was not valid ($($parsed.Problem)).")
@@ -720,11 +1167,30 @@ function Invoke-Enrollment {
             $result.BranchId = $parsed.BranchId
             $result.InstallationId = $parsed.InstallationId
             $result.Token = $secureToken
+            $result.Contract = $parsed.Contract
+            $result.KeyId = $parsed.KeyId
+            $result.Timezone = $parsed.Timezone
+            $result.Rules = $parsed.Rules
             $parsed.AgentToken = $null
             $parsed = $null
             return $result
         }
         400 { return (& $outcome "Rejected" "The enrollment code was not accepted (invalid, expired, or already used).") }
+        409 {
+            $refusal = Get-EnrollmentRefusalCode -Content $http.Content
+            $http.Content = $null
+            if ($null -ne $refusal) {
+                $detail = switch ($refusal) {
+                    "collector_upgrade_required" { "This enrollment code requires a newer SortView Collector than this release bundle." }
+                    "contract_not_permitted" { "This enrollment code does not permit the contract this setup asked for." }
+                    "unsupported_contract_version" { "SortView does not support the contract version this setup asked for." }
+                    default { "SortView reports that this installation is not ready to be enrolled." }
+                }
+                $result = & $outcome "Refused" "$detail The enrollment code was NOT used."
+                $result.RefusalCode = $refusal
+                return $result
+            }
+        }
         429 { return (& $outcome "RateLimited" "SortView is limiting requests from this computer.") }
     }
     if ($http.StatusCode -ge 300 -and $http.StatusCode -lt 400) {
@@ -734,7 +1200,7 @@ function Invoke-Enrollment {
         return (& $outcome "ServerError" "SortView reported an error (HTTP $($http.StatusCode)).")
     }
     if ($http.StatusCode -eq 0) {
-        return (& $outcome "Unreachable" "Could not complete a secure connection ($($http.Failure)).")
+        return (& $outcome "Unreachable" "No response was received from SortView ($($http.Failure)), so the result of the enrollment request is unknown.")
     }
     return (& $outcome "BadResponse" "SortView answered with an unexpected status (HTTP $($http.StatusCode)).")
 }
@@ -823,13 +1289,19 @@ function Invoke-SetupMain {
         [string]$AcsPath,
         [string]$InstallRoot = "C:\SortView\Collector",
         [string]$DataRoot = "C:\ProgramData\SortViewCollector",
-        [switch]$ReplaceExistingToken,
         [switch]$EnableTask
     )
 
     $script:State = @{
         CodeAttempted = $false; CodeConsumed = $false; TokenStored = $false
         RecoveryOnDisk = $false; RecoveryPath = $null
+        # 1 = a legacy enrollment, 2 = Contract v2. Known only once the server has answered (or a saved
+        # enrollment was read); it decides the advice every stop gives about the enrollment code.
+        Contract = 1
+        # This run created the (empty) setup folder for a fresh enrollment that then did not happen.
+        StagingPrepared = $false
+        # The API answered 400: this request enrolled nothing (which says nothing about an earlier request).
+        CodeRejected = $false
         # Set just before anything is installed or finished: only from then on can a Scheduled Task be
         # this run's own. Before that, a task that exists is the customer's and is never touched.
         InstallStarted = $false
@@ -947,12 +1419,29 @@ function Invoke-SetupMain {
 
         if ($recovery.Status -eq "Malformed") {
             foreach ($problem in $recovery.Problems) { Write-Host "  $problem" -ForegroundColor Red }
+            # A damaged record of a CONTRACT V2 enrollment is never "stale": that enrollment exists on the server and a
+            # new code would be refused. The legacy advice (delete it, get a new code) applies only to a legacy record.
+            $malformedFix = "The record holds only non-secret IDs. If you are sure it is stale, delete that one file and run setup.ps1 again (a NEW enrollment code will then be needed); otherwise contact SortView support."
+            if (Test-RecoveryLooksContractV2 -DataRoot $DataRoot) {
+                $malformedFix = "This is the record of a Contract v2 enrollment, which already exists on the SortView server. Do NOT ask for another enrollment code (it would be refused) and do NOT delete or edit the record or anything beside it. Contact SortView support."
+            }
             Stop-Setup -Step "step 2 (machine)" -Problem "A saved enrollment record exists at '$($recovery.Path)' but it is not valid (listed above); setup will not guess." `
                 -Unchanged "the record, the installed files, the token and the Scheduled Task, and the enrollment code was not requested" `
-                -Fix "The record holds only non-secret IDs. If you are sure it is stale, delete that one file and run setup.ps1 again (a NEW enrollment code will then be needed); otherwise contact SortView support." -ExitCode 2
+                -Fix $malformedFix -ExitCode 2
         }
 
         if ($recovery.Status -eq "Valid") {
+            if (-not $tokenPresent -and $recovery.Record.Contract -eq 2) {
+                # A Contract v2 enrollment exists exactly once on the server: a NEW code would be refused, so the
+                # record is kept and the only way forward is a replacement token for THIS installation.
+                $script:State.CodeConsumed = $true
+                $script:State.Contract = 2
+                $script:State.RecoveryOnDisk = $true
+                $script:State.RecoveryPath = $recovery.Path
+                Stop-Setup -Step "step 2 (machine)" -Problem "A saved Contract v2 enrollment was found (installation $($recovery.Record.InstallationId)), but this computer has no API token (api_token.dpapi) to go with it." `
+                    -Unchanged "the saved record, the staged classification rules and everything else, and no enrollment request was made" `
+                    -Fix "Do NOT ask for another enrollment code (it would be refused) and do NOT delete the saved record. Contact SortView support: they issue a replacement API token for installation $($recovery.Record.InstallationId). Store it with tools\set-api-token.ps1 -CustomerId $($recovery.Record.CustomerId) -BranchId $($recovery.Record.BranchId) -DataRoot `"$DataRoot`" -ExePath `"$runtimeExe`", then run setup.ps1 again to resume." -ExitCode 2
+            }
             if (-not $tokenPresent) {
                 Stop-Setup -Step "step 2 (machine)" -Problem "A saved enrollment was found (installation $($recovery.Record.InstallationId)), but this computer has no API token (api_token.dpapi) to go with it." `
                     -Unchanged "the saved record and everything else, and the enrollment code was not requested" `
@@ -964,6 +1453,7 @@ function Invoke-SetupMain {
             $script:State.RecoveryOnDisk = $true
             $script:State.RecoveryPath = $recovery.Path
             $record = $recovery.Record
+            $script:State.Contract = $record.Contract
 
             # The token was issued by THAT server: never point a resumed setup anywhere else.
             if (-not [string]::IsNullOrWhiteSpace($ApiUrl) -and $ApiUrl.Trim().TrimEnd('/') -cne $record.ApiUrl) {
@@ -984,12 +1474,22 @@ function Invoke-SetupMain {
                 }
                 $mode = "ResumeFinish"
             }
+            if ($record.Contract -eq 2) {
+                # The rules this enrollment was saved with must be here -- staged or already installed -- and be
+                # exactly those: a rules file with any other content belongs to something else and is never used.
+                $rulesState = Get-RulesResumeState -DataRoot $DataRoot -ExpectedSha256 $record.RulesSha256
+                if ($rulesState.State -eq "Contradiction") {
+                    Stop-Setup -Step "step 2 (machine)" -Problem "The saved Contract v2 enrollment (installation $($record.InstallationId)) cannot be resumed safely: $($rulesState.Reason)." `
+                        -Unchanged "the saved record, every rules file, the token, the installed files and the Scheduled Task, and no enrollment request was made" `
+                        -Fix "Do NOT ask for another enrollment code (it would be refused) and do not delete or replace anything. Contact SortView support." -ExitCode 2
+                }
+            }
             Write-Host "  Found an unfinished setup: installation $($record.InstallationId), enrolled with release $($record.ReleaseVersion)." -ForegroundColor Yellow
             $answer = Read-SetupAnswer -Prompt "Resume it using the saved enrollment (no new code needed)? [Y/n] (Enter = resume)"
             if ($null -ne $answer -and @("n", "no") -contains $answer.Trim().ToLowerInvariant()) {
                 Stop-Setup -Step "step 2 (machine)" -Problem "Resuming the unfinished setup was declined." `
                     -Unchanged "everything on this computer, including the saved record and the token" `
-                    -Fix "To start over instead: run tools\uninstall.ps1, delete the saved record '$($recovery.Path)', get a NEW enrollment code, then run setup.ps1." -ExitCode 2
+                    -Fix $(if ($record.Contract -eq 2) { "Run setup.ps1 again and resume when you are ready. A Contract v2 enrollment cannot be started over with a new enrollment code (it would be refused): if this machine will not be the Collector after all, contact SortView support." } else { "To start over instead: run tools\uninstall.ps1, delete the saved record '$($recovery.Path)', get a NEW enrollment code, then run setup.ps1." }) -ExitCode 2
             }
             $customerId = $record.CustomerId
             $branchId = $record.BranchId
@@ -1002,17 +1502,19 @@ function Invoke-SetupMain {
                     -Unchanged "the existing install, its state and its Scheduled Task, and the enrollment code was not requested" `
                     -Fix "An earlier setup may be unfinished. If the API token was already stored, resume the remaining steps with: tools\finish-install.ps1 (safe to re-run). To start over, run tools\uninstall.ps1 first, then setup.ps1 with a NEW enrollment code." -ExitCode 2
             }
-            if ($tokenPresent -and -not $ReplaceExistingToken) {
-                Write-Host "  An API token is already stored on this computer ($DataRoot\secrets\api_token.dpapi; value not shown)." -ForegroundColor Yellow
-                Write-Host "  Setup would replace it with the token issued for this installation."
-                $answer = Read-SetupAnswer -Prompt "Replace the existing token? [y/N] (Enter = no)"
-                if ($null -eq $answer -or @("y", "yes") -notcontains $answer.Trim().ToLowerInvariant()) {
-                    Stop-Setup -Step "step 2 (machine)" -Problem "An API token is already stored on this computer (api_token.dpapi) and replacing it was not confirmed." `
-                        -Unchanged "the existing token, and the enrollment code was not requested" `
-                        -Fix "If it is a leftover from an unfinished setup, run setup.ps1 again and answer y (or pass -ReplaceExistingToken)." -ExitCode 2
-                }
+            # A first install starts from a machine with NO Collector identity or data on it. An API token, a
+            # Contract v2 secret, a cursor of either contract or a rules file already here belongs to some other
+            # installation (tools\uninstall.ps1 keeps the data root), and none of them is ever adopted, replaced
+            # or offered for replacement -- least of all after the single-use code has been spent.
+            $leftovers = @(Get-LeftoverArtifacts -DataRoot $DataRoot)
+            if ($tokenPresent) { $leftovers = @("an API token at '$DataRoot\secrets\api_token.dpapi' (value not shown)") + $leftovers }
+            if ($leftovers.Count -gt 0) {
+                foreach ($item in $leftovers) { Write-Host "  Found: $item" -ForegroundColor Yellow }
+                Stop-Setup -Step "step 2 (machine)" -Problem "This computer already holds SortView Collector data from an earlier install or setup (listed above), and there is no saved enrollment to resume. Setup will not adopt, replace or delete any of it." `
+                    -Unchanged "everything listed above, and the enrollment code was not requested" `
+                    -Fix "If this machine ran a Collector before, contact SortView support before installing again. If the earlier install is truly finished with, tools\uninstall.ps1 -PurgeData removes its data root (this cannot be undone); then run setup.ps1 again." -ExitCode 2
             }
-            Write-Host "  OK: no existing Collector install; token: $(if ($tokenPresent) { 'existing token will be replaced (confirmed)' } else { 'none set' })." -ForegroundColor Green
+            Write-Host "  OK: no existing Collector install, token, secret, cursor or rules on this computer." -ForegroundColor Green
         }
 
         # === STEP 3: source files ======================================================
@@ -1038,6 +1540,18 @@ function Invoke-SetupMain {
         Write-Host "  OK: reached the SortView API." -ForegroundColor Green
 
         if ($mode -eq "Fresh") {
+            # The last check before the code: the folder a resume depends on can be created, restricted and
+            # written. After the code is used, saving the enrollment there is the one step that must not fail.
+            try {
+                Initialize-SetupStaging -DataRoot $DataRoot | Out-Null
+                $script:State.StagingPrepared = $true
+            } catch {
+                Stop-Setup -Step "step 4 (setup folder)" -Problem "The setup folder '$(Join-Path $DataRoot 'setup')' could not be created, restricted to Administrators and SYSTEM, and written to ($($_.Exception.Message))." `
+                    -Unchanged "nothing was installed and the enrollment code was NOT requested" `
+                    -Fix "Make sure '$DataRoot' can be created and written by Administrators on this computer, then run setup.ps1 again." -ExitCode 1
+            }
+            Write-Host "  OK: the setup folder is ready (Administrators and SYSTEM only)." -ForegroundColor Green
+
             # === STEP 5: redeem the enrollment code ====================================
             Write-Host ""
             Write-Host "=== Step 5: enrolling this computer ===" -ForegroundColor Cyan
@@ -1048,27 +1562,120 @@ function Invoke-SetupMain {
                     -Unchanged "nothing was installed" -Fix "Run setup.ps1 from an interactive PowerShell window and enter the code when asked." -ExitCode 1
             }
             $script:State.CodeAttempted = $true
-            $enrollment = Invoke-Enrollment -ApiUrl $resolvedApiUrl -Code $code -HostName (Get-LocalHostName) -Version $runtimeVersion
+            # This release enrolls on Contract v2 and asks for it first. A code issued for the legacy contract
+            # answers `contract_not_permitted` WITHOUT being used; then -- and only then, and only once -- the
+            # legacy request is sent with the same code. No other refusal, error or status is retried.
+            $enrollment = Invoke-Enrollment -ApiUrl $resolvedApiUrl -Code $code -HostName (Get-LocalHostName) -Version $runtimeVersion -ContractVersion 2
+            if ($enrollment.Outcome -eq "Refused" -and $enrollment.RefusalCode -eq "contract_not_permitted") {
+                Write-Host "  This enrollment code is for the legacy contract (the first request did not use it); enrolling on that contract."
+                $enrollment = Invoke-Enrollment -ApiUrl $resolvedApiUrl -Code $code -HostName (Get-LocalHostName) -Version $runtimeVersion -ContractVersion 1
+            }
             $code = $null
+            if ($enrollment.Outcome -eq "Refused") {
+                # One of the API's fixed refusals: it GUARANTEES the code was not used.
+                $script:State.CodeAttempted = $false
+                $fix = switch ($enrollment.RefusalCode) {
+                    "collector_upgrade_required" { "Get the current SortView Collector release bundle from SortView and run its setup.ps1 with the SAME code (it is still valid until it expires)." }
+                    "enrollment_not_ready" { "If an earlier setup attempt for this installation ended with an unknown result (no response, or an error from SortView), or this branch already has a Collector, contact SortView support and do NOT ask for another enrollment code: the enrollment may already exist. Otherwise ask your SortView administrator to finish preparing this installation in Super Admin (the site's Collector time zone and its reviewed classification lists). The same code is still valid until it expires." }
+                    default { "Contact SortView support; this release bundle and the SortView server do not agree on a contract. The same code is still valid until it expires." }
+                }
+                Stop-Setup -Step "step 5 (enrollment)" -Problem $enrollment.Detail `
+                    -Unchanged "nothing was installed and no token was stored" -Fix $fix -ExitCode 1
+            }
             if ($enrollment.Outcome -ne "Enrolled") {
-                $definitelyNotUsed = @("Rejected", "RateLimited", "Unreachable", "Redirected") -contains $enrollment.Outcome
+                # What each outcome says about the single-use code:
+                #   RateLimited, Redirected -- the API never processed the request: the code was NOT used.
+                #   Rejected (400)          -- THIS request enrolled nothing. It cannot tell a mistyped or expired code
+                #                              from one an EARLIER request already used, so it claims neither.
+                #   everything else         -- UNKNOWN. No response at all (a timeout, a reset, a connection closed
+                #                              after the request was sent), a 5xx, an unexpected status, or a 200
+                #                              that could not be read: the server may have enrolled this computer and
+                #                              the answer was lost. A Contract v2 enrollment exists exactly once and a
+                #                              second code would be refused, so a NEW code is never the advice here.
+                $definitelyNotUsed = @("RateLimited", "Redirected") -contains $enrollment.Outcome
+                $sameCode = "Do NOT ask for a new enrollment code. Run setup.ps1 again with the SAME code. If the same code is then refused as invalid or already used, the first request may have completed: contact SortView support and do not request another code."
                 $fix = switch ($enrollment.Outcome) {
-                    "Rejected" { "Ask your SortView administrator for a new enrollment code (each code works once and expires after a short time), then run setup.ps1 again." }
+                    "Rejected" { "If an earlier setup attempt with this code on this computer ended with an unknown result (no response, or an error from SortView), that attempt may have completed: contact SortView support and do NOT ask for a new enrollment code. Otherwise -- the code was mistyped, has expired, or was already used elsewhere -- check it and try again, or ask your SortView administrator for a new enrollment code." }
                     "RateLimited" { "Wait a minute, then run setup.ps1 again with the same code." }
-                    "Unreachable" { "Check the network/proxy, then run setup.ps1 again with the same code." }
+                    "Unreachable" { "Check this computer's network/proxy. $sameCode" }
                     "Redirected" { "Contact SortView support; the API address in this bundle may be wrong. Do not use a different address unless SortView tells you to." }
-                    default { "Ask your SortView administrator for a new enrollment code and, if this repeats, contact SortView support." }
+                    default { $sameCode }
                 }
                 if ($definitelyNotUsed) { $script:State.CodeAttempted = $false }
+                if ($enrollment.Outcome -eq "Rejected") {
+                    $script:State.CodeAttempted = $false
+                    $script:State.CodeRejected = $true
+                }
                 Stop-Setup -Step "step 5 (enrollment)" -Problem $enrollment.Detail `
                     -Unchanged "nothing was installed and no token was stored" -Fix $fix -ExitCode 1
             }
             $script:State.CodeConsumed = $true
+            $script:State.Contract = $enrollment.Contract
             $customerId = $enrollment.CustomerId
             $branchId = $enrollment.BranchId
             $installationId = $enrollment.InstallationId
-            Write-Host "  OK: this computer is enrolled (installation $installationId)." -ForegroundColor Green
+            Write-Host "  OK: this computer is enrolled (installation $installationId$(if ($enrollment.Contract -eq 2) { ', Contract v2' })). " -ForegroundColor Green
+          if ($enrollment.Contract -eq 2) {
+            # === STEP 6 (Contract v2): save what a resume needs FIRST, then store the token ============
+            # A Contract v2 enrollment has already created this branch's one v2 identity on the server, and
+            # a second code would be refused. So everything non-secret the server just said -- the IDs, the
+            # key id, the time zone, and the classification rules -- is put on disk, read back and checked
+            # BEFORE anything else is attempted. From then on a local failure is resumed, never re-enrolled.
+            Write-Host ""
+            Write-Host "=== Step 6: saving the enrollment and the classification rules ===" -ForegroundColor Cyan
+            $keyId = $enrollment.KeyId
+            $timezone = $enrollment.Timezone
+            $recoveryFailure = $null
+            try {
+                $rulesSha256 = Save-StagedRules -DataRoot $DataRoot -Rules $enrollment.Rules
+                $recoveryJson = ConvertTo-SetupRecoveryJson -CustomerId $customerId -BranchId $branchId -InstallationId $installationId `
+                    -ApiUrl $resolvedApiUrl -ReleaseVersion $runtimeVersion -ContractVersion 2 -KeyId $keyId -Timezone $timezone -RulesSha256 $rulesSha256
+                $savedPath = Save-SetupRecovery -DataRoot $DataRoot -Json $recoveryJson
+                $script:State.RecoveryPath = $savedPath
+                $v2Problems = @(Confirm-SetupRecovery -DataRoot $DataRoot -CustomerId $customerId -BranchId $branchId `
+                        -InstallationId $installationId -ApiUrl $resolvedApiUrl -ReleaseVersion $runtimeVersion `
+                        -ContractVersion 2 -KeyId $keyId -Timezone $timezone -RulesSha256 $rulesSha256)
+                if ($v2Problems.Count -gt 0) { $recoveryFailure = "could not be verified ($($v2Problems -join '; '))" }
+            } catch {
+                $recoveryFailure = "could not be saved ($($_.Exception.Message))"
+            } finally {
+                $enrollment.Rules = $null
+            }
+            if ($null -ne $recoveryFailure) {
+                # What was written is unverified, so it must not steer a later resume.
+                try {
+                    Remove-SetupRecovery -DataRoot $DataRoot
+                } catch {
+                    Write-Host "  NOTE: the unverified files in '$(Join-Path $DataRoot 'setup')' could not be removed ($($_.Exception.Message))." -ForegroundColor Yellow
+                }
+                Stop-Setup -Step "step 6 (saving the enrollment)" -Problem "The enrollment details and classification rules $recoveryFailure, so setup will not go on." `
+                    -Unchanged "nothing was installed, no token was stored and no Scheduled Task was created or changed" `
+                    -Fix "Contact SortView support and give them installation number $installationId. Do NOT ask for another enrollment code: it would be refused." -ExitCode 1
+            }
+            $script:State.RecoveryOnDisk = $true
+            Write-Host "  OK: the enrollment details and the classification rules are saved and verified (Administrators/SYSTEM only; never shown)." -ForegroundColor Green
 
+            Write-Host ""
+            Write-Host "=== Step 6b: storing the API token ===" -ForegroundColor Cyan
+            $toolExit = Invoke-SetupTool -Path $setTokenScript -Parameters @{
+                Token = $enrollment.Token; ExePath = $runtimeExe; CustomerId = $customerId; BranchId = $branchId; DataRoot = $DataRoot
+            }
+            $enrollment.Token = $null
+            $tokenProblem = $null
+            if ($toolExit -ne 0) {
+                $tokenProblem = "The API token could not be stored (exit code $toolExit)."
+            } else {
+                $checkExit = Invoke-ApiTokenCheck -ExePath $runtimeExe -CustomerId $customerId -BranchId $branchId -DataRoot $DataRoot
+                if ($checkExit -ne 0) { $tokenProblem = "After storing it, the Collector could not verify the stored API token (api-token check exit code $checkExit)." }
+            }
+            if ($null -ne $tokenProblem) {
+                Stop-Setup -Step "step 6b (API token)" -Problem $tokenProblem `
+                    -Unchanged "nothing was installed; the saved enrollment details and classification rules stay in place" `
+                    -Fix "Contact SortView support: a replacement API token must be issued for installation $installationId. Store it with tools\set-api-token.ps1 -CustomerId $customerId -BranchId $branchId -DataRoot `"$DataRoot`" -ExePath `"$runtimeExe`", then run setup.ps1 again -- it resumes. Do NOT ask for another enrollment code." -ExitCode 1
+            }
+            $script:State.TokenStored = $true
+            Write-Host "  OK: token stored in api_token.dpapi (DPAPI, Administrators + SYSTEM only; value never shown)." -ForegroundColor Green
+          } else {
             # === STEP 6: store the token, immediately; then save what a resume needs ====
             Write-Host ""
             Write-Host "=== Step 6: storing the API token ===" -ForegroundColor Cyan
@@ -1121,10 +1728,11 @@ function Invoke-SetupMain {
                 }
                 Stop-Setup -Step "step 6 (saving the enrollment details)" -Problem "The non-secret enrollment details $recoveryFailure, so setup will not start installing: without them an interrupted install could not be resumed." `
                     -Unchanged "nothing was installed and no Scheduled Task was created or changed; the API token that was just stored is still stored" `
-                    -Fix "Fix what is named above (the folder '$(Join-Path $DataRoot 'setup')' must be writable by Administrators), ask your SortView administrator for a NEW enrollment code, and run setup.ps1 again. It will ask before replacing the token that is already stored (or pass -ReplaceExistingToken)." -ExitCode 1
+                    -Fix "Fix what is named above (the folder '$(Join-Path $DataRoot 'setup')' must be writable by Administrators) and ask your SortView administrator for a NEW enrollment code. The token just stored belongs to the enrollment that could not be saved: setup will not replace it, so remove '$DataRoot\secrets\api_token.dpapi' yourself before running setup.ps1 again." -ExitCode 1
             }
             $script:State.RecoveryOnDisk = $true
             Write-Host "  OK: the non-secret enrollment details were saved and verified (Administrators/SYSTEM only), so an interrupted setup can resume without a new code." -ForegroundColor Green
+          }
         } else {
             Write-Host ""
             Write-Host "=== Steps 5-6: not needed -- resuming with the saved enrollment and the token already stored on this computer ===" -ForegroundColor Cyan
@@ -1144,12 +1752,35 @@ function Invoke-SetupMain {
                 CheckinsPath = $sources["checkins"]; RejectsPath = $sources["rejects"]; AcsPath = $sources["acs"]
                 SuppressNextSteps = $true
             }
+            if ($script:State.Contract -eq 2) {
+                # The config selects Contract v2 with the key id and time zone the server issued (non-secret).
+                # Everything else about v2 is left to the Collector's own defaults.
+                $installParameters["ContractMode"] = "v2"
+                $installParameters["KeyId"] = $(if ($mode -eq "Fresh") { $keyId } else { $record.KeyId })
+                $installParameters["Timezone"] = $(if ($mode -eq "Fresh") { $timezone } else { $record.Timezone })
+            }
             $toolExit = Invoke-SetupTool -Path $installScript -Parameters $installParameters
             if ($toolExit -ne 0) {
                 Stop-Setup -Step "step 7 (install)" -Problem "install.ps1 did not finish (exit code $toolExit) -- see its message above." `
                     -Unchanged "the Scheduled Task was not created" `
                     -Fix "Fix what the message above names, then run setup.ps1 again: it resumes with the saved enrollment (no new enrollment code is needed). If install.ps1 left a partial install behind, run tools\uninstall.ps1 first -- the saved enrollment and the stored token are kept." -ExitCode $toolExit
             }
+        }
+
+        # === STEP 7b (Contract v2): the site's classification rules ======================
+        if ($script:State.Contract -eq 2) {
+            Write-Host ""
+            Write-Host "=== Step 7b: installing the classification rules ===" -ForegroundColor Cyan
+            $expectedRulesSha256 = $(if ($mode -eq "Fresh") { $rulesSha256 } else { $record.RulesSha256 })
+            $rulesOutcome = $null
+            try {
+                $rulesOutcome = Install-ClassificationRules -DataRoot $DataRoot -ExpectedSha256 $expectedRulesSha256
+            } catch {
+                Stop-Setup -Step "step 7b (classification rules)" -Problem "The classification rules SortView issued for this installation could not be installed: $($_.Exception.Message)." `
+                    -Unchanged "every rules file; the Scheduled Task was not created" `
+                    -Fix "Run setup.ps1 again -- it resumes with the saved enrollment. If this repeats, contact SortView support. Do NOT ask for another enrollment code." -ExitCode 2
+            }
+            Write-Host "  OK: the classification rules from SortView are $(if ($rulesOutcome -eq 'Installed') { 'installed' } else { 'already installed' }) (Administrators/SYSTEM only; never shown)." -ForegroundColor Green
         }
 
         # === STEP 8: preflights, bootstrap, task registration (DISABLED) ================
@@ -1192,10 +1823,20 @@ function Invoke-SetupMain {
         Write-Host "  [OK] Installed from release $runtimeVersion"
         Write-Host "  [OK] Interactive and SYSTEM-context preflight passed"
         Write-Host "  [OK] Starting cursors seeded for every source"
+        if ($script:State.Contract -eq 2) {
+            Write-Host "  [OK] Contract v2: classification rules from SortView installed; local secret created on this machine (neither is ever shown)"
+        }
         Write-Host "  [OK] Scheduled Task '$($script:TaskName)' registered -- State: Disabled"
         Write-Host ""
 
-        $enableNow = [bool]$EnableTask
+        # A Contract v2 install is enabled here, as the LAST action and only because every step above succeeded:
+        # both preflights passed, the cursor is seeded at the end of each file, and the task was just verified
+        # Disabled. A legacy install keeps its explicit question (Enter = leave it disabled).
+        $isV2Install = ($script:State.Contract -eq 2)
+        $enableNow = ([bool]$EnableTask -or $isV2Install)
+        if ($isV2Install) {
+            Write-Host "Enabling the scheduled task: this Contract v2 install passed every check, so it starts on its own schedule."
+        }
         if (-not $enableNow) {
             Write-Host "Nothing will upload until the task is enabled. Enabling starts the recurring 15-minute runs."
             $answer = Read-SetupAnswer -Prompt "Enable the scheduled task now? [y/N] (Enter = leave it disabled)"
@@ -1242,6 +1883,15 @@ function Invoke-SetupMain {
         }
         $code = $null
         $enrollment = $null
+        # The setup folder this run prepared for an enrollment that then certainly did not happen holds
+        # nothing: it is taken away again (only if empty -- Remove-SetupRecovery never removes anything else).
+        if ($script:State.StagingPrepared -and -not $script:State.CodeConsumed -and -not $script:State.CodeAttempted) {
+            try {
+                Remove-SetupRecovery -DataRoot $DataRoot
+            } catch {
+                $null = $_
+            }
+        }
         # A task this run created must never be left enabled by a run that did not deliberately
         # enable it. (Before InstallStarted a task that exists is not ours -- never touched.)
         if ($script:State.InstallStarted -and -not $script:State.TaskEnabledOnPurpose) {

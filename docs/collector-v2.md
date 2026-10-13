@@ -255,15 +255,17 @@ run reports.
 * **Release packaging.** As of 1.0.6, every v2 module is in `collector.build_release.COLLECTOR_RUNTIME_FILES` and ships in every
   release bundle (source and frozen). `collector/run.py` still reads `contract_mode` itself and imports v2 lazily, so a build that
   ever lacked the v2 modules would still run v1 and answer a `contract_mode: v2` config (or `--v2-dry-run`) with "this build does not
-  include Contract v2" (exit 2) rather than crashing -- that fallback is now a safety net, not the normal case. For the exact,
-  release-tooling-only NBPL pilot preparation and dry-run acceptance procedure (build-time rules generation, `tools\prepare_v2_pilot.ps1`),
-  see [collector-1.0.9-v2-pilot-runbook.md](collector-1.0.9-v2-pilot-runbook.md).
+  include Contract v2" (exit 2) rather than crashing -- that fallback is now a safety net, not the normal case. The NBPL pilot's
+  preparation and dry-run acceptance procedure is recorded in
+  [collector-1.0.9-v2-pilot-runbook.md](collector-1.0.9-v2-pilot-runbook.md); its build-time rules artifact and
+  `tools\prepare_v2_pilot.ps1` shipped in releases 1.0.6 - 1.0.13 and are **not in a bundle from 1.0.14 on** (a site's rules come
+  only from the API at enrollment).
 * No historical replay. A **fresh** v2 install starts at the end of each file (`bootstrap`, see *Fresh-install bootstrap and v2
   preflight* below). An in-place **v1-to-v2 conversion** is different: it needs the v2 cursor carried over from the v1 cursor, there
   is no tool for that yet, and `bootstrap` refuses such a machine rather than seed it at end-of-file.
-* Deferred: installer/release integration, `collector_installations` status linkage, retiring v1, dashboard reads. (Server-side key
-  enrollment exists, and the collector can bootstrap and preflight a v2 install -- see below -- but no released installer uses either
-  yet.)
+* Deferred: `collector_installations` status linkage, retiring v1, a replacement-machine workflow, key rotation, and making
+  Contract v2 the provisioning default. (The guided setup can install a new machine on Contract v2 as of 1.0.14 -- see *Fresh
+  Contract v2 installation* below.)
 
 ## Server-enforced Contract v2 enrollment (onboarding stage A1)
 
@@ -308,8 +310,9 @@ and the site's lists are well-formed, the branch has **no active ingest key**, a
 site's effective settings (`src/services/collector_rules.py`, held to `collector/v2_rules.py` by `tests/test_collector_rules.py`).
 It contains patron account names and is never logged.
 
-**Still contract 1 by default.** A new installation is contract 2 only when it is created so explicitly; Super Admin does not do that
-yet, because no released installer can enroll on contract 2. Making it the normal choice belongs with that installer.
+**Still contract 1 by default.** A new installation is contract 2 only when it is created so explicitly. Super Admin can now do
+that -- a contract selector on both creation forms, defaulting to 1 (see *Fresh Contract v2 installation*) -- but 2 is not yet the
+normal choice: that follows the rehearsal and publication of the first bundle that can install it (Collector 1.0.14).
 
 **Deployment order.** (1) apply migration `f7b3d2c81a46` (the two `required_contract` columns, and `INSERT` on `v2_cutovers` for the
 runtime role -- no `UPDATE`, no `DELETE`); (2) deploy the API; (3) deploy Super Admin. The migration is safe against the previous API.
@@ -318,8 +321,8 @@ future hardening.
 
 ## Fresh-install bootstrap and v2 preflight (onboarding stage A2)
 
-Two things the collector runtime can now do for a `contract_mode: "v2"` config. **They are runtime capabilities only: no installer
-calls them for v2 yet, and a fresh Contract v2 customer installation is not available.** Both are the existing commands; a config
+Two things the collector runtime can do for a `contract_mode: "v2"` config. They are what the guided setup calls for a Contract v2
+install as of 1.0.14 (next section); they are also usable on their own. Both are the existing commands; a config
 without `contract_mode` (or with `"v1"`) behaves exactly as before, and any other value is a configuration error (exit 2).
 
 ### `bootstrap` -- the starting cursor
@@ -382,3 +385,96 @@ class, last success, quarantine count and start time (the run and schedule diagn
 them until the next scheduled run). On a fresh install there is nothing to re-send, so it sends the smallest valid snapshot,
 `healthy`. **That heartbeat means "v2 preflight passed", not "a production run has happened":** a fresh install can show a healthy
 state before its task has run once. A neutral, non-reporting validation endpoint would remove this and is not built.
+
+## Fresh Contract v2 installation (onboarding stage A3a)
+
+Collector **1.0.14**'s guided setup (`setup.ps1`, frozen bundles) installs a new machine directly on Contract v2 when the
+enrollment code was generated for a **contract 2 installation**. Nothing about an existing install changes, and the same
+bundle still installs a contract 1 code on the legacy contract. **Contract 2 is not the provisioning default:** Super Admin
+creates a contract 1 installation unless Contract v2 is selected explicitly (see *Provisioning* below). The steps and
+every stop are the script's own text; this is the order and the guarantees.
+
+| Step | What happens | If it fails |
+| --- | --- | --- |
+| 0 - 4 | elevation; the bundle verified against its manifest; **a clean machine**; the three source files exist; the API is reachable; the setup folder can be created, restricted and written | nothing was changed; the code was not requested |
+| 5 | the code is redeemed with `contract_version: 2` | see *Refusals* |
+| 6 | the non-secret enrollment details and the site's **classification rules** are saved to `<DataRoot>\setup` and verified -- **before** anything else | stop; SortView support |
+| 6b | the API token is stored (`api_token.dpapi`) and verified | stop; SortView support issues a replacement token, then setup resumes |
+| 7 | `install.ps1` installs the runtime and writes a v2 config (`contract_mode`, `v2.key_id`, `v2.timezone`), atomically | resume |
+| 7b | the staged rules are installed as `<DataRoot>\config\classification_rules.json` | resume |
+| 8 | `tools\finish-install.ps1`: the local secret (`v2-key check` / `init` / `check`), the interactive preflight, the SYSTEM preflight, `bootstrap`, the task registered **Disabled** | resume |
+| 9 | the Scheduled Task is **enabled** -- the last action, with no question | the task stays Disabled |
+
+* **A clean machine.** A first install is refused, before the code is requested, if the machine already has a Collector
+  runtime, config or Scheduled Task, **or** an API token, a Contract v2 secret, a state file of either contract, or a
+  classification rules file. `tools\uninstall.ps1` keeps the data root, so these outlive an uninstall. Nothing is adopted,
+  replaced or deleted; replacing a stored token is not offered.
+* **The rules are the server's.** The document in the enrollment response is written exactly as received (UTF-8, no BOM,
+  atomically), read back and compared before it is trusted; nothing is merged in and no default is added. It is never
+  printed, and it is not in the resume record -- only the SHA-256 of the staged file is, which is what ties that file to the
+  enrollment. No release bundle carries any site's rules (1.0.6 - 1.0.13 shipped `pilot\classification_rules.json` and
+  `tools\prepare_v2_pilot.ps1`; 1.0.14 ships neither).
+* **The secret is the machine's.** `v2-key init` generates it locally; setup never sees it and it is never sent. An existing
+  secret is reused only if `v2-key check` accepts it for this installation's key id; one that it does not accept is never
+  overwritten.
+* **The time zone is the administrator's.** `v2.timezone` is the IANA zone recorded for the site in Super Admin. Setup does
+  not compare it with the Windows time zone.
+* **The task.** No task exists until the secret, both preflights and the bootstrap have succeeded; it is registered
+  Disabled and enabled only as setup's final action. A failure at any earlier point leaves no active task. Setup never
+  starts a run: the first one is the task's next 15-minute trigger, and it reads from the cursor seeded at step 8.
+* **A legacy code.** The first request is refused `contract_not_permitted` without using the code; setup sends the legacy
+  request (no `contract_version`) once and follows the legacy path unchanged -- including its question before enabling
+  the task. Nothing else is ever retried.
+
+### Refusals
+
+The API's 409 refusals are read by their fixed `code` only (the rest of the body is never shown). **None of them uses the
+enrollment code**, and setup says so:
+
+| `code` | Meaning for the technician |
+| --- | --- |
+| `contract_not_permitted` | a legacy code: retried once on the legacy contract (above) |
+| `collector_upgrade_required` | this bundle is too old for the code: use the current bundle with the same code |
+| `enrollment_not_ready` | the site is not prepared (time zone, reviewed lists), or the branch already has a Contract v2 Collector |
+| `unsupported_contract_version` | the bundle and the server do not agree on a contract |
+
+A rate limit (429) and a redirect never reached the API and are also reported as "not used".
+
+**Unknown results.** Every other failure of the enrollment request leaves it unknown whether the server enrolled the machine:
+no response at all (a timeout, a reset, a connection closed after the request was sent), a 5xx, an unexpected status, an
+unrecognized 409, or a 200 that could not be read. For these setup never says the code "was not used" and never advises getting
+a new one. It says the result is unknown and to **run `setup.ps1` again with the same code**; if that code is then refused as
+invalid or already used, the first request may have completed and the next step is **SortView support**, not another code. A
+400 means only that *this* request enrolled nothing, and its advice puts that case first. Setup never retries an enrollment
+by itself. A damaged resume record of a Contract v2 enrollment is treated the same way: setup stops, changes nothing, and
+directs to support.
+
+### Resume
+
+A Contract v2 enrollment creates the branch's v2 identity on the server -- its ingest key and its cutover -- exactly
+once, and a second code for the branch is refused. So after step 6 an interrupted setup is **finished from disk**: run
+`setup.ps1` again and accept the resume. It makes no enrollment request and asks for no code; it reuses the stored token,
+the staged or installed rules, a valid existing secret and a valid existing v2 cursor, and completes only what is
+unfinished. It refuses (and changes nothing) if the installed config, or a rules file, is not the saved enrollment's.
+
+The resume record (`<DataRoot>\setup\enrollment-recovery.json`, Administrators and SYSTEM only) holds, for Contract v2:
+the three IDs, the API address, the release version, `contract_version`, `contract_mode`, the non-secret `key_id`, the
+time zone and the staged rules file's SHA-256. It never holds the enrollment code, the API token, the HMAC secret or any
+rule. A legacy enrollment's record is unchanged.
+
+**What still needs SortView support** (a new enrollment code is not a recovery path for any of these):
+
+* the enrollment succeeded on the server but its response never reached the machine;
+* the API token could not be stored after enrollment -- support issues a replacement token for the installation, it is
+  stored with `tools\set-api-token.ps1`, and setup resumes;
+* the enrolled machine is lost or replaced.
+
+### Provisioning
+
+Super Admin's two creation paths -- *Provision Library* and *Manage Libraries > Add installation* -- have an explicit
+contract selector. **Its default is 1 (legacy).** Choosing 2 requires the site's Collector time zone and its reviewed
+classification lists (and, when provisioning, a confirmation that the pre-filled transit labels are the library's own,
+because for Contract v2 they become its classification rules), and is labelled as needing Collector 1.0.14 or later. The
+choice is made once, when the installation is created; an existing installation's contract cannot be changed. A branch
+has one Contract v2 Collector: adding a second or replacement installation to a branch that has already enrolled on
+Contract v2 is not supported yet.

@@ -41,6 +41,8 @@ from services.privacy_hardening import (
     log_safe_exception,
 )
 from services.tenant_service import (
+    COLLECTOR_CONTRACT_LEGACY,
+    COLLECTOR_CONTRACT_V2,
     assign_operational_identity,
     build_collector_agent_config,
     create_collector_installation,
@@ -113,6 +115,49 @@ def slugify(value: str) -> str:
     value = re.sub(r"[^a-z0-9]+", "-", value)
     value = re.sub(r"-{2,}", "-", value)
     return value.strip("-")
+
+
+# --- which ingest contract a NEW installation is created on (onboarding stage A3a) -------------------------------------
+#
+# Chosen explicitly, per installation, when it is created -- and passed explicitly to create_collector_installation,
+# whose own default is not relied on. THE DEFAULT HERE IS STILL THE LEGACY CONTRACT: Contract v2 becomes the default only
+# after the first Collector release that can install it has been rehearsed and published. An existing installation's
+# contract is never changed by this page.
+COLLECTOR_CONTRACT_OPTIONS = (COLLECTOR_CONTRACT_LEGACY, COLLECTOR_CONTRACT_V2)
+DEFAULT_COLLECTOR_CONTRACT = COLLECTOR_CONTRACT_LEGACY
+# The first Collector release whose setup can enroll on Contract v2. A fixed fact about that release, NOT "the current
+# version" (which is collector.__version__ and nowhere else): it does not move when the Collector is next released. Held
+# as a version tuple, the way a minimum is compared, and only formatted for display.
+CONTRACT_V2_MINIMUM_COLLECTOR_VERSION = (1, 0, 14)
+CONTRACT_V2_MINIMUM_COLLECTOR = ".".join(str(part) for part in CONTRACT_V2_MINIMUM_COLLECTOR_VERSION)
+
+
+def collector_contract_label(contract: int) -> str:
+    """What the contract selector shows for each choice."""
+    if contract == COLLECTOR_CONTRACT_V2:
+        return f"2 - Contract v2 (requires SortView Collector {CONTRACT_V2_MINIMUM_COLLECTOR} or later)"
+    return "1 - Legacy contract (the default)"
+
+
+def contract_two_provisioning_problems(
+    timezone_input: str, rules_reviewed: bool, routing_labels_confirmed: bool
+) -> list[str]:
+    """What still stops a library being provisioned with a Contract v2 installation, from what was entered on this page
+    (empty = nothing). A Contract v2 enrollment hands the Collector this site's time zone and its classification rules
+    -- which are built from the Internal Routing lists AND the transit labels on this page -- so all three must have
+    been deliberately given: an enrollment for a site that was not prepared is refused at install time, on the
+    library's machine, and a pre-filled example label would otherwise become that library's rule."""
+    problems = []
+    if not timezone_input.strip():
+        problems.append("Contract v2 needs the Collector time zone (the zone the library's Tech Logic machine keeps its clock in).")
+    if not rules_reviewed:
+        problems.append("Contract v2 needs the confirmation that the four Internal Routing lists were reviewed with this library.")
+    if not routing_labels_confirmed:
+        problems.append(
+            "Contract v2 needs the confirmation that the Home branch label and the Transit destinations are this "
+            "library's own (the pre-filled values are examples and would become this library's classification rules)."
+        )
+    return problems
 
 
 def lines_to_list(text: str) -> list[str]:
@@ -217,8 +262,8 @@ with st.form("provision_library_form"):
 
     st.subheader("Collector Site Settings (Contract v2)")
     st.caption(
-        "Needed only to enroll a Collector on Contract v2, and read only then. The installation created below is "
-        "still a legacy (contract 1) installation: leaving these blank changes nothing about it. The time zone is "
+        "Needed only to enroll a Collector on Contract v2, and read only then. For a legacy (contract 1) "
+        "installation -- still the default below -- leaving these blank changes nothing. The time zone is "
         "the one the library's Tech Logic machine keeps its clock in; it does not change how reports are drawn."
     )
     collector_timezone_input = st.text_input(
@@ -228,6 +273,12 @@ with st.form("provision_library_form"):
     collector_rules_reviewed = st.checkbox(
         "I have reviewed the four Internal Routing lists above with this library, and they are correct "
         "(including where a list is empty)",
+        value=False,
+    )
+
+    collector_routing_labels_confirmed = st.checkbox(
+        "The Home branch label and the Transit destinations above are this library's own values "
+        "(they are pre-filled with examples; for Contract v2 they become this library's classification rules)",
         value=False,
     )
 
@@ -255,6 +306,18 @@ with st.form("provision_library_form"):
     installation_name = st.text_input("Installation name", value="Main AMH Sorter")
     installation_hostname = st.text_input("Installation hostname (optional)")
     installation_version = st.text_input("Collector version", value=COLLECTOR_VERSION)
+    installation_contract = st.selectbox(
+        "Ingest contract for this installation",
+        options=list(COLLECTOR_CONTRACT_OPTIONS),
+        index=COLLECTOR_CONTRACT_OPTIONS.index(DEFAULT_COLLECTOR_CONTRACT),
+        format_func=collector_contract_label,
+        help=(
+            "The contract an enrollment code for this installation will require. Contract v2 can only be installed "
+            f"with the SortView Collector {CONTRACT_V2_MINIMUM_COLLECTOR} release bundle or later (an older bundle is "
+            "refused and the code stays unused), and needs the three Collector Site Settings entries above. It cannot "
+            "be changed afterwards."
+        ),
+    )
 
     submitted = st.form_submit_button("Provision Library", type="primary")
 
@@ -273,6 +336,17 @@ if submitted:
     if create_installation and not installation_name.strip():
         st.error("Installation name is required to create an installation record.")
         st.stop()
+
+    # Checked BEFORE anything is created: a Contract v2 installation for a site that was not prepared could only be
+    # refused later, at install time, on the library's machine.
+    if create_installation and installation_contract == COLLECTOR_CONTRACT_V2:
+        contract_problems = contract_two_provisioning_problems(
+            collector_timezone_input, collector_rules_reviewed, collector_routing_labels_confirmed
+        )
+        if contract_problems:
+            for problem in contract_problems:
+                st.error(problem)
+            st.stop()
 
     try:
         collector_settings = collector_site_settings(
@@ -359,6 +433,7 @@ if submitted:
                 hostname=installation_hostname,
                 collector_version=installation_version,
                 status="provisioning",
+                required_contract=installation_contract,
             )
         except Exception as exc:
             log_safe_exception(logger, "Collector installation record creation failed", exc)

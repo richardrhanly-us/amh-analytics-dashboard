@@ -34,6 +34,11 @@ from services.collector_enrollment_service import (
     EnrollmentError,
     generate_enrollment_code_for_installation,
 )
+from services.collector_rules import (
+    CollectorSettingsError,
+    collector_timezone,
+    require_rules_reviewed,
+)
 from services.platform_admin_service import (
     list_libraries_with_status,
     offboard_library,
@@ -44,16 +49,57 @@ from services.privacy_hardening import (
     log_safe_exception,
 )
 from services.tenant_service import (
+    COLLECTOR_CONTRACT_LEGACY,
+    COLLECTOR_CONTRACT_V2,
     COLLECTOR_INSTALLATION_STATUSES,
     assign_operational_identity,
     build_collector_agent_config,
     create_collector_installation,
     format_collector_install_parameters,
+    get_effective_settings,
     list_collector_installations_for_organization,
     update_collector_installation,
 )
 
 logger = logging.getLogger("sortview.super_admin.libraries")
+
+# --- which ingest contract a NEW installation is created on (onboarding stage A3a) -------------------------------------
+#
+# Chosen explicitly, per installation, when it is created -- and passed explicitly to create_collector_installation,
+# whose own default is not relied on. THE DEFAULT HERE IS STILL THE LEGACY CONTRACT: Contract v2 becomes the default only
+# after the first Collector release that can install it has been rehearsed and published. An existing installation's
+# contract is never changed by this page.
+COLLECTOR_CONTRACT_OPTIONS = (COLLECTOR_CONTRACT_LEGACY, COLLECTOR_CONTRACT_V2)
+DEFAULT_COLLECTOR_CONTRACT = COLLECTOR_CONTRACT_LEGACY
+# The first Collector release whose setup can enroll on Contract v2. A fixed fact about that release, NOT "the current
+# version" (which is collector.__version__ and nowhere else): it does not move when the Collector is next released. Held
+# as a version tuple, the way a minimum is compared, and only formatted for display.
+CONTRACT_V2_MINIMUM_COLLECTOR_VERSION = (1, 0, 14)
+CONTRACT_V2_MINIMUM_COLLECTOR = ".".join(str(part) for part in CONTRACT_V2_MINIMUM_COLLECTOR_VERSION)
+
+
+def collector_contract_label(contract: int) -> str:
+    """What the contract selector shows for each choice."""
+    if contract == COLLECTOR_CONTRACT_V2:
+        return f"2 - Contract v2 (requires SortView Collector {CONTRACT_V2_MINIMUM_COLLECTOR} or later)"
+    return "1 - Legacy contract (the default)"
+
+
+def contract_two_site_problems(site_settings: object) -> list[str]:
+    """What still stops this library getting a Contract v2 installation, from its STORED settings (empty = nothing): the
+    Collector time zone and the record that its classification lists were reviewed -- the two things a Contract v2
+    enrollment reads and refuses without (services.collector_rules). Fixed sentences: no settings value is repeated."""
+    problems = []
+    try:
+        collector_timezone(site_settings)
+    except CollectorSettingsError:
+        problems.append("This library has no valid Collector time zone recorded.")
+    try:
+        require_rules_reviewed(site_settings)
+    except CollectorSettingsError:
+        problems.append("This library's classification lists have not been recorded as reviewed.")
+    return problems
+
 
 # Keep an uncaught page exception's text out of Streamlit's own server log (see services/privacy_hardening.py).
 install_streamlit_log_scrubber()
@@ -384,8 +430,8 @@ if installations:
             "hostname": "Hostname",
             "collector_version": "Collector Version",
             "status": "Status",
-            # The ingest contract a code for this installation requires (1 = legacy, 2 = Contract v2). Shown, not
-            # chosen: a new installation is still contract 1 here until an installer that can enroll on 2 is released.
+            # The ingest contract a code for this installation requires (1 = legacy, 2 = Contract v2). Shown here, never
+            # edited: it is chosen once, when an installation is ADDED (below), and an existing one is never changed.
             "required_contract": "Required Contract",
             "installed_at": "Installed At",
             "last_seen_at": "Last Seen At",
@@ -515,10 +561,42 @@ if pd.notna(primary_branch_id) and not library_cancelled:
             new_name = st.text_input("Installation name", value="Main AMH Sorter")
             new_hostname = st.text_input("Hostname (optional)")
             new_version = st.text_input("Collector version", value=COLLECTOR_VERSION)
+            new_contract = st.selectbox(
+                "Ingest contract for the new installation",
+                options=list(COLLECTOR_CONTRACT_OPTIONS),
+                index=COLLECTOR_CONTRACT_OPTIONS.index(DEFAULT_COLLECTOR_CONTRACT),
+                format_func=collector_contract_label,
+                help=(
+                    "The contract an enrollment code for this installation will require. It is set once, here, and "
+                    "cannot be changed afterwards; existing installations are not affected."
+                ),
+            )
+            st.caption(
+                f"Contract v2 needs the SortView Collector {CONTRACT_V2_MINIMUM_COLLECTOR} release bundle or later, and "
+                "this library's Collector time zone and reviewed classification lists. A branch has ONE Contract v2 "
+                "Collector: if this branch already has one (it has enrolled on Contract v2 before), a code for a "
+                "second or replacement installation will be refused at install time, whichever contract is chosen "
+                "here. Replacing a machine is not supported from this page yet -- contact SortView engineering."
+            )
             add_installation = st.form_submit_button("Add Installation")
+
+        contract_problems: list[str] = []
+        if add_installation and new_name.strip() and new_contract == COLLECTOR_CONTRACT_V2:
+            # Advisory, from the library's stored settings; the enrollment itself checks again and is the authority.
+            try:
+                contract_problems = contract_two_site_problems(
+                    get_effective_settings(str(selected_row["organization_slug"]))["settings"]
+                )
+            except Exception as exc:
+                log_safe_exception(logger, "Collector site settings could not be read", exc)
+                contract_problems = ["This library's Collector site settings could not be read."]
 
         if add_installation and not new_name.strip():
             st.error(INSTALLATION_NAME_REQUIRED_MESSAGE)
+        elif add_installation and contract_problems:
+            for problem in contract_problems:
+                st.error(problem)
+            st.error("No installation was added. A Contract v2 installation needs both, recorded for this library first.")
         elif add_installation:
             try:
                 create_collector_installation(
@@ -528,6 +606,7 @@ if pd.notna(primary_branch_id) and not library_cancelled:
                     hostname=new_hostname,
                     collector_version=new_version,
                     status="provisioning",
+                    required_contract=new_contract,
                 )
             except Exception as exc:
                 log_safe_exception(logger, "Collector installation creation failed", exc)

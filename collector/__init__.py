@@ -158,4 +158,22 @@ from __future__ import annotations
 # Machine-scope variable is ignored, never removed automatically. The storage
 # model itself (DPAPI scope, entropy, ACL, tenant binding, `api-token
 # set|check` and its exit codes) is unchanged.
-__version__ = "1.0.13"
+# 1.0.14 is the first release whose guided setup (setup.ps1) can bring a NEW
+# machine up directly on Contract v2 (onboarding stage A3a). The runtime
+# gained its part in the unreleased A2 work this release also carries -- a
+# line-safe end-of-file bootstrap of the v2 cursor and a v2-aware preflight
+# (collector/bootstrap_state.py, collector/preflight.py). The setup tooling
+# now asks the API for a Contract v2 enrollment, saves the non-secret
+# enrollment details and the site's classification rules (delivered by the
+# server, never bundled) before anything else so an interrupted setup resumes
+# without a new code, writes a v2 config, has the Collector create its own
+# local DPAPI secret (`v2-key init`), runs both preflights, seeds the cursor
+# and -- only then -- enables the Scheduled Task. A code issued for the legacy
+# contract still enrolls on it: the server answers `contract_not_permitted`
+# without using the code and setup retries once with the legacy request. The
+# release bundle no longer ships one library's classification rules
+# (pilot/classification_rules.json) or tools\prepare_v2_pilot.ps1 -- see
+# collector/build_release.py's NEVER_BUNDLED. A scheduled v1 or v2 run, the
+# wire contracts, the identity algorithm and the privacy boundary are
+# unchanged. See docs/releases/collector-1.0.14.md.
+__version__ = "1.0.14"
