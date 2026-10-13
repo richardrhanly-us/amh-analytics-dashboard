@@ -471,11 +471,35 @@ def _patch_provisioning(monkeypatch, *, create_org=None, create_installation=Non
     monkeypatch.setattr(tenant, "create_organization_with_primary_branch", create_org or default_create_org)
     monkeypatch.setattr(tenant, "create_collector_installation", create_installation or default_create_installation)
     monkeypatch.setattr(tenant, "assign_operational_identity", assign or default_assign)
+    monkeypatch.setattr(tenant, "list_active_plans", lambda: [dict(plan) for plan in ACTIVE_PLANS])
     return calls
 
 
-def _provision(at: AppTest) -> None:
+ACTIVE_PLANS = ({"code": "starter", "name": "Starter"}, {"code": "pro", "name": "Pro"})
+
+
+def _selectbox(at: AppTest, label: str):
+    (match,) = [s for s in at.selectbox if s.label == label]
+    return match
+
+
+def _checkbox(at: AppTest, label_starts: str):
+    (match,) = [c for c in at.checkbox if c.label.startswith(label_starts)]
+    return match
+
+
+def _fill_provision_form(at: AppTest) -> None:
+    """A complete form for the page's default -- a Contract v2 installation: a name, a plan, and the three Collector
+    Site Settings entries. Nothing is submitted."""
     _text_input(at, "Organization name").input("Acme Library")
+    _selectbox(at, "Plan").select("starter")
+    _text_input(at, "Collector time zone (IANA name, e.g. America/New_York) *").input("America/New_York")
+    _checkbox(at, "I have reviewed the four Internal Routing lists").check()
+    _checkbox(at, "The Home branch label and the Transit destinations").check()
+
+
+def _provision(at: AppTest) -> None:
+    _fill_provision_form(at)
     _button(at, "Provision Library").click()
     at.run()
 
@@ -605,14 +629,30 @@ def _installation(**overrides):
     return row
 
 
+READY_SITE = {
+    "collector_timezone": "America/New_York",
+    "collector_rules": {"reviewed_at": "2026-01-01T00:00:00+00:00", "reviewed_by_user_id": 7},
+    "transit_destination_labels": [],
+    "internal_routing_counts": {},
+}
+
+
 def _patch_manage(monkeypatch, *, row=None, set_status=None, assign=None, update=None, create=None, enroll=None,
-                  offboard=None):
+                  offboard=None, site=None, save_site=None):
+    """`site` is what the library has stored of its Collector site settings (services.tenant_service
+    .get_collector_site_settings); left out, it is a library that is ready for a Contract v2 installation."""
     import services.collector_enrollment_service as enrollment
     import services.platform_admin_service as platform
     import services.tenant_service as tenant
 
     _patch_super_admin_auth(monkeypatch)
-    calls = {"set_status": [], "assign": [], "update": [], "create": [], "enroll": [], "offboard": []}
+    calls = {"set_status": [], "assign": [], "update": [], "create": [], "enroll": [], "offboard": [], "save_site": []}
+
+    def default_save_site(organization_id, **kwargs):
+        calls["save_site"].append({"organization_id": organization_id, **kwargs})
+
+    monkeypatch.setattr(tenant, "get_collector_site_settings", lambda organization_id: dict(READY_SITE if site is None else site))
+    monkeypatch.setattr(tenant, "set_collector_site_settings", save_site or default_save_site)
 
     def recording(name, outcome=None, result=None):
         def call(**kwargs):

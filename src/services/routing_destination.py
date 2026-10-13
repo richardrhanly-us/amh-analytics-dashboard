@@ -66,6 +66,8 @@ HOME_DESTINATION_KEY = "main"
 UNKNOWN_DESTINATION_KEY = UNKNOWN
 
 _NOT_SLUG_CHARACTERS = re.compile(r"[^a-z0-9]+")
+# The longest destination slug the collector contract allows (DESTINATION_PATTERN; held to it by a test).
+_MAX_SLUG_LENGTH = 32
 
 
 def destination_key(value: object) -> str:
@@ -80,8 +82,15 @@ def destination_key(value: object) -> str:
     if built_in != UNKNOWN:
         return built_in
 
-    # Otherwise the text itself, in slug form. A current slug is unchanged by this.
-    return _NOT_SLUG_CHARACTERS.sub("_", value.strip().lower()).strip("_") or UNKNOWN_DESTINATION_KEY
+    # Otherwise the text itself, in slug form -- and in the SHAPE the collector contract gives a destination slug
+    # (services.ingest_v2_models.DESTINATION_PATTERN: a letter first, at most 32 characters), by the collector's own
+    # rule for a label (collector/v2_rules.py::_slugify): cut to 32, and "d_" put before one that does not start with
+    # a letter. A key that could not be a slug is one no collector could ever store a check-in under. A current slug
+    # is unchanged by this, and so is a key keyed again: an underscore left at the cut is trimmed.
+    slug = _NOT_SLUG_CHARACTERS.sub("_", value.strip().lower()).strip("_")[:_MAX_SLUG_LENGTH]
+    if slug and not slug[0].isalpha():
+        slug = ("d_" + slug)[:_MAX_SLUG_LENGTH]
+    return slug.strip("_") or UNKNOWN_DESTINATION_KEY
 
 
 @dataclass(frozen=True, slots=True)

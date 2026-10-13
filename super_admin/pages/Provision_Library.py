@@ -48,6 +48,9 @@ from services.tenant_service import (
     create_collector_installation,
     create_organization_with_primary_branch,
     format_collector_install_parameters,
+    list_active_plans,
+    transit_destination_entries,
+    transit_destination_problems,
 )
 
 logger = logging.getLogger("sortview.super_admin.provision")
@@ -63,6 +66,11 @@ PROVISION_FAILED_MESSAGE = (
     "Library provisioning could not be completed. Check Manage Libraries in case the library "
     "already exists, then try again. If this keeps happening, contact SortView support."
 )
+PLANS_LOAD_FAILED_MESSAGE = (
+    "The list of plans could not be loaded, so a library cannot be provisioned right now. Please try again in a few "
+    "minutes. If this keeps happening, contact SortView support."
+)
+NO_ACTIVE_PLANS_MESSAGE = "There is no active plan to put a new library on. Contact SortView engineering."
 # Stable codes, stored where the exception text used to be.
 OPERATIONAL_STAGE_FAILED = "operational_identity_assignment_failed"
 INSTALLATION_RECORD_FAILED = "installation_record_creation_failed"
@@ -83,12 +91,10 @@ DEFAULT_ORG_SETTINGS = {
     "security": {
         "admin_enabled": True,
     },
+    # No library's own labels: a new organization's routing is only what was entered for it on this page.
     "transit": {
-        "home_branch_label": "Main",
-        "destinations": [
-            {"key": "westside", "label": "Westside", "enabled": True},
-            {"key": "library_express", "label": "Library Express", "enabled": True},
-        ],
+        "home_branch_label": "",
+        "destinations": [],
     },
     "internal_routing": {
         "branch_services_names": [],
@@ -117,14 +123,13 @@ def slugify(value: str) -> str:
     return value.strip("-")
 
 
-# --- which ingest contract a NEW installation is created on (onboarding stage A3a) -------------------------------------
+# --- which ingest contract a NEW installation is created on (onboarding stages A3a, A3b) ------------------------------
 #
 # Chosen explicitly, per installation, when it is created -- and passed explicitly to create_collector_installation,
-# whose own default is not relied on. THE DEFAULT HERE IS STILL THE LEGACY CONTRACT: Contract v2 becomes the default only
-# after the first Collector release that can install it has been rehearsed and published. An existing installation's
-# contract is never changed by this page.
+# whose own default is not relied on. THE DEFAULT HERE IS CONTRACT V2 (A3b); the legacy contract is still offered and
+# still fully supported. An existing installation's contract is never changed by this page.
 COLLECTOR_CONTRACT_OPTIONS = (COLLECTOR_CONTRACT_LEGACY, COLLECTOR_CONTRACT_V2)
-DEFAULT_COLLECTOR_CONTRACT = COLLECTOR_CONTRACT_LEGACY
+DEFAULT_COLLECTOR_CONTRACT = COLLECTOR_CONTRACT_V2
 # The first Collector release whose setup can enroll on Contract v2. A fixed fact about that release, NOT "the current
 # version" (which is collector.__version__ and nowhere else): it does not move when the Collector is next released. Held
 # as a version tuple, the way a minimum is compared, and only formatted for display.
@@ -136,7 +141,7 @@ def collector_contract_label(contract: int) -> str:
     """What the contract selector shows for each choice."""
     if contract == COLLECTOR_CONTRACT_V2:
         return f"2 - Contract v2 (requires SortView Collector {CONTRACT_V2_MINIMUM_COLLECTOR} or later)"
-    return "1 - Legacy contract (the default)"
+    return "1 - Legacy contract"
 
 
 def contract_two_provisioning_problems(
@@ -144,9 +149,9 @@ def contract_two_provisioning_problems(
 ) -> list[str]:
     """What still stops a library being provisioned with a Contract v2 installation, from what was entered on this page
     (empty = nothing). A Contract v2 enrollment hands the Collector this site's time zone and its classification rules
-    -- which are built from the Internal Routing lists AND the transit labels on this page -- so all three must have
-    been deliberately given: an enrollment for a site that was not prepared is refused at install time, on the
-    library's machine, and a pre-filled example label would otherwise become that library's rule."""
+    -- which are built from the Internal Routing lists AND the transit destinations on this page -- so all three must
+    have been deliberately given: an enrollment for a site that was not prepared is refused at install time, on the
+    library's machine, and a destination nobody entered is one the Collector reports as unknown."""
     problems = []
     if not timezone_input.strip():
         problems.append("Contract v2 needs the Collector time zone (the zone the library's Tech Logic machine keeps its clock in).")
@@ -154,8 +159,8 @@ def contract_two_provisioning_problems(
         problems.append("Contract v2 needs the confirmation that the four Internal Routing lists were reviewed with this library.")
     if not routing_labels_confirmed:
         problems.append(
-            "Contract v2 needs the confirmation that the Home branch label and the Transit destinations are this "
-            "library's own (the pre-filled values are examples and would become this library's classification rules)."
+            "Contract v2 needs the confirmation that the Home branch label and the Transit destinations are complete for "
+            "this library (the destinations become this library's classification rules)."
         )
     return problems
 
@@ -173,8 +178,8 @@ def collector_site_settings(
 
     Raises CollectorSettingsError if a time zone was entered that is not a known IANA name.
 
-    Neither changes anything about a legacy (contract 1) installation, which is what this page still creates: they are
-    read only by a contract-2 enrollment."""
+    Neither changes anything about a legacy (contract 1) installation: they are read only by a contract-2
+    enrollment."""
     settings: dict[str, Any] = {}
     if timezone_input.strip():
         settings[TIMEZONE_KEY] = collector_timezone({TIMEZONE_KEY: timezone_input})
@@ -227,13 +232,52 @@ if "provision_result" not in st.session_state:
 if "provision_config_inputs" not in st.session_state:
     st.session_state["provision_config_inputs"] = None
 
-with st.form("provision_library_form"):
+# The plans a library can be put on are the database's own active plans: nothing is typed, and none is pre-selected.
+try:
+    active_plans = list_active_plans()
+except Exception as exc:
+    log_safe_exception(logger, "Plan list could not be loaded", exc)
+    st.error(PLANS_LOAD_FAILED_MESSAGE)
+    st.stop()
+
+plan_names = {str(plan["code"]): str(plan["name"]) for plan in active_plans}
+if not plan_names:
+    st.error(NO_ACTIVE_PLANS_MESSAGE)
+    st.stop()
+
+# enter_to_submit=False: pressing Enter in a field must never provision a half-completed library. Only the button does.
+with st.form("provision_library_form", enter_to_submit=False):
+    # FIRST, because it decides which of the fields below are required.
+    installation_contract = st.selectbox(
+        "Ingest contract for this installation",
+        options=list(COLLECTOR_CONTRACT_OPTIONS),
+        index=COLLECTOR_CONTRACT_OPTIONS.index(DEFAULT_COLLECTOR_CONTRACT),
+        format_func=collector_contract_label,
+        help=(
+            "The contract an enrollment code for this installation will require. Contract v2 can only be installed "
+            f"with the SortView Collector {CONTRACT_V2_MINIMUM_COLLECTOR} release bundle or later (an older bundle is "
+            "refused and the code stays unused), and needs the Collector Site Settings entries below. It cannot "
+            "be changed afterwards."
+        ),
+    )
+    st.caption(
+        "Fields marked * are required for a Contract v2 installation, and are checked before anything is created. "
+        "A legacy (contract 1) installation may leave them blank."
+    )
+
     col1, col2 = st.columns(2)
 
     with col1:
         org_name = st.text_input("Organization name")
         branch_name = st.text_input("Primary branch name", value="Main Branch")
-        plan_code = st.text_input("Plan code", value="trial")
+        plan_code = st.selectbox(
+            "Plan",
+            options=list(plan_names),
+            index=None,
+            format_func=lambda code: f"{plan_names[code]} ({code})",
+            placeholder="Choose a plan",
+            help="Required. The library's subscription starts as a trial of the plan chosen here.",
+        )
         contact_name = st.text_input("Contact name")
         contact_email = st.text_input("Contact email")
 
@@ -245,9 +289,12 @@ with st.form("provision_library_form"):
         notes = st.text_area("Notes", height=100)
 
     st.subheader("Transit")
-    home_branch_label = st.text_input("Home branch label", value="Main")
-    transit_1_label = st.text_input("Transit destination 1", value="Westside")
-    transit_2_label = st.text_input("Transit destination 2", value="Library Express")
+    st.caption(
+        "This library's own labels, exactly as its sorter shows them. Nothing is pre-filled: a library with no "
+        "transit destinations leaves the list empty."
+    )
+    home_branch_label = st.text_input("Home branch label")
+    transit_destinations_text = st.text_area("Transit destinations (one per line)", height=100)
 
     st.subheader("Internal Routing")
     route_col1, route_col2 = st.columns(2)
@@ -262,23 +309,24 @@ with st.form("provision_library_form"):
 
     st.subheader("Collector Site Settings (Contract v2)")
     st.caption(
-        "Needed only to enroll a Collector on Contract v2, and read only then. For a legacy (contract 1) "
-        "installation -- still the default below -- leaving these blank changes nothing. The time zone is "
-        "the one the library's Tech Logic machine keeps its clock in; it does not change how reports are drawn."
+        "REQUIRED for a Contract v2 installation (the default, chosen at the top of this form): all three entries "
+        "marked * below. They are read only when a Collector enrolls on Contract v2, so for a legacy (contract 1) "
+        "installation leaving them blank changes nothing. The time zone is the one the library's Tech Logic machine "
+        "keeps its clock in; it does not change how reports are drawn."
     )
     collector_timezone_input = st.text_input(
-        "Collector time zone (IANA name, e.g. America/New_York)",
-        help="The site's own zone. There is no default: leave blank if it is not known yet.",
+        "Collector time zone (IANA name, e.g. America/New_York) *",
+        help="The site's own zone. There is no default. Required for Contract v2.",
     )
     collector_rules_reviewed = st.checkbox(
         "I have reviewed the four Internal Routing lists above with this library, and they are correct "
-        "(including where a list is empty)",
+        "(including where a list is empty) *",
         value=False,
     )
 
     collector_routing_labels_confirmed = st.checkbox(
-        "The Home branch label and the Transit destinations above are this library's own values "
-        "(they are pre-filled with examples; for Contract v2 they become this library's classification rules)",
+        "The Home branch label and the Transit destinations above are complete for this library, including where "
+        "there are none (for Contract v2 the destinations become this library's classification rules) *",
         value=False,
     )
 
@@ -306,18 +354,6 @@ with st.form("provision_library_form"):
     installation_name = st.text_input("Installation name", value="Main AMH Sorter")
     installation_hostname = st.text_input("Installation hostname (optional)")
     installation_version = st.text_input("Collector version", value=COLLECTOR_VERSION)
-    installation_contract = st.selectbox(
-        "Ingest contract for this installation",
-        options=list(COLLECTOR_CONTRACT_OPTIONS),
-        index=COLLECTOR_CONTRACT_OPTIONS.index(DEFAULT_COLLECTOR_CONTRACT),
-        format_func=collector_contract_label,
-        help=(
-            "The contract an enrollment code for this installation will require. Contract v2 can only be installed "
-            f"with the SortView Collector {CONTRACT_V2_MINIMUM_COLLECTOR} release bundle or later (an older bundle is "
-            "refused and the code stays unused), and needs the three Collector Site Settings entries above. It cannot "
-            "be changed afterwards."
-        ),
-    )
 
     submitted = st.form_submit_button("Provision Library", type="primary")
 
@@ -325,28 +361,38 @@ if submitted:
     org_slug = slugify(org_slug_input or org_name)
     branch_slug = slugify(branch_slug_input or branch_name)
 
+    # EVERYTHING below is checked BEFORE the first service call: nothing is created for a form that is not complete.
+    # Every problem is shown at once, so the form is corrected in one pass.
+    problems: list[str] = []
+
     if not org_name.strip():
-        st.error("Organization name is required.")
-        st.stop()
+        problems.append("Organization name is required.")
 
     if not branch_name.strip():
-        st.error("Primary branch name is required.")
-        st.stop()
+        problems.append("Primary branch name is required.")
+
+    # Only a plan the database listed as active can be chosen, and one must be: there is no default plan.
+    if plan_code not in plan_names:
+        problems.append("A plan must be chosen.")
 
     if create_installation and not installation_name.strip():
-        st.error("Installation name is required to create an installation record.")
-        st.stop()
+        problems.append("Installation name is required to create an installation record.")
 
-    # Checked BEFORE anything is created: a Contract v2 installation for a site that was not prepared could only be
-    # refused later, at install time, on the library's machine.
+    # A label that means home is not a transit destination, and two different labels that share one canonical key
+    # would be ONE destination to the Collector and the reports.
+    problems.extend(transit_destination_problems(home_branch_label, lines_to_list(transit_destinations_text)))
+
+    # A Contract v2 installation for a site that was not prepared could only be refused later, at install time, on
+    # the library's machine.
     if create_installation and installation_contract == COLLECTOR_CONTRACT_V2:
-        contract_problems = contract_two_provisioning_problems(
+        problems.extend(contract_two_provisioning_problems(
             collector_timezone_input, collector_rules_reviewed, collector_routing_labels_confirmed
-        )
-        if contract_problems:
-            for problem in contract_problems:
-                st.error(problem)
-            st.stop()
+        ))
+
+    if problems:
+        for problem in problems:
+            st.error(problem)
+        st.stop()
 
     try:
         collector_settings = collector_site_settings(
@@ -366,12 +412,10 @@ if submitted:
     org_settings.update({
         "library_name": library_name.strip() or org_name.strip(),
         "system_name": system_name.strip(),
+        # Exactly the labels entered, each stored with its canonical key (the label's own): never a synthetic one.
         "transit": {
             "home_branch_label": home_branch_label.strip(),
-            "destinations": [
-                {"key": "dest_1", "label": transit_1_label.strip(), "enabled": True} if transit_1_label.strip() else None,
-                {"key": "dest_2", "label": transit_2_label.strip(), "enabled": True} if transit_2_label.strip() else None,
-            ],
+            "destinations": transit_destination_entries(lines_to_list(transit_destinations_text)),
         },
         "internal_routing": {
             "branch_services_names": lines_to_list(branch_services_names_text),
@@ -383,15 +427,12 @@ if submitted:
             "organization_name": org_name.strip(),
             "contact_name": contact_name.strip(),
             "contact_email": contact_email.strip(),
-            "plan_name": plan_code.strip(),
+            "plan_name": plan_code,
             "notes": notes.strip(),
         },
     })
     # Only what was actually entered: no time zone and no review record are ever stored by default.
     org_settings.update(collector_settings)
-    org_settings["transit"]["destinations"] = [
-        d for d in org_settings["transit"]["destinations"] if d is not None
-    ]
 
     branch_settings = dict(DEFAULT_BRANCH_SETTINGS)
     branch_settings.update({
@@ -404,7 +445,7 @@ if submitted:
             org_slug=org_slug,
             branch_name=branch_name.strip(),
             branch_slug=branch_slug,
-            plan_code=plan_code.strip(),
+            plan_code=plan_code,
             org_settings=org_settings,
             branch_settings=branch_settings,
         )

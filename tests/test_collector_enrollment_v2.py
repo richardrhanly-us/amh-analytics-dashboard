@@ -999,11 +999,12 @@ def test_the_v2_kill_switch_still_closes_the_v2_routes_for_an_enrolled_branch(wo
 # the deliberate default
 # =====================================================================================================================
 
-def test_contract_2_is_chosen_explicitly_and_the_legacy_contract_is_still_every_default():
+def test_contract_2_is_chosen_explicitly_and_is_super_admins_default_while_the_servers_own_default_is_still_legacy():
     """A1 landed before an installer that could enroll on Contract v2, and pinned here that nothing asked for it. A3a
-    ships that installer (Collector 1.0.14) and an explicit contract selector in Super Admin -- so this is where the
-    deliberate change shows, and where what did NOT change is held: the service's default, and the selector's default,
-    are still the legacy contract. Making 2 the default is a later stage's change, and will show here too."""
+    shipped that installer (Collector 1.0.14) and an explicit contract selector in Super Admin. A3b makes Contract v2
+    that SELECTOR's default -- and this is where the deliberate change shows, and where what did NOT change is held:
+    the service's own default is still the legacy contract, and the pages still pass the selector's value, never a
+    literal."""
     from pathlib import Path
 
     from src.services import tenant_service
@@ -1016,8 +1017,9 @@ def test_contract_2_is_chosen_explicitly_and_the_legacy_contract_is_still_every_
         # The page passes the contract explicitly -- the selector's value, never a literal 2 ...
         assert source.count("required_contract=") == 1 and "required_contract=2" not in source, page
         assert "required_contract=COLLECTOR_CONTRACT_V2" not in source, page
-        # ... and the selector's default is the legacy contract.
-        assert "DEFAULT_COLLECTOR_CONTRACT = COLLECTOR_CONTRACT_LEGACY" in source, page
+        # ... and the selector's default is Contract v2 (A3b), with the legacy contract still one of its options.
+        assert "DEFAULT_COLLECTOR_CONTRACT = COLLECTOR_CONTRACT_V2" in source, page
+        assert "COLLECTOR_CONTRACT_OPTIONS = (COLLECTOR_CONTRACT_LEGACY, COLLECTOR_CONTRACT_V2)" in source, page
     # The installer now asks for Contract v2 first, and its one retry for a legacy code sends NO contract_version --
     # the legacy request this server has always accepted.
     setup = (root / "collector" / "deploy" / "setup-collector.ps1").read_text(encoding="utf-8")

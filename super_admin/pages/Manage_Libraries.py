@@ -56,21 +56,22 @@ from services.tenant_service import (
     build_collector_agent_config,
     create_collector_installation,
     format_collector_install_parameters,
-    get_effective_settings,
+    get_collector_site_settings,
     list_collector_installations_for_organization,
+    set_collector_site_settings,
+    transit_destination_problems,
     update_collector_installation,
 )
 
 logger = logging.getLogger("sortview.super_admin.libraries")
 
-# --- which ingest contract a NEW installation is created on (onboarding stage A3a) -------------------------------------
+# --- which ingest contract a NEW installation is created on (onboarding stages A3a, A3b) ------------------------------
 #
 # Chosen explicitly, per installation, when it is created -- and passed explicitly to create_collector_installation,
-# whose own default is not relied on. THE DEFAULT HERE IS STILL THE LEGACY CONTRACT: Contract v2 becomes the default only
-# after the first Collector release that can install it has been rehearsed and published. An existing installation's
-# contract is never changed by this page.
+# whose own default is not relied on. THE DEFAULT HERE IS CONTRACT V2 (A3b); the legacy contract is still offered and
+# still fully supported. An existing installation's contract is never changed by this page.
 COLLECTOR_CONTRACT_OPTIONS = (COLLECTOR_CONTRACT_LEGACY, COLLECTOR_CONTRACT_V2)
-DEFAULT_COLLECTOR_CONTRACT = COLLECTOR_CONTRACT_LEGACY
+DEFAULT_COLLECTOR_CONTRACT = COLLECTOR_CONTRACT_V2
 # The first Collector release whose setup can enroll on Contract v2. A fixed fact about that release, NOT "the current
 # version" (which is collector.__version__ and nowhere else): it does not move when the Collector is next released. Held
 # as a version tuple, the way a minimum is compared, and only formatted for display.
@@ -82,13 +83,14 @@ def collector_contract_label(contract: int) -> str:
     """What the contract selector shows for each choice."""
     if contract == COLLECTOR_CONTRACT_V2:
         return f"2 - Contract v2 (requires SortView Collector {CONTRACT_V2_MINIMUM_COLLECTOR} or later)"
-    return "1 - Legacy contract (the default)"
+    return "1 - Legacy contract"
 
 
 def contract_two_site_problems(site_settings: object) -> list[str]:
-    """What still stops this library getting a Contract v2 installation, from its STORED settings (empty = nothing): the
-    Collector time zone and the record that its classification lists were reviewed -- the two things a Contract v2
-    enrollment reads and refuses without (services.collector_rules). Fixed sentences: no settings value is repeated."""
+    """What still stops this library getting a Contract v2 installation, from its ORGANIZATION's stored settings (empty
+    = nothing): the Collector time zone and the record that its classification lists were reviewed -- the two things a
+    Contract v2 enrollment reads there and refuses without (services.collector_rules). Fixed sentences: no settings
+    value is repeated."""
     problems = []
     try:
         collector_timezone(site_settings)
@@ -129,6 +131,24 @@ INSTALLATION_ADD_FAILED_MESSAGE = (
 )
 ENROLLMENT_CODE_FAILED_MESSAGE = f"An enrollment code could not be generated. Please try again. {_SUPPORT_HINT}"
 INSTALLATION_NAME_REQUIRED_MESSAGE = "Installation name is required."
+SITE_SETTINGS_READ_FAILED_MESSAGE = "This library's Collector site settings could not be read."
+SITE_SETTINGS_SAVE_FAILED_MESSAGE = (
+    f"The Collector site settings could not be saved; nothing was changed. Please try again. {_SUPPORT_HINT}"
+)
+SITE_SETTINGS_TIMEZONE_MESSAGE = (
+    "Collector time zone is required, and must be a known IANA time zone name such as America/New_York. "
+    "Nothing was saved."
+)
+SITE_SETTINGS_REVIEW_MESSAGE = (
+    "Confirm that this organization's collector routing configuration has been reviewed. Nothing was saved."
+)
+# The four classification lists, named as Admin Settings names them. Only how many entries each has is ever shown here.
+INTERNAL_ROUTING_LIST_LABELS = {
+    "branch_services_names": "Branch Services Names",
+    "collection_services_names": "Collection Services Names",
+    "branch_services_da_patterns": "Branch Services DA Patterns",
+    "collection_services_da_patterns": "Collection Services DA Patterns",
+}
 
 st.set_page_config(
     page_title="Manage Libraries",
@@ -555,6 +575,106 @@ elif installations:
 else:
     st.info("No collector installations recorded for this library.")
 
+# --- collector site settings: what a Contract v2 enrollment needs, shown and repaired here ----------------------------
+#
+# Read from, and written to, the ORGANIZATION's own settings -- where the enrollment itself reads the time zone and the
+# review record. The service returns only those two, the transit destination labels and how many entries each
+# classification list has: the lists' contents (patron account names) never reach this page.
+st.subheader("Collector Site Settings (Contract v2)")
+st.caption(
+    "What a Contract v2 Collector enrollment needs from this library: its Collector time zone, its transit "
+    "destinations, and the record that its collector routing configuration was reviewed. A legacy (contract 1) "
+    "installation needs none of them."
+)
+
+site_settings: dict | None
+try:
+    site_settings = get_collector_site_settings(organization_id)
+except Exception as exc:
+    log_safe_exception(logger, "Collector site settings could not be read", exc)
+    site_settings = None
+
+if site_settings is None:
+    st.error(SITE_SETTINGS_READ_FAILED_MESSAGE)
+else:
+    site_problems = contract_two_site_problems(site_settings)
+    if site_problems:
+        st.warning("Not ready for a Contract v2 installation: " + " ".join(site_problems))
+    else:
+        st.success("Ready for a Contract v2 installation.")
+
+    routing_counts = site_settings.get("internal_routing_counts") or {}
+    st.caption(
+        "Internal Routing lists (entries are not shown here; they are edited in the library's Admin Settings): "
+        + "; ".join(
+            f"{label}: {int(routing_counts.get(name, 0))}" for name, label in INTERNAL_ROUTING_LIST_LABELS.items()
+        )
+        + "."
+    )
+
+    if not library_cancelled:
+        stored_timezone = site_settings.get("collector_timezone")
+        with st.form(f"collector_site_settings_form_{organization_id}", enter_to_submit=False):
+            site_timezone = st.text_input(
+                "Collector time zone (IANA name, e.g. America/New_York) *",
+                value=stored_timezone if isinstance(stored_timezone, str) else "",
+                help="The zone the library's Tech Logic machine keeps its clock in. It does not change how reports are drawn.",
+            )
+            site_destinations_text = st.text_area(
+                "Transit destinations (one per line)",
+                value="\n".join(site_settings.get("transit_destination_labels") or []),
+                help=(
+                    "This library's enabled transit destination labels, exactly as its sorter shows them. They become "
+                    "its Contract v2 classification rules. Leave empty if it has none."
+                ),
+            )
+            site_reviewed = st.checkbox(
+                "I confirm this organization's collector routing configuration has been reviewed (the transit "
+                "destinations above and its four Internal Routing lists, including where a list is empty) *",
+                value=False,
+                key=f"collector_site_reviewed_{organization_id}",
+            )
+            save_site_settings = st.form_submit_button("Save Collector Site Settings")
+
+        if save_site_settings:
+            timezone_valid = True
+            try:
+                collector_timezone({"collector_timezone": site_timezone})
+            except CollectorSettingsError:
+                timezone_valid = False
+
+            # A label that means home (by the contract, or by this library's stored home label) is not a transit
+            # destination, and two different labels that share one canonical key would be ONE destination to the
+            # Collector and the reports.
+            destination_problems = transit_destination_problems(
+                site_settings.get("home_branch_label"), site_destinations_text.splitlines()
+            )
+
+            if not timezone_valid:
+                st.error(SITE_SETTINGS_TIMEZONE_MESSAGE)
+            elif destination_problems:
+                for destination_problem in destination_problems:
+                    st.error(destination_problem)
+                st.error("Nothing was saved.")
+            elif not site_reviewed:
+                st.error(SITE_SETTINGS_REVIEW_MESSAGE)
+            else:
+                try:
+                    set_collector_site_settings(
+                        organization_id,
+                        timezone=site_timezone,
+                        transit_destination_labels=site_destinations_text.splitlines(),
+                        reviewed_by_user_id=int(auth_user["id"]),
+                    )
+                except Exception as exc:
+                    log_safe_exception(logger, "Collector site settings save failed", exc)
+                    st.error(SITE_SETTINGS_SAVE_FAILED_MESSAGE)
+                else:
+                    # A review is confirmed for one save only: the box is unticked again for the next one.
+                    st.session_state.pop(f"collector_site_reviewed_{organization_id}", None)
+                    st.success("Collector site settings saved.")
+                    st.rerun()
+
 if pd.notna(primary_branch_id) and not library_cancelled:
     with st.expander("Add installation"):
         with st.form("add_installation_form"):
@@ -573,7 +693,8 @@ if pd.notna(primary_branch_id) and not library_cancelled:
             )
             st.caption(
                 f"Contract v2 needs the SortView Collector {CONTRACT_V2_MINIMUM_COLLECTOR} release bundle or later, and "
-                "this library's Collector time zone and reviewed classification lists. A branch has ONE Contract v2 "
+                "this library's Collector time zone and reviewed classification lists (Collector Site Settings, "
+                "above). A branch has ONE Contract v2 "
                 "Collector: if this branch already has one (it has enrolled on Contract v2 before), a code for a "
                 "second or replacement installation will be refused at install time, whichever contract is chosen "
                 "here. Replacing a machine is not supported from this page yet -- contact SortView engineering."
@@ -582,21 +703,23 @@ if pd.notna(primary_branch_id) and not library_cancelled:
 
         contract_problems: list[str] = []
         if add_installation and new_name.strip() and new_contract == COLLECTOR_CONTRACT_V2:
-            # Advisory, from the library's stored settings; the enrollment itself checks again and is the authority.
+            # Advisory, read again now from the organization's own stored settings -- the same place the enrollment
+            # reads them; the enrollment itself checks again and is the authority.
             try:
-                contract_problems = contract_two_site_problems(
-                    get_effective_settings(str(selected_row["organization_slug"]))["settings"]
-                )
+                contract_problems = contract_two_site_problems(get_collector_site_settings(organization_id))
             except Exception as exc:
                 log_safe_exception(logger, "Collector site settings could not be read", exc)
-                contract_problems = ["This library's Collector site settings could not be read."]
+                contract_problems = [SITE_SETTINGS_READ_FAILED_MESSAGE]
 
         if add_installation and not new_name.strip():
             st.error(INSTALLATION_NAME_REQUIRED_MESSAGE)
         elif add_installation and contract_problems:
             for problem in contract_problems:
                 st.error(problem)
-            st.error("No installation was added. A Contract v2 installation needs both, recorded for this library first.")
+            st.error(
+                "No installation was added. A Contract v2 installation needs both, recorded for this library first "
+                "(Collector Site Settings, above)."
+            )
         elif add_installation:
             try:
                 create_collector_installation(

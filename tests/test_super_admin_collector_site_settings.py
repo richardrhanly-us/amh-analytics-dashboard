@@ -6,10 +6,14 @@ needs (the Collector's time zone, and the record that the classification lists w
 an installation requires.
 
 A3a ships that installer (Collector 1.0.14) and adds an explicit CONTRACT SELECTOR to both places an installation is
-created -- Provision Library, and Manage Libraries' "Add installation". ITS DEFAULT IS STILL THE LEGACY CONTRACT: nothing
-is contract 2 unless an administrator chooses it. The selected value is passed explicitly to
+created -- Provision Library, and Manage Libraries' "Add installation". The selected value is passed explicitly to
 create_collector_installation, a Contract v2 choice is refused for a site that has not been prepared, and an existing
 installation's contract can never be changed.
+
+A3b makes CONTRACT V2 THE SELECTOR'S DEFAULT on both pages (the legacy contract stays selectable, and the service's own
+default stays 1), and makes that safe: the selector is the first field of a Provision form that Enter cannot submit,
+no library's transit labels are pre-filled, and no synthetic destination key is written. What the pages DO when they
+run is in tests/test_super_admin_a3b_provisioning.py.
 
 The pages are Streamlit scripts and are not imported: the function is extracted from the page source with `ast` and run
 for real (as tests/test_super_admin_installation_config.py does), and the rest is asserted against the source.
@@ -98,7 +102,7 @@ def test_the_page_merges_them_into_the_organizations_settings_and_defaults_neith
 
     assert "org_settings.update(collector_settings)" in source
     # No default zone, and the confirmation starts unticked.
-    assert 'st.text_input(\n        "Collector time zone (IANA name, e.g. America/New_York)",\n        help=' in source.replace("\r\n", "\n")
+    assert 'st.text_input(\n        "Collector time zone (IANA name, e.g. America/New_York) *",\n        help=' in source.replace("\r\n", "\n")
     assert "value=False,\n    )\n" in source.replace("\r\n", "\n")
     assert "America/Chicago" not in source
     # Neither key is among the settings a new organization gets without anyone entering them.
@@ -111,8 +115,20 @@ def test_the_page_says_what_the_fields_are_for_and_what_they_do_not_change():
     source = " ".join(_source(PROVISION).split())
 
     assert "Collector Site Settings (Contract v2)" in source
-    assert "For a legacy (contract 1) \" \"installation -- still the default below -- leaving these blank changes nothing." in source
+    assert "REQUIRED for a Contract v2 installation (the default, chosen at the top of this form)" in source
+    assert "for a legacy (contract 1) \" \"installation leaving them blank changes nothing." in source
+    assert "still the default" not in source
     assert "it does not change how reports are drawn" in source
+
+
+def test_the_three_contract_2_entries_are_marked_required_and_the_form_says_what_the_mark_means():
+    source = _source(PROVISION)
+    section = source[source.index('st.subheader("Collector Site Settings (Contract v2)")'):source.index('st.subheader("Agent Config")')]
+
+    labels = [" ".join(ast.literal_eval(node.args[0]).split()) for node in ast.walk(ast.parse(section.replace("\n    ", "\n")))
+              if isinstance(node, ast.Call) and ast.unparse(node.func) in ("st.text_input", "st.checkbox")]
+    assert len(labels) == 3 and all(label.endswith(" *") for label in labels), labels
+    assert "Fields marked * are required for a Contract v2 installation, and are checked before anything is created." in " ".join(source.split()).replace('" "', "")
 
 
 def test_manage_libraries_shows_the_required_contract_and_never_edits_an_existing_installations():
@@ -164,19 +180,53 @@ def _page_namespace(path: Path, *names: str) -> dict[str, Any]:
 
 
 @PAGES
-def test_both_creation_paths_have_a_contract_selector_whose_default_is_still_the_legacy_contract(page):
+def test_both_creation_paths_have_a_contract_selector_whose_default_is_contract_2_and_still_offers_the_legacy_one(page):
     namespace = _page_namespace(page, "collector_contract_label")
 
-    assert namespace["COLLECTOR_CONTRACT_OPTIONS"] == (1, 2)
-    assert namespace["DEFAULT_COLLECTOR_CONTRACT"] == 1  # A3a: the default is NOT flipped
+    assert namespace["COLLECTOR_CONTRACT_OPTIONS"] == (1, 2)  # the legacy contract is still a choice
+    assert namespace["DEFAULT_COLLECTOR_CONTRACT"] == 2  # A3b: the default IS Contract v2
     source = _source(page)
     assert source.count("st.selectbox(") >= 1
     selector = source[source.index('"Ingest contract for'):]
     selector = selector[:selector.index("format_func=collector_contract_label")]
     assert "options=list(COLLECTOR_CONTRACT_OPTIONS)" in selector
     assert "index=COLLECTOR_CONTRACT_OPTIONS.index(DEFAULT_COLLECTOR_CONTRACT)" in selector  # the default is the constant, not a literal
-    assert "DEFAULT_COLLECTOR_CONTRACT = COLLECTOR_CONTRACT_LEGACY" in source
-    assert "DEFAULT_COLLECTOR_CONTRACT = COLLECTOR_CONTRACT_V2" not in source
+    assert "DEFAULT_COLLECTOR_CONTRACT = COLLECTOR_CONTRACT_V2" in source
+    assert "DEFAULT_COLLECTOR_CONTRACT = COLLECTOR_CONTRACT_LEGACY" not in source
+
+
+def test_the_provision_form_cannot_be_submitted_by_enter_and_its_contract_selector_is_its_first_field():
+    """Enter in a text field used to submit the whole form -- with the selector, then the LAST widget, still on its
+    default. Only the button submits now, and the selector comes before every field whose requiredness it decides."""
+    tree = ast.parse(_source(PROVISION))
+    (form,) = [node for node in ast.walk(tree) if isinstance(node, ast.With)
+               and ast.unparse(node.items[0].context_expr).startswith("st.form(")]
+    call = form.items[0].context_expr
+
+    assert ast.literal_eval(call.args[0]) == "provision_library_form"
+    assert {keyword.arg: ast.literal_eval(keyword.value) for keyword in call.keywords} == {"enter_to_submit": False}
+    widgets = [node for node in ast.walk(form) if isinstance(node, ast.Call) and ast.unparse(node.func).startswith("st.")
+               and ast.unparse(node.func) not in ("st.form", "st.caption", "st.columns", "st.subheader")]
+    first = min(widgets, key=lambda node: (node.lineno, node.col_offset))
+    assert ast.unparse(first.func) == "st.selectbox" and ast.literal_eval(first.args[0]) == "Ingest contract for this installation"
+    # ... and it is inside the form, once: there is no second contract control anywhere on the page.
+    assert _source(PROVISION).count('"Ingest contract for this installation"') == 1
+
+
+def test_the_plan_is_chosen_from_the_active_plans_with_none_pre_selected_and_is_never_typed():
+    source = _source(PROVISION)
+    tree = ast.parse(source)
+    (plan,) = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and ast.unparse(node.func) == "st.selectbox"
+               and ast.literal_eval(node.args[0]) == "Plan"]
+    keywords = {keyword.arg: ast.unparse(keyword.value) for keyword in plan.keywords}
+
+    assert keywords["options"] == "list(plan_names)" and keywords["index"] == "None"  # the service's plans; no default
+    assert "active_plans = list_active_plans()" in source
+    assert "plan_names = {str(plan['code']): str(plan['name']) for plan in active_plans}" in ast.unparse(tree)
+    assert 'text_input("Plan' not in source and "'trial'" not in source and '"trial"' not in source
+    # Refused before anything is created, and what reaches the service is the chosen code itself.
+    assert source.index('problems.append("A plan must be chosen.")') < source.index("result = create_organization_with_primary_branch(")
+    assert "plan_code=plan_code," in source
 
 
 @PAGES
@@ -204,7 +254,7 @@ def test_the_contract_2_choice_is_labelled_with_the_collector_release_it_needs(p
     namespace = _page_namespace(page, "collector_contract_label")
     label = namespace["collector_contract_label"]
 
-    assert label(1) == "1 - Legacy contract (the default)"
+    assert label(1) == "1 - Legacy contract"  # no longer called the default
     assert label(2) == "2 - Contract v2 (requires SortView Collector 1.0.14 or later)"  # freshness: allow FRESH002 -- the first release that can enroll on Contract v2: a fixed minimum the page states, not the current version
     assert namespace["CONTRACT_V2_MINIMUM_COLLECTOR_VERSION"] == (1, 0, 14)
     # The current release is never copied into the page: this minimum is a fixed fact, held as a tuple.
@@ -220,32 +270,134 @@ def test_provisioning_on_contract_2_requires_the_time_zone_both_confirmations_an
     assert len(problems("   ", True, True)) == 1 and "time zone" in problems("   ", True, True)[0]
     assert len(problems("America/New_York", False, True)) == 1 and "Internal Routing lists" in problems("America/New_York", False, True)[0]
     (labels,) = problems("America/New_York", True, False)
-    assert "Home branch label" in labels and "Transit destinations" in labels and "examples" in labels
+    assert "Home branch label" in labels and "Transit destinations" in labels and "complete" in labels
 
 
-def test_the_contract_2_check_runs_before_anything_is_created_and_only_for_contract_2():
-    source = _source(PROVISION)
-    check = source.index("if create_installation and installation_contract == COLLECTOR_CONTRACT_V2:")
-    block = source[check:source.index("collector_settings = collector_site_settings(")]
+def test_every_check_runs_before_anything_is_created_and_the_contract_2_ones_only_for_contract_2():
+    source = _source(PROVISION).replace("\r\n", "\n")
+    submit = source[source.index("if submitted:"):]
+    check = submit.index("if create_installation and installation_contract == COLLECTOR_CONTRACT_V2:")
+    stop = submit.index("    if problems:\n        for problem in problems:\n            st.error(problem)\n        st.stop()\n")
+    first_write = min(submit.index(call) for call in (
+        "create_organization_with_primary_branch(", "create_collector_installation(", "run_operational_stage("))
 
-    assert "contract_two_provisioning_problems(" in block and "st.error(problem)" in block and "st.stop()" in block
-    assert check < source.index("create_organization_with_primary_branch(\n")  # nothing exists yet when it stops
-    assert check < source.index("installation = create_collector_installation(")
+    # Every problem is collected, shown and stopped on before the first of the three service calls.
+    assert "problems.extend(contract_two_provisioning_problems(" in submit[check:stop]
+    for required in ('"Organization name is required."', '"Primary branch name is required."', '"A plan must be chosen."',
+                     '"Installation name is required to create an installation record."'):
+        assert submit.index(required) < stop, required
+    assert check < stop < submit.index("collector_settings = collector_site_settings(") < first_write
     # A legacy installation is provisioned exactly as before: none of the three is required for it.
     assert source.count("contract_two_provisioning_problems(") == 2  # its definition and that one guarded call
 
 
-def test_the_pre_filled_transit_labels_cannot_silently_become_a_contract_2_sites_rules():
-    """The form still pre-fills example labels (changing those defaults belongs to the stage that makes contract 2 the
-    default). For contract 2 they would become the site's classification rules, so the administrator must confirm
-    they are the library's own -- an unticked box, required, with the reason stated."""
+NBPL_VALUES = ("Westside", "Library Express", "library_express", "westside", "New Braunfels", '"Main"', "'Main'")
+
+
+def test_provisioning_pre_fills_no_librarys_transit_labels_and_writes_no_synthetic_destination_key():
+    """The form used to pre-fill one library's home label and destinations, and to store whatever was entered under
+    "dest_1" / "dest_2". For Contract v2 the destinations become the site's classification rules, so nothing is
+    pre-filled, and the administrator still confirms the list is complete -- an unticked box, required."""
     source = _source(PROVISION)
 
-    assert 'value="Westside"' in source and 'value="Library Express"' in source  # unchanged in A3a
+    assert [value for value in NBPL_VALUES if value in source] == []
+    assert "dest_1" not in source and "dest_2" not in source and re.search(r"dest_\{|f\"dest|'key':|\"key\":", source) is None
+    assert 'home_branch_label = st.text_input("Home branch label")' in source  # no value=
+    assert 'transit_destinations_text = st.text_area("Transit destinations (one per line)", height=100)' in source
+    assert '"destinations": transit_destination_entries(lines_to_list(transit_destinations_text)),' in source
+    defaults = _page_namespace_value(PROVISION, "DEFAULT_ORG_SETTINGS")
+    assert defaults["transit"] == {"home_branch_label": "", "destinations": []}
     box = source[source.index("collector_routing_labels_confirmed = st.checkbox("):]
     box = box[:box.index("st.subheader(")]
-    assert "value=False" in box and "pre-filled with examples" in " ".join(box.split())
-    assert "collector_routing_labels_confirmed" in source[source.index("contract_two_provisioning_problems(\n            collector_timezone_input"):][:200]
+    assert "value=False" in box and "pre-filled" not in box and "complete for this library" in " ".join(box.split())
+    assert "collector_routing_labels_confirmed" in source[source.index("problems.extend(contract_two_provisioning_problems("):][:200]
+
+
+def _page_namespace_value(path: Path, name: str) -> Any:
+    tree = ast.parse(_source(path))
+    (node,) = [n for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in n.targets)]
+    return ast.literal_eval(node.value)
+
+
+# One canonical key for a destination, wherever it is saved: services.routing_destination.destination_key(label).
+CANONICAL_KEYS = [
+    ("North Branch", "north_branch"),
+    ("3rd Street Branch", "d_3rd_street_branch"),  # a slug starts with a letter
+    ("The Very Long Named Regional Library Annex", "the_very_long_named_regional_lib"),  # ... and is at most 32 long
+    ("St. Mary's   Branch", "st_mary_s_branch"),  # punctuation and repeated spaces
+    ("Westside Annex", "westside"),  # the collector's built-in rule for that text
+]
+
+
+@pytest.mark.parametrize("label, key", CANONICAL_KEYS, ids=[label for label, _key in CANONICAL_KEYS])
+def test_a_saved_destinations_key_is_the_one_key_the_collector_and_the_reports_both_use(label, key):
+    """The regression: stored as {"key": "dest_1", "label": "North Branch"}, a destination went to the Collector as the
+    slug `dest_1` while the reports looked for `north_branch` -- so its check-ins were counted as "other". And a key
+    that is not a valid collector slug (one starting with a digit, or longer than 32) could never be met at all."""
+    from collector import v2_rules
+    from services.ingest_v2_models import DESTINATION_PATTERN
+    from services.routing_destination import build_routing_config, destination_key
+
+    (entry,) = tenant_contracts.transit_destination_entries([f"  {label} "])
+    settings = {"transit": {"home_branch_label": "Central", "destinations": [entry]}}
+    (rule,) = collector_rules.build_classification_rules(settings)["destinations"]
+    (routed,) = build_routing_config(settings, site_name="Central").transit
+
+    # stored key == destination_key(label) == the Collector's rule slug == the reports' routing key
+    assert entry == {"key": key, "label": label, "enabled": True}
+    assert entry["key"] == destination_key(label) == rule["slug"] == routed.key == key
+    assert rule["contains"] == label.upper()
+    # ... and it is a destination slug the contract allows, so a Collector CAN store a check-in under it.
+    assert re.fullmatch(DESTINATION_PATTERN, key) and len(key) <= 32
+    assert not key.startswith("dest_")
+    # The stored key passes through the rules builder -- the server's copy and the Collector's own -- unchanged,
+    # and a check-in stored under it is keyed back to it.
+    assert collector_rules._slugify(key) == v2_rules._slugify(key) == key
+    assert destination_key(key) == key
+    # The Collector's own seeder gives the same rule for the same stored entry.
+    assert v2_rules.seed_from_settings(settings)["destinations"] == [{"slug": key, "contains": label.upper()}]
+
+
+def test_entries_are_trimmed_and_a_blank_or_repeated_label_is_left_out():
+    entries = tenant_contracts.transit_destination_entries(["  East Side Annex  ", "", None, "east side annex", "Riverside"])
+
+    assert entries == [{"key": "east_side_annex", "label": "East Side Annex", "enabled": True},
+                       {"key": "riverside", "label": "Riverside", "enabled": True}]
+    assert tenant_contracts.transit_destination_entries([]) == []
+
+
+@pytest.mark.parametrize("labels, groups", [
+    # Two long labels that are the same in their first 32 letters and digits.
+    (["The Very Long Named Regional Library Annex", "North Branch", "The Very Long Named Regional Library Bookmobile"],
+     [["The Very Long Named Regional Library Annex", "The Very Long Named Regional Library Bookmobile"]]),
+    (["North Branch", "North-Branch", "NORTH  BRANCH!"], [["North Branch", "North-Branch", "NORTH  BRANCH!"]]),
+    (["Westside", "Westside Annex", "3rd Street", "3rd  street."], [["Westside", "Westside Annex"], ["3rd Street", "3rd  street."]]),
+])
+def test_different_labels_that_share_one_canonical_key_are_reported_as_a_collision(labels, groups):
+    assert tenant_contracts.transit_destination_key_collisions(labels) == groups
+    messages = tenant_contracts.transit_destination_collision_messages(labels)
+    assert len(messages) == len(groups)
+    for message, group in zip(messages, groups, strict=True):
+        assert all(f'"{label}"' in message for label in group) and "share one key" in message
+
+
+@pytest.mark.parametrize("labels", [
+    [],
+    ["North Branch", "South Branch", "3rd Street Branch", "The Very Long Named Regional Library Annex"],
+    ["North Branch", "north branch", "  NORTH BRANCH  "],  # the same label again is one label, not a collision
+])
+def test_labels_that_are_each_a_destination_of_their_own_are_no_collision(labels):
+    assert tenant_contracts.transit_destination_key_collisions(labels) == []
+    assert tenant_contracts.transit_destination_collision_messages(labels) == []
+
+
+def test_the_synthetic_key_was_the_defect_this_guards_against():
+    from services.routing_destination import build_routing_config
+
+    old = {"transit": {"destinations": [{"key": "dest_1", "label": "North Branch", "enabled": True}]}}
+
+    assert [d["slug"] for d in collector_rules.build_classification_rules(old)["destinations"]] == ["dest_1"]
+    assert [d.key for d in build_routing_config(old, site_name="Central").transit] == ["north_branch"]  # ... which never met
 
 
 def test_adding_a_contract_2_installation_needs_the_sites_stored_time_zone_and_review_record():
@@ -269,7 +421,9 @@ def test_adding_an_installation_checks_readiness_only_for_contract_2_and_adds_no
     form = source[source.index('with st.form("add_installation_form"):'):]
 
     assert 'if add_installation and new_name.strip() and new_contract == COLLECTOR_CONTRACT_V2:' in form
-    assert 'get_effective_settings(str(selected_row["organization_slug"]))["settings"]' in form
+    # Read from the ORGANIZATION's own settings, where the enrollment reads them -- not the branch-merged ones.
+    assert "contract_two_site_problems(get_collector_site_settings(organization_id))" in form
+    assert "get_effective_settings" not in source
     refused = form.index("elif add_installation and contract_problems:")
     created = form.index("create_collector_installation(")
     assert refused < created and "No installation was added." in form[refused:created]
