@@ -1196,3 +1196,162 @@ def test_the_same_event_key_one_second_later_is_a_conflict_never_a_duplicate(eng
     table = _EVENT_TABLE[kind]
     stored = rows(engine, f"SELECT event_time FROM {table}")  # nosec B608 - a fixed table name
     assert len(stored) == 1 and stored[0][0].astimezone(UTC) == _helper_instant(original["event_time"])  # the original, untouched
+
+
+# =====================================================================================================================
+# 9. The first successful v2 ingest makes its branch ready -- on the real schema, in the upload's own transaction
+# =====================================================================================================================
+#
+# tests/test_ingest_v2_api.py holds the behaviour on SQLite. What only a real server shows: the statement against the
+# real `branches` columns (TEXT / TIMESTAMPTZ), a real rollback of rows a transaction had already inserted, and two
+# first uploads racing for the same row.
+
+LONG_AGO = datetime(2020, 1, 1, tzinfo=UTC)
+TOKEN_ROW = {"id": 1, "customer_id": CUSTOMER, "branch_id": BRANCH, "resolved_branch_id": BRANCH, "resolved_organization_id": 1}
+
+
+def _onboarding(engine, branch_id=BRANCH):
+    (row,) = rows(engine, "SELECT onboarding_status, onboarding_message, onboarding_updated_at FROM branches WHERE id = :b", b=branch_id)
+    return row
+
+
+def _set_onboarding(engine, status, message=None, branch_id=BRANCH):
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE branches SET onboarding_status = :s, onboarding_message = :m, onboarding_updated_at = :t "
+                          "WHERE id = :b"), {"s": status, "m": message, "t": LONG_AGO, "b": branch_id})
+
+
+def test_a_new_branch_is_pending_on_the_real_schema(engine):
+    assert _onboarding(engine)[:2] == ("pending", None) and _onboarding(engine, OTHER_BRANCH)[:2] == ("pending", None)
+
+
+def test_the_first_inserting_upload_commits_its_events_and_the_ready_transition_together(api, engine):
+    _set_onboarding(engine, "pending", "Waiting for the first upload.")
+    before = datetime.now(UTC) - timedelta(seconds=5)
+
+    response = post_upload(api, upload(checkins=[checkin(1)], rejects=[reject(2)], acs_items=[acs_hold(3)]))
+
+    assert response.status_code == 200
+    assert [scalar(engine, f"SELECT count(*) FROM {table}") for table in EVENT_TABLES] == [1, 1, 1]  # nosec B608
+    status_, message, updated_at = _onboarding(engine)
+    assert status_ == "ready" and message is None
+    assert updated_at.tzinfo is not None and updated_at >= before  # a TIMESTAMPTZ, stamped now
+    # The other tenant's branch: untouched in every column.
+    assert _onboarding(engine, OTHER_BRANCH)[:2] == ("pending", None)
+
+
+def test_a_duplicate_only_upload_leaves_a_pending_branch_pending_on_postgres(api, engine):
+    body = upload(checkins=[checkin(1), checkin(2)])
+    assert post_upload(api, body).status_code == 200
+    _set_onboarding(engine, "pending")
+
+    again = post_upload(api, body)
+
+    assert again.status_code == 200 and again.json()["checkins_inserted"] == 0 and again.json()["checkins_duplicates"] == 2
+    assert _onboarding(engine) == ("pending", None, LONG_AGO)
+
+
+def test_a_conflict_rolls_back_the_requests_events_and_leaves_the_branch_pending(api, engine):
+    assert post_upload(api, upload(checkins=[checkin(1)])).status_code == 200
+    _set_onboarding(engine, "pending")
+
+    response = post_upload(api, upload(checkins=[checkin(1, bin="9"), checkin(2), checkin(3)], rejects=[reject(4)]))
+
+    assert response.status_code == 409
+    assert scalar(engine, "SELECT count(*) FROM checkin_events") == 1 and scalar(engine, "SELECT count(*) FROM reject_events") == 0
+    assert _onboarding(engine) == ("pending", None, LONG_AGO)
+
+
+def test_if_the_transition_fails_postgres_rolls_back_the_events_it_had_already_inserted(api, engine, monkeypatch):
+    working = main._BRANCH_READY_AFTER_FIRST_INGEST_SQL
+    monkeypatch.setattr(main, "_BRANCH_READY_AFTER_FIRST_INGEST_SQL",
+                        working.replace("onboarding_status = 'ready'", "no_such_column = 'ready'"))
+    body = upload(checkins=[checkin(1), checkin(2)], rejects=[reject(3)], acs_items=[acs_hold(4)])
+
+    response = post_upload(api, body)
+
+    assert response.status_code == 500 and response.json() == {"detail": "Internal server error"}
+    assert [scalar(engine, f"SELECT count(*) FROM {table}") for table in EVENT_TABLES] == [0, 0, 0]  # nosec B608
+    assert _onboarding(engine)[:2] == ("pending", None)
+
+    # The Collector's retry of the same events, once the fault is gone: stored, and the branch is ready.
+    monkeypatch.setattr(main, "_BRANCH_READY_AFTER_FIRST_INGEST_SQL", working)
+    retry = post_upload(api, body)
+    assert retry.status_code == 200 and retry.json()["checkins_inserted"] == 2
+    assert _onboarding(engine)[0] == "ready"
+
+
+@pytest.mark.parametrize("state", ["ready", "paused", "mapping", "settings", "agent", "initial_sync", "a_state_from_the_future"])
+def test_a_branch_in_any_other_state_is_left_exactly_as_it_is_on_postgres(api, engine, state):
+    _set_onboarding(engine, state, "Set by an administrator.")
+
+    assert post_upload(api, upload(checkins=[checkin(1)])).status_code == 200
+
+    assert scalar(engine, "SELECT count(*) FROM checkin_events") == 1
+    assert _onboarding(engine) == (state, "Set by an administrator.", LONG_AGO)
+
+
+def test_the_transition_touches_only_the_branch_all_three_facts_name(engine):
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO branches (id, organization_id, slug, name, status) VALUES (3, 1, 'second', 'Second', 'active')"))
+        for wrong in ({"resolved_branch_id": OTHER_BRANCH}, {"resolved_organization_id": 2}, {"branch_id": OTHER_BRANCH},
+                      {"resolved_branch_id": 3}, {"resolved_branch_id": None}):
+            assert main.mark_branch_ready_after_first_ingest(conn, {**TOKEN_ROW, **wrong}) is False, wrong
+
+    assert [_onboarding(engine, branch)[0] for branch in (BRANCH, OTHER_BRANCH, 3)] == ["pending"] * 3
+
+    with engine.begin() as conn:
+        assert main.mark_branch_ready_after_first_ingest(conn, TOKEN_ROW) is True
+    assert [_onboarding(engine, branch)[0] for branch in (BRANCH, OTHER_BRANCH, 3)] == ["ready", "pending", "pending"]
+
+
+def test_an_inactive_branch_is_never_made_ready(engine):
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE branches SET status = 'inactive' WHERE id = :b"), {"b": BRANCH})
+        assert main.mark_branch_ready_after_first_ingest(conn, TOKEN_ROW) is False
+
+    assert _onboarding(engine)[0] == "pending"
+
+
+def test_concurrent_first_uploads_all_store_their_events_and_exactly_one_makes_the_branch_ready(engine):
+    """Eight first uploads at once, each with its own event, each in its own transaction: every event is stored, the
+    branch is ready, and exactly ONE transaction performed pending -> ready -- the others waited for its row, found it
+    no longer pending, and changed nothing. Nothing errors and nothing regresses."""
+    outcomes: list[object] = []
+    gate = threading.Barrier(8)
+
+    def worker(i: int):
+        gate.wait()
+        try:
+            with engine.begin() as conn:
+                counts = service.store_events(conn, customer_id=CUSTOMER, branch_id=BRANCH, key_id=KEY,
+                                              checkins=[CheckinEvent.model_validate(checkin(100 + i))], rejects=[], acs_items=[])
+                assert counts["checkins_inserted"] == 1
+                outcomes.append(main.mark_branch_ready_after_first_ingest(conn, TOKEN_ROW))
+        except Exception as exc:
+            outcomes.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+
+    assert not [o for o in outcomes if not isinstance(o, bool)], outcomes
+    assert sorted(outcomes) == [False] * 7 + [True]
+    assert scalar(engine, "SELECT count(*) FROM checkin_events") == 8
+    assert _onboarding(engine)[0] == "ready"
+
+
+def test_concurrent_first_uploads_through_the_endpoint_all_succeed(api, engine):
+    responses: list[int] = []
+    gate = threading.Barrier(6)
+
+    def worker(i: int):
+        gate.wait()
+        responses.append(post_upload(api, upload(checkins=[checkin(200 + i)])).status_code)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(6)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+
+    assert responses == [200] * 6
+    assert scalar(engine, "SELECT count(*) FROM checkin_events") == 6 and _onboarding(engine)[0] == "ready"

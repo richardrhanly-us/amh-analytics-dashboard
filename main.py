@@ -1174,6 +1174,54 @@ def _require_ingest_key(conn, token_row, key_id: str) -> None:
         raise HTTPException(status_code=403, detail=V2_KEY_NOT_AUTHORIZED_DETAIL)
 
 
+# --- the first successful Contract v2 ingest makes its branch ready ------------------------------------------------
+#
+# A branch is created `onboarding_status = 'pending'`, and the dashboard shows nothing for it until it is 'ready'
+# (services.readiness_service). The first /v2/upload that actually INSERTS an event is the proof that the whole
+# chain -- provisioning, enrollment, the Collector, the key, the ingest -- works for that branch, and is what moves
+# it: pending -> ready, and nothing else. Any other state (paused, mapping, settings, agent, initial_sync, one this
+# code has never heard of) is somebody's decision and is left exactly as it is; a branch that is already ready is
+# not touched, so its timestamp is the moment it FIRST became ready.
+#
+# IN THE UPLOAD'S OWN TRANSACTION, WITH NO SAVEPOINT: the events and the transition commit together or not at all.
+# If this statement fails the upload fails with it (a 500, which the Collector retries with the same events) --
+# were the events kept, the retry would be all duplicates, would insert nothing, and the branch would stay pending
+# with its data already stored.
+#
+# The branch is the one the TOKEN resolved to (_AGENT_TOKEN_LOOKUP_SQL: branches.id, and the organization it was
+# required to belong to), and must also still carry the token's operational branch id: three facts that agree, never
+# an operational id on its own. Two first uploads at once are safe: the second waits for the first's row, finds it
+# no longer pending, and changes nothing.
+_BRANCH_READY_AFTER_FIRST_INGEST_SQL = """
+    UPDATE branches
+    SET onboarding_status = 'ready',
+        onboarding_message = NULL,
+        onboarding_updated_at = CURRENT_TIMESTAMP
+    WHERE id = :resolved_branch_id
+      AND organization_id = :resolved_organization_id
+      AND operational_branch_id = :operational_branch_id
+      AND status = 'active'
+      AND onboarding_status = 'pending'
+"""
+
+
+def mark_branch_ready_after_first_ingest(conn, token_row) -> bool:
+    """Moves the token's own branch from pending to ready; True if it did. Called only after events were inserted,
+    inside the same transaction. Raises whatever the statement raises: the caller's transaction then stores nothing.
+
+    Says nothing in the log: the transaction has not committed yet, so nothing has happened that can be reported.
+    The caller logs it once the transaction has."""
+    result = conn.execute(
+        text(_BRANCH_READY_AFTER_FIRST_INGEST_SQL),
+        {
+            "resolved_branch_id": token_row["resolved_branch_id"],
+            "resolved_organization_id": token_row["resolved_organization_id"],
+            "operational_branch_id": int(token_row["branch_id"]),
+        },
+    )
+    return result.rowcount == 1
+
+
 v2_upload_router = APIRouter(route_class=_v2_route_class(lambda: V2_UPLOAD_MAX_BODY_BYTES))
 v2_status_router = APIRouter(route_class=_v2_route_class(lambda: V2_STATUS_MAX_BODY_BYTES))
 
@@ -1182,6 +1230,7 @@ v2_status_router = APIRouter(route_class=_v2_route_class(lambda: V2_STATUS_MAX_B
 @limiter.limit(UPLOAD_RATE_LIMIT, key_func=get_agent_rate_limit_key)
 def upload_v2(request: Request, data: UploadV2Request, authorization: str | None = Header(default=None)):
     token_row = None
+    became_ready = False
     try:
         if not (data.checkins or data.rejects or data.acs_items):
             raise HTTPException(status_code=400, detail="No upload events provided")
@@ -1197,6 +1246,18 @@ def upload_v2(request: Request, data: UploadV2Request, authorization: str | None
                 checkins=data.checkins,
                 rejects=data.rejects,
                 acs_items=data.acs_items,
+            )
+            # Only when something was actually stored -- a request of nothing but duplicates proves nothing new.
+            # Same transaction, no savepoint: see _BRANCH_READY_AFTER_FIRST_INGEST_SQL.
+            if counts["checkins_inserted"] + counts["rejects_inserted"] + counts["acs_items_inserted"] > 0:
+                became_ready = mark_branch_ready_after_first_ingest(conn, token_row)
+
+        # Only now: the block above has exited, so the transaction -- the events AND the transition -- is committed.
+        # Logged any earlier, a commit that then failed would leave a line claiming a branch was ready that is not.
+        if became_ready:
+            logger.info(
+                "Branch onboarding is ready after its first v2 ingest | token_id=%s customer_id=%s branch_id=%s",
+                token_row["id"], token_row["customer_id"], token_row["branch_id"],
             )
 
         return {"status": "success", "contract_version": 2, **counts}
