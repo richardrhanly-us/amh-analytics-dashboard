@@ -136,7 +136,7 @@ def test_bundle_includes_the_identity_collision_diagnostic_module(built_bundle):
     assert any(e.path == "collector/identity_collision_diag.py" for e in built_bundle.entries)
 
 
-def test_bundle_contains_only_the_approved_six_agent_parser_files(built_bundle):
+def test_bundle_contains_only_the_approved_agent_parser_files(built_bundle):
     agent_files = sorted(
         p.relative_to(built_bundle.bundle_dir).as_posix()
         for p in (built_bundle.bundle_dir / "agent").rglob("*")
@@ -144,6 +144,7 @@ def test_bundle_contains_only_the_approved_six_agent_parser_files(built_bundle):
     )
     expected = sorted(deploy_manifest.PARSER_RUNTIME_FILES)
     assert agent_files == expected
+    assert "agent/logger_config.py" not in agent_files  # no code in a bundle opens a log file under the working directory
 
 
 def test_bundle_contains_deploy_tools_and_support_files(built_bundle):

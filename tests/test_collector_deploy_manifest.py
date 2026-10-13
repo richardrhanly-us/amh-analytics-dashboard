@@ -97,7 +97,10 @@ def test_fresh_install_payload_contains_collector_package_and_parser_runtime():
     assert (REPO_ROOT / "agent" / "parser" / "checkins.py") in payload
     assert (REPO_ROOT / "agent" / "parser" / "rejects.py") in payload
     assert (REPO_ROOT / "agent" / "parser" / "acs.py") in payload
-    assert (REPO_ROOT / "agent" / "logger_config.py") in payload
+    # NOT the legacy logging helper: the parsers no longer import it (they are plain named loggers), so it is no
+    # longer in the import closure this list documents -- and a Collector install has no code that opens a log
+    # file under the working directory. See tests/test_parser_logging_ownership.py.
+    assert (REPO_ROOT / "agent" / "logger_config.py") not in payload
     assert (REPO_ROOT / "agent" / "__init__.py") in payload
 
 
@@ -110,7 +113,7 @@ def test_fresh_install_payload_never_includes_tests_or_docs():
 
 
 def test_fresh_install_payload_never_includes_unrelated_agent_modules():
-    # Confirms the narrow-package rule holds: only the six verified
+    # Confirms the narrow-package rule holds: only the five verified
     # parser-runtime files from agent/, never the continuous-agent
     # runtime, never the legacy local mirror, never agent/main.py.
     payload = _fresh_install_payload()

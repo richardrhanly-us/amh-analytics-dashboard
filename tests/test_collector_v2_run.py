@@ -1115,8 +1115,9 @@ def test_the_dry_run_writes_nothing_under_the_install_root_when_run_through_the_
 
 
 def test_the_dry_run_writes_no_state_cache_quarantine_status_or_log_file_of_its_own(tmp_path):
-    """A fresh interpreter, an EMPTY working directory, no token: the ONLY files that can appear are the v1 parser modules' own empty log
-    files, which `collector.run` creates merely by being imported (it imports the v1 parsers) -- nothing the dry run itself writes."""
+    """A fresh interpreter, an EMPTY working directory, no token: NOTHING appears in it. (Until 1.0.14 importing `collector.run` created
+    the v1 parser modules' own empty `logs/parser.*.log` there, and this test had to allow for them; the parsers attach no handler now --
+    see tests/test_parser_logging_ownership.py.)"""
     import os
     import subprocess
     import sys
@@ -1136,8 +1137,7 @@ def test_the_dry_run_writes_no_state_cache_quarantine_status_or_log_file_of_its_
                             capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
     made = {p.relative_to(cwd).as_posix(): p.stat().st_size for p in cwd.rglob("*")}
-    assert set(made) <= {"logs", "logs/parser.acs.log", "logs/parser.checkins.log", "logs/parser.rejects.log"}, made
-    assert all(size == 0 for name, size in made.items() if name.endswith(".log")), made        # empty: nothing was ever logged into them
+    assert made == {}, made  # not one file or folder: not even a `logs` directory
     assert not (install / "data").exists() and not (install / "state").exists() and not (install / "logs").exists()
 
 

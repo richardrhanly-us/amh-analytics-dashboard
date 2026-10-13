@@ -195,7 +195,7 @@ def _corrections(ctx: TransformContext, patron_pk: bytes, outcome: tuple[bool, b
 
 def _transform_acs(lines: list[str], ctx: TransformContext) -> tuple[list[SafeEvent], Counters]:
     from agent.parser import (
-        acs as acs_parser,  # imported here, not at module level: importing the parsers opens their log files
+        acs as acs_parser,  # imported here, not at module level: the raw layer is loaded only when a parse actually runs
     )
 
     counters = Counters(lines_read=len(lines))
@@ -342,9 +342,11 @@ _PARSER_LOGGERS = ("parser.acs", "parser.checkins", "parser.rejects")
 
 @contextmanager
 def _parser_logs_off() -> Iterator[None]:
-    """The v1 parsers log parse summaries (including a breakdown of raw destination labels) to `logs/parser.*.log` and to stderr. v2 parses
-    quietly: nothing SortView-owned may carry raw routing text, so those loggers are disabled for exactly the duration of a parse and their
-    previous state is restored."""
+    """The v1 parsers log parse summaries (including a breakdown of raw destination labels) to three named loggers. The parsers attach no
+    handler of their own and the Collector attaches none either, so today those records have nowhere to go -- but that is a property of how
+    logging happens to be configured, not a guarantee. v2 parses quietly whatever is configured: nothing SortView-owned may carry raw
+    routing text, so those loggers are DISABLED for exactly the duration of a parse (a disabled logger drops a record before any handler
+    or any propagation to a parent logger sees it) and their previous state is restored."""
     loggers = [logging.getLogger(name) for name in _PARSER_LOGGERS]
     previous = [log.disabled for log in loggers]
     for log in loggers:

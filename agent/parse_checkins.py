@@ -5,6 +5,9 @@ from .logger_config import get_logger
 from .parser.checkins import COLUMNS, empty_df, normalize_destination, parse_lines
 
 logger = get_logger("parse_checkins")
+# The canonical parser (agent/parser/checkins.py) is a library and attaches no handler of its own. THIS module is the
+# legacy mirror's application code, so it is what gives that parser's summaries their legacy file and console output.
+get_logger("parser.checkins")
 
 # Parsing logic (COLUMNS, normalize_destination, the line parser) now lives
 # in agent/parser/checkins.py -- this module is a thin, behavior-preserving

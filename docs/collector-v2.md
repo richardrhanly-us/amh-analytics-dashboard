@@ -194,9 +194,8 @@ It has no network client, commits no cursor, keeps its patron cache and hold led
 cache, log or secret file of its own. Because everything is in memory and limited to a tail, a profile that lies outside the tail is not
 seen, so its classification counts can differ from a full run.
 
-One thing it cannot avoid: importing the v1 collector entry point (`collector.run`) imports the v1 parsers, whose own logger setup creates an
-**empty** `logs/parser.*.log` under the *current directory*. That is existing v1 behavior (a test pins that these are the only files and
-that they stay empty); run the tool from a scratch directory if it matters.
+It creates no file anywhere, the working directory included. (Before 1.0.14, merely importing the v1 parsers created an empty
+`logs/parser.*.log` under the current directory; they attach no handler of their own now -- see *Parser logging* below.)
 
 ## Onsite dry-run acceptance check: identical identities
 
@@ -266,6 +265,21 @@ run reports.
 * Deferred: `collector_installations` status linkage, retiring v1, a replacement-machine workflow, key rotation, and making
   Contract v2 the provisioning default. (The guided setup can install a new machine on Contract v2 as of 1.0.14 -- see *Fresh
   Contract v2 installation* below.)
+
+## Parser logging
+
+The canonical Tech Logic parsers (`agent/parser/*.py`) are shared library code. They log their parse summaries to three named
+loggers -- `parser.checkins`, `parser.rejects`, `parser.acs` -- and, as of 1.0.14, attach no handler, create no directory and open
+no file: importing them has no effect on the filesystem. The Collector attaches no handler to those loggers, so the summaries
+(which include a breakdown of raw destination labels) are written nowhere; under Contract v2 the three loggers are additionally
+disabled for the duration of every parse, so nothing could carry them even if a handler were added later.
+
+Before 1.0.14 the parsers configured their own handlers at import and wrote `logs\parser.*.log` under the *current directory*.
+That put three files inside a release bundle the first time `preflight` ran from it -- after which the bundle failed its own
+manifest verification, so `setup.ps1` could not be run again (or resumed) from the same folder -- and inside the install root on
+every preflight and scheduled run, where the installed-manifest check (`tools\verify-install.ps1`) reports any file the release did
+not put there. A Collector's only log is the one at its configured `log_path`. A frozen install updated from an earlier release
+has its old `<InstallRoot>\logs\parser.*.log` removed by the update, which replaces the whole install root.
 
 ## Server-enforced Contract v2 enrollment (onboarding stage A1)
 
