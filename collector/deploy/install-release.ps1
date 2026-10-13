@@ -525,8 +525,8 @@ if ($isFrozenBundle) {
 
     Write-Host "=== 1b. Canonical parser runtime (agent.parser.*) ===" -ForegroundColor Cyan
     # Copied directly from the bundle's own agent\ folder -- already curated
-    # and verified (nothing beyond agent/__init__.py, agent/logger_config.py,
-    # agent/parser/*.py) by collector/build_release.py at build time. A
+    # and verified (nothing beyond agent/__init__.py and agent/parser/*.py)
+    # by collector/build_release.py at build time. A
     # trailing \* on the source is required: copying a bare "...\agent" with
     # -Recurse into an EXISTING destination nests the source folder inside it
     # instead of overwriting its contents in place (verified empirically --

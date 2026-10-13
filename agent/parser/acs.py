@@ -6,13 +6,14 @@ the regression proof.
 
 from __future__ import annotations
 
+import logging
 import re
 
 import pandas as pd
 
-from ..logger_config import get_logger
-
-logger = get_logger("parser.acs")
+# A named logger and nothing else: this module is a LIBRARY, imported by several applications (the Collector, the
+# continuous agent, the legacy mirror). It attaches no handler and touches no file -- see agent/parser/__init__.py.
+logger = logging.getLogger("parser.acs")
 
 TAG_PATTERN = re.compile(r"([A-Z]{2})([^|]*)")
 

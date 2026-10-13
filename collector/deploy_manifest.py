@@ -16,14 +16,23 @@ closure of collector/parsers.py's `from agent.parser import ...`
 statements, confirmed by reading every file in the chain:
 
     collector/parsers.py
-      -> agent/parser/checkins.py  -> pandas (venv dep) + agent/logger_config.py
-      -> agent/parser/rejects.py   -> pandas (venv dep) + agent/logger_config.py
-      -> agent/parser/acs.py       -> pandas (venv dep) + re (stdlib) + agent/logger_config.py
+      -> agent/parser/checkins.py  -> pandas (venv dep) + logging (stdlib)
+      -> agent/parser/rejects.py   -> pandas (venv dep) + logging (stdlib)
+      -> agent/parser/acs.py       -> pandas (venv dep) + logging, re (stdlib)
       -> agent/parser/__init__.py  -> (docstring only, no imports -- still required as a package marker)
     agent/__init__.py is required too -- empty, but Python cannot import
     `agent.parser.*` as a package at all without it existing on disk.
 
-Nothing beyond this is copied -- explicitly NOT agent/config.py,
+agent/logger_config.py WAS in this closure and is no longer (1.0.14): the three
+parsers used to call its get_logger() at import, which created
+`logs/parser.*.log` under the current directory -- inside a release bundle
+during its own preflight, and inside the install root on every run. They are
+plain named loggers now (see agent/parser/__init__.py), nothing a Collector
+install runs imports that module, and so it is not shipped: a deployed
+Collector has no code that opens a log file anywhere but its configured
+log_path. tests/test_parser_logging_ownership.py holds the closure to this.
+
+Nothing beyond this is copied -- explicitly NOT agent/config.py, agent/logger_config.py,
 agent/runtime/*, agent/tailer.py, agent/state.py, agent/spool.py,
 agent/main.py, agent/discovery.py, agent/identity.py,
 agent/event_identity.py, the legacy agent/run_pipeline.py mirror, or the
@@ -44,7 +53,6 @@ from pathlib import Path
 # separator by callers via Path(...) / PowerShell's own Join-Path.
 PARSER_RUNTIME_FILES: tuple[str, ...] = (
     "agent/__init__.py",
-    "agent/logger_config.py",
     "agent/parser/__init__.py",
     "agent/parser/checkins.py",
     "agent/parser/rejects.py",

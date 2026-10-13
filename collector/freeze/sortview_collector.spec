@@ -32,8 +32,7 @@ MUST be built from the ISOLATED .pyinstaller-venv (collector/deploy/requirements
 
 EXCLUDES are defensive/documentary, not strictly load-bearing: PyInstaller
 only bundles what the dependency graph starting at dispatcher.py actually
-imports (collector.* + the narrow agent.parser.*/agent.logger_config.py
-slice, transitively) -- agent/runtime/*, agent/main.py, and SortViewAgent/
+imports (collector.* + the narrow agent.parser.* slice, transitively) -- agent/runtime/*, agent/main.py, and SortViewAgent/
 are never reachable from that graph in the first place. Listed explicitly
 anyway as a DEFENSIVE exclusion: PyInstaller excludes do not guarantee a
 build-time failure if a future accidental import (e.g. someone adding an

@@ -97,6 +97,19 @@ and `tools\prepare_v2_pilot.ps1`, which could copy it over a machine's live rule
 bundle.** A site's rules come only from the SortView API at enrollment. `tools\configure_v2.ps1` (the
 in-place conversion of an existing install) is still shipped and unchanged.
 
+### Importing the parsers no longer writes log files
+
+Found in the Windows rehearsal of this release. The shared Tech Logic parsers configured their own log handlers when they were
+imported, which created `logs\parser.acs.log`, `logs\parser.checkins.log` and `logs\parser.rejects.log` under whatever the
+current directory was. During setup that was the release bundle itself: the first preflight added three files to it, and the
+bundle then failed its own manifest verification, so `setup.ps1` could not be run a second time -- or resumed -- from the same
+folder. On an installed machine it was the install root, where `tools\verify-install.ps1` reports unexpected files.
+
+The parsers are now plain log producers: they attach no handler and touch no file, and `agent\logger_config.py` is no longer part
+of a Collector install. Manifest verification is unchanged and still refuses any unexpected file. A legacy-contract Collector no
+longer writes parser summary files under its install root (they held raw destination-label breakdowns outside the configured log
+path, and grew without bound); its `collector.log` is unchanged. Contract v2 parsing was already silent and still is.
+
 ## Compatibility
 
 - An existing install is updated with `tools\update.ps1` as before. A legacy config runs and preflights as

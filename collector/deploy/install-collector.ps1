@@ -7,7 +7,7 @@
     1. Creates the install root (-InstallRoot) and copies collector/*.py
        PLUS the narrow canonical-parser runtime slice of agent/ that
        collector/parsers.py actually imports (agent/__init__.py,
-       agent/logger_config.py, agent/parser/*.py -- see
+       agent/parser/*.py -- see
        collector/deploy_manifest.py, the single source of truth for
        exactly this list). Never tests/, never this deploy/ folder
        itself, never any other part of agent/ (no agent/runtime/*, no
@@ -115,8 +115,8 @@ Get-ChildItem -Path $SourceCollectorDir -Filter "*.py" -File | ForEach-Object {
 Write-Host "Copied collector\*.py to $TargetCollectorDir"
 
 Write-Host "=== 1b. Canonical parser runtime (agent.parser.*) ===" -ForegroundColor Cyan
-# collector/parsers.py imports agent.parser.{checkins,rejects,acs} (and,
-# transitively, agent/logger_config.py) -- collector/deploy_manifest.py
+# collector/parsers.py imports agent.parser.{checkins,rejects,acs} (and
+# nothing else of agent/) -- collector/deploy_manifest.py
 # is the single, unit-tested source of truth for exactly which files that
 # requires, so this list can never silently drift from what
 # collector/parsers.py actually imports. Deliberately NOT all of agent/
