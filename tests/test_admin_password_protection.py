@@ -177,22 +177,27 @@ def test_the_cached_settings_hold_no_security_block_password_or_hash(settings_se
     assert result["TRANSIT_HOME_LABEL"] == "Home"  # everything the dashboard actually reads is intact
 
 
-def test_the_file_fallback_is_stripped_too_even_if_the_file_carries_a_security_block(settings_service, monkeypatch, tmp_path):
+def test_file_backed_settings_are_stripped_too_and_a_failed_database_load_never_reads_the_file(settings_service, monkeypatch, tmp_path):
     settings_file = tmp_path / "branch_settings.json"
     settings_file.write_text(json.dumps({"library": {"library_name": "Fallback Library"},
                                          "security": {"admin_enabled": True, "admin_password": PW}}), encoding="utf-8")
 
+    # Asked for explicitly (no organization): the file is read, and its security block is dropped.
     from_file = settings_service.load_runtime_settings(settings_file, org_slug=None)
+    assert from_file["source"] == "file" and from_file["LIBRARY_NAME"] == "Fallback Library"
     assert PW not in repr(from_file) and "security" not in from_file["branch_settings"]
 
     def unavailable(org_slug, branch_slug=None):
         raise RuntimeError("db unavailable")
 
+    # For a named organization whose database load fails, the file is NOT an answer: the load fails closed, and
+    # neither the file's password nor anything else of it is in what is raised.
     monkeypatch.setattr(settings_service, "get_effective_settings", unavailable)
     settings_service.load_runtime_settings.clear()
-    fallback = settings_service.load_runtime_settings(settings_file, org_slug="acme", branch_slug="main")
-    assert fallback["source"] == "file_fallback" and fallback["LIBRARY_NAME"] == "Fallback Library"
-    assert PW not in repr(fallback) and "security" not in fallback["branch_settings"]
+    with pytest.raises(settings_service.SettingsUnavailableError) as excinfo:
+        settings_service.load_runtime_settings(settings_file, org_slug="acme", branch_slug="main")
+    assert str(excinfo.value) == "database_unavailable"
+    assert PW not in repr(excinfo.value) and "Fallback Library" not in repr(excinfo.value)
 
 
 def test_no_tracked_settings_file_carries_an_admin_password():

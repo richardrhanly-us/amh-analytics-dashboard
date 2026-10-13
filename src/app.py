@@ -56,7 +56,7 @@ from services.permission_service import (
 )
 from services.privacy_hardening import install_streamlit_log_scrubber
 from services.readiness_service import get_branch_readiness
-from services.settings_service import load_runtime_settings
+from services.settings_service import SettingsUnavailableError, load_runtime_settings
 from services.sidebar_service import render_main_sidebar
 from services.streamlit_access_adapter import (
     get_org_branches,
@@ -310,6 +310,8 @@ if st.session_state["auth_user"] is None:
 #***************************************************************
 
 SETTINGS_FILE = Path(__file__).parent / "branch_settings.json"
+# Fixed and support-safe: what is shown when the selected organization's settings cannot be loaded. Never the error.
+SETTINGS_UNAVAILABLE_MESSAGE = "Settings could not be loaded right now. Please try again in a few minutes."
 
 auth_user = st.session_state["auth_user"]
 auth_service.enforce_active_session(auth_user)
@@ -556,12 +558,20 @@ selected_branch_slug = st.session_state["selected_branch_slug"]
 # routing rules, and display names.
 #***************************************************************
 
-app_settings = load_runtime_settings(
-    settings_file=SETTINGS_FILE,
-    org_slug=selected_org_slug,
-    branch_slug=selected_branch_slug,
-    prefer_database=True,
-)
+# FAIL CLOSED: if this organization's settings cannot be loaded, the dashboard stops here. Nothing below -- no view,
+# no report -- is drawn from any other settings, and SETTINGS_FILE (one library's own configuration) is never read
+# in their place. The failure itself is already logged, as a safe summary, by the settings service.
+try:
+    app_settings = load_runtime_settings(
+        settings_file=SETTINGS_FILE,
+        org_slug=selected_org_slug,
+        branch_slug=selected_branch_slug,
+        prefer_database=True,
+    )
+except SettingsUnavailableError:
+    st.error(SETTINGS_UNAVAILABLE_MESSAGE)
+    st.stop()
+
 LIBRARY_SETTINGS = app_settings["LIBRARY_SETTINGS"]
 TRANSIT_SETTINGS = app_settings["TRANSIT_SETTINGS"]
 

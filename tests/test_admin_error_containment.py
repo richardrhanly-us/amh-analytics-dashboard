@@ -926,21 +926,25 @@ def _settings_file(tmp_path):
 
 
 def test_settings_error_is_a_stable_code_never_exception_text(settings_service, monkeypatch, tmp_path, caplog):
+    """A failed database load used to be answered with the settings file (and a `settings_error` key). It now FAILS
+    CLOSED: SettingsUnavailableError, whose whole text is the same stable code, and the file is never used."""
     monkeypatch.setattr(settings_service, "get_effective_settings", _raise_backend_error)
 
-    with caplog.at_level(logging.DEBUG, logger="sortview.settings"):
-        result = settings_service.load_runtime_settings(_settings_file(tmp_path), org_slug="acme", branch_slug="main")
+    with caplog.at_level(logging.DEBUG, logger="sortview.settings"), pytest.raises(settings_service.SettingsUnavailableError) as excinfo:
+        settings_service.load_runtime_settings(_settings_file(tmp_path), org_slug="acme", branch_slug="main")
 
-    assert result["source"] == "file_fallback" and result["LIBRARY_NAME"] == "Fallback Library"  # fallback unchanged
-    assert result["settings_error"] == "database_unavailable" == settings_service.SETTINGS_ERROR_DATABASE_UNAVAILABLE
-    assert _leaks(repr(result)) == []  # the whole dict is what st.cache_data keeps process-wide
-    # the failure used to be silent; it is now diagnosable, as a safe summary
-    assert ("Database settings load failed; using the settings file | error_type=sqlalchemy.exc.DataError "
+    error = excinfo.value
+    assert str(error) == error.code == "database_unavailable" == settings_service.SETTINGS_ERROR_DATABASE_UNAVAILABLE
+    assert error.__cause__ is None and error.__context__ is None  # the driver's exception does not ride along
+    assert _leaks(repr(error) + str(error)) == [] and "Fallback Library" not in repr(error)
+    # the failure is diagnosable, as a safe summary
+    assert ("Database settings load failed; no settings are available | error_type=sqlalchemy.exc.DataError "
             "sqlstate=22P02") in caplog.text
     assert [n for n, c in CANARIES.items() if c in caplog.text] == [] and "Traceback" not in caplog.text
+    assert "Fallback Library" not in caplog.text
 
 
-def test_the_cached_settings_dict_holds_no_exception_text(settings_service, monkeypatch, tmp_path):
+def test_a_failed_settings_load_caches_nothing_so_no_exception_text_or_file_value_is_kept(settings_service, monkeypatch, tmp_path):
     calls = []
 
     def failing(org_slug, branch_slug=None):
@@ -950,12 +954,15 @@ def test_the_cached_settings_dict_holds_no_exception_text(settings_service, monk
     monkeypatch.setattr(settings_service, "get_effective_settings", failing)
     settings_file = _settings_file(tmp_path)
 
-    first = settings_service.load_runtime_settings(settings_file, org_slug="acme", branch_slug="main")
-    second = settings_service.load_runtime_settings(settings_file, org_slug="acme", branch_slug="main")
+    for _ in range(2):
+        with pytest.raises(settings_service.SettingsUnavailableError):
+            settings_service.load_runtime_settings(settings_file, org_slug="acme", branch_slug="main")
 
-    assert len(calls) == 1  # the second call was served from the process-wide cache
-    assert first["settings_error"] == second["settings_error"] == "database_unavailable"
-    assert _leaks(repr(second)) == []
+    assert len(calls) == 2  # nothing was cached process-wide for the failure: the second call asked the database again
+    monkeypatch.setattr(settings_service, "get_effective_settings", _effective)
+    recovered = settings_service.load_runtime_settings(settings_file, org_slug="acme", branch_slug="main")
+    assert recovered["source"] == "database" and recovered["LIBRARY_NAME"] == "Acme"
+    assert _leaks(repr(recovered)) == [] and "Fallback Library" not in repr(recovered)
 
 
 def test_settings_have_no_error_key_when_the_database_load_succeeds(settings_service, monkeypatch, tmp_path):
