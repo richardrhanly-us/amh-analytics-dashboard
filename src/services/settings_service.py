@@ -21,11 +21,22 @@ from services.tenant_service import get_effective_settings
 
 logger = logging.getLogger("sortview.settings")
 
-# What `settings_error` holds when the database settings could not be loaded and the file fallback
-# was used instead. It is a stable code, never exception text: the settings dict is cached
-# process-wide by st.cache_data for _SETTINGS_CACHE_TTL_SECONDS, and a driver's error message
-# quotes SQL, bound values and the failing row. The exception itself is logged as a safe summary.
+# The one thing SettingsUnavailableError says. It is a stable code, never exception text: a driver's error message
+# quotes SQL, bound values and the failing row. The exception that caused it is logged as a safe summary.
 SETTINGS_ERROR_DATABASE_UNAVAILABLE = "database_unavailable"
+
+
+class SettingsUnavailableError(RuntimeError):
+    """An organization's settings could not be loaded from the database, and so there are none: NOTHING ELSE IS USED
+    IN THEIR PLACE. The settings file beside the dashboard holds one library's own configuration, and is never an
+    answer for another organization.
+
+    `code` -- and the message, which is that code and nothing else -- is the fixed SETTINGS_ERROR_DATABASE_UNAVAILABLE,
+    whatever went wrong: no organization, branch, settings value or database error text travels in it."""
+
+    def __init__(self) -> None:
+        super().__init__(SETTINGS_ERROR_DATABASE_UNAVAILABLE)
+        self.code = SETTINGS_ERROR_DATABASE_UNAVAILABLE
 
 # load_runtime_settings (via get_effective_settings: 4 sequential
 # queries -- org, branch, subscription, entitlements) previously ran on
@@ -35,7 +46,8 @@ SETTINGS_ERROR_DATABASE_UNAVAILABLE = "database_unavailable"
 # ttl=120 keeps it feeling live for anyone actively editing settings
 # while eliminating repeat round trips otherwise. Cache key is
 # (settings_file, org_slug, branch_slug, prefer_database), so this is
-# naturally tenant- and branch-scoped.
+# naturally tenant- and branch-scoped. Only a RETURNED result is cached:
+# a load that raises SettingsUnavailableError caches nothing.
 _SETTINGS_CACHE_TTL_SECONDS = 120
 
 
@@ -184,17 +196,26 @@ def load_runtime_settings(
     branch_slug: str | None = None,
     prefer_database: bool = True,
 ) -> dict:
+    """An organization's settings from the database, or -- only when no organization is named, or the caller asked
+    for the file with prefer_database=False -- the settings file's.
+
+    FAIL CLOSED. For a named organization, ANY failure to load its settings (the database, a missing organization or
+    branch, stored settings that cannot be read) raises SettingsUnavailableError. The settings file is never read in
+    their place: it is one library's own configuration. Nothing is cached for a failed load, so the next call tries
+    the database again."""
     if prefer_database and org_slug:
+        loaded = None
         try:
-            return load_app_settings_from_db(
+            loaded = load_app_settings_from_db(
                 org_slug=org_slug,
                 branch_slug=branch_slug,
             )
         except Exception as exc:
-            log_safe_exception(logger, "Database settings load failed; using the settings file", exc)
-            fallback = load_app_settings_from_file(settings_file)
-            fallback["source"] = "file_fallback"
-            fallback["settings_error"] = SETTINGS_ERROR_DATABASE_UNAVAILABLE
-            return fallback
+            log_safe_exception(logger, "Database settings load failed; no settings are available", exc)
+        # Raised from outside the handler: the original exception (a driver's message quotes SQL and values) must
+        # not ride along as this one's context.
+        if loaded is None:
+            raise SettingsUnavailableError
+        return loaded
 
     return load_app_settings_from_file(settings_file)
