@@ -2,7 +2,8 @@ import { useOutletContext } from 'react-router'
 
 import { LiveToday } from '../liveToday/LiveToday.tsx'
 import { hasTransits } from './capabilities.ts'
-import { sorterStatusLabel } from './labels.ts'
+import { FirstDataNotice } from './FirstDataNotice.tsx'
+import { isWaitingForFirstData, sorterStatusLabel } from './labels.ts'
 import type { SorterContext } from './SorterLayout.tsx'
 
 /**
@@ -30,13 +31,18 @@ export function SorterPage() {
           shown separately.
         </p>
       )}
-      {/* Keyed by sorter, so another sorter starts as a new dashboard: running, and with nothing carried over. */}
-      <LiveToday
-        key={`${organization.slug}/${sorter.slug}`}
-        orgSlug={organization.slug}
-        branchSlug={sorter.host_branch.slug}
-        transits={hasTransits(organization)}
-      />
+      {isWaitingForFirstData(sorter) ? (
+        // Nothing to show yet, so nothing is asked for: no zeros, and no pipeline state in place of the reason.
+        <FirstDataNotice />
+      ) : (
+        // Keyed by sorter, so another sorter starts as a new dashboard: running, and with nothing carried over.
+        <LiveToday
+          key={`${organization.slug}/${sorter.slug}`}
+          orgSlug={organization.slug}
+          branchSlug={sorter.host_branch.slug}
+          transits={hasTransits(organization)}
+        />
+      )}
     </>
   )
 }
