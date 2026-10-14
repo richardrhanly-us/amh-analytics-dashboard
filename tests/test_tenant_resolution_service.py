@@ -238,7 +238,7 @@ def test_an_organization_without_an_operational_customer_id_does_not_resolve(db)
     assert resolve_operational_tenant(ALICE, "acme", "main") is None
 
 
-@pytest.mark.parametrize("status", ["active", "trial", "suspended", "cancelled", "inactive", ""])
+@pytest.mark.parametrize("status", ["active", "trial", "suspended", "cancelled", "inactive", "", "Active"])
 def test_the_access_mode_rule_agrees_with_access_service_for_every_status(db, status):
     db.run("UPDATE organizations SET status = :s WHERE slug = 'acme'", s=status)
 

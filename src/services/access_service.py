@@ -181,6 +181,17 @@ def user_can_access_org(user_id: int, org_slug: str) -> bool:
 #
 #***************************************************************
 
+def access_mode_for_organization_status(status: object) -> str:
+    """The organization lifecycle policy: the access an organization's status allows -- "full", "read_only" or
+    "blocked". Pure. This is the one copy of the rule; tenant_resolution_service applies it too. A status is matched
+    exactly, so anything not listed (cancelled, empty, missing, another spelling) is "blocked"."""
+    if status in ("active", "trial"):
+        return "full"
+    if status == "suspended":
+        return "read_only"
+    return "blocked"
+
+
 def get_org_access_mode(org_slug: str) -> str:
     sql = text("""
         SELECT status
@@ -196,9 +207,4 @@ def get_org_access_mode(org_slug: str) -> str:
     if row is None:
         return "blocked"
 
-    status = row[0]
-    if status in ("active", "trial"):
-        return "full"
-    if status == "suspended":
-        return "read_only"
-    return "blocked"
+    return access_mode_for_organization_status(row[0])
