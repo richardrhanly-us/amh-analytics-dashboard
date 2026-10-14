@@ -97,7 +97,9 @@ def _build_engine(monkeypatch, *, fact_tables: bool):
 
     ddl = [
         "CREATE TABLE organizations (id INTEGER PRIMARY KEY, slug TEXT, status TEXT, operational_customer_id INTEGER)",
-        "CREATE TABLE branches (id INTEGER PRIMARY KEY, organization_id INTEGER, status TEXT, operational_branch_id INTEGER)",
+        ("CREATE TABLE branches (id INTEGER PRIMARY KEY, organization_id INTEGER, status TEXT, operational_branch_id INTEGER,"
+         " onboarding_status TEXT NOT NULL DEFAULT 'pending', onboarding_message TEXT,"
+         " onboarding_updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
         "CREATE TABLE collector_installations (id INTEGER PRIMARY KEY, organization_id INTEGER, branch_id INTEGER, status TEXT)",
         (
             "CREATE TABLE agent_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, token_hash TEXT, customer_id INTEGER,"
@@ -111,7 +113,8 @@ def _build_engine(monkeypatch, *, fact_tables: bool):
         for statement in ddl:
             conn.execute(text(statement))
         conn.execute(text("INSERT INTO organizations VALUES (1, 'lib', 'active', :c)"), {"c": CUSTOMER})
-        conn.execute(text("INSERT INTO branches VALUES (1, 1, 'active', :b)"), {"b": BRANCH})
+        conn.execute(text("INSERT INTO branches (id, organization_id, status, operational_branch_id) VALUES (1, 1, 'active', :b)"),
+                     {"b": BRANCH})
         conn.execute(
             text("INSERT INTO agent_tokens (token_hash, customer_id, branch_id, description, is_active)"
                  " VALUES (:h, :c, :b, 'test token', 1)"),

@@ -44,6 +44,9 @@ VALID_TOKEN_ROW = {
     "description": "test agent",
     "organization_status": "active",
     "branch_status": "active",
+    # What the real lookup also resolves (the SaaS ids the branch-readiness transition names the branch by).
+    "resolved_organization_id": 1,
+    "resolved_branch_id": 5,
 }
 
 
@@ -226,6 +229,8 @@ SECOND_BRANCH_TOKEN_ROW = {
     "description": "second branch test agent",
     "organization_status": "active",
     "branch_status": "active",
+    "resolved_organization_id": 2,
+    "resolved_branch_id": 9,
 }
 
 
