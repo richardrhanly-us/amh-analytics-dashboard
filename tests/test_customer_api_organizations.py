@@ -49,9 +49,9 @@ BRANCHES = [
 ]
 # One registered sorter, at the main branch. East has none: it is a branch, not a machine.
 SORTERS = [SorterSite(slug="main", name="Main Library AMH", host_branch_slug="main", host_branch_name="Main",
-                      status="active", collector_count=1)]
+                      status="active", collector_count=1, onboarding_status="ready")]
 SORTERS_JSON = [{"slug": "main", "name": "Main Library AMH", "host_branch": {"slug": "main", "name": "Main"},
-                 "status": "active", "collector_count": 1}]
+                 "status": "active", "collector_count": 1, "onboarding_status": "ready"}]
 SUBSCRIPTION = {"id": 500001, "status": "active", "started_at": None, "ends_at": None,
                 "plan_id": 400001, "plan_code": "pro", "plan_name": "Pro"}
 ENTITLEMENTS = {"exports": {"enabled": True, "limit_value": None},
@@ -475,7 +475,8 @@ def test_the_organization_routes_are_read_only():
 # =====================================================================================================================
 
 MEMBERSHIP_ROWS = [dict(ACME), dict(BETA)]
-INSTALLATION_ROWS = [{"name": "Main Library AMH", "status": "active", "branch_slug": "main", "branch_name": "Main"}]
+INSTALLATION_ROWS = [{"name": "Main Library AMH", "status": "active", "branch_slug": "main", "branch_name": "Main",
+                      "onboarding_status": "ready", "onboarding_message": "MESSAGE-CANARY"}]
 
 
 def _real_core(monkeypatch, results) -> FakeEngine:
@@ -575,9 +576,9 @@ def test_the_routes_use_the_core_services_and_never_a_streamlit_adapter(api, mon
 # Sorting machines: the organization's registered sorter sites
 # =====================================================================================================================
 
-def _site(slug, name, branch_name, status="active", collectors=1) -> SorterSite:
+def _site(slug, name, branch_name, status="active", collectors=1, onboarding="ready") -> SorterSite:
     return SorterSite(slug=slug, name=name, host_branch_slug=slug, host_branch_name=branch_name, status=status,
-                      collector_count=collectors)
+                      collector_count=collectors, onboarding_status=onboarding)
 
 
 def test_the_detail_lists_the_organizations_sorters_separately_from_its_branches(api, monkeypatch):
@@ -591,13 +592,13 @@ def test_the_detail_lists_the_organizations_sorters_separately_from_its_branches
     assert [sorter["slug"] for sorter in body["sorters"]] == ["main"]
 
 
-def test_a_sorter_carries_exactly_its_five_public_fields(api, monkeypatch):
+def test_a_sorter_carries_exactly_its_six_public_fields(api, monkeypatch):
     Services(monkeypatch)
 
     response = api.get("/api/organizations/acme", headers=COOKIE)
 
     for sorter in response.json()["sorters"]:
-        assert list(sorter) == ["slug", "name", "host_branch", "status", "collector_count"]
+        assert list(sorter) == ["slug", "name", "host_branch", "status", "collector_count", "onboarding_status"]
         assert list(sorter["host_branch"]) == ["slug", "name"]
     _assert_no_internal_or_operational_identifier(response)
     for leaked in ("hostname", "collector_version", "installation_id", "token", "enrollment", "last_seen", "installed_at"):
@@ -636,6 +637,57 @@ def test_a_site_with_two_collectors_is_one_sorter_marked_as_combined(api, monkey
 
     assert len(sorters) == 1
     assert sorters[0]["collector_count"] == 2
+
+
+def test_each_sorter_says_whether_its_site_is_ready_or_still_waiting_for_its_first_data(api, monkeypatch):
+    Services(monkeypatch, sorters=[
+        _site("central", "Central Library AMH", "Central Library", onboarding="ready"),
+        _site("north", "North AMH", "North", status="provisioning", onboarding="pending"),
+    ])
+
+    sorters = api.get("/api/organizations/acme", headers=COOKIE).json()["sorters"]
+
+    assert [(s["slug"], s["status"], s["onboarding_status"]) for s in sorters] == [
+        ("central", "active", "ready"), ("north", "provisioning", "pending"),
+    ]
+
+
+@pytest.mark.parametrize(("stored", "presented"), [
+    ("ready", "ready"), ("pending", "pending"), ("paused", "pending"), ("", "pending"), ("READY", "pending"),
+    ("something_new", "pending"),
+])
+def test_a_stored_onboarding_status_reaches_the_browser_as_ready_or_pending_only(api, monkeypatch, stored, presented):
+    """Through the REAL inventory read: whatever text is stored, the browser is told one of two words."""
+    results = _detail_results()
+    results[-1] = FakeQueryResult(all_rows=[{**INSTALLATION_ROWS[0], "onboarding_status": stored}])
+    _real_core(monkeypatch, results)
+
+    response = api.get("/api/organizations/acme", headers=COOKIE)
+
+    assert response.status_code == 200
+    assert [sorter["onboarding_status"] for sorter in response.json()["sorters"]] == [presented]
+
+
+def test_the_onboarding_message_and_time_are_never_sent(api, monkeypatch):
+    _real_core(monkeypatch, _detail_results())
+
+    response = api.get("/api/organizations/acme", headers=COOKIE)
+
+    assert response.status_code == 200
+    assert "MESSAGE-CANARY" not in response.text
+    for leaked in ("onboarding_message", "onboarding_updated_at"):
+        assert leaked not in response.text
+    # Branches are unchanged: setup progress is told per sorter site only.
+    assert all(set(branch) == {"slug", "name", "is_primary"} for branch in response.json()["branches"])
+
+
+def test_an_onboarding_status_that_was_not_normalized_is_a_500_never_passed_through(api, monkeypatch):
+    Services(monkeypatch, sorters=[_site("main", "Main Library AMH", "Main", onboarding="paused")])
+
+    response = TestClient(main.app, raise_server_exceptions=False).get("/api/organizations/acme", headers=COOKIE)
+
+    assert response.status_code == 500
+    assert response.json() == INTERNAL_ERROR
 
 
 def test_a_status_the_contract_does_not_have_is_a_500_never_a_sorter(api, monkeypatch):

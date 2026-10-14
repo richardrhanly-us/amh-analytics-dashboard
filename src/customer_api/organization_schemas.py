@@ -46,6 +46,10 @@ class SorterHostBranch(_ResponseModel):
 # "retired" is deliberately not a value: a retired machine is never returned at all.
 SorterStatus = Literal["active", "provisioning", "inactive"]
 
+# The host branch's setup progress, as services.branch_readiness.normalize_onboarding_status presents it: "ready"
+# once its first data has arrived, "pending" before. Whatever else is stored is "pending"; nothing is passed through.
+OnboardingStatus = Literal["pending", "ready"]
+
 
 class SorterSummary(_ResponseModel):
     """One SortView sorter site of the organization (services.sorter_inventory_service).
@@ -54,17 +58,19 @@ class SorterSummary(_ResponseModel):
     reads are addressed by; today it is the host branch's slug. `name` is the
     machine's registered name. `collector_count` is how many collectors can
     report for the site: above one, their figures are combined and cannot be
-    separated.
+    separated. `onboarding_status` is the host branch's setup progress: it is
+    information, and the site's reads are open whichever it is.
 
-    No installation id, hostname, collector version or credential has a field
-    here. A place a sorter merely routes items TO is not a sorter and is never
-    in this list."""
+    No installation id, hostname, collector version, credential or onboarding
+    message has a field here. A place a sorter merely routes items TO is not a
+    sorter and is never in this list."""
 
     slug: str
     name: str
     host_branch: SorterHostBranch
     status: SorterStatus
     collector_count: int
+    onboarding_status: OnboardingStatus
 
 
 class SubscriptionSummary(_ResponseModel):

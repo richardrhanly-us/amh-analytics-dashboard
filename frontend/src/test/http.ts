@@ -98,8 +98,8 @@ export const NORTHBRIDGE_DETAIL = {
     { slug: 'westside', name: 'Westside', is_primary: false },
   ],
   sorters: [
-    { slug: 'central', name: 'Central Library AMH', host_branch: { slug: 'central', name: 'Central Branch' }, status: 'active', collector_count: 1 },
-    { slug: 'east-side', name: 'East Side AMH', host_branch: { slug: 'east-side', name: 'East Side Branch' }, status: 'active', collector_count: 1 },
+    { slug: 'central', name: 'Central Library AMH', host_branch: { slug: 'central', name: 'Central Branch' }, status: 'active', collector_count: 1, onboarding_status: 'ready' },
+    { slug: 'east-side', name: 'East Side AMH', host_branch: { slug: 'east-side', name: 'East Side Branch' }, status: 'active', collector_count: 1, onboarding_status: 'ready' },
   ],
   subscription: { plan_code: 'standard', plan_name: 'Standard', status: 'active' },
   entitlements: {
@@ -116,7 +116,7 @@ export const RIVERSIDE_DETAIL = {
   ...RIVERSIDE,
   branches: [{ slug: 'main', name: 'Riverside Main', is_primary: true }],
   sorters: [
-    { slug: 'main', name: 'Riverside Main AMH', host_branch: { slug: 'main', name: 'Riverside Main' }, status: 'active', collector_count: 1 },
+    { slug: 'main', name: 'Riverside Main AMH', host_branch: { slug: 'main', name: 'Riverside Main' }, status: 'active', collector_count: 1, onboarding_status: 'ready' },
   ],
   subscription: null,
   // As Northbridge: what a plan without these changes is tested on its own (capabilities.test.tsx).

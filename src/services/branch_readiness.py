@@ -18,6 +18,12 @@ a stored status that happens to spell one of their codes is still read as a stat
 This is the DASHBOARD's rule. The customer API's tenant resolution (services.tenant_resolution_service) does not
 read onboarding_status; that difference is deliberate and is not decided here.
 
+    normalize_onboarding_status(stored) -> "ready" | "pending"
+
+How a branch's stored onboarding_status is SHOWN to the customer API: exactly "ready" is "ready", and anything else
+-- NULL, empty, "paused", a value of another case, one never heard of -- is "pending". Presentation only: it reads
+nothing, writes nothing and grants or refuses nothing.
+
 Pure: no database, no framework, no environment, no messages. What each code says to a person is
 services.readiness_service's.
 """
@@ -26,8 +32,15 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Literal
 
 READY = "ready"
+
+OnboardingStatus = Literal["pending", "ready"]
+
+
+def normalize_onboarding_status(value: object) -> OnboardingStatus:
+    return "ready" if value == READY else "pending"
 
 
 @dataclass(frozen=True, slots=True)

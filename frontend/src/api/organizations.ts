@@ -37,6 +37,13 @@ export const SORTER_STATUSES = ['active', 'provisioning', 'inactive'] as const
 export type SorterStatus = (typeof SORTER_STATUSES)[number]
 
 /**
+ * How far the sorter's site has got with setup: "ready" once its first data has arrived, "pending" before. The API
+ * sends one of these two whatever it has stored. Information only: a pending sorter's figures can still be read.
+ */
+export const ONBOARDING_STATUSES = ['pending', 'ready'] as const
+export type OnboardingStatus = (typeof ONBOARDING_STATUSES)[number]
+
+/**
  * One sorting machine the organization runs SortView on -- a registered
  * installation, never a branch that merely exists or a place items are routed
  * to. More exactly it is a sorter SITE: the API gives one entry per host
@@ -52,6 +59,8 @@ export interface SorterSummary {
   status: SorterStatus
   /** How many collectors can report for the site. Above one, their figures are combined and inseparable. */
   collector_count: number
+  /** The site's setup progress. Only the organization's own list says it; its reports do not. */
+  onboarding_status: OnboardingStatus
 }
 
 export interface SubscriptionSummary {
@@ -142,7 +151,8 @@ export function parseSorterIdentity(value: unknown): Pick<SorterSummary, 'slug' 
   }
 }
 
-export function parseSorter(value: unknown): SorterSummary {
+/** What the organization and its reports both say about a sorter. */
+export function parseSorter(value: unknown): Omit<SorterSummary, 'onboarding_status'> {
   const { status, collector_count } = record(value)
   if (
     !SORTER_STATUSES.includes(status as SorterStatus) ||
@@ -155,13 +165,22 @@ export function parseSorter(value: unknown): SorterSummary {
   return { ...parseSorterIdentity(value), status: status as SorterStatus, collector_count }
 }
 
+/** A sorter as the organization lists it, with its setup progress. */
+function parseOrganizationSorter(value: unknown): SorterSummary {
+  const { onboarding_status } = record(value)
+  if (!ONBOARDING_STATUSES.includes(onboarding_status as OnboardingStatus)) {
+    throw unexpectedResponse(200)
+  }
+  return { ...parseSorter(value), onboarding_status: onboarding_status as OnboardingStatus }
+}
+
 /**
  * The sorters of one organization. Two with one slug could not be told apart
  * in an address, and two at one host branch would be two dashboards of the
  * very same figures: neither is a list this app can show truthfully.
  */
 function parseSorters(value: unknown): SorterSummary[] {
-  const sorters = list(value, parseSorter)
+  const sorters = list(value, parseOrganizationSorter)
   const distinct = (keys: string[]) => new Set(keys).size === keys.length
   if (!distinct(sorters.map((sorter) => sorter.slug)) || !distinct(sorters.map((sorter) => sorter.host_branch.slug))) {
     throw unexpectedResponse(200)

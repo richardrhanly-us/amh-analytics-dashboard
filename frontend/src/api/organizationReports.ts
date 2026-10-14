@@ -23,8 +23,8 @@ import { agrees, dayNumber, days, range, reasons, sum, type ReportRange } from '
 
 export type SorterIdentity = Pick<SorterSummary, 'slug' | 'name' | 'host_branch'>
 
-/** One sorter's headline counts, beside what the organization's own list says about it. */
-export interface OrganizationSorterOverview extends SorterSummary {
+/** One sorter's headline counts, beside what the organization's own list says about it (bar its setup progress). */
+export interface OrganizationSorterOverview extends Omit<SorterSummary, 'onboarding_status'> {
   available: boolean
   checkin_count: number
   /** Dates in the range on which THIS sorter had a check-in. */

@@ -134,6 +134,7 @@ def create_organization_router() -> APIRouter:
                     host_branch=SorterHostBranch(slug=site.host_branch_slug, name=site.host_branch_name),
                     status=site.status,
                     collector_count=site.collector_count,
+                    onboarding_status=site.onboarding_status,
                 )
                 for site in sorter_inventory_service.list_sorter_sites(org_slug)
             ],

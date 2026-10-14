@@ -731,7 +731,7 @@ describe('slugs in addresses', () => {
           ...NORTHBRIDGE_DETAIL,
           slug: odd.slug,
           branches: [{ slug: 'a b', name: 'Odd Branch', is_primary: false }],
-          sorters: [{ slug: 'a b', name: 'Odd Sorter', host_branch: { slug: 'a b', name: 'Odd Branch' }, status: 'active', collector_count: 1 }],
+          sorters: [{ slug: 'a b', name: 'Odd Sorter', host_branch: { slug: 'a b', name: 'Odd Branch' }, status: 'active', collector_count: 1, onboarding_status: 'ready' }],
         }),
       ...liveRoutes('north bridge?x', 'a b'),
     })
@@ -761,6 +761,7 @@ const sorter = (slug: string, name: string, hostName: string, changes: Record<st
   host_branch: { slug, name: hostName },
   status: 'active',
   collector_count: 1,
+  onboarding_status: 'ready',
   ...changes,
 })
 
@@ -846,7 +847,7 @@ describe('the sorting machines of an organization', () => {
           sorters: [
             sorter('central', 'Central Library AMH', 'Central Library'),
             sorter('westside', 'Westside AMH', 'Westside', { status: 'provisioning' }),
-            sorter('north', 'North Sorter', 'North', { status: 'inactive', collector_count: 0 }),
+            sorter('north', 'North Sorter', 'North', { status: 'inactive', collector_count: 0, onboarding_status: 'ready' }),
           ],
         }),
     })
@@ -883,7 +884,7 @@ describe('the sorting machines of an organization', () => {
     ['two sorters at one host branch', [sorter('central', 'A', 'Central'), { ...sorter('other', 'B', 'Central'), host_branch: { slug: 'central', name: 'Central' } }]],
     ['a sorter with no slug', [sorter('', 'A', 'Central')]],
     ['a sorter with no name', [sorter('central', '   ', 'Central')]],
-    ['a sorter with no host branch', [{ slug: 'central', name: 'A', status: 'active', collector_count: 1 }]],
+    ['a sorter with no host branch', [{ slug: 'central', name: 'A', status: 'active', collector_count: 1, onboarding_status: 'ready' }]],
     ['a status this app does not know', [sorter('central', 'A', 'Central', { status: 'retired' })]],
     ['a collector count that is not a count', [sorter('central', 'A', 'Central', { collector_count: -1 })]],
     ['sorters that are not a list', { central: sorter('central', 'A', 'Central') }],
@@ -990,7 +991,7 @@ describe('a sorter page', () => {
   it('says when several collectors report for the site, and that their figures are combined', async () => {
     serveMetro({
       'GET /api/organizations/metro': () =>
-        jsonResponse(200, { ...METRO_DETAIL, sorters: [sorter('central', 'Central Library AMH', 'Central Library', { collector_count: 2 })] }),
+        jsonResponse(200, { ...METRO_DETAIL, sorters: [sorter('central', 'Central Library AMH', 'Central Library', { collector_count: 2, onboarding_status: 'ready' })] }),
     })
 
     renderApp('/organizations/metro/sorters/central')
@@ -1132,7 +1133,7 @@ describe('the address a sorter used to have', () => {
       'GET /api/organizations/metro': () =>
         jsonResponse(200, {
           ...METRO_DETAIL,
-          sorters: [{ slug: 'amh-1', name: 'Central Library AMH', host_branch: { slug: 'central', name: 'Central Library' }, status: 'active', collector_count: 1 }],
+          sorters: [{ slug: 'amh-1', name: 'Central Library AMH', host_branch: { slug: 'central', name: 'Central Library' }, status: 'active', collector_count: 1, onboarding_status: 'ready' }],
         }),
     })
 

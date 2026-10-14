@@ -52,7 +52,7 @@ const BUSY: ReportFixture = { ...REPORT, checkins: () => 1274, rejects: () => 13
 /** A hundred a day, a tenth to Westside and nowhere else, none rejected. */
 const EAST: ReportFixture = { ...REPORT, checkins: () => 100, rejects: () => 0, transit: [['westside', 'Westside', 0.1]], home: 'East Side' }
 /** Registered, and with nothing to read yet. */
-const NORTH = { slug: 'north', name: 'North Sorter', host_branch: { slug: 'north', name: 'North Branch' }, status: 'active', collector_count: 1 }
+const NORTH = { slug: 'north', name: 'North Sorter', host_branch: { slug: 'north', name: 'North Branch' }, status: 'active', collector_count: 1, onboarding_status: 'ready' }
 
 const on = (limit_value: number | null = null): FeatureEntitlement => ({ enabled: true, limit_value })
 const off = (): FeatureEntitlement => ({ enabled: false, limit_value: null })

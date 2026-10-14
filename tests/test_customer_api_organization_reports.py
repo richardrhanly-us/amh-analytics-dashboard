@@ -124,7 +124,7 @@ _SCHEMA = (
     "CREATE TABLE organizations (id INTEGER PRIMARY KEY, slug TEXT, name TEXT, status TEXT, operational_customer_id INTEGER)",
     (
         "CREATE TABLE branches (id INTEGER PRIMARY KEY, organization_id INTEGER, slug TEXT, name TEXT, "
-        "is_primary BOOLEAN, status TEXT, operational_branch_id INTEGER)"
+        "is_primary BOOLEAN, status TEXT, operational_branch_id INTEGER, onboarding_status TEXT NOT NULL DEFAULT 'pending')"
     ),
     "CREATE TABLE memberships (id INTEGER PRIMARY KEY, organization_id INTEGER, user_id INTEGER, role TEXT, removed_at TEXT)",
     "CREATE TABLE organization_settings (id INTEGER PRIMARY KEY, organization_id INTEGER UNIQUE, settings_json TEXT)",
