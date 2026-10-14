@@ -179,7 +179,6 @@ def build_pipeline_context(pipeline_status, df_live_raw, now_ct, local_tz, theme
         status_code_text = str(health_status)
         state = state_for_legacy_health(health_status)
 
-        # A heartbeat state other than these three leaves pipeline_result_text unset (unchanged behaviour).
         if state == "ok":
             pipeline_status_label = "Pipeline Healthy"
             pipeline_result_text = "Continuous agent reporting healthy"
@@ -192,6 +191,9 @@ def build_pipeline_context(pipeline_status, df_live_raw, now_ct, local_tz, theme
         elif state == "failed":
             pipeline_status_label = "Pipeline Auth Failure"
             pipeline_result_text = "Continuous agent cannot authenticate -- check the agent token"
+        else:  # a value pipeline_state does not recognise is `unknown`, as the customer API shows it
+            pipeline_status_label = "Pipeline Status Unknown"
+            pipeline_result_text = "Unknown"
         pipeline_status_color, pipeline_status_bg = _status_colors(_FAMILY_FOR_STATE[state], theme_base)
 
         pipeline_expanded = state != "ok"
