@@ -5,11 +5,16 @@ import { Breadcrumb } from '../components/Breadcrumb.tsx'
 import { PageHeading } from '../components/PageHeading.tsx'
 import { ORGANIZATIONS_PATH, organizationReportViewPath, organizationSettingsPath, sorterPath } from '../router/paths.ts'
 import { canManageOrganization, SETTINGS_NAME } from '../settings/settingsText.ts'
-import { sorterStatusLabel } from './labels.ts'
+import { isWaitingForFirstData, sorterStatusLabel, WAITING_FOR_FIRST_DATA } from './labels.ts'
 
 function SorterRow({ orgSlug, sorter }: { orgSlug: string; sorter: SorterSummary }) {
-  // Where the machine is, then anything about its state worth saying. Words, not colour.
-  const details = [sorter.host_branch.name, sorterStatusLabel(sorter.status)].filter((detail) => detail !== null)
+  // Where the machine is, then anything about its state worth saying, then whether its site has had any data yet.
+  // Words, not colour.
+  const details = [
+    sorter.host_branch.name,
+    sorterStatusLabel(sorter.status),
+    isWaitingForFirstData(sorter) ? WAITING_FOR_FIRST_DATA : null,
+  ].filter((detail) => detail !== null)
   return (
     <li>
       <Link className="nav-list-link" to={sorterPath(orgSlug, sorter.slug)}>

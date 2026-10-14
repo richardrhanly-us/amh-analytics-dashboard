@@ -278,6 +278,15 @@ button[aria-disabled='true'] {
   background: var(--surface);
 }
 
+/* A notice with a heading of its own: the box's padding is all the space it needs above and below. */
+.first-data-notice > :first-child {
+  margin-top: 0;
+}
+
+.first-data-notice > :last-child {
+  margin-bottom: 0;
+}
+
 /*
  * Live Today: the page a library can leave open on a screen. It reads from the top down as a dashboard does --
  * is it live and how fresh, what state the pipeline is in, then today's figures in three named zones, then the

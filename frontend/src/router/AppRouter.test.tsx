@@ -1066,6 +1066,140 @@ describe('a sorter page', () => {
   })
 })
 
+describe('a sorter waiting for its first data', () => {
+  const WAITING = 'Waiting for first data'
+  const waiting = () => within(main()).queryByRole('heading', { level: 3, name: WAITING })
+  /** Metro, with its Central sorter's site still waiting for its first data, and Central's machine in `status`. */
+  const serveWaiting = (status = 'active') =>
+    serveMetro({
+      'GET /api/organizations/metro': () =>
+        jsonResponse(200, {
+          ...METRO_DETAIL,
+          sorters: [
+            sorter('central', 'Central Library AMH', 'Central Library', { status, onboarding_status: 'pending' }),
+            sorter('westside', 'Westside AMH', 'Westside'),
+          ],
+        }),
+    })
+
+  it('says it is waiting for first data in place of the dashboard, and asks for no live data', async () => {
+    const fetchMock = serveWaiting()
+
+    renderApp('/organizations/metro/sorters/central')
+    await heading('Central Library AMH')
+
+    expect(waiting()).toBeVisible()
+    expect(main()).toHaveTextContent(
+      'This sorter is set up or still being connected, and SortView has not received any activity from it yet. ' +
+        'Its figures will appear here once its first data arrives.',
+    )
+    // Its machine is fine: nothing about it is said, exactly as for any active sorter.
+    expect(main()).toHaveTextContent(/Live activity for this sorter, at Central Library(?! ·)/)
+    // No figures that would read as a real day with nothing in it, and no pipeline state standing in for the reason.
+    expect(screen.queryByText('Check-ins today')).not.toBeInTheDocument()
+    expect(screen.queryByText('No check-ins yet')).not.toBeInTheDocument()
+    expect(main()).not.toHaveTextContent(/Unknown|Pipeline|Not available/)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(liveRequests(fetchMock)).toEqual([])
+    // Still a sorter page, with both of its views.
+    expect(linkNames()).toEqual(['Organizations', 'Metro Library System', 'Live Today', 'Reports'])
+  })
+
+  it.each([
+    ['provisioning', 'Being set up'],
+    ['inactive', 'Inactive'],
+  ])('keeps the machine’s own status (%s) beside its waiting for first data', async (status, label) => {
+    serveWaiting(status)
+
+    renderApp('/organizations/metro/sorters/central')
+    await heading('Central Library AMH')
+
+    expect(main()).toHaveTextContent(`Live activity for this sorter, at Central Library · ${label}`)
+    expect(waiting()).toBeVisible()
+  })
+
+  it('shows a ready sorter’s dashboard as before, its pipeline’s Unknown included', async () => {
+    serveMetro(liveRoutes('metro', 'central', { ...METRO_CENTRAL, state: 'unknown', last_reported_at: null }))
+
+    renderApp('/organizations/metro/sorters/central')
+    await heading('Central Library AMH')
+    await waitFor(() => expect(figure('Check-ins today')).toHaveTextContent(/^100$/))
+
+    expect(within(main()).getByRole('region', { name: 'Pipeline' })).toHaveTextContent('Unknown')
+    expect(waiting()).not.toBeInTheDocument()
+    expect(main()).not.toHaveTextContent(WAITING)
+  })
+
+  it('says so on the organization page, after the machine’s own status', async () => {
+    serveMetro({
+      'GET /api/organizations/metro': () =>
+        jsonResponse(200, {
+          ...METRO_DETAIL,
+          sorters: [
+            sorter('central', 'Central Library AMH', 'Central Library'),
+            sorter('westside', 'Westside AMH', 'Westside', { onboarding_status: 'pending' }),
+            sorter('north', 'North Sorter', 'North', { status: 'provisioning', onboarding_status: 'pending' }),
+            sorter('east', 'East Sorter', 'East', { status: 'inactive', collector_count: 0, onboarding_status: 'pending' }),
+          ],
+        }),
+    })
+
+    renderApp('/organizations/metro')
+    await heading('Metro Library System')
+
+    const [central, westside, north, east] = within(sorterList()).getAllByRole('listitem')
+    expect(central).toHaveTextContent(/^Central Library AMHCentral Library$/)
+    expect(westside).toHaveTextContent(/^Westside AMHWestside · Waiting for first data$/)
+    expect(north).toHaveTextContent(/^North SorterNorth · Being set up · Waiting for first data$/)
+    expect(east).toHaveTextContent(/^East SorterEast · Inactive · Waiting for first data$/)
+    expect(linkNames()).toEqual(['Organizations', 'Organization Reports', 'Central Library AMH', 'Westside AMH', 'North Sorter', 'East Sorter'])
+  })
+
+  it('says it is waiting for first data in place of the reports, and asks for no report', async () => {
+    const fetchMock = serveWaiting('provisioning')
+
+    renderApp('/organizations/metro/sorters/central/reports/operations')
+    await heading('Central Library AMH')
+
+    expect(within(main()).getByRole('heading', { level: 3, name: 'Reports' })).toBeVisible()
+    expect(main()).toHaveTextContent('What this sorter processed, at Central Library · Being set up')
+    expect(waiting()).toBeVisible()
+    expect(within(main()).getByRole('navigation', { name: 'Sorter views' })).toBeVisible()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(liveRequests(fetchMock)).toEqual([])
+  })
+
+  it('can be reached, and moved around in, like any sorter: nothing is blocked and nothing redirects', async () => {
+    const fetchMock = serveWaiting()
+    const user = userEvent.setup()
+
+    renderApp('/organizations/metro')
+    await heading('Metro Library System')
+    await user.click(link('Central Library AMH'))
+    await heading('Central Library AMH')
+    expect(address()).toBe('/organizations/metro/sorters/central')
+    expect(waiting()).toBeVisible()
+
+    await user.click(link('Reports'))
+    await waitFor(() => expect(address()).toBe('/organizations/metro/sorters/central/reports/operations'))
+    expect(waiting()).toBeVisible()
+
+    await user.click(link('Live Today'))
+    await waitFor(() => expect(address()).toBe('/organizations/metro/sorters/central'))
+    expect(waiting()).toBeVisible()
+
+    // Another sorter of the organization, ready, is its usual dashboard.
+    await user.click(link('Metro Library System'))
+    await user.click(link('Westside AMH'))
+    await heading('Westside AMH')
+    await waitFor(() => expect(figure('Check-ins today')).toHaveTextContent(/^40$/))
+    expect(waiting()).not.toBeInTheDocument()
+    // Nothing more was asked of the API than the organization itself and the ready sorter's own data.
+    expect(organizationRequests(fetchMock)).toEqual(['/api/organizations/metro'])
+    expect(liveRequests(fetchMock).every((url) => url.includes('/branches/westside/'))).toBe(true)
+  })
+})
+
 describe('the address a sorter used to have', () => {
   it('redirects a branch address to the sorter hosted at that branch, replacing it in history', async () => {
     const fetchMock = serveMetro()

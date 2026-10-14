@@ -5,7 +5,8 @@ import { SorterReports } from '../reports/SorterReports.tsx'
 import { canSeeEfficiency, EFFICIENCY_FOR_ADMINS } from '../reports/useEfficiency.ts'
 import { sorterReportViewPath, type SorterReportView } from '../router/paths.ts'
 import { hasExports, hasTransits, historyDays } from './capabilities.ts'
-import { sorterStatusLabel } from './labels.ts'
+import { FirstDataNotice } from './FirstDataNotice.tsx'
+import { isWaitingForFirstData, sorterStatusLabel } from './labels.ts'
 import type { SorterContext } from './SorterLayout.tsx'
 
 /**
@@ -52,6 +53,9 @@ export function SorterReportsPage({ view }: { view: SorterReportView }) {
         <p className="notice" role="note">
           {EFFICIENCY_FOR_ADMINS}
         </p>
+      ) : isWaitingForFirstData(sorter) ? (
+        // No range has anything in it yet, so none is asked for: an empty report would read as days with no activity.
+        <FirstDataNotice />
       ) : (
         // Keyed by sorter, so another sorter starts as a new set of reports, with nothing carried over.
         <SorterReports
