@@ -229,8 +229,22 @@ describe('the sorters of an organization', () => {
     const detail = await read()
 
     expect(detail.sorters).toStrictEqual([
-      { slug: 'central', name: 'Central Library AMH', host_branch: { slug: 'central', name: 'Central Branch' }, status: 'active', collector_count: 1 },
-      { slug: 'east-side', name: 'East Side AMH', host_branch: { slug: 'east-side', name: 'East Side Branch' }, status: 'active', collector_count: 1 },
+      {
+        slug: 'central',
+        name: 'Central Library AMH',
+        host_branch: { slug: 'central', name: 'Central Branch' },
+        status: 'active',
+        collector_count: 1,
+        onboarding_status: 'ready',
+      },
+      {
+        slug: 'east-side',
+        name: 'East Side AMH',
+        host_branch: { slug: 'east-side', name: 'East Side Branch' },
+        status: 'active',
+        collector_count: 1,
+        onboarding_status: 'ready',
+      },
     ])
     // Three branches, two sorters: a branch is not made a sorter, and a sorter is not made from a branch.
     expect(detail.branches.map((branch) => branch.slug)).toEqual(['central', 'east-side', 'westside'])
@@ -242,6 +256,16 @@ describe('the sorters of an organization', () => {
 
   it.each(['active', 'provisioning', 'inactive'])('accepts the status %s', async (status) => {
     expect((await withSorters([{ ...central, status }])).sorters[0].status).toBe(status)
+  })
+
+  it.each(['pending', 'ready'])('accepts the onboarding status %s', async (onboarding_status) => {
+    expect((await withSorters([{ ...central, onboarding_status }])).sorters[0].onboarding_status).toBe(onboarding_status)
+  })
+
+  it('keeps setup progress apart from the machine’s own status', async () => {
+    const detail = await withSorters([{ ...central, status: 'provisioning', onboarding_status: 'pending' }])
+
+    expect(detail.sorters[0]).toMatchObject({ status: 'provisioning', onboarding_status: 'pending' })
   })
 
   it('accepts a site with no reporting collector, and one with several', async () => {
@@ -296,6 +320,12 @@ describe('the sorters of an organization', () => {
     ['a fractional collector count', [{ ...central, collector_count: 1.5 }]],
     ['a collector count as text', [{ ...central, collector_count: '1' }]],
     ['a missing collector count', [{ ...central, collector_count: undefined }]],
+    // The API sends one of two words, whatever is stored: anything else is not this contract.
+    ['a missing onboarding status', [{ ...central, onboarding_status: undefined }]],
+    ['a null onboarding status', [{ ...central, onboarding_status: null }]],
+    ['the onboarding status paused', [{ ...central, onboarding_status: 'paused' }]],
+    ['an onboarding status in another case', [{ ...central, onboarding_status: 'READY' }]],
+    ['an onboarding status that is not text', [{ ...central, onboarding_status: true }]],
     ['two sorters with one slug', [central, { ...central, host_branch: { slug: 'east-side', name: 'East Side Branch' } }]],
     ['two sorters at one host branch', [central, { ...central, slug: 'amh-2', name: 'AMH 2' }]],
   ])('rejects %s as an unexpected response', async (_label, sorters) => {

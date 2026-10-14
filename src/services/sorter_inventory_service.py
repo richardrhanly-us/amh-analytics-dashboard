@@ -1,6 +1,7 @@
 """An organization's SortView sorting machines, for the customer API.
 
-    list_sorter_sites(org_slug) -> [SorterSite(slug, name, host_branch_slug, host_branch_name, status, collector_count)]
+    list_sorter_sites(org_slug) -> [SorterSite(slug, name, host_branch_slug, host_branch_name, status, collector_count,
+                                               onboarding_status)]
 
 WHAT IS LISTED. The machines an organization actually runs SortView on --
 taken from collector_installations, the one place a deployed Collector is
@@ -21,6 +22,9 @@ installations of one host branch, together:
     status           that installation's status
     collector_count  how many of the site's installations can currently report (provisioning or active).
                      More than one means their figures are combined and cannot be separated.
+    onboarding_status  the host branch's setup progress, "ready" (its first data has arrived) or "pending",
+                     normalized by services.branch_readiness.normalize_onboarding_status. Information only: it
+                     never decides whether a site is listed or which installation leads it.
 
 Telling two machines at one branch apart needs the events themselves to say
 which installation produced them. That is deliberately not attempted here.
@@ -40,8 +44,8 @@ replaced machine left "inactive" beside its "active" replacement does not
 name the site.
 
 WHAT IS NOT RETURNED. No installation id, hostname or Collector version, no
-token or enrollment data, and no organization, customer or branch id: none is
-selected.
+token or enrollment data, no onboarding message or time, and no organization,
+customer or branch id: none is selected.
 
 The caller has already established that the user may see the organization;
 this module makes no access decision. Framework-neutral: no Streamlit, no
@@ -57,6 +61,7 @@ from typing import Any
 from sqlalchemy import text
 
 from database import get_engine
+from services.branch_readiness import OnboardingStatus, normalize_onboarding_status
 
 # Most alive first: the order a site's lead installation is chosen in.
 VISIBLE_STATUSES = ("active", "provisioning", "inactive")
@@ -76,11 +81,13 @@ class SorterSite:
     host_branch_name: str
     status: str
     collector_count: int
+    onboarding_status: OnboardingStatus
 
 
 def sorter_sites(installations: Iterable[Mapping[str, Any]]) -> list[SorterSite]:
     """The sorter sites in `installations` -- rows with name, status,
-    branch_slug and branch_name, in the order the sites should be listed.
+    branch_slug, branch_name and the branch's onboarding_status, in the order
+    the sites should be listed.
 
     Rows of one branch become one site, placed where that branch first
     appears. A row whose status is not a visible one is ignored, wherever it
@@ -102,6 +109,8 @@ def sorter_sites(installations: Iterable[Mapping[str, Any]]) -> list[SorterSite]
             host_branch_name=lead["branch_name"],
             status=lead["status"],
             collector_count=sum(1 for row in rows if row["status"] in REPORTING_STATUSES),
+            # Every row of a site is the same host branch, so any of them gives its onboarding status.
+            onboarding_status=normalize_onboarding_status(lead["onboarding_status"]),
         ))
     return sites
 
@@ -115,7 +124,8 @@ _INSTALLATIONS_SQL = text("""
         ci.name AS name,
         ci.status AS status,
         b.slug AS branch_slug,
-        b.name AS branch_name
+        b.name AS branch_name,
+        b.onboarding_status AS onboarding_status
     FROM collector_installations ci
     JOIN organizations o
       ON o.id = ci.organization_id

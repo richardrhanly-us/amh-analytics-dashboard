@@ -159,7 +159,7 @@ def test_operational_ids_of_zero_are_valid(db):
     assert _ids(resolve_operational_tenant(ALICE, "acme", "main")) == (0, 0)
 
 
-@pytest.mark.parametrize("onboarding_status", ["pending", "paused", None, "something_new"])
+@pytest.mark.parametrize("onboarding_status", ["ready", "pending", "paused", None, "something_new"])
 def test_onboarding_status_is_not_part_of_resolution_today(db, onboarding_status):
     # Characterization, not policy: the dashboard (services.readiness_service via services.branch_readiness) shows
     # nothing for a branch that is not 'ready', but the resolver -- and so the customer API -- does not read

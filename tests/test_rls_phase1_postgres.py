@@ -3029,6 +3029,9 @@ def test_sorter_sites_are_one_per_host_branch_isolated_by_organization_and_carry
         _install_collector(conn, 2, BRANCH_B, "Tenant B AMH 1")
         _install_collector(conn, 2, BRANCH_B, "Tenant B AMH 2")
         _install_collector(conn, 2, BRANCH_B_NORTH, "Tenant B North AMH", status="provisioning")
+        # Setup progress, stated here rather than left to whatever earlier tests did: A's main has had data, B's have not.
+        conn.execute(text("UPDATE branches SET onboarding_status = CASE WHEN id = :a THEN 'ready' ELSE 'pending' END "
+                          "WHERE id IN (:a, :b, :north)"), {"a": BRANCH_A, "b": BRANCH_B, "north": BRANCH_B_NORTH})
     monkeypatch.setattr(sorter_inventory_service, "get_engine", lambda: runtime_engine)
 
     tenant_a = list_sorter_sites("tenant-a")
@@ -3036,13 +3039,13 @@ def test_sorter_sites_are_one_per_host_branch_isolated_by_organization_and_carry
 
     assert tenant_a == [
         SorterSite(slug="main", name="Tenant A Main AMH", host_branch_slug="main", host_branch_name="Main",
-                   status="active", collector_count=1),
+                   status="active", collector_count=1, onboarding_status="ready"),
     ]
     assert sorted(tenant_b, key=lambda site: site.slug) == [
         SorterSite(slug="main", name="Tenant B AMH 1", host_branch_slug="main", host_branch_name="Main",
-                   status="active", collector_count=2),
+                   status="active", collector_count=2, onboarding_status="pending"),
         SorterSite(slug="north", name="Tenant B North AMH", host_branch_slug="north", host_branch_name="North",
-                   status="provisioning", collector_count=1),
+                   status="provisioning", collector_count=1, onboarding_status="pending"),
     ]
     assert list_sorter_sites("no-such-tenant") == []
     assert "CANARY" not in repr(tenant_a + tenant_b) and "9.9.9" not in repr(tenant_a + tenant_b)

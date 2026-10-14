@@ -8,7 +8,12 @@ import copy
 import inspect
 
 from src.services import branch_readiness as module
-from src.services.branch_readiness import READY, BranchReadiness, branch_readiness
+from src.services.branch_readiness import (
+    READY,
+    BranchReadiness,
+    branch_readiness,
+    normalize_onboarding_status,
+)
 
 READY_ROW = {
     "branch_slug": "main",
@@ -66,6 +71,29 @@ def test_only_exactly_ready_is_ready():
     assert READY == "ready"
     assert [status for status in ("ready", "pending", "paused", None, "", "READY", "unexpected")
             if branch_readiness(_row(onboarding_status=status)).is_ready] == ["ready"]
+
+
+def test_a_stored_onboarding_status_is_presented_as_ready_or_pending_and_nothing_else():
+    cases = [
+        # (stored, presented)
+        ("ready", "ready"),
+        ("pending", "pending"),
+        (None, "pending"),
+        ("", "pending"),
+        ("paused", "pending"),
+        ("READY", "pending"),
+        (" ready", "pending"),
+        ("initial_sync", "pending"),
+        ("something_new", "pending"),
+        (1, "pending"),
+    ]
+    for stored, presented in cases:
+        assert normalize_onboarding_status(stored) == presented, stored
+
+
+def test_presentation_says_ready_exactly_when_the_dashboards_onboarding_check_does():
+    for status in ("ready", "pending", "paused", None, "", "READY", "unexpected"):
+        assert (normalize_onboarding_status(status) == READY) is branch_readiness(_row(onboarding_status=status)).is_ready, status
 
 
 def test_the_row_is_not_changed():

@@ -34,8 +34,9 @@ from services.sorter_inventory_service import (
 )
 
 
-def _row(name, status, branch_slug="main", branch_name="Main Library") -> dict:
-    return {"name": name, "status": status, "branch_slug": branch_slug, "branch_name": branch_name}
+def _row(name, status, branch_slug="main", branch_name="Main Library", onboarding_status="ready") -> dict:
+    return {"name": name, "status": status, "branch_slug": branch_slug, "branch_name": branch_name,
+            "onboarding_status": onboarding_status}
 
 
 # =====================================================================================================================
@@ -45,7 +46,7 @@ def _row(name, status, branch_slug="main", branch_name="Main Library") -> dict:
 def test_one_installation_is_one_sorter_site_addressed_by_its_host_branch():
     assert sorter_sites([_row("Main Library AMH", "active")]) == [
         SorterSite(slug="main", name="Main Library AMH", host_branch_slug="main", host_branch_name="Main Library",
-                   status="active", collector_count=1),
+                   status="active", collector_count=1, onboarding_status="ready"),
     ]
 
 
@@ -85,7 +86,7 @@ def test_two_active_installations_at_one_branch_are_one_site_marked_as_two_colle
     sites = sorter_sites([_row("AMH 1", "active"), _row("AMH 2", "active")])
 
     assert sites == [SorterSite(slug="main", name="AMH 1", host_branch_slug="main", host_branch_name="Main Library",
-                                status="active", collector_count=2)]
+                                status="active", collector_count=2, onboarding_status="ready")]
 
 
 def test_a_replaced_machine_left_inactive_does_not_name_the_site_or_count_as_a_collector():
@@ -132,9 +133,32 @@ def test_the_status_sets_are_the_ones_the_rest_of_the_system_uses():
     assert set(REPORTING_STATUSES) <= set(VISIBLE_STATUSES)
 
 
-def test_a_site_has_exactly_six_fields_and_none_is_an_identifier_or_a_secret():
+def test_a_site_has_exactly_seven_fields_and_none_is_an_identifier_or_a_secret():
     assert [field.name for field in dataclasses.fields(SorterSite)] == [
-        "slug", "name", "host_branch_slug", "host_branch_name", "status", "collector_count",
+        "slug", "name", "host_branch_slug", "host_branch_name", "status", "collector_count", "onboarding_status",
+    ]
+
+
+@pytest.mark.parametrize(("stored", "presented"), [
+    ("ready", "ready"), ("pending", "pending"), (None, "pending"), ("", "pending"), ("paused", "pending"),
+    ("READY", "pending"), ("something_new", "pending"),
+])
+def test_a_site_carries_its_host_branchs_onboarding_status_as_ready_or_pending(stored, presented):
+    (site,) = sorter_sites([_row("Main Library AMH", "active", onboarding_status=stored)])
+
+    assert site.onboarding_status == presented
+
+
+def test_onboarding_status_is_the_host_branchs_and_does_not_change_which_sites_are_listed_or_how():
+    """Setup progress is information about a site, never a reason to leave one out or to pick another lead."""
+    sites = sorter_sites([
+        _row("Central AMH", "active", "central", "Central", onboarding_status="ready"),
+        _row("North AMH", "provisioning", "north", "North", onboarding_status="pending"),
+        _row("East AMH", "inactive", "east", "East", onboarding_status="paused"),
+    ])
+
+    assert [(site.slug, site.status, site.collector_count, site.onboarding_status) for site in sites] == [
+        ("central", "active", 1, "ready"), ("north", "provisioning", 1, "pending"), ("east", "inactive", 0, "pending"),
     ]
 
 
@@ -146,7 +170,8 @@ _SCHEMA = (
     "CREATE TABLE organizations (id INTEGER PRIMARY KEY, slug TEXT, name TEXT, status TEXT, operational_customer_id INTEGER)",
     (
         "CREATE TABLE branches (id INTEGER PRIMARY KEY, organization_id INTEGER, slug TEXT, name TEXT, "
-        "is_primary BOOLEAN, status TEXT, operational_branch_id INTEGER)"
+        "is_primary BOOLEAN, status TEXT, operational_branch_id INTEGER, "
+        "onboarding_status TEXT NOT NULL DEFAULT 'pending', onboarding_message TEXT)"
     ),
     (
         "CREATE TABLE collector_installations (id INTEGER PRIMARY KEY, organization_id INTEGER, branch_id INTEGER, "
@@ -166,6 +191,8 @@ _SCHEMA = (
         "(21, 2, 'main', 'Beta Main', 1, 'active', 21), "            # the same slug, in another organization
         "(31, 3, 'main', 'Paused Main', 1, 'active', 31)"
     ),
+    # Acme's main branch has had its first data; every other branch is still pending, the schema's default.
+    "UPDATE branches SET onboarding_status = 'ready' WHERE id = 11",
 )
 
 
@@ -198,7 +225,7 @@ def test_a_registered_installation_is_the_organizations_sorter(db):
 
     assert list_sorter_sites("acme") == [
         SorterSite(slug="main", name="Main Library AMH", host_branch_slug="main", host_branch_name="Main Library",
-                   status="active", collector_count=1),
+                   status="active", collector_count=1, onboarding_status="ready"),
     ]
 
 
@@ -247,8 +274,28 @@ def test_two_installations_at_one_branch_are_one_site_and_the_earlier_registered
 
     assert list_sorter_sites("acme") == [
         SorterSite(slug="main", name="AMH 1", host_branch_slug="main", host_branch_name="Main Library",
-                   status="active", collector_count=2),
+                   status="active", collector_count=2, onboarding_status="ready"),
     ]
+
+
+def test_each_site_reads_its_own_host_branchs_onboarding_status(db):
+    with db.begin() as conn:
+        conn.execute(text("UPDATE branches SET onboarding_status = 'something_new', onboarding_message = 'MESSAGE-CANARY' "
+                          "WHERE id = 12"))
+    _install(db, 1, 11, "Main Library AMH")
+    _install(db, 1, 12, "Westside AMH")
+    _install(db, 1, 13, "East Branch AMH")
+
+    sites = list_sorter_sites("acme")
+
+    assert [(site.slug, site.onboarding_status) for site in sites] == [
+        ("main", "ready"), ("east", "pending"), ("westside", "pending"),
+    ]
+    assert "MESSAGE-CANARY" not in repr(sites)
+    # Presentation only: what is stored is left exactly as it was.
+    with db.connect() as conn:
+        stored = dict(conn.execute(text("SELECT id, onboarding_status FROM branches WHERE organization_id = 1")).all())
+    assert stored == {11: "ready", 12: "something_new", 13: "pending", 14: "pending"}
 
 
 @pytest.mark.parametrize(("status", "listed"), [("active", True), ("provisioning", True), ("inactive", True), ("retired", False)])
@@ -321,8 +368,12 @@ def test_nothing_about_the_machine_itself_is_read(db):
     assert "CANARY" not in repr(site) and "9.9.9" not in repr(site)
     sql = " ".join(str(sorter_inventory_service._INSTALLATIONS_SQL).split())
     selected = sql.split(" FROM ")[0]
-    assert selected == "SELECT ci.name AS name, ci.status AS status, b.slug AS branch_slug, b.name AS branch_name"
-    for forbidden in ("hostname", "collector_version", "token", "enrollment", "last_seen_at", "ci.id AS", "customer"):
+    assert selected == (
+        "SELECT ci.name AS name, ci.status AS status, b.slug AS branch_slug, b.name AS branch_name, "
+        "b.onboarding_status AS onboarding_status"
+    )
+    for forbidden in ("hostname", "collector_version", "token", "enrollment", "last_seen_at", "ci.id AS", "customer",
+                      "onboarding_message", "onboarding_updated_at"):
         assert forbidden not in selected
 
 
@@ -347,5 +398,6 @@ def test_the_module_needs_neither_streamlit_nor_pandas_and_changes_nothing():
         "from typing import Any",
         "from sqlalchemy import text",
         "from database import get_engine",
+        "from services.branch_readiness import OnboardingStatus, normalize_onboarding_status",
     ]
     assert ".begin(" not in source and "commit" not in source

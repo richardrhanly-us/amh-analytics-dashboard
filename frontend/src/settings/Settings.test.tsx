@@ -260,8 +260,8 @@ describe('Branches & Sorters', () => {
 
   it('says a machine’s state in the words used everywhere, and that several collectors’ figures are combined', async () => {
     const sorters = [
-      { slug: 'central', name: 'Central Library AMH', host_branch: { slug: 'central', name: 'Central Branch' }, status: 'provisioning', collector_count: 0 },
-      { slug: 'east-side', name: 'East Side AMH', host_branch: { slug: 'east-side', name: 'East Side Branch' }, status: 'inactive', collector_count: 3 },
+      { slug: 'central', name: 'Central Library AMH', host_branch: { slug: 'central', name: 'Central Branch' }, status: 'provisioning', collector_count: 0, onboarding_status: 'ready' },
+      { slug: 'east-side', name: 'East Side AMH', host_branch: { slug: 'east-side', name: 'East Side Branch' }, status: 'inactive', collector_count: 3, onboarding_status: 'ready' },
     ]
     await page(BRANCHES, 'Branches & Sorters', { detail: { sorters } })
 
@@ -274,9 +274,9 @@ describe('Branches & Sorters', () => {
   it('matches a machine to a branch by the machine’s own host branch, and drops no machine the API listed', async () => {
     const sorters = [
       // Named like one branch, installed at another: it belongs where the API says it is.
-      { slug: 'east-side', name: 'Central Annex AMH', host_branch: { slug: 'east-side', name: 'East Side Branch' }, status: 'active', collector_count: 1 },
+      { slug: 'east-side', name: 'Central Annex AMH', host_branch: { slug: 'east-side', name: 'East Side Branch' }, status: 'active', collector_count: 1, onboarding_status: 'ready' },
       // A machine whose branch is not in the branch list at all.
-      { slug: 'depot', name: 'Depot AMH', host_branch: { slug: 'depot', name: 'Depot' }, status: 'active', collector_count: 1 },
+      { slug: 'depot', name: 'Depot AMH', host_branch: { slug: 'depot', name: 'Depot' }, status: 'active', collector_count: 1, onboarding_status: 'ready' },
     ]
     await page(BRANCHES, 'Branches & Sorters', { detail: { sorters } })
 
@@ -298,6 +298,7 @@ describe('Branches & Sorters', () => {
           host_branch: { slug: 'br-7f3a', name: 'Harbor Branch' },
           status: 'active',
           collector_count: 2,
+          onboarding_status: 'ready',
           // What the API never sends, sent anyway: none of it can reach the page.
           installation_id: 'inst-55c1',
           hostname: 'AMH-PC-01',
