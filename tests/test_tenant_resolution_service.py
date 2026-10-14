@@ -159,6 +159,18 @@ def test_operational_ids_of_zero_are_valid(db):
     assert _ids(resolve_operational_tenant(ALICE, "acme", "main")) == (0, 0)
 
 
+@pytest.mark.parametrize("onboarding_status", ["pending", "paused", None, "something_new"])
+def test_onboarding_status_is_not_part_of_resolution_today(db, onboarding_status):
+    # Characterization, not policy: the dashboard (services.readiness_service via services.branch_readiness) shows
+    # nothing for a branch that is not 'ready', but the resolver -- and so the customer API -- does not read
+    # onboarding_status at all. A branch in any onboarding state still resolves.
+    db.run("ALTER TABLE branches ADD COLUMN onboarding_status TEXT")
+    db.run("UPDATE branches SET onboarding_status = :status WHERE id = :id", status=onboarding_status, id=ACME_MAIN)
+
+    assert _ids(resolve_operational_tenant(ALICE, "acme", "main")) == (ACME_CUSTOMER, ACME_MAIN)
+    assert "onboarding_status" not in str(tenant_resolution_service._RESOLVE_SQL)
+
+
 def test_the_result_carries_the_slugs_of_the_rows_that_were_resolved(db):
     resolved = resolve_operational_tenant(ALICE, "acme", "east")
 

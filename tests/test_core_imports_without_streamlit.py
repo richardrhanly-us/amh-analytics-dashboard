@@ -44,6 +44,8 @@ STREAMLIT_FREE_MODULES = [
     "services.collector_schedule",
     # The one effective-settings merge, shared by the dashboard, the customer API and Collector enrollment.
     "services.settings_merge",
+    # The dashboard's branch-readiness decision, out of the Streamlit-cached readiness_service.
+    "services.branch_readiness",
 ]
 
 

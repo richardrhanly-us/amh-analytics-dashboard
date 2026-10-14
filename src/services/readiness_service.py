@@ -4,6 +4,7 @@ import streamlit as st
 from sqlalchemy import text
 
 from database import get_engine
+from services.branch_readiness import branch_readiness
 
 # get_branch_readiness previously ran on every Streamlit rerun -- every
 # auto-refresh tick, every nav click -- to answer a question (is this
@@ -22,6 +23,13 @@ DEFAULT_MESSAGES = {
     "initial_sync": "This branch is waiting for its first successful data sync.",
     "ready": "Ready",
     "paused": "This branch has been paused.",
+}
+
+_SETUP_MESSAGES = {
+    "org_not_found": "This organization could not be found.",
+    "branch_not_found": "This branch could not be found for the selected organization.",
+    "branch_inactive": "This branch is not active.",
+    "missing_operational_mapping": "Operational tenant mapping is missing for this branch.",
 }
 
 
@@ -58,52 +66,23 @@ def get_branch_readiness(org_slug: str, branch_slug: str) -> dict:
             },
         ).mappings().first()
 
-    if row is None:
+    readiness = branch_readiness(row)
+
+    if row is None or not readiness.onboarding:
         return {
             "is_ready": False,
-            "code": "org_not_found",
-            "message": "This organization could not be found.",
+            "code": readiness.code,
+            "message": _SETUP_MESSAGES[readiness.code],
         }
 
-    if row["branch_slug"] is None:
-        return {
-            "is_ready": False,
-            "code": "branch_not_found",
-            "message": "This branch could not be found for the selected organization.",
-        }
-
-    if row["branch_status"] != "active":
-        return {
-            "is_ready": False,
-            "code": "branch_inactive",
-            "message": "This branch is not active.",
-        }
-
-    if row["customer_id"] is None or row["branch_id"] is None:
-        return {
-            "is_ready": False,
-            "code": "missing_operational_mapping",
-            "message": "Operational tenant mapping is missing for this branch.",
-        }
-
-    onboarding_status = row["onboarding_status"] or "pending"
     onboarding_message = row["onboarding_message"] or DEFAULT_MESSAGES.get(
-        onboarding_status,
+        readiness.code,
         "This branch is not ready yet.",
     )
 
-    if onboarding_status != "ready":
-        return {
-            "is_ready": False,
-            "code": onboarding_status,
-            "message": onboarding_message,
-            "customer_id": row["customer_id"],
-            "branch_id": row["branch_id"],
-        }
-
     return {
-        "is_ready": True,
-        "code": "ready",
+        "is_ready": readiness.is_ready,
+        "code": readiness.code,
         "message": onboarding_message,
         "customer_id": row["customer_id"],
         "branch_id": row["branch_id"],
