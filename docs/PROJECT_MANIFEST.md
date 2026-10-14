@@ -116,6 +116,12 @@ Super Admin (internal staff tool) may stay on Streamlit until later.
       is one person's card, and are deliberately omitted by the tested API; a "today" range in Reports covers most
       of the live cards' value. Reopen only if NBPL staff confirm active operational use of the service counts —
       and then evaluate the ranged report first, not Live Today.
+  - Automatic alerts / insight text — **decided 2026-10-14 (D4): metrics only at cutover.** React shows the
+    underlying figures with no automatic diagnosis or advice; none of Streamlit's alert/insight logic is ported
+    (routing trend alerts, "Recommended Attention", transit/reject correlation, reject-rate colour bands, the unused
+    "critical" alerts, other advisory text). Why: hard-coded thresholds from one library, NBPL-specific wording that
+    mislabels another library's destinations, advice not validated enough to recommend action, and React's tested
+    "show the data, do not diagnose or advise" boundary (`frontend/src/test/scope.test.ts`).
   - Demo/guest mode — decide whether it survives.
   - History window — verified 2026-10-14 in NBPL production: plan `enterprise` (one subscription),
     `history_days` enabled with 3650, so React/API give NBPL a 3650-day window. No 30-day fallback risk at NBPL
@@ -230,6 +236,7 @@ Not engineering, but slow; starting them early shortens the plan without moving 
 
 One line each, dated. Pick up only when a milestone needs it, or when it is promoted on purpose.
 
+- 2026-10-14 — Fact-only Live Today reject-rate notice (vs. that sorter's own baseline, after a minimum check-in volume, no "check X" advice) — only if NBPL or a customer asks or shows it is useful (D4). Not an A2 requirement.
 - 2026-10-14 — Branch Services / Collection Services counts in the ranged Holds report — reconsider only if NBPL staff confirm they drive a real operational decision (D3). Not an A2 requirement.
 - 2026-10-14 — Optional single printable React summary view (accepted metrics only) — build only if a customer or director asks for it (D1).
 - 2026-10-14 — NBPL's only subscription has status `trial`; `get_org_subscription` picks the newest subscription regardless of status. No effect today; decide before billing (C7).
