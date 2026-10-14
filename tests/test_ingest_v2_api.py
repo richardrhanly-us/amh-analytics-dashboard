@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import inspect
 import json
 import logging
 import os
@@ -2008,16 +2009,174 @@ def test_a_heartbeat_never_makes_a_branch_ready(db):
     assert _onboarding(db) == PENDING and _branch_updates(db) == []
 
 
-def test_the_legacy_upload_route_is_not_part_of_this_and_leaves_a_pending_branch_pending(db):
-    """Contract v2 ONLY. A fresh Contract 1 library has the same pending -> ready gap; closing it is a follow-up that
-    must land before a fresh Contract 1 customer is onboarded. This holds the scope, not the gap."""
-    v1 = {"checkins": [{"customer_id": CUSTOMER, "branch_id": BRANCH, "event_time": "2026-01-01 10:00:00", "barcode": "B-1",
-                        "destination": "Main", "bin": "1"}]}
+# --- the legacy (Contract 1) route makes a branch ready by the same rule, with the same transition ---------------------
 
-    response = client.post("/upload", json=v1, headers=AUTH)
+def _v1(kind):
+    """A v1 request carrying only the one `kind` of row v1_payload builds: "checkins", "rejects" or "acs"."""
+    return {kind: v1_payload()[kind]}
 
-    assert response.status_code == 200 and response.json()["checkins_inserted"] == 1
+
+def post_v1(body, token=TOKEN):
+    return client.post("/upload", json=body, headers={"Authorization": f"Bearer {token}"})
+
+
+def _v1_unique_index(db):
+    """The production semantic unique index on checkins (alembic c53c1b536c71), so a resend inserts nothing."""
+    with db.engine.begin() as conn:
+        conn.execute(text("CREATE UNIQUE INDEX checkins_semantic ON checkins (customer_id, branch_id, barcode, event_time)"))
+
+
+@pytest.mark.parametrize("kind", ["checkins", "rejects", "acs"])
+def test_the_first_legacy_upload_that_inserts_a_row_makes_a_pending_branch_ready(db, caplog, kind):
+    _set_onboarding(db, "pending", "Waiting for the first upload.")
+
+    with caplog.at_level(logging.INFO, logger="sortview.api"):
+        response = post_v1(_v1(kind))
+
+    assert response.status_code == 200 and response.json()[f"{kind}_inserted"] == 1
+    assert v1_event_rows(db) == 1
+    status_, message, updated_at = _onboarding(db)
+    assert status_ == "ready" and message is None and updated_at > ONBOARDING_CREATED_AT
+    assert len(_branch_updates(db)) == 1
+    assert _onboarding(db, 2) == PENDING  # the other tenant's branch: untouched
+    assert f"Branch onboarding is ready after its first v1 ingest | token_id=1 customer_id={CUSTOMER} branch_id={BRANCH}" in caplog.text
+    for secret in (TOKEN, V1_BARCODE, V1_PATRON, V1_RAW, V1_TITLE):
+        assert secret not in caplog.text, secret
+
+
+def test_the_legacy_route_sends_the_one_transition_after_its_inserts_inside_its_own_transaction(db):
+    post_v1(v1_payload())
+
+    writes = [" ".join(s.split()[:3]) for s in db.sent if s.split()[0] in ("INSERT", "UPDATE")]
+    assert [w for w in writes if w.startswith(("INSERT INTO checkins", "INSERT INTO rejects", "INSERT INTO acs_events", "UPDATE branches"))] == [
+        "INSERT INTO checkins", "INSERT INTO rejects", "INSERT INTO acs_events", "UPDATE branches SET",
+    ]
+    assert "SAVEPOINT" not in " ".join(db.sent).upper()
+    # One transition for both routes: the same statement, from the same helper, and nowhere else.
+    source = inspect.getsource(main)
+    assert source.count("UPDATE branches") == 1
+    assert source.count("became_ready = mark_branch_ready_after_first_ingest(conn, token_row)") == 2
+
+
+def test_a_ready_branch_stays_ready_and_keeps_the_moment_it_first_was(db):
+    assert post_v1(_v1("checkins")).status_code == 200
+    first = _onboarding(db)
+    assert first[0] == "ready"
+
+    assert post_v1(_v1("rejects")).status_code == 200
+    assert post_upload(upload(checkins=[checkin(1)])).status_code == 200  # nor does a v2 upload after it
+
+    assert _onboarding(db) == first
+
+
+def test_an_empty_legacy_upload_leaves_a_pending_branch_pending(db):
+    assert post_v1({"checkins": [], "rejects": [], "acs": []}).status_code == 400
     assert _onboarding(db) == PENDING and _branch_updates(db) == []
+
+
+def test_a_legacy_upload_of_nothing_but_duplicates_leaves_a_pending_branch_pending(db):
+    _v1_unique_index(db)
+    assert post_v1(_v1("checkins")).status_code == 200
+    _set_onboarding(db, "pending")  # its row is stored, and it is pending again
+
+    again = post_v1(_v1("checkins"))
+
+    assert again.status_code == 200 and again.json()["checkins_inserted"] == 0
+    assert db.count("checkins") == 1
+    assert _onboarding(db) == PENDING and _branch_updates(db) == []  # the statement was not even sent
+
+
+def test_one_new_legacy_row_among_duplicates_is_enough(db):
+    _v1_unique_index(db)
+    assert post_v1(_v1("checkins")).status_code == 200
+    _set_onboarding(db, "pending")
+    second = {**v1_payload()["checkins"][0], "event_time": "2026-01-01 11:00:00"}
+
+    response = post_v1({"checkins": [*v1_payload()["checkins"], second]})
+
+    assert response.json()["checkins_inserted"] == 1
+    assert _onboarding(db)[0] == "ready"
+
+
+@pytest.mark.parametrize(("body", "token", "code"), [
+    ({"checkins": [{"branch_id": BRANCH, "barcode": "B-1"}]}, TOKEN, 422),                                   # no customer_id
+    ({"checkins": [{"customer_id": CUSTOMER, "branch_id": "one"}]}, TOKEN, 422),                             # not a branch id
+    ({"checkins": [v1_payload()["checkins"][0], {**v1_payload()["checkins"][0], "branch_id": OTHER_BRANCH}]}, TOKEN, 400),
+    (v1_payload(customer=OTHER_CUSTOMER, branch=OTHER_BRANCH), TOKEN, 403),                                  # another scope
+    (v1_payload(), "CANARY-NOT-A-TOKEN", 401),
+], ids=["a missing tenant field", "an invalid field", "rows of two tenants", "a scope the token does not have", "an unknown token"])
+def test_a_refused_legacy_upload_leaves_a_pending_branch_pending(db, body, token, code):
+    assert post_v1(body, token=token).status_code == code
+    assert v1_event_rows(db) == 0 and _onboarding(db) == PENDING and _onboarding(db, 2) == PENDING
+    assert _branch_updates(db) == []
+
+
+def test_a_legacy_upload_refused_after_the_cutover_leaves_a_pending_branch_pending(db):
+    now = datetime.now(UTC)
+    cut_over(db, now - timedelta(hours=1), set_at=now - timedelta(hours=2))
+
+    assert post_v1(v1_payload()).status_code == 403
+    assert v1_event_rows(db) == 0 and _onboarding(db) == PENDING and _branch_updates(db) == []
+
+
+def test_if_the_transition_fails_the_legacy_upload_fails_and_stores_nothing(db, monkeypatch, caplog):
+    working = main._BRANCH_READY_AFTER_FIRST_INGEST_SQL
+    monkeypatch.setattr(main, "_BRANCH_READY_AFTER_FIRST_INGEST_SQL",
+                        working.replace("onboarding_status = 'ready'", "no_such_column = 'ready'"))
+
+    with caplog.at_level(logging.INFO, logger="sortview.api"):
+        response = post_v1(v1_payload())
+
+    assert response.status_code == 500 and response.json() == {"detail": "Internal server error"}
+    assert v1_event_rows(db) == 0 and db.count("checkins_clean") == 0  # the inserts already run were rolled back with it
+    assert _onboarding(db) == PENDING
+    assert "Upload failed | error_type=sqlalchemy.exc.OperationalError" in caplog.text
+    assert "Branch onboarding is ready" not in caplog.text
+    for secret in (TOKEN, V1_BARCODE, V1_PATRON, V1_RAW, "no_such_column", "UPDATE branches"):
+        assert secret not in response.text and secret not in caplog.text, secret
+
+    # The Collector resends the same rows. With the fault gone they are stored, and the branch becomes ready.
+    monkeypatch.setattr(main, "_BRANCH_READY_AFTER_FIRST_INGEST_SQL", working)
+    retry = post_v1(v1_payload())
+    assert retry.status_code == 200 and v1_event_rows(db) == 3 and _onboarding(db)[0] == "ready"
+
+
+def test_an_exception_from_the_transition_fails_the_legacy_upload_and_its_text_goes_nowhere(db, monkeypatch, caplog):
+    def fails(_conn, _token_row):
+        raise RuntimeError(f"permission denied for table branches; token={TOKEN}; {V1_PATRON}")
+
+    monkeypatch.setattr(main, "mark_branch_ready_after_first_ingest", fails)
+
+    with caplog.at_level(logging.INFO, logger="sortview.api"):
+        response = post_v1(v1_payload())
+
+    assert response.status_code == 500 and response.json() == {"detail": "Internal server error"}
+    assert v1_event_rows(db) == 0 and _onboarding(db) == PENDING
+    for secret in (TOKEN, V1_PATRON, "permission denied"):
+        assert secret not in response.text and secret not in caplog.text, secret
+
+
+@pytest.mark.parametrize("state", ["ready", "paused", "mapping", "initial_sync", "a_state_from_the_future", "", "PENDING"])
+def test_a_legacy_upload_leaves_a_branch_in_any_other_state_exactly_as_it_is(db, state):
+    _set_onboarding(db, state, "Set by an administrator.")
+
+    response = post_v1(v1_payload())
+
+    assert response.status_code == 200 and v1_event_rows(db) == 3  # the upload itself is unaffected
+    assert _onboarding(db) == (state, "Set by an administrator.", ONBOARDING_CREATED_AT)
+
+
+def test_a_legacy_upload_for_an_inactive_branch_is_refused_as_before_and_the_branch_is_left_alone(db):
+    with db.engine.begin() as conn:
+        conn.execute(text("UPDATE branches SET status = 'inactive' WHERE id = 1"))
+    db.sent.clear()
+
+    response = post_v1(v1_payload())
+
+    assert response.status_code == 403
+    assert v1_event_rows(db) == 0 and _onboarding(db) == PENDING and _branch_updates(db) == []
+    with db.engine.connect() as conn:
+        assert conn.execute(text("SELECT status FROM branches WHERE id = 1")).scalar() == "inactive"
 
 
 # --- only pending, and only this token's own branch --------------------------------------------------------------------

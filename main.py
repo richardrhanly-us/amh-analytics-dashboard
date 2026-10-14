@@ -864,6 +864,7 @@ def upload(request: Request, data: UploadRequest, authorization: str | None = He
         inserted_checkins = 0
         inserted_rejects = 0
         inserted_acs = 0
+        became_ready = False
 
         with engine.begin() as conn:
             token_row = authenticate_agent(
@@ -974,6 +975,18 @@ def upload(request: Request, data: UploadRequest, authorization: str | None = He
                 """), acs_row)
 
                 inserted_acs += result.rowcount
+
+            # The same pending -> ready transition as /v2/upload, by the same rule: only when a row was actually
+            # stored, in this transaction, with no savepoint. See _BRANCH_READY_AFTER_FIRST_INGEST_SQL.
+            if inserted_checkins + inserted_rejects + inserted_acs > 0:
+                became_ready = mark_branch_ready_after_first_ingest(conn, token_row)
+
+        # Only now, with the rows and the transition committed together.
+        if became_ready:
+            logger.info(
+                "Branch onboarding is ready after its first v1 ingest | token_id=%s customer_id=%s branch_id=%s",
+                token_row["id"], token_row["customer_id"], token_row["branch_id"],
+            )
 
         return {
             "status": "success",
@@ -1174,14 +1187,14 @@ def _require_ingest_key(conn, token_row, key_id: str) -> None:
         raise HTTPException(status_code=403, detail=V2_KEY_NOT_AUTHORIZED_DETAIL)
 
 
-# --- the first successful Contract v2 ingest makes its branch ready ------------------------------------------------
+# --- the first successful ingest makes its branch ready ----------------------------------------------------------------
 #
 # A branch is created `onboarding_status = 'pending'`, and the dashboard shows nothing for it until it is 'ready'
-# (services.readiness_service). The first /v2/upload that actually INSERTS an event is the proof that the whole
-# chain -- provisioning, enrollment, the Collector, the key, the ingest -- works for that branch, and is what moves
-# it: pending -> ready, and nothing else. Any other state (paused, mapping, settings, agent, initial_sync, one this
-# code has never heard of) is somebody's decision and is left exactly as it is; a branch that is already ready is
-# not touched, so its timestamp is the moment it FIRST became ready.
+# (services.readiness_service). The first upload that actually INSERTS an event -- on /v2/upload or on the legacy
+# /upload, by the same rule and through the same function -- is the proof that the whole chain works for that branch,
+# and is what moves it: pending -> ready, and nothing else. Any other state (paused, mapping, settings, agent,
+# initial_sync, one this code has never heard of) is somebody's decision and is left exactly as it is; a branch that
+# is already ready is not touched, so its timestamp is the moment it FIRST became ready.
 #
 # IN THE UPLOAD'S OWN TRANSACTION, WITH NO SAVEPOINT: the events and the transition commit together or not at all.
 # If this statement fails the upload fails with it (a 500, which the Collector retries with the same events) --

@@ -730,6 +730,7 @@ def test_upload_never_writes_collector_installations(monkeypatch):
             return {
                 "id": 1, "customer_id": 1, "branch_id": 1, "is_active": True, "description": "t",
                 "organization_status": "active", "branch_status": "active",
+                "resolved_organization_id": 1, "resolved_branch_id": 1,
             }
 
     class _Conn:

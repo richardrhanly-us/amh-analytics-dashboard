@@ -38,12 +38,14 @@ def _row(*, is_active=True, organization_status="active", branch_status="active"
          customer_id=1, branch_id=1, **installation):
     """A token-lookup row. `installation` may carry the bound-installation
     columns (installation_id, installation_status, installation_organization_id,
-    installation_branch_id, resolved_organization_id, resolved_branch_id); without
-    them it is a legacy, unbound token."""
+    installation_branch_id) and override the resolved tenant ids
+    (resolved_organization_id, resolved_branch_id), which the real lookup always
+    returns; without the installation columns it is a legacy, unbound token."""
     return {
         "id": 7, "customer_id": customer_id, "branch_id": branch_id,
         "is_active": is_active, "description": "test",
         "organization_status": organization_status, "branch_status": branch_status,
+        "resolved_organization_id": 1, "resolved_branch_id": 1,
         **installation,
     }
 
