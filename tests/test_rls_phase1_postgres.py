@@ -162,7 +162,11 @@ def _create_runtime_role(owner_engine, role_name: str) -> None:
         # exercise the real API end to end as this role.
         conn.execute(text(f"GRANT SELECT, UPDATE ON TABLE public.agent_tokens TO {role_name}"))
         conn.execute(text(f"GRANT SELECT ON TABLE public.organizations TO {role_name}"))
-        conn.execute(text(f"GRANT SELECT ON TABLE public.branches TO {role_name}"))
+        # UPDATE as well as SELECT: the first /v2/upload that stores an event moves its branch from pending to ready
+        # (main.mark_branch_ready_after_first_ingest), in the upload's own transaction, as this role. Production
+        # sortview_app holds SELECT, INSERT and UPDATE on branches (the 2026-10-01 privilege inventory, recorded in
+        # scripts/runtime_role_privileges.py); this fixture had granted SELECT alone, which was all it then needed.
+        conn.execute(text(f"GRANT SELECT, UPDATE ON TABLE public.branches TO {role_name}"))
         conn.execute(text(f"GRANT SELECT ON TABLE public.collector_installations TO {role_name}"))
         conn.execute(text(f"GRANT SELECT ON TABLE public.customers TO {role_name}"))
         # v1 POST /upload reads v2_cutovers on every request since commit
@@ -487,6 +491,53 @@ def test_v2_upload_works_under_rls_as_the_runtime_role(owner_engine, api):
             "SELECT COUNT(*) FROM checkin_events WHERE customer_id = :c AND branch_id = :b"
         ), {"c": CUSTOMER_A, "b": BRANCH_A}).scalar()
     assert count == 1
+
+
+def test_the_first_v2_upload_makes_its_branch_ready_as_the_runtime_role_and_no_other_tenants(owner_engine, runtime_engine, api):
+    """The pending -> ready transition runs inside the upload's transaction AS THE RUNTIME ROLE, so that role must be
+    able to UPDATE branches (it can in production: scripts/runtime_role_privileges.py). Without the grant the whole
+    upload would fail and store nothing -- which the second half of this test shows is exactly what happens."""
+    key = "5c1d7e2a-3b4f-4a6c-9d8e-0f1a2b3c4d5e"
+    runtime_role = runtime_engine.url.username  # this module's throwaway runtime role (generated; no user input)
+    with owner_engine.begin() as conn:
+        conn.execute(text("INSERT INTO ingest_key_ids (key_id, customer_id, branch_id, algorithm, status) "
+                          "VALUES (:k, :c, :b, 'hmac-sha256-v1', 'active')"), {"k": key, "c": CUSTOMER_A, "b": BRANCH_A})
+        before = dict(conn.execute(text("SELECT id, onboarding_status FROM branches")).all())
+    assert set(before.values()) == {"pending"} and len(before) >= 2
+
+    def post(n: int):
+        return api.post(
+            "/v2/upload",
+            json={"contract_version": 2, "key_id": key, "checkins": [{
+                "event_key": hashlib.sha256(f"ready-{n}".encode()).hexdigest(), "event_time": datetime.now(UTC).isoformat(),
+                "item_key": hashlib.sha256(f"ready-item-{n}".encode()).hexdigest(), "destination": "westside", "bin": "3"}]},
+            headers={"Authorization": f"Bearer {TOKEN_A}"},
+        )
+
+    resp = post(1)
+    assert resp.status_code == 200, resp.text
+
+    with owner_engine.connect() as conn:
+        after = dict(conn.execute(text("SELECT id, onboarding_status FROM branches")).all())
+        mine = conn.execute(text("SELECT id FROM branches WHERE operational_branch_id = :b"), {"b": BRANCH_A}).scalar_one()
+    assert after[mine] == "ready"
+    assert {branch: state for branch, state in after.items() if branch != mine} == {
+        branch: "pending" for branch in before if branch != mine}  # every other tenant's branch: still pending
+
+    # Atomic, as this role: with the UPDATE privilege taken away again, a first upload for a pending branch fails as a
+    # whole -- a 500, and its event is NOT stored -- rather than succeeding with the branch left pending.
+    with owner_engine.begin() as conn:
+        conn.execute(text("UPDATE branches SET onboarding_status = 'pending' WHERE id = :i"), {"i": mine})
+        conn.execute(text(f"REVOKE UPDATE ON TABLE public.branches FROM {runtime_role}"))  # nosec B608
+    try:
+        denied = post(2)
+        assert denied.status_code == 500 and denied.json() == {"detail": "Internal server error"}
+        with owner_engine.connect() as conn:
+            assert conn.execute(text("SELECT COUNT(*) FROM checkin_events WHERE customer_id = :c"), {"c": CUSTOMER_A}).scalar() == 1
+            assert conn.execute(text("SELECT onboarding_status FROM branches WHERE id = :i"), {"i": mine}).scalar() == "pending"
+    finally:
+        with owner_engine.begin() as conn:
+            conn.execute(text(f"GRANT UPDATE ON TABLE public.branches TO {runtime_role}"))  # nosec B608
 
 
 def test_v2_status_works_under_rls_as_the_runtime_role(owner_engine, api):

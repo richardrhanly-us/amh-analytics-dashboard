@@ -82,7 +82,10 @@ _DDL = [
     "CREATE TABLE customers (id INTEGER PRIMARY KEY)",
     """CREATE TABLE organizations (
         id INTEGER PRIMARY KEY, slug TEXT, status TEXT, operational_customer_id INTEGER, created_at TEXT)""",
-    "CREATE TABLE branches (id INTEGER PRIMARY KEY, organization_id INTEGER, status TEXT, operational_branch_id INTEGER)",
+    # The onboarding columns are the real schema's: the first v2 upload that stores an event moves pending -> ready.
+    ("CREATE TABLE branches (id INTEGER PRIMARY KEY, organization_id INTEGER, status TEXT, operational_branch_id INTEGER,"
+     " onboarding_status TEXT NOT NULL DEFAULT 'pending', onboarding_message TEXT,"
+     " onboarding_updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"),
     "CREATE TABLE organization_settings (id INTEGER PRIMARY KEY AUTOINCREMENT, organization_id INTEGER UNIQUE, settings_json TEXT)",
     "CREATE TABLE branch_settings (id INTEGER PRIMARY KEY AUTOINCREMENT, branch_id INTEGER UNIQUE, settings_json TEXT)",
     """CREATE TABLE collector_installations (
@@ -131,7 +134,8 @@ def _tenant(engine, org_id, customer_id, branch_id, *, created_at, settings=None
     _run(engine, "INSERT OR IGNORE INTO customers VALUES (:c)", c=customer_id)
     _run(engine, "INSERT INTO organizations VALUES (:i, :slug, :s, :c, :created)",
          i=org_id, slug=f"org-{org_id}", s=org_status, c=customer_id, created=created_at)
-    _run(engine, "INSERT INTO branches VALUES (:i, :o, 'active', :i)", i=branch_id, o=org_id)
+    _run(engine, "INSERT INTO branches (id, organization_id, status, operational_branch_id) VALUES (:i, :o, 'active', :i)",
+         i=branch_id, o=org_id)
     if settings is not None:
         _set_settings(engine, org_id, settings)
     if branch_settings is not None:

@@ -437,6 +437,14 @@ A3b):** Super Admin's contract selector starts on Contract v2, and the legacy co
 * **The task.** No task exists until the secret, both preflights and the bootstrap have succeeded; it is registered
   Disabled and enabled only as setup's final action. A failure at any earlier point leaves no active task. Setup never
   starts a run: the first one is the task's next 15-minute trigger, and it reads from the cursor seeded at step 8.
+* **The dashboard opens on the first stored event.** A branch is created `onboarding_status = 'pending'`, and the
+  dashboard shows nothing for it until it is `ready`. The first `/v2/upload` that actually **inserts** an event moves
+  the uploading token's own branch from `pending` to `ready`, in that upload's transaction: the events and the
+  transition are stored together or not at all (if the transition fails, the upload is a `500` and the Collector
+  retries it). An upload of nothing but duplicates, an empty or invalid request, a conflict, a heartbeat and an
+  enrollment never do it, and a branch in any other state (`paused`, for one) is left as it is. The dashboard caches
+  readiness for up to two minutes. **Contract v2 only:** the legacy `/upload` route does not do this, so a fresh
+  contract 1 library still stays `pending` -- to be closed before a fresh contract 1 customer is onboarded.
 * **A legacy code.** The first request is refused `contract_not_permitted` without using the code; setup sends the legacy
   request (no `contract_version`) once and follows the legacy path unchanged -- including its question before enabling
   the task. Nothing else is ever retried.

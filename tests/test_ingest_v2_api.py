@@ -181,6 +181,10 @@ _V2_DDL = (
 )
 
 
+# What a branch's onboarding_updated_at is when it is created here: long before any upload in these tests.
+ONBOARDING_CREATED_AT = "2020-01-01 00:00:00"
+
+
 class Db:
     def __init__(self, engine, sent, state):
         self.engine, self.sent, self.state = engine, sent, state
@@ -222,7 +226,10 @@ def db(monkeypatch):
 
     ddl = [
         "CREATE TABLE organizations (id INTEGER PRIMARY KEY, slug TEXT, status TEXT, operational_customer_id INTEGER)",
-        "CREATE TABLE branches (id INTEGER PRIMARY KEY, organization_id INTEGER, status TEXT, operational_branch_id INTEGER)",
+        # The onboarding columns are the real schema's (baseline migration): a new branch is 'pending'.
+        ("CREATE TABLE branches (id INTEGER PRIMARY KEY, organization_id INTEGER, status TEXT, operational_branch_id INTEGER,"
+         " onboarding_status TEXT NOT NULL DEFAULT 'pending', onboarding_message TEXT,"
+         f" onboarding_updated_at TEXT NOT NULL DEFAULT '{ONBOARDING_CREATED_AT}')"),
         "CREATE TABLE collector_installations (id INTEGER PRIMARY KEY, organization_id INTEGER, branch_id INTEGER, status TEXT)",
         ("CREATE TABLE agent_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, token_hash TEXT, customer_id INTEGER,"
          " branch_id INTEGER, description TEXT, is_active BOOLEAN, last_used_at TEXT, installation_id INTEGER)"),
@@ -234,8 +241,9 @@ def db(monkeypatch):
             conn.execute(text(statement))
         conn.execute(text("INSERT INTO organizations VALUES (1, 'lib', 'active', :c)"), {"c": CUSTOMER})
         conn.execute(text("INSERT INTO organizations VALUES (2, 'other', 'active', :c)"), {"c": OTHER_CUSTOMER})
-        conn.execute(text("INSERT INTO branches VALUES (1, 1, 'active', :b)"), {"b": BRANCH})
-        conn.execute(text("INSERT INTO branches VALUES (2, 2, 'active', :b)"), {"b": OTHER_BRANCH})
+        for branch_id, organization_id, operational in ((1, 1, BRANCH), (2, 2, OTHER_BRANCH)):
+            conn.execute(text("INSERT INTO branches (id, organization_id, status, operational_branch_id) VALUES (:i, :o, 'active', :b)"),
+                         {"i": branch_id, "o": organization_id, "b": operational})
         for token, customer, branch in ((TOKEN, CUSTOMER, BRANCH), (OTHER_TOKEN, OTHER_CUSTOMER, OTHER_BRANCH)):
             conn.execute(
                 text("INSERT INTO agent_tokens (token_hash, customer_id, branch_id, description, is_active)"
@@ -1817,3 +1825,271 @@ def test_the_same_event_key_one_second_later_is_a_409_conflict_never_a_duplicate
     assert conflict.json() == {"code": "event_conflict", "conflicts": {kind: [0]},
                                "detail": "An event identity arrived with different content; nothing was stored"}
     assert db.count(_EVENT_TABLE[kind]) == 1  # the original is untouched
+
+
+# =====================================================================================================================
+# The first successful v2 ingest makes its branch ready (pending -> ready, in the upload's own transaction)
+# =====================================================================================================================
+#
+# A branch is created 'pending' and nothing ever moved it: a fresh Contract v2 library enrolled, uploaded, stored its
+# events -- and its dashboard still said "This branch is still being onboarded." The first /v2/upload that actually
+# INSERTS an event now moves the token's own branch from pending to ready, atomically with those events.
+
+EMPTY = {"checkins": [], "rejects": [], "acs_items": []}
+
+
+def _onboarding(db, branch_id=1):
+    """(onboarding_status, onboarding_message, onboarding_updated_at) of a branch."""
+    (row,) = db.rows("branches", "onboarding_status, onboarding_message, onboarding_updated_at", f"WHERE id = {int(branch_id)}")
+    return row
+
+
+def _set_onboarding(db, status, message=None, branch_id=1):
+    with db.engine.begin() as conn:
+        conn.execute(text("UPDATE branches SET onboarding_status = :s, onboarding_message = :m, onboarding_updated_at = :t"
+                          " WHERE id = :i"), {"s": status, "m": message, "t": ONBOARDING_CREATED_AT, "i": branch_id})
+    db.sent.clear()
+
+
+def _branch_updates(db):
+    return [statement for statement in db.sent if "UPDATE branches" in statement]
+
+
+PENDING = ("pending", None, ONBOARDING_CREATED_AT)
+
+
+@pytest.mark.parametrize(("kind", "build"), [("checkins", checkin), ("rejects", reject), ("acs_items", acs_hold)])
+def test_the_first_upload_that_inserts_an_event_makes_a_pending_branch_ready(db, caplog, kind, build):
+    _set_onboarding(db, "pending", "Waiting for the first upload.")
+
+    with caplog.at_level(logging.INFO, logger="sortview.api"):
+        response = post_upload(upload(**{**EMPTY, kind: [build(1)]}))
+
+    assert response.status_code == 200 and response.json()[f"{kind}_inserted"] == 1
+    assert db.count(_EVENT_TABLE[kind]) == 1  # the event is there ...
+    status_, message, updated_at = _onboarding(db)
+    assert status_ == "ready" and message is None  # ... and so is the branch, with its pending note cleared
+    assert updated_at != ONBOARDING_CREATED_AT and updated_at > ONBOARDING_CREATED_AT
+    assert len(_branch_updates(db)) == 1
+    # Logged as ids only, like every other line about a token's tenant.
+    assert f"Branch onboarding is ready after its first v2 ingest | token_id=1 customer_id={CUSTOMER} branch_id={BRANCH}" in caplog.text
+    assert TOKEN not in caplog.text and hmac_like(1) not in caplog.text
+
+
+def test_the_transition_is_sent_after_the_inserts_and_inside_the_same_transaction(db):
+    post_upload(upload(checkins=[checkin(1)], rejects=[reject(2)], acs_items=[acs_hold(3)]))
+
+    sent = [statement.split() for statement in db.sent]
+    writes = [f"{words[0]} {words[2] if words[0] == 'INSERT' else words[1]}" for words in sent if words[0] in ("INSERT", "UPDATE")]
+    assert writes == ["UPDATE agent_tokens", "INSERT checkin_events", "INSERT reject_events", "INSERT acs_item_events",
+                      "UPDATE branches"]
+    assert "SAVEPOINT" not in " ".join(db.sent).upper()  # one transaction: the events and the transition are one unit
+
+
+def test_the_transition_names_the_tokens_own_branch_by_three_facts_and_only_ever_moves_pending_to_ready():
+    sql = " ".join(main._BRANCH_READY_AFTER_FIRST_INGEST_SQL.split())
+
+    assert sql == (
+        "UPDATE branches SET onboarding_status = 'ready', onboarding_message = NULL, "
+        "onboarding_updated_at = CURRENT_TIMESTAMP "
+        "WHERE id = :resolved_branch_id AND organization_id = :resolved_organization_id "
+        "AND operational_branch_id = :operational_branch_id AND status = 'active' AND onboarding_status = 'pending'"
+    )
+
+
+# --- atomic: the events and the transition commit together, or neither does --------------------------------------------
+
+def test_if_the_transition_fails_the_upload_fails_and_stores_nothing(db, monkeypatch, caplog):
+    """The critical one. Were the events kept, the Collector's retry would be all duplicates, would insert nothing,
+    and the branch would stay pending with its data already stored."""
+    working = main._BRANCH_READY_AFTER_FIRST_INGEST_SQL
+    monkeypatch.setattr(main, "_BRANCH_READY_AFTER_FIRST_INGEST_SQL",
+                        working.replace("onboarding_status = 'ready'", "no_such_column = 'ready'"))
+    body = upload(checkins=[checkin(1), checkin(2)], rejects=[reject(3)], acs_items=[acs_hold(4)])
+
+    with caplog.at_level(logging.INFO, logger="sortview.api"):
+        response = post_upload(body)
+
+    assert response.status_code == 500 and response.json() == {"detail": "Internal server error"}  # never a false 200
+    assert db.v2_rows() == 0  # the inserts that had already run were rolled back with it
+    assert _onboarding(db) == PENDING
+    assert "V2 upload failed | error_type=sqlalchemy.exc.OperationalError" in caplog.text
+    assert "Branch onboarding is ready" not in caplog.text
+    for secret in (TOKEN, hmac_like(1), "no_such_column", "UPDATE branches"):
+        assert secret not in response.text and secret not in caplog.text, secret
+
+    # The Collector retries the SAME events. With the fault gone they are stored, and the branch becomes ready.
+    monkeypatch.setattr(main, "_BRANCH_READY_AFTER_FIRST_INGEST_SQL", working)
+    retry = post_upload(body)
+    assert retry.status_code == 200 and retry.json()["checkins_inserted"] == 2 and retry.json()["checkins_duplicates"] == 0
+    assert db.v2_rows() == 4 and _onboarding(db)[0] == "ready"
+
+
+def test_an_exception_from_the_transition_is_not_swallowed_and_its_text_goes_nowhere(db, monkeypatch, caplog):
+    def fails(_conn, _token_row):
+        raise RuntimeError(f"permission denied for table branches; token={TOKEN}; {CANARY_NAME}")
+
+    monkeypatch.setattr(main, "mark_branch_ready_after_first_ingest", fails)
+
+    with caplog.at_level(logging.INFO, logger="sortview.api"):
+        response = post_upload(upload(checkins=[checkin(1)]))
+
+    assert response.status_code == 500 and response.json() == {"detail": "Internal server error"}
+    assert db.v2_rows() == 0 and _onboarding(db) == PENDING
+    assert "V2 upload failed | error_type=builtins.RuntimeError" in caplog.text
+    for secret in (TOKEN, CANARY_NAME, "permission denied"):
+        assert secret not in response.text and secret not in caplog.text, secret
+
+
+# --- what does NOT make a branch ready ---------------------------------------------------------------------------------
+
+def test_an_upload_of_nothing_but_duplicates_leaves_a_pending_branch_pending(db):
+    body = upload(checkins=[checkin(1), checkin(2)], rejects=[reject(3)], acs_items=[acs_hold(4)])
+    assert post_upload(body).status_code == 200
+    _set_onboarding(db, "pending")  # its events are stored, and it is pending again
+
+    again = post_upload(body)
+
+    assert again.status_code == 200
+    assert (again.json()["checkins_inserted"], again.json()["rejects_inserted"], again.json()["acs_items_inserted"]) == (0, 0, 0)
+    assert (again.json()["checkins_duplicates"], again.json()["rejects_duplicates"], again.json()["acs_items_duplicates"]) == (2, 1, 1)
+    assert _onboarding(db) == PENDING and _branch_updates(db) == []  # the statement was not even sent
+
+
+def test_one_new_event_among_duplicates_is_enough(db):
+    assert post_upload(upload(checkins=[checkin(1), checkin(2)])).status_code == 200
+    _set_onboarding(db, "pending")
+
+    response = post_upload(upload(checkins=[checkin(1), checkin(2), checkin(3)]))
+
+    assert response.json()["checkins_inserted"] == 1 and response.json()["checkins_duplicates"] == 2
+    assert _onboarding(db)[0] == "ready"
+
+
+def test_an_empty_request_leaves_a_pending_branch_pending(db):
+    assert post_upload(upload(checkins=[])).status_code == 400
+    assert _onboarding(db) == PENDING and _branch_updates(db) == []
+
+
+@pytest.mark.parametrize("body", [
+    upload(checkins=[checkin(1, destination="Not A Slug")]),
+    upload(checkins=[checkin(1), checkin(2, bin=None)]),            # one valid event beside an invalid one: all refused
+    upload(checkins=[checkin(1)], customer_id=CUSTOMER),
+    {"contract_version": 2, "checkins": [checkin(1)]},              # no key at all
+], ids=["an invalid destination", "a valid event beside an invalid one", "a tenant field", "no key_id"])
+def test_a_request_that_fails_validation_leaves_a_pending_branch_pending(db, body):
+    assert post_upload(body).status_code == 422
+    assert db.v2_rows() == 0 and _onboarding(db) == PENDING and db.sent == []
+
+
+def test_a_conflict_leaves_a_pending_branch_pending_and_stores_none_of_the_requests_new_events(db):
+    assert post_upload(upload(checkins=[checkin(1)])).status_code == 200
+    _set_onboarding(db, "pending")
+
+    # The request also carries events that WOULD have been inserted: the conflict rolls those back, and with them
+    # any reason to call the branch ready.
+    response = post_upload(upload(checkins=[checkin(1, bin="9"), checkin(2), checkin(3)], rejects=[reject(4)]))
+
+    assert response.status_code == 409
+    assert (db.count("checkin_events"), db.count("reject_events")) == (1, 0)
+    assert _onboarding(db) == PENDING and _branch_updates(db) == []
+
+
+@pytest.mark.parametrize("key", [UNKNOWN_KEY, RETIRED_KEY, OTHER_TENANT_KEY])
+def test_an_upload_refused_for_its_key_leaves_a_pending_branch_pending(db, key):
+    assert post_upload(upload(key=key)).status_code == 403
+    assert db.v2_rows() == 0 and _onboarding(db) == PENDING and _onboarding(db, 2) == PENDING
+
+
+def test_a_heartbeat_never_makes_a_branch_ready(db):
+    for body in (status(), status(status="degraded", pending_outbox_count=3, quarantined_count=1)):
+        assert post_status(body).status_code == 200
+
+    assert _onboarding(db) == PENDING and _branch_updates(db) == []
+
+
+def test_the_legacy_upload_route_is_not_part_of_this_and_leaves_a_pending_branch_pending(db):
+    """Contract v2 ONLY. A fresh Contract 1 library has the same pending -> ready gap; closing it is a follow-up that
+    must land before a fresh Contract 1 customer is onboarded. This holds the scope, not the gap."""
+    v1 = {"checkins": [{"customer_id": CUSTOMER, "branch_id": BRANCH, "event_time": "2026-01-01 10:00:00", "barcode": "B-1",
+                        "destination": "Main", "bin": "1"}]}
+
+    response = client.post("/upload", json=v1, headers=AUTH)
+
+    assert response.status_code == 200 and response.json()["checkins_inserted"] == 1
+    assert _onboarding(db) == PENDING and _branch_updates(db) == []
+
+
+# --- only pending, and only this token's own branch --------------------------------------------------------------------
+
+@pytest.mark.parametrize("state", ["ready", "paused", "mapping", "settings", "agent", "initial_sync", "a_state_from_the_future", ""])
+def test_a_branch_in_any_other_state_is_left_exactly_as_it_is(db, state):
+    _set_onboarding(db, state, "Set by an administrator.")
+
+    response = post_upload(upload(checkins=[checkin(1)], rejects=[reject(2)], acs_items=[acs_hold(3)]))
+
+    assert response.status_code == 200 and db.v2_rows() == 3  # the upload itself is unaffected
+    assert _onboarding(db) == (state, "Set by an administrator.", ONBOARDING_CREATED_AT)  # status, message AND timestamp
+
+
+def test_a_branch_that_became_ready_keeps_the_moment_it_first_did(db):
+    post_upload(upload(checkins=[checkin(1)]))
+    first = _onboarding(db)
+    assert first[0] == "ready"
+
+    post_upload(upload(checkins=[checkin(2)]))
+    post_upload(upload(checkins=[checkin(3)]))
+
+    assert _onboarding(db) == first
+
+
+def test_an_inactive_branch_is_not_made_ready_even_if_reached(db):
+    """An upload for an inactive branch is refused at the tenant gate long before this; the predicate says so too."""
+    token_row = {"id": 1, "customer_id": CUSTOMER, "branch_id": BRANCH, "resolved_branch_id": 1, "resolved_organization_id": 1}
+    with db.engine.begin() as conn:
+        conn.execute(text("UPDATE branches SET status = 'inactive' WHERE id = 1"))
+        assert main.mark_branch_ready_after_first_ingest(conn, token_row) is False
+
+    assert _onboarding(db) == PENDING
+
+
+def test_one_tenants_upload_never_touches_another_tenants_pending_branch(db):
+    assert post_upload(upload(checkins=[checkin(1)])).status_code == 200
+
+    assert _onboarding(db, 1)[0] == "ready"
+    assert _onboarding(db, 2) == PENDING  # the other tenant's branch: untouched in every column
+
+    assert post_upload(upload(key=OTHER_TENANT_KEY, checkins=[checkin(1)]), token=OTHER_TOKEN).status_code == 200
+    assert _onboarding(db, 2)[0] == "ready"
+
+
+def test_a_branch_is_never_found_by_its_operational_id_alone(db):
+    """Three more pending branches that each match SOME of the facts about tenant A's branch -- the same operational
+    branch id under another organization, another branch of the same organization, a row with no operational id.
+    Only the branch the token resolved to (id, organization and operational id all agreeing) is moved."""
+    with db.engine.begin() as conn:
+        for branch_id, organization_id, operational in ((3, 2, BRANCH), (4, 1, 4), (5, 1, None)):
+            conn.execute(text("INSERT INTO branches (id, organization_id, status, operational_branch_id) VALUES (:i, :o, 'active', :b)"),
+                         {"i": branch_id, "o": organization_id, "b": operational})
+
+    assert post_upload(upload(checkins=[checkin(1)])).status_code == 200
+
+    assert _onboarding(db, 1)[0] == "ready"
+    assert [_onboarding(db, branch_id) for branch_id in (2, 3, 4, 5)] == [PENDING] * 4
+
+
+@pytest.mark.parametrize("changed", [
+    {"resolved_branch_id": 2},                # another tenant's branch id
+    {"resolved_organization_id": 2},          # the right branch, the wrong organization
+    {"branch_id": OTHER_BRANCH},              # the right branch, the wrong operational id
+    {"resolved_branch_id": None},
+    {"resolved_organization_id": None},
+], ids=["another branch id", "another organization", "another operational id", "no branch", "no organization"])
+def test_the_transition_changes_nothing_unless_all_three_facts_agree(db, changed):
+    token_row = {"id": 1, "customer_id": CUSTOMER, "branch_id": BRANCH, "resolved_branch_id": 1, "resolved_organization_id": 1,
+                 **changed}
+
+    with db.engine.begin() as conn:
+        assert main.mark_branch_ready_after_first_ingest(conn, token_row) is False
+
+    assert _onboarding(db, 1) == PENDING and _onboarding(db, 2) == PENDING
