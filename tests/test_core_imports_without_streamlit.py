@@ -40,6 +40,8 @@ STREAMLIT_FREE_MODULES = [
     "services.hold_rules",
     "services.hold_report_service",
     "customer_api.holds_report_routes",
+    # The collector-schedule judgement shared out of the dashboard's pipeline panel.
+    "services.collector_schedule",
 ]
 
 

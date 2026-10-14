@@ -7,7 +7,6 @@ clock. A healthy, current heartbeat at that moment: last run 2:45 PM, next run 3
 """
 
 from datetime import datetime, timedelta
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -15,11 +14,10 @@ import pytest
 from test_pipeline_status_null_counters import _render_run_summary
 
 import data_loader as dl
-from collector import task_settings, v2_events
+from collector import v2_events
 from services import ingest_v2_models
 from services import pipeline_context_service as service
 from services.pipeline_context_service import (
-    build_collector_diagnostics,
     build_pipeline_context,
     build_v2_aware_pipeline_context,
 )
@@ -137,19 +135,8 @@ def test_an_old_collector_heartbeat_never_changes_a_non_healthy_headline_either(
 
 
 # ======================================================================================================================
-# the overdue rule: two cadences
+# the overdue rule: two cadences (the grace itself is services.collector_schedule's, see tests/test_collector_schedule.py)
 # ======================================================================================================================
-
-def test_the_overdue_grace_is_two_canonical_cadences_and_is_tied_to_the_collectors_own_constant():
-    assert service.COLLECTOR_CADENCE_MINUTES == task_settings.DEFAULT_CADENCE_MINUTES == 15
-    assert service.SCHEDULE_OVERDUE_GRACE_CADENCES == 2
-    assert service.SCHEDULE_OVERDUE_GRACE == timedelta(minutes=2 * task_settings.DEFAULT_CADENCE_MINUTES) == timedelta(minutes=30)
-    # Derived, not a bare literal: the service computes it from the two named constants.
-    source = Path(service.__file__).read_text(encoding="utf-8")
-    assert "timedelta(minutes=COLLECTOR_CADENCE_MINUTES * SCHEDULE_OVERDUE_GRACE_CADENCES)" in source
-    assert "timedelta(minutes=30)" not in source
-    assert "MultipleInstancesPolicy=IgnoreNew" in source  # and the reason for two is written down next to it
-
 
 @pytest.mark.parametrize("minutes_overdue", [0, 1, 14, 15, 16, 29, 29.9, 30])
 def test_a_healthy_schedule_up_to_thirty_minutes_overdue_is_still_healthy(minutes_overdue):
@@ -291,19 +278,29 @@ def test_an_overdue_schedule_does_not_displace_an_auth_failure_either():
 
 
 # ======================================================================================================================
-# the judgement function on its own
+# an unknown health: a demonstrable schedule error still shows; an unconfirmed schedule changes nothing
 # ======================================================================================================================
 
-def test_the_four_judgements():
-    def judge(**overrides):
-        return build_collector_diagnostics(heartbeat(**overrides), NOW_CT, APP_TZ)[:2]
+def test_an_unknown_health_with_an_overdue_schedule_is_a_schedule_error():
+    ctx = context(heartbeat(health_status=None, collector_next_run_at=utc_iso(-31)))
 
-    assert judge() == (service.SCHEDULE_OK, None)
-    assert judge(**OLD_COLLECTOR) == (service.SCHEDULE_UNKNOWN, None)
-    assert judge(collector_schedule_status="task_missing") == (service.SCHEDULE_ERROR, "scheduled task not found")
-    assert judge(collector_next_run_at=utc_iso(-31)) == (service.SCHEDULE_ERROR, "scheduled run overdue")
-    assert judge(collector_schedule_status="query_failed") == (service.SCHEDULE_INDETERMINATE, "schedule could not be checked")
+    assert ctx["pipeline_status_label"] == "Pipeline Schedule Error" and ctx["pipeline_expanded"] is True
+    assert (ctx["pipeline_status_color"], ctx["pipeline_status_bg"]) == FAILED_COLORS
+    assert ctx["pipeline_result_text"] == "Collector schedule error -- scheduled run overdue (ingestion last reported no status)"
 
+
+def test_an_unknown_health_with_an_unreadable_schedule_stays_unknown():
+    # The dashboard's rule, kept on purpose: pipeline_state.state_for_current_report would call this "degraded".
+    ctx = context(heartbeat(health_status=None, collector_schedule_status="query_failed", collector_next_run_at=None))
+
+    assert ctx["pipeline_status_label"] == "Pipeline Status Unknown" and ctx["pipeline_expanded"] is True
+    assert (ctx["pipeline_status_color"], ctx["pipeline_status_bg"]) == service._status_colors("unknown", "light")
+    assert ctx["collector_diagnostics_lines"][3] == "Collector Schedule: Error — schedule could not be checked"
+
+
+# ======================================================================================================================
+# every code has words (the judgements themselves are tests/test_collector_schedule.py's)
+# ======================================================================================================================
 
 def test_every_code_the_collector_can_send_has_a_fixed_line_on_the_dashboard():
     assert ingest_v2_models.SCHEDULE_STATUSES == v2_events.SCHEDULE_STATUSES

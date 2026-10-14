@@ -1,9 +1,23 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 from formatting import format_relative_time
+from services.collector_schedule import (
+    OVERDUE,
+    SCHEDULE_ERROR,
+    SCHEDULE_INDETERMINATE,
+    SCHEDULE_OK,
+    SCHEDULE_UNKNOWN,
+    UNREADABLE,
+    judge_schedule,
+)
+from services.pipeline_state import (
+    state_for_current_health,
+    state_for_legacy_health,
+    state_for_run_status,
+)
 
 # WCAG 2.1 AA (>=4.5:1, normal-size text) foreground/background pairs for
 # each pipeline-status family, one pair per Streamlit theme. The prior
@@ -45,6 +59,11 @@ def _status_colors(family: str, theme_base: str) -> tuple[str, str]:
     check in this codebase)."""
     theme_key = "dark" if theme_base == "dark" else "light"
     return _STATUS_COLOR_PAIRS[family][theme_key]
+
+
+# What a stored value MEANS is services.pipeline_state's rule, shared with the customer API. This is only how the panel
+# shows each of its four states: in which colour family.
+_FAMILY_FOR_STATE = {"ok": "healthy", "degraded": "degraded", "failed": "failed", "unknown": "unknown"}
 
 
 def _parse_status_datetime(value, local_tz):
@@ -158,61 +177,56 @@ def build_pipeline_context(pipeline_status, df_live_raw, now_ct, local_tz, theme
 
     if heartbeat_is_current:
         status_code_text = str(health_status)
+        state = state_for_legacy_health(health_status)
 
-        if health_status == "healthy":
+        # A heartbeat state other than these three leaves pipeline_result_text unset (unchanged behaviour).
+        if state == "ok":
             pipeline_status_label = "Pipeline Healthy"
-            pipeline_status_color, pipeline_status_bg = _status_colors("healthy", theme_base)
             pipeline_result_text = "Continuous agent reporting healthy"
-        elif health_status == "degraded":
+        elif state == "degraded":
             pipeline_status_label = "Pipeline Degraded"
-            pipeline_status_color, pipeline_status_bg = _status_colors("degraded", theme_base)
             pipeline_result_text = (
                 "Continuous agent reporting degraded -- backlog, quarantine, "
                 "or unresolved delivery failure"
             )
-        elif health_status == "auth_failure":
+        elif state == "failed":
             pipeline_status_label = "Pipeline Auth Failure"
-            pipeline_status_color, pipeline_status_bg = _status_colors("failed", theme_base)
             pipeline_result_text = "Continuous agent cannot authenticate -- check the agent token"
+        pipeline_status_color, pipeline_status_bg = _status_colors(_FAMILY_FOR_STATE[state], theme_base)
 
-        pipeline_expanded = health_status != "healthy"
+        pipeline_expanded = state != "ok"
 
     else:
         status_code_text = str(pipeline_run_status)
+        state = state_for_run_status(pipeline_run_status)
+        family = _FAMILY_FOR_STATE[state]
 
-        if pipeline_run_status == "completed":
+        if state == "ok":
             pipeline_status_label = "Pipeline Healthy"
-            pipeline_status_color, pipeline_status_bg = _status_colors("healthy", theme_base)
-            pipeline_result_text = (
-                f"Uploaded {uploaded_checkins_rows:,} new checkins and "
-                f"{uploaded_rejects_rows:,} new rejects this run"
-            )
-        elif pipeline_run_status == "completed_no_new_rows":
-            pipeline_status_label = "Pipeline Healthy"
-            pipeline_status_color, pipeline_status_bg = _status_colors("healthy", theme_base)
-            pipeline_result_text = "Run completed, but no new rows were uploaded"
-        elif pipeline_run_status == "skipped_no_source_changes":
-            pipeline_status_label = "Pipeline Healthy"
-            pipeline_status_color, pipeline_status_bg = _status_colors("healthy", theme_base)
-            pipeline_result_text = "No new source changes detected this run"
-        elif str(pipeline_run_status).startswith("failed"):
+            if pipeline_run_status == "completed":
+                pipeline_result_text = (
+                    f"Uploaded {uploaded_checkins_rows:,} new checkins and "
+                    f"{uploaded_rejects_rows:,} new rejects this run"
+                )
+            elif pipeline_run_status == "completed_no_new_rows":
+                pipeline_result_text = "Run completed, but no new rows were uploaded"
+            else:  # skipped_no_source_changes
+                pipeline_result_text = "No new source changes detected this run"
+        elif state == "failed":
             pipeline_status_label = "Pipeline Failed"
-            pipeline_status_color, pipeline_status_bg = _status_colors("failed", theme_base)
             pipeline_result_text = "Latest run failed"
         elif pipeline_run_status == "started":
+            # Presentation only: a run that has begun is `unknown` to pipeline_state (no outcome reported yet); the
+            # panel says it is running, in amber.
             pipeline_status_label = "Pipeline Running"
-            pipeline_status_color, pipeline_status_bg = _status_colors("degraded", theme_base)
+            family = "degraded"
             pipeline_result_text = "Run in progress"
         else:
             pipeline_status_label = "Pipeline Status Unknown"
-            pipeline_status_color, pipeline_status_bg = _status_colors("unknown", theme_base)
             pipeline_result_text = "Unknown"
+        pipeline_status_color, pipeline_status_bg = _status_colors(family, theme_base)
 
-        pipeline_expanded = pipeline_run_status not in [
-            "completed",
-            "completed_no_new_rows",
-            "skipped_no_source_changes",
-        ]
+        pipeline_expanded = state != "ok"
 
     if isinstance(destination_breakdown, dict) and destination_breakdown:
         destination_breakdown_text = ", ".join(
@@ -256,23 +270,8 @@ def build_pipeline_context(pipeline_status, df_live_raw, now_ct, local_tz, theme
 #
 # The collector reads its own Windows Scheduled Task and reports, in every heartbeat: Task Scheduler's LastRunTime and
 # NextRunTime, how long the invocation took, and one fixed schedule code (collector/v2_schedule.py). This section turns
-# those four stored values into the panel's four lines and one judgement about the schedule.
-#
-# THE DASHBOARD ALSO REASONS ABOUT TIME. "healthy" in the latest heartbeat only describes the moment it was sent. If the
-# collector then stops running -- the task is deleted or disabled, the machine is off -- no newer heartbeat arrives to
-# say so, and the stored next-run time simply slides into the past. So a healthy schedule whose next run is overdue by
-# more than the grace below is shown as an error. The latest row IS the newest heartbeat for the key, so "overdue and
-# not replaced" needs no second query.
-#
-# THE GRACE IS TWO CADENCES. The task runs every 15 minutes with MultipleInstancesPolicy=IgnoreNew: if a run is still
-# going when the next trigger fires, that trigger is legitimately skipped, and the next heartbeat can be a full cadence
-# later than the stored next-run time. One cadence of grace would therefore raise a false alarm on a single long run;
-# two tolerates one skipped trigger and still reports a stopped collector within half an hour. The cadence is the
-# collector's own constant (collector/task_settings.py DEFAULT_CADENCE_MINUTES); nothing under src/ imports the
-# collector package, so it is restated here and tests/test_v2_collector_diagnostics.py pins the two together.
-COLLECTOR_CADENCE_MINUTES = 15
-SCHEDULE_OVERDUE_GRACE_CADENCES = 2
-SCHEDULE_OVERDUE_GRACE = timedelta(minutes=COLLECTOR_CADENCE_MINUTES * SCHEDULE_OVERDUE_GRACE_CADENCES)
+# those four stored values into the panel's four lines; what the schedule IS (ok, error, indeterminate, unknown, and
+# why) is judged by services.collector_schedule, including the overdue grace. Only the words are decided here.
 
 # What the schedule line says for each code the collector can report (ingest_v2_models.SCHEDULE_STATUSES). Fixed text,
 # stated in words: colour reinforces the panel's state but is never the only signal.
@@ -281,13 +280,11 @@ _SCHEDULE_REASON_TEXT = {
     "task_disabled": "scheduled task is disabled",
     "no_next_run": "no future run scheduled",
 }
+_SCHEDULE_OVERDUE_TEXT = "scheduled run overdue"
 _SCHEDULE_QUERY_FAILED_TEXT = "schedule could not be checked"
 _SCHEDULE_NOT_REPORTED_TEXT = "Unknown (not reported by this collector version)"
-
-# The four judgements. ERROR is demonstrable (the collector said so, or the next run is overdue); INDETERMINATE is "the
-# collector is evidently running, but could not read its own schedule"; UNKNOWN is an older collector that reports none
-# of this and must change nothing.
-SCHEDULE_OK, SCHEDULE_ERROR, SCHEDULE_INDETERMINATE, SCHEDULE_UNKNOWN = "ok", "error", "indeterminate", "unknown"
+# The words for each reason collector_schedule can give.
+_SCHEDULE_REASON_WORDS = {**_SCHEDULE_REASON_TEXT, OVERDUE: _SCHEDULE_OVERDUE_TEXT, UNREADABLE: _SCHEDULE_QUERY_FAILED_TEXT}
 
 
 def _format_time_until(dt_value, now_value):
@@ -320,27 +317,18 @@ def build_collector_diagnostics(v2_ingest_status, now_ct, local_tz):
     renders as N/A / Unknown and yields SCHEDULE_UNKNOWN -- never an exception, and never a schedule error."""
     last_run = _parse_status_datetime(v2_ingest_status.get("collector_last_run_at"), local_tz)
     next_run = _parse_status_datetime(v2_ingest_status.get("collector_next_run_at"), local_tz)
-    status = v2_ingest_status.get("collector_schedule_status")
+    schedule = judge_schedule(v2_ingest_status.get("collector_schedule_status"), next_run, now_ct)
 
     def _display(dt):
         return dt.strftime("%b %d, %Y %I:%M %p") if dt else "N/A"
 
-    if not status:
-        judgement, reason = SCHEDULE_UNKNOWN, None
+    judgement = schedule.judgement
+    reason = None if schedule.reason is None else _SCHEDULE_REASON_WORDS[schedule.reason]
+    if judgement == SCHEDULE_UNKNOWN:
         schedule_text = _SCHEDULE_NOT_REPORTED_TEXT
-    elif status == "healthy":
-        if next_run is None:  # "healthy" without a next run cannot be trusted as healthy
-            judgement, reason = SCHEDULE_ERROR, _SCHEDULE_REASON_TEXT["no_next_run"]
-        elif now_ct - next_run > SCHEDULE_OVERDUE_GRACE:
-            judgement, reason = SCHEDULE_ERROR, "scheduled run overdue"
-        else:
-            judgement, reason = SCHEDULE_OK, None
-        schedule_text = "Healthy" if judgement == SCHEDULE_OK else f"Error — {reason}"
-    elif status in _SCHEDULE_REASON_TEXT:
-        judgement, reason = SCHEDULE_ERROR, _SCHEDULE_REASON_TEXT[status]
-        schedule_text = f"Error — {reason}"
-    else:  # query_failed, or a code this dashboard does not know: the schedule's real state is not known
-        judgement, reason = SCHEDULE_INDETERMINATE, _SCHEDULE_QUERY_FAILED_TEXT
+    elif judgement == SCHEDULE_OK:
+        schedule_text = "Healthy"
+    else:
         schedule_text = f"Error — {reason}"
 
     last_run_line = (
@@ -420,13 +408,6 @@ def build_collector_diagnostics(v2_ingest_status, now_ct, local_tz):
 #
 #***************************************************************
 
-_V2_HEALTH_STATUS_FAMILY = {
-    "healthy": "healthy",
-    "degraded": "degraded",
-    "error": "failed",
-}
-
-
 def build_v2_aware_pipeline_context(pipeline_status, v2_ingest_status, df_live_raw, now_ct, local_tz, theme_base):
     if not v2_ingest_status:
         return build_pipeline_context(pipeline_status, df_live_raw, now_ct, local_tz, theme_base)
@@ -434,7 +415,7 @@ def build_v2_aware_pipeline_context(pipeline_status, v2_ingest_status, df_live_r
     base = build_pipeline_context(pipeline_status, df_live_raw, now_ct, local_tz, theme_base)
 
     health_status = v2_ingest_status.get("health_status")
-    family = _V2_HEALTH_STATUS_FAMILY.get(health_status, "unknown")
+    family = _FAMILY_FOR_STATE[state_for_current_health(health_status)]
     pipeline_status_color, pipeline_status_bg = _status_colors(family, theme_base)
 
     if family == "healthy":
