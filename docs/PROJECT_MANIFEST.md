@@ -108,7 +108,8 @@ Super Admin (internal staff tool) may stay on Streamlit until later.
     rather than the authorization boundary, has no attempt limit or audit trail, and is a shared organization
     secret rather than per-user access. D2 does not close B3: MFA/SSO remains the stronger future control, and is
     not a cutover blocker unless new evidence says otherwise.
-  - Streamlit Transits view and Overview (internal workflow) — confirm React routing/holds reports cover them.
+  - Streamlit Transits view and Overview (internal workflow) — **resolved 2026-10-14:** internal workflow / Holds by
+    D3, Transits and Exceptions / Overflow by D5 (details below).
     - **Internal workflow decided 2026-10-14 (D3):** keep React's ranged Public Holds + ILL report as it is. Not in
       cutover scope: Branch Services / Collection Services counts, Live Today internal-workflow cards, the ILL split
       by destination branch. Why: Holds + ILL generalize to any library; the service counts depend on per-library
@@ -116,6 +117,15 @@ Super Admin (internal staff tool) may stay on Streamlit until later.
       is one person's card, and are deliberately omitted by the tested API; a "today" range in Reports covers most
       of the live cards' value. Reopen only if NBPL staff confirm active operational use of the service counts —
       and then evaluate the ranged report first, not Live Today.
+    - **Transits deep reports and Exceptions / Overflow decided 2026-10-14 (D5): dropped; nothing to build in A2.**
+      React's routing and reject reporting already covers the general questions: settings-driven destinations,
+      where check-ins went, daily/monthly transit (with a per-destination CSV), previous-period comparison, the
+      organization routing network, reject reasons, bin volume, CSV and print. Not carried forward: transit by
+      hour, % routing over time, peak transit weekday, all-history destination-share baselines, the "No Agency
+      Destination" count, deep dive and item-level title/barcode table, destination-linked reject diagnostics, and
+      the bin-0 "exception/overflow" figures including "Estimated Holds". Why: NBPL-specific (Westside / Library
+      Express / "No Agency Destination" / bin 0), inferred or weak logic, redundant with React, or raw item rows
+      outside the v2 privacy boundary; real hold counts are kept under D3, and diagnostic text was dropped in D4.
   - Automatic alerts / insight text — **decided 2026-10-14 (D4): metrics only at cutover.** React shows the
     underlying figures with no automatic diagnosis or advice; none of Streamlit's alert/insight logic is ported
     (routing trend alerts, "Recommended Attention", transit/reject correlation, reject-rate colour bands, the unused
