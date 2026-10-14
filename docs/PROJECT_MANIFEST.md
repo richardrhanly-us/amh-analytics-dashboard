@@ -95,6 +95,10 @@ Super Admin (internal staff tool) may stay on Streamlit until later.
   - Streamlit admin-password lock (`security` settings) — likely obsolete under React's roles; decide.
   - Streamlit Transits view and Overview (internal workflow) — confirm React routing/holds reports cover them.
   - Demo/guest mode — decide whether it survives.
+  - History window — verified 2026-10-14 in NBPL production: plan `enterprise` (one subscription),
+    `history_days` enabled with 3650, so React/API give NBPL a 3650-day window. No 30-day fallback risk at NBPL
+    cutover. The general rule stands for other customers: a missing or disabled `history_days` falls back to
+    30 days (`entitlement_service.DEFAULT_HISTORY_DAYS`); Streamlit never enforced it.
 - [ ] **A2. Close parity gaps** decided in A1 (each its own small PR).
 - [ ] **A3. Production hosting:** CloudFront (per runbook) on a SortView custom domain, TLS, production API origin.
 - [ ] **A4. Cutover:** NBPL moved to React; Streamlit customer access removed or redirected.
@@ -200,6 +204,7 @@ Not engineering, but slow; starting them early shortens the plan without moving 
 
 One line each, dated. Pick up only when a milestone needs it, or when it is promoted on purpose.
 
+- 2026-10-14 — NBPL's only subscription has status `trial`; `get_org_subscription` picks the newest subscription regardless of status. No effect today; decide before billing (C7).
 - 2026-10-14 — `onboarding_status` vocabulary: `paused`/`mapping`/`settings`/`agent`/`initial_sync` have messages but no writer; no admin control; no DB CHECK constraint (production holds only `pending`/`ready`).
 - 2026-10-14 — `branches.status` has no admin control (inactive only via SQL); Super Admin warns but cannot change it.
 - 2026-10-14 — React pending page does not refresh to "ready" while open (organization detail is fetched once); a "Check again" button would fix it.
