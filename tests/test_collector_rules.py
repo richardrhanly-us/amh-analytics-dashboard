@@ -253,9 +253,9 @@ def test_a_branchs_settings_are_merged_over_its_organizations_key_by_key():
     assert effective["collector_timezone"] == "America/Chicago" and effective["branch_name"] == "East"
     assert rules.build_classification_rules(effective)["branch_services_names"] == ["BRANCH NAME"]
     # The dashboard's own merge gives the same document.
-    from src.services.tenant_service import _deep_merge_settings
+    from src.services.settings_merge import merge_settings
 
-    assert effective == _deep_merge_settings(organization, branch)
+    assert effective == merge_settings(organization, branch)
 
 
 @pytest.mark.parametrize("missing", [None, "", [], 7])

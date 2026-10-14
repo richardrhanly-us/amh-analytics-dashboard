@@ -15,16 +15,12 @@ The read takes a connection the caller supplies; database errors propagate.
 
 from __future__ import annotations
 
-import json
-from collections.abc import Mapping
-from typing import Any
-
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 from services.routing_destination import RoutingConfig, build_routing_config
+from services.settings_merge import merge_settings, settings_document
 from services.tenant_resolution_service import ResolvedOperationalTenant
-from services.tenant_service import _deep_merge_settings
 
 # Neither settings table is under row level security, so this statement's own
 # filter is the only thing scoping the read: both ids are bound from the
@@ -49,15 +45,6 @@ _SITE_SETTINGS_SQL = text("""
 """)
 
 
-def _settings_document(value: object) -> dict[str, Any]:
-    """A stored settings_json as a dict. PostgreSQL hands JSONB back parsed; a
-    driver that hands back text is parsed here. Nothing stored, or anything
-    that is not an object, is an empty document."""
-    if isinstance(value, (str, bytes)):
-        value = json.loads(value)
-    return dict(value) if isinstance(value, Mapping) else {}
-
-
 def get_routing_config(conn: Connection, tenant: ResolvedOperationalTenant) -> RoutingConfig:
     """The routing configuration of the tenant's sorter site: the
     organization's settings with the site's own merged over them, exactly as
@@ -76,8 +63,8 @@ def get_routing_config(conn: Connection, tenant: ResolvedOperationalTenant) -> R
         raise RuntimeError("The settings of the resolved tenant could not be read as exactly one row.")
     row = rows[0]
 
-    effective = _deep_merge_settings(
-        _settings_document(row["organization_settings"]),
-        _settings_document(row["branch_settings"]),
+    effective = merge_settings(
+        settings_document(row["organization_settings"]),
+        settings_document(row["branch_settings"]),
     )
     return build_routing_config(effective, site_name=row["site_name"] or "")

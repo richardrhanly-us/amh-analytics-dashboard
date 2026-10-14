@@ -16,6 +16,7 @@ from .routing_settings import (
     RoutingSettingsError,
     validate_routing_settings,
 )
+from .settings_merge import merge_settings
 
 
 def create_organization_with_primary_branch(
@@ -660,18 +661,6 @@ def update_collector_installation(
     return dict(row)
 
 
-def _deep_merge_settings(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    result = dict(base)
-
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(result.get(key), dict):
-            result[key] = _deep_merge_settings(result[key], value)
-        else:
-            result[key] = value
-
-    return result
-
-
 def get_effective_settings(org_slug: str, branch_slug: str | None = None) -> dict[str, Any]:
     sql_org = text("""
         SELECT
@@ -761,7 +750,7 @@ def get_effective_settings(org_slug: str, branch_slug: str | None = None) -> dic
     org_settings = dict(org["org_settings"] or {})
     branch_settings = dict(branch["branch_settings"] or {})
 
-    effective_settings = _deep_merge_settings(org_settings, branch_settings)
+    effective_settings = merge_settings(org_settings, branch_settings)
 
     entitlements = {
         row["feature_key"]: {

@@ -45,7 +45,6 @@ Streamlit, no FastAPI. Database errors propagate.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -62,6 +61,7 @@ from services.efficiency_settings import (
     serialize_organization_efficiency_settings,
     serialize_sorter_efficiency_settings,
 )
+from services.settings_merge import settings_document
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,15 +216,6 @@ _CLEAR_SORTER_SQL = text("""
 """)
 
 
-def _settings_document(value: object) -> dict[str, Any]:
-    """A stored settings_json as a dict. PostgreSQL hands JSONB back parsed; a
-    driver that hands back text is parsed here. Nothing stored, or anything
-    that is not an object, is an empty document."""
-    if isinstance(value, (str, bytes)):
-        value = json.loads(value)
-    return dict(value) if isinstance(value, Mapping) else {}
-
-
 def _one(conn: Connection, statement, parameters: dict[str, Any]) -> RowMapping | None:
     """The one row the scope resolves to, or None. Two rows is not a scope."""
     rows = conn.execute(statement, parameters).mappings().all()
@@ -235,7 +226,7 @@ def _organization(conn: Connection, parameters: dict[str, Any], *, for_write: bo
     row = _one(conn, _ORGANIZATION_SQL, {**parameters, "for_write": int(for_write)})
     if row is None:
         return None
-    return parse_organization_efficiency_settings(_settings_document(row["organization_settings"]))
+    return parse_organization_efficiency_settings(settings_document(row["organization_settings"]))
 
 
 def _sorter(conn: Connection, parameters: dict[str, Any], *, for_write: bool) -> SorterEfficiency | None:
@@ -243,8 +234,8 @@ def _sorter(conn: Connection, parameters: dict[str, Any], *, for_write: bool) ->
     if row is None:
         return None
     return SorterEfficiency(
-        organization=parse_organization_efficiency_settings(_settings_document(row["organization_settings"])),
-        sorter=parse_sorter_efficiency_settings(_settings_document(row["sorter_settings"])),
+        organization=parse_organization_efficiency_settings(settings_document(row["organization_settings"])),
+        sorter=parse_sorter_efficiency_settings(settings_document(row["sorter_settings"])),
     )
 
 
@@ -309,7 +300,7 @@ def replace_sorter_efficiency(
         if row is None:
             return None
         # The site's own stored block is not parsed: it is about to be replaced.
-        parse_organization_efficiency_settings(_settings_document(row["organization_settings"]))
+        parse_organization_efficiency_settings(settings_document(row["organization_settings"]))
         if block:
             conn.execute(_SET_SORTER_SQL, {**parameters, "block": json.dumps(block)})
         else:

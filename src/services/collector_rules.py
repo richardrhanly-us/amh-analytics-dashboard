@@ -39,7 +39,7 @@ how a configured destination's slug is chosen -- is deliberately reproduced as i
 Errors carry a FIXED reason code and never a value: the lists hold patron account names, some of them a staff member's
 own, and no message, log line or response may repeat one.
 
-Standard library and services.ingest_v2_models only.
+Standard library, services.ingest_v2_models and services.settings_merge only.
 """
 
 from __future__ import annotations
@@ -51,6 +51,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from .ingest_v2_models import DESTINATION_PATTERN
+from .settings_merge import merge_settings
 
 # The Collector's own (collector/v2_rules.py: SCHEMA_VERSION, _MAX_ENTRIES); held to it by a test.
 RULES_SCHEMA_VERSION = 1
@@ -92,14 +93,8 @@ def _document(value: object) -> dict[str, Any]:
 
 def effective_settings(organization_settings: object, branch_settings: object) -> dict[str, Any]:
     """The organization's settings with the branch's merged over them, key by key -- the same merge the dashboard's
-    effective settings use (services.tenant_service._deep_merge_settings). Neither argument is changed."""
-    result = _document(organization_settings)
-    for key, value in _document(branch_settings).items():
-        if isinstance(value, Mapping) and isinstance(result.get(key), Mapping):
-            result[key] = effective_settings(result[key], value)
-        else:
-            result[key] = value
-    return result
+    effective settings use (services.settings_merge.merge_settings). Neither argument is changed."""
+    return merge_settings(organization_settings, branch_settings)
 
 
 # --- time zone ---------------------------------------------------------------------------------------------------------
