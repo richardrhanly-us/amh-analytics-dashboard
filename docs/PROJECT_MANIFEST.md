@@ -109,6 +109,13 @@ Super Admin (internal staff tool) may stay on Streamlit until later.
     secret rather than per-user access. D2 does not close B3: MFA/SSO remains the stronger future control, and is
     not a cutover blocker unless new evidence says otherwise.
   - Streamlit Transits view and Overview (internal workflow) — confirm React routing/holds reports cover them.
+    - **Internal workflow decided 2026-10-14 (D3):** keep React's ranged Public Holds + ILL report as it is. Not in
+      cutover scope: Branch Services / Collection Services counts, Live Today internal-workflow cards, the ILL split
+      by destination branch. Why: Holds + ILL generalize to any library; the service counts depend on per-library
+      account lists and NBPL terms (unconfigured lists read as false zeros), carry a small privacy edge when a list
+      is one person's card, and are deliberately omitted by the tested API; a "today" range in Reports covers most
+      of the live cards' value. Reopen only if NBPL staff confirm active operational use of the service counts —
+      and then evaluate the ranged report first, not Live Today.
   - Demo/guest mode — decide whether it survives.
   - History window — verified 2026-10-14 in NBPL production: plan `enterprise` (one subscription),
     `history_days` enabled with 3650, so React/API give NBPL a 3650-day window. No 30-day fallback risk at NBPL
@@ -223,6 +230,7 @@ Not engineering, but slow; starting them early shortens the plan without moving 
 
 One line each, dated. Pick up only when a milestone needs it, or when it is promoted on purpose.
 
+- 2026-10-14 — Branch Services / Collection Services counts in the ranged Holds report — reconsider only if NBPL staff confirm they drive a real operational decision (D3). Not an A2 requirement.
 - 2026-10-14 — Optional single printable React summary view (accepted metrics only) — build only if a customer or director asks for it (D1).
 - 2026-10-14 — NBPL's only subscription has status `trial`; `get_org_subscription` picks the newest subscription regardless of status. No effect today; decide before billing (C7).
 - 2026-10-14 — `onboarding_status` vocabulary: `paused`/`mapping`/`settings`/`agent`/`initial_sync` have messages but no writer; no admin control; no DB CHECK constraint (production holds only `pending`/`ready`).
