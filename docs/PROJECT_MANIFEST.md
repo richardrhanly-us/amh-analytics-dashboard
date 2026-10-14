@@ -89,7 +89,17 @@ Super Admin (internal staff tool) may stay on Streamlit until later.
 
 - [ ] **A1. Parity checklist.** A written list of every customer-facing Streamlit capability, each marked
       *in React* / *needs building* / *dropped on purpose*. Known candidates to decide:
-  - Director PDF export (Streamlit `reports_labor.py`) — React has no PDF export.
+  - Director PDF export (Streamlit `reports_labor.py`) — **decided 2026-10-14 (D1): dropped for cutover.** React
+    Print report + CSV are the supported export story; the server-side PDF is not rebuilt. A single printable React
+    summary view is parked until a customer or director asks for it.
+    - **AMH ROI framing (product decision, not an implementation detail):** the legacy AMH "hours saved",
+      annualized ROI, payback and since-install value are removed on purpose. Why: the "AMH rate" was observed
+      demand, not machine throughput; arbitrary ranges were annualized; since-install projected the current range
+      over unobserved years; the PDF carried NBPL-specific routing and unsupported narrative. Accepted framing
+      (`services/efficiency_report.py`): manual-workload and labor-value *equivalents* from stored assumptions,
+      unavailable when an assumption is missing, and no claim that staff hours, payroll or budget were saved.
+    - Not affected: SortView Value's own ROI/payback (`services/sortview_value.py`), a separate model of the
+      SortView subscription from customer-entered before/after task times, with its existing caveats.
   - Internal-routing lists (Branch/Collection Services names, patron account names) — editable only in Streamlit
     Admin Settings. Decide: React (owners/admins), Super Admin only, or Collector-side only.
   - Streamlit admin-password lock (`security` settings) — likely obsolete under React's roles; decide.
@@ -204,6 +214,7 @@ Not engineering, but slow; starting them early shortens the plan without moving 
 
 One line each, dated. Pick up only when a milestone needs it, or when it is promoted on purpose.
 
+- 2026-10-14 — Optional single printable React summary view (accepted metrics only) — build only if a customer or director asks for it (D1).
 - 2026-10-14 — NBPL's only subscription has status `trial`; `get_org_subscription` picks the newest subscription regardless of status. No effect today; decide before billing (C7).
 - 2026-10-14 — `onboarding_status` vocabulary: `paused`/`mapping`/`settings`/`agent`/`initial_sync` have messages but no writer; no admin control; no DB CHECK constraint (production holds only `pending`/`ready`).
 - 2026-10-14 — `branches.status` has no admin control (inactive only via SQL); Super Admin warns but cannot change it.
