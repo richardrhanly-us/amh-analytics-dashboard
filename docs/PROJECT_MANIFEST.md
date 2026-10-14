@@ -102,7 +102,12 @@ Super Admin (internal staff tool) may stay on Streamlit until later.
       SortView subscription from customer-entered before/after task times, with its existing caveats.
   - Internal-routing lists (Branch/Collection Services names, patron account names) — editable only in Streamlit
     Admin Settings. Decide: React (owners/admins), Super Admin only, or Collector-side only.
-  - Streamlit admin-password lock (`security` settings) — likely obsolete under React's roles; decide.
+  - Streamlit admin-password lock (`security` settings) — **decided 2026-10-14 (D2): not rebuilt in React.** React
+    relies on the API's server-side owner/admin role checks on every settings and members request. The Streamlit
+    lock stays until cutover/retirement. Why: it guards only Admin Settings (not members), is a page-level gate
+    rather than the authorization boundary, has no attempt limit or audit trail, and is a shared organization
+    secret rather than per-user access. D2 does not close B3: MFA/SSO remains the stronger future control, and is
+    not a cutover blocker unless new evidence says otherwise.
   - Streamlit Transits view and Overview (internal workflow) — confirm React routing/holds reports cover them.
   - Demo/guest mode — decide whether it survives.
   - History window — verified 2026-10-14 in NBPL production: plan `enterprise` (one subscription),
@@ -113,6 +118,10 @@ Super Admin (internal staff tool) may stay on Streamlit until later.
 - [ ] **A3. Production hosting:** CloudFront (per runbook) on a SortView custom domain, TLS, production API origin.
 - [ ] **A4. Cutover:** NBPL moved to React; Streamlit customer access removed or redirected.
 - [ ] **A5. Retire** Streamlit customer code paths no longer reachable.
+  - Admin-lock cleanup (added 2026-10-14, D2): inventory and remove legacy `security` settings; handle any
+    remaining plaintext `security.admin_password` through the existing approved process
+    (`docs/production-verification-runbook.md` Part 1); retire `admin_lock_service.py`, its scripts, tests and
+    the `docs/deployment.md` section with the Streamlit code.
 
 **Exit:** no customer signs in to Streamlit.
 
