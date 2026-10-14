@@ -42,6 +42,8 @@ STREAMLIT_FREE_MODULES = [
     "customer_api.holds_report_routes",
     # The collector-schedule judgement shared out of the dashboard's pipeline panel.
     "services.collector_schedule",
+    # The one effective-settings merge, shared by the dashboard, the customer API and Collector enrollment.
+    "services.settings_merge",
 ]
 
 

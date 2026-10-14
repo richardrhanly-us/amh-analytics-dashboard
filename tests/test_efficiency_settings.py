@@ -41,7 +41,7 @@ from services.efficiency_settings import (
     validate_organization_efficiency_settings,
     validate_sorter_efficiency_settings,
 )
-from services.tenant_service import _deep_merge_settings
+from services.settings_merge import merge_settings
 
 # The product's date a write is validated against. Always passed in as today=: nothing under test reads a clock.
 AS_OF = date(2026, 10, 6)
@@ -567,7 +567,7 @@ def test_a_cost_written_in_the_organizations_document_is_never_a_sorters_cost():
     assert effective.labor_rate == ResolvedRate(Decimal("20.00"), "organization")
 
     # The dashboard's effective settings WOULD hand all three down -- which is why Efficiency does not read them.
-    merged = _deep_merge_settings(organization_document, sorter_document)
+    merged = merge_settings(organization_document, sorter_document)
     assert parse_sorter_efficiency_settings(merged).one_time_cost == Decimal("100000.00")
     assert parse_sorter_efficiency_settings(merged).in_service_date == date(2019, 1, 1)
 

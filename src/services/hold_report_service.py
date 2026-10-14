@@ -49,8 +49,8 @@ import metrics
 import metrics_v2
 from services.hold_rules import INTERNAL_ROUTING_KEY, V1HoldRules, v1_hold_rules
 from services.operational_report_service import ReportWindow
+from services.settings_merge import merge_settings
 from services.tenant_resolution_service import ResolvedOperationalTenant
-from services.tenant_service import _deep_merge_settings
 
 # The legacy rows the legacy classifier reads, and only those: its item records (a raw message starting `101`) and
 # its patron records (message 64), with the columns it uses. Both conditions are the classifier's own.
@@ -139,7 +139,7 @@ def legacy_hold_rules(conn: Connection, tenant: ResolvedOperationalTenant) -> V1
     # into the organization's, and a key it does not have leaves the organization's as it is.
     organization: dict[str, Any] = {INTERNAL_ROUTING_KEY: row["organization_rules"]} if row["organization_has_rules"] else {}
     branch: dict[str, Any] = {INTERNAL_ROUTING_KEY: row["branch_rules"]} if row["branch_has_rules"] else {}
-    effective: Mapping[str, Any] = _deep_merge_settings(organization, branch)
+    effective: Mapping[str, Any] = merge_settings(organization, branch)
     return v1_hold_rules(effective.get(INTERNAL_ROUTING_KEY))
 
 

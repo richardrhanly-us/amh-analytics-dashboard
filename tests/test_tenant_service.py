@@ -357,13 +357,13 @@ def test_get_branch_by_slug_none_when_branch_belongs_to_a_different_org(monkeypa
     assert result is None
 
 
-# --- _deep_merge_settings ----------------------------------------------------
+# --- merge_settings (services.settings_merge) --------------------------------
 
 def test_deep_merge_settings_merges_nested_dicts_without_dropping_siblings():
     base = {"theme": {"color": "blue", "font": "arial"}, "locale": "en-US"}
     override = {"theme": {"color": "red"}}
 
-    merged = tenant_service._deep_merge_settings(base, override)
+    merged = tenant_service.merge_settings(base, override)
 
     assert merged == {"theme": {"color": "red", "font": "arial"}, "locale": "en-US"}
 
@@ -372,7 +372,7 @@ def test_deep_merge_settings_non_dict_override_replaces_value_outright():
     base = {"feature_flags": {"beta": True}}
     override = {"feature_flags": "disabled"}
 
-    merged = tenant_service._deep_merge_settings(base, override)
+    merged = tenant_service.merge_settings(base, override)
 
     assert merged == {"feature_flags": "disabled"}
 
