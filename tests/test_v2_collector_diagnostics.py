@@ -289,6 +289,15 @@ def test_an_unknown_health_with_an_overdue_schedule_is_a_schedule_error():
     assert ctx["pipeline_result_text"] == "Collector schedule error -- scheduled run overdue (ingestion last reported no status)"
 
 
+def test_a_cut_over_branch_with_an_unrecognised_legacy_heartbeat_still_shows_its_v2_headline():
+    # The frozen v1 row is still read first; a health value pipeline_state does not recognise must not break the panel.
+    legacy = {"health_status": "error", "watcher_last_active_at": utc_iso(-1), "last_attempt": utc_iso(-2)}
+    ctx = context(heartbeat(), v1_status=legacy)
+
+    assert ctx["pipeline_status_label"] == "Pipeline Healthy"
+    assert ctx["pipeline_result_text"] == "Contract v2 collector reporting healthy"
+
+
 def test_an_unknown_health_with_an_unreadable_schedule_stays_unknown():
     # The dashboard's rule, kept on purpose: pipeline_state.state_for_current_report would call this "degraded".
     ctx = context(heartbeat(health_status=None, collector_schedule_status="query_failed", collector_next_run_at=None))

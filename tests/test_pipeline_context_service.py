@@ -186,7 +186,7 @@ def _family(ctx):
 # Every value a writer stores for each signal, and values no writer stores. Each table is one case: what each value
 # MEANS is pinned value by value in tests/test_pipeline_state.py; these prove the panel takes its state from there (a
 # local re-implementation would part company on the odd values) and that every family is reached.
-LEGACY_HEALTH = ["healthy", "degraded", "auth_failure"]
+LEGACY_HEALTH = ["healthy", "degraded", "auth_failure", "error", "Healthy", "", "some_future_value"]
 RUN_STATUSES = ["completed", "completed_no_new_rows", "skipped_no_source_changes", "failed", "failed_upload",
                 "failed_upload_none", "failed_parse_error", "preflight_check", "some_future_value", "", "Completed",
                 "FAILED", None, 5]
@@ -217,7 +217,11 @@ def test_a_current_legacy_heartbeat_is_shown_in_the_family_of_its_shared_state()
                      "last_attempt": "2026-09-18T14:12:00Z"})
 
     assert _mismatches(LEGACY_HEALTH, state_for_legacy_health, context_for) == []
-    assert {_family(context_for(value)) for value in LEGACY_HEALTH} == {"healthy", "degraded", "failed"}
+    assert {_family(context_for(value)) for value in LEGACY_HEALTH} == {"healthy", "degraded", "failed", "unknown"}
+    # A value pipeline_state does not recognise is shown as unknown, in the panel's own words for that state.
+    for value in [value for value in LEGACY_HEALTH if state_for_legacy_health(value) == "unknown"]:
+        ctx = context_for(value)
+        assert (ctx["pipeline_status_label"], ctx["pipeline_result_text"]) == ("Pipeline Status Unknown", "Unknown"), value
 
 
 def test_a_legacy_run_status_is_shown_in_the_family_of_its_shared_state_and_a_finished_run_in_its_own_words():
