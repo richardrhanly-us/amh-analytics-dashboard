@@ -165,6 +165,26 @@ def test_the_core_loaders_carry_no_streamlit_cache():
 
 # --- get_org_access_mode (organization lifecycle policy) ---------------------
 
+def test_the_access_mode_for_each_organization_status():
+    # The one organization-status -> access-mode mapping (tenant_resolution_service uses it too). Matched exactly:
+    # anything not listed -- an empty or missing status, another spelling, a status that does not exist -- is blocked.
+    expected = {
+        "active": "full",
+        "trial": "full",
+        "suspended": "read_only",
+        "cancelled": "blocked",
+        "": "blocked",
+        None: "blocked",
+        "Active": "blocked",
+        "inactive": "blocked",
+        "paused": "blocked",
+    }
+
+    actual = {status: access_service.access_mode_for_organization_status(status) for status in expected}
+
+    assert actual == expected
+
+
 @pytest.mark.parametrize("status", ["active", "trial"])
 def test_get_org_access_mode_full_for_active_or_trial(monkeypatch, status):
     engine = FakeEngine([FakeQueryResult(first=(status,))])

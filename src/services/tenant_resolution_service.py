@@ -40,20 +40,8 @@ from dataclasses import dataclass, field
 from sqlalchemy import text
 
 from database import get_engine
+from services.access_service import access_mode_for_organization_status
 
-# How an organization's lifecycle status maps to what its members may do.
-# This is the same rule as access_service.get_org_access_mode -- repeated here
-# only because that function runs its own query and this decision must come
-# from the single resolver query. tests/test_tenant_resolution_service.py
-# pins that the two agree for every status.
-#   active / trial -> "full"
-#   suspended      -> "read_only"  (history stays readable; mutations do not)
-#   anything else  -> not resolvable at all
-_ACCESS_MODE_BY_ORGANIZATION_STATUS = {
-    "active": "full",
-    "trial": "full",
-    "suspended": "read_only",
-}
 _USABLE_BRANCH_STATUS = "active"
 
 # LIMIT 2, not 1: the schema makes a second row impossible (organizations.slug,
@@ -123,8 +111,9 @@ def resolve_operational_tenant(user_id: int, org_slug: str, branch_slug: str) ->
     if not row["user_is_active"]:
         return None
 
-    access_mode = _ACCESS_MODE_BY_ORGANIZATION_STATUS.get(row["organization_status"])
-    if access_mode is None:
+    # The organization lifecycle policy (access_service): a blocked organization is not resolvable at all.
+    access_mode = access_mode_for_organization_status(row["organization_status"])
+    if access_mode == "blocked":
         return None
 
     if row["branch_status"] != _USABLE_BRANCH_STATUS:
