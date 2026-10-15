@@ -139,7 +139,21 @@ exact scope is set by A1b.
     "critical" alerts, other advisory text). Why: hard-coded thresholds from one library, NBPL-specific wording that
     mislabels another library's destinations, advice not validated enough to recommend action, and React's tested
     "show the data, do not diagnose or advise" boundary (`frontend/src/test/scope.test.ts`).
-  - Demo/guest mode — decide whether it survives.
+  - Demo/guest mode — **decided 2026-10-14 (D7): dropped.** No anonymous or shared-credential guest access in
+    React, and Streamlit is not kept alive after cutover for a demo. If a sales/evaluation demo is needed later, it
+    uses a dedicated isolated demo organization with synthetic data (never copied from a customer) and a normal
+    authenticated account with the minimum role, under normal React/API auth. Not an A2 requirement; its
+    provisioning may be considered in A1b or later demo tooling.
+    - **Production security finding during D7 (not a feature):** the README links to
+      `https://sortview.streamlit.app/?guest=1`, NBPL's production app. Read-only checks found the historical
+      `guest@gmail.com` account active, not a platform admin, with an NBPL `viewer` membership that reached NBPL's
+      operational data, and `last_password_changed_at` NULL; production Streamlit Secrets held the historical
+      guest email and a weak, historical shared password. So NBPL viewer data was exposed whenever guest auto-login
+      was on, and a weak shared login was usable through the normal sign-in.
+    - **Remediated by the product owner:** `SORTVIEW_DEMO_MODE_ENABLED` set to false in production Streamlit; the
+      NBPL membership removed through the supported app path (verified read-only: `removed_at =
+      2026-10-15 00:49:21.772118+00`), so the account has no NBPL access. The account itself was not deleted or
+      deactivated (still active at the last check). Remaining cleanup is under A5.
   - History window — verified 2026-10-14 in NBPL production: plan `enterprise` (one subscription),
     `history_days` enabled with 3650, so React/API give NBPL a 3650-day window. No 30-day fallback risk at NBPL
     cutover. The general rule stands for other customers: a missing or disabled `history_days` falls back to
@@ -156,6 +170,10 @@ exact scope is set by A1b.
     remaining plaintext `security.admin_password` through the existing approved process
     (`docs/production-verification-runbook.md` Part 1); retire `admin_lock_service.py`, its scripts, tests and
     the `docs/deployment.md` section with the Streamlit code.
+  - Legacy guest cleanup (added 2026-10-14, D7): remove the README `?guest=1` demo link; remove the
+    `SORTVIEW_DEMO_MODE_ENABLED` / `SORTVIEW_GUEST_EMAIL` / `SORTVIEW_GUEST_PASSWORD` settings (and their
+    `docs/deployment.md` rows) when the Streamlit guest path is retired; deactivate or remove the unused
+    `guest@gmail.com` account through a supported process if it has no remaining purpose.
 
 **Exit:** no customer signs in to Streamlit, and the provisioning/library-management functions A1b finds necessary
 have a supported React replacement, so the Super Admin Streamlit app can be retired (milestone wording refined
