@@ -71,7 +71,9 @@ Phase 0 (completed 2026-10-14):
 ### A. Streamlit → React cutover
 
 **Goal:** every customer uses the React app on a SortView domain; the Streamlit customer dashboard is retired.
-Super Admin (internal staff tool) may stay on Streamlit until later.
+The migration also includes the internal provisioning and library-management surface SortView needs to operate
+(today the Super Admin Streamlit app). Super Admin stays on Streamlit only until its React replacement is ready; its
+exact scope is set by A1b.
 
 **Where it stands (verified):**
 
@@ -100,8 +102,13 @@ Super Admin (internal staff tool) may stay on Streamlit until later.
       unavailable when an assumption is missing, and no claim that staff hours, payroll or budget were saved.
     - Not affected: SortView Value's own ROI/payback (`services/sortview_value.py`), a separate model of the
       SortView subscription from customer-entered before/after task times, with its existing caveats.
-  - Internal-routing lists (Branch/Collection Services names, patron account names) — editable only in Streamlit
-    Admin Settings. Decide: React (owners/admins), Super Admin only, or Collector-side only.
+  - Internal-routing lists (Branch/Collection Services names, patron account names) — **decided 2026-10-14 (D6):**
+    still necessary: they decide which holds are subtracted from Public Holds (v1 on the server, v2 on the
+    collector), even though D3 hides the service counts. Not added to ordinary customer React settings. Long-term
+    owner: the future React SortView administration/provisioning surface (scoped by A1b); Super Admin already
+    collects them at provisioning (`super_admin/pages/Provision_Library.py`). The existing Streamlit paths stay
+    until that replacement is ready. Known limit: hosted edits do not update an installed v2 collector's
+    `classification_rules.json` (delivered once, at enrollment) — separate collector work under C6.
   - Streamlit admin-password lock (`security` settings) — **decided 2026-10-14 (D2): not rebuilt in React.** React
     relies on the API's server-side owner/admin role checks on every settings and members request. The Streamlit
     lock stays until cutover/retirement. Why: it guards only Admin Settings (not members), is a page-level gate
@@ -137,7 +144,11 @@ Super Admin (internal staff tool) may stay on Streamlit until later.
     `history_days` enabled with 3650, so React/API give NBPL a 3650-day window. No 30-day fallback risk at NBPL
     cutover. The general rule stands for other customers: a missing or disabled `history_days` falls back to
     30 days (`entitlement_service.DEFAULT_HISTORY_DAYS`); Streamlit never enforced it.
-- [ ] **A2. Close parity gaps** decided in A1 (each its own small PR).
+- [ ] **A1b. Super Admin parity audit** (read-only; immediately after D9, before any A2 work). Inventory every
+      Super Admin capability needed to provision and manage libraries, classify each as migrate / drop /
+      redesign, and set the React administration scope. D6 shows at least the Internal Routing lists belong there;
+      do not assume that is the whole list.
+- [ ] **A2. Close parity gaps** decided in A1 and A1b (each its own small PR). Starts after A1b.
 - [ ] **A3. Production hosting:** CloudFront (per runbook) on a SortView custom domain, TLS, production API origin.
 - [ ] **A4. Cutover:** NBPL moved to React; Streamlit customer access removed or redirected.
 - [ ] **A5. Retire** Streamlit customer code paths no longer reachable.
@@ -146,7 +157,9 @@ Super Admin (internal staff tool) may stay on Streamlit until later.
     (`docs/production-verification-runbook.md` Part 1); retire `admin_lock_service.py`, its scripts, tests and
     the `docs/deployment.md` section with the Streamlit code.
 
-**Exit:** no customer signs in to Streamlit.
+**Exit:** no customer signs in to Streamlit, and the provisioning/library-management functions A1b finds necessary
+have a supported React replacement, so the Super Admin Streamlit app can be retired (milestone wording refined
+after A1b).
 
 ### B. Government readiness
 
@@ -265,3 +278,6 @@ One line each, dated. Pick up only when a milestone needs it, or when it is prom
 
 - 2026-10-14 — Manifest created. Order set to: Phase 0 → A (React cutover) → B (government readiness) → C (installer
   commercialization), with long-lead items in parallel.
+- 2026-10-14 — Workstream A boundary widened (product owner, prompted by D6): the React migration includes the
+  internal provisioning/library-management surface; Super Admin may no longer stay on Streamlit indefinitely. Added
+  A1b (Super Admin parity audit after D9) as a prerequisite to A2. Workstream order unchanged.
