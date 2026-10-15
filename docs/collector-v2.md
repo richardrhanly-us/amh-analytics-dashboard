@@ -21,7 +21,8 @@ message codes, raw destination text, exception or server-response text.
 **Where the hold classification rules live -- and where they do not.** That list is what a v2 *event* carries. It is not where
 the classification *rules* are kept. The collector's local rules file (`classification_rules.json`) is the authority for every
 v2 hold: it is classified on this machine and arrives at the server already carrying its three flags. The cloud's
-`organization_settings.settings_json["internal_routing"]` -- the same four lists, edited on the dashboard's Admin Settings page --
+`organization_settings.settings_json["internal_routing"]` -- the same four lists, edited by platform administrators in SortView
+administration (the library's *Collector configuration*) --
 does not affect a v2 hold at all. It is read only by the dashboard's v1 classifier (`src/metrics.py::build_acs_item_summary`),
 for holds from before a branch's cutover, and it is read when a report is made: changing it changes how those older holds are
 counted, the next time a report is read. Nothing keeps the two in step. Those cloud lists hold the same patron account names as
@@ -521,7 +522,10 @@ adding a second or replacement installation to a branch that has already enrolle
 repairs it: the Collector time zone, the enabled transit destination labels, and a review confirmation that records the
 signed-in Super Admin and the time. It reads and writes the **organization's** own settings -- where the enrollment
 reads them -- and leaves every other setting as it is. The four Internal Routing lists hold patron account names: this
-page shows only how many entries each has, and they are edited in the library's Admin Settings.
+page shows only how many entries each has, and they are edited in SortView administration (the library's *Collector
+configuration*, platform administrators only). The customer Admin Settings page no longer shows or saves them (A2 item 4).
+A change there is saved to SortView: it is used by the v1 hold reports and by the next Contract v2 enrollment, and a
+Collector that is already installed keeps the rules it received at enrollment.
 
 Admin Settings no longer offers another library's values where an organization has none: a missing home label or
 destination list is shown blank, and an empty destination row is not saved.

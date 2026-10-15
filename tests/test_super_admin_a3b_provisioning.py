@@ -570,7 +570,8 @@ def test_manage_libraries_shows_how_many_entries_each_classification_list_has_an
 
     assert not at.exception and not at.error
     rendered = _rendered(at)
-    assert ("Internal Routing lists (entries are not shown here; they are edited in the library's Admin Settings): "
+    assert ("Internal Routing lists (entries are not shown here; they are edited in SortView administration, under the "
+            "library's Collector configuration): "
             "Branch Services Names: 2; Collection Services Names: 1; Branch Services DA Patterns: 0; "
             "Collection Services DA Patterns: 1.") in rendered
     assert [canary for canary in LIST_CANARIES if canary in rendered] == [] and "CANARY" not in rendered

@@ -1,5 +1,6 @@
 import { Link, Navigate, Route, Routes } from 'react-router'
 
+import { CollectorConfigPage } from './collector/CollectorConfigPage.tsx'
 import { SorterDiagnosticsPage } from './diagnostics/SorterDiagnosticsPage.tsx'
 import { LibrariesPage } from './libraries/LibrariesPage.tsx'
 import { LibraryPage } from './libraries/LibraryPage.tsx'
@@ -22,6 +23,7 @@ export function AdminRoutes() {
       <Route index element={<Navigate to="/libraries" replace />} />
       <Route path="libraries" element={<LibrariesPage />} />
       <Route path="libraries/:orgSlug" element={<LibraryPage />} />
+      <Route path="libraries/:orgSlug/collector" element={<CollectorConfigPage />} />
       <Route path="libraries/:orgSlug/sorters/:sorterSlug" element={<SorterDiagnosticsPage />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>

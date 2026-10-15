@@ -605,7 +605,8 @@ else:
 
     routing_counts = site_settings.get("internal_routing_counts") or {}
     st.caption(
-        "Internal Routing lists (entries are not shown here; they are edited in the library's Admin Settings): "
+        "Internal Routing lists (entries are not shown here; they are edited in SortView administration, under the "
+        "library's Collector configuration): "
         + "; ".join(
             f"{label}: {int(routing_counts.get(name, 0))}" for name, label in INTERNAL_ROUTING_LIST_LABELS.items()
         )

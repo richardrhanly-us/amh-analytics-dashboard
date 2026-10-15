@@ -101,7 +101,7 @@ export function oneOf<T extends string>(value: unknown, allowed: readonly T[]): 
   throw unexpectedResponse(200)
 }
 
-function list(value: unknown): unknown[] {
+export function list(value: unknown): unknown[] {
   if (Array.isArray(value)) {
     return value
   }

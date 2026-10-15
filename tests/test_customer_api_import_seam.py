@@ -66,6 +66,10 @@ ADMIN_CORE_MODULES = [
     "admin_api.diagnostics_routes",
     "admin_api.diagnostics_schemas",
     "services.admin_diagnostics_service",
+    # A2 item 4.
+    "admin_api.collector_config_routes",
+    "admin_api.collector_config_schemas",
+    "services.internal_routing",
 ]
 API_CORE_MODULES = CUSTOMER_CORE_MODULES + ADMIN_CORE_MODULES
 # The same files under their OTHER name. Loading any of these next to the flat
@@ -137,6 +141,11 @@ ADMIN_ROUTES = {
     ("GET", "/api/admin/libraries/{org_slug}"),
     # A2 item 3: a sorter site's diagnostics (admin_api.diagnostics_routes).
     ("GET", "/api/admin/libraries/{org_slug}/sorters/{sorter_slug}/diagnostics"),
+    # A2 item 4: a library's collector configuration (admin_api.collector_config_routes).
+    ("GET", "/api/admin/libraries/{org_slug}/collector-settings"),
+    ("PUT", "/api/admin/libraries/{org_slug}/collector-settings"),
+    ("GET", "/api/admin/libraries/{org_slug}/internal-routing"),
+    ("PUT", "/api/admin/libraries/{org_slug}/internal-routing"),
 }
 
 _PROBE = """
