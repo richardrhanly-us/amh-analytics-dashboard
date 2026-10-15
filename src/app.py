@@ -1036,7 +1036,8 @@ def _render_live_today():
         selected_view="Live Today",
     )
 
-    current_pipeline_status_label = live_view_context["live_today_args"]["pipeline_status_label"]
+    # The customer wording of the headline (A2 item 3): the announcement never names an auth or schedule failure.
+    current_pipeline_status_label = live_view_context["live_today_args"]["customer_status_label"]
     previous_pipeline_status_label = tenant_refresh_state.get("last_pipeline_status_label")
 
     pipeline_status_changed = (

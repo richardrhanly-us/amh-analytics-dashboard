@@ -205,6 +205,8 @@ def test_every_admin_route_requires_a_platform_admin_and_the_admin_origin_guard(
         # A2 item 2: read-only libraries (admin_api.library_routes).
         ("GET", f"{ADMIN_API_PREFIX}/libraries"),
         ("GET", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}"),
+        # A2 item 3: a sorter site's diagnostics (admin_api.diagnostics_routes).
+        ("GET", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/sorters/{{sorter_slug}}/diagnostics"),
     }
     for route in admin_routes:
         router_level = {dependency.dependency for dependency in route.dependencies}

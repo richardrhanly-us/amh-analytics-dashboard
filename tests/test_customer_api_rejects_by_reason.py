@@ -1211,7 +1211,7 @@ def test_the_check_in_routes_are_unchanged_and_never_read_a_reject_table(api, sa
     assert list(by_hour.json()) == ["date", "timezone", "hours"]
     assert by_hour.json()["hours"][0] == {"hour": 0, "checkin_count": 120} and len(by_hour.json()["hours"]) == 24
     assert operational.log == ["open", "verify context", "v2_cutovers", "checkins", "checkin_events", "close"] * 2
-    for suffix in ("/checkins/count", "/checkins/by-hour", "/ingest-status"):
+    for suffix in ("/checkins/count", "/checkins/by-hour"):
         assert "reason" not in inspect.getsource(_endpoint(suffix)).lower(), suffix
 
 
@@ -1226,12 +1226,12 @@ def test_the_reasons_route_never_reads_a_check_in_table(api, saas_db, operationa
     assert "90001" not in response.text and "80002" not in response.text
 
 
-def test_the_branch_routes_are_exactly_the_seven_operational_endpoints_the_six_reports_and_the_efficiency_settings():
+def test_the_branch_routes_are_exactly_the_six_operational_endpoints_the_six_reports_and_the_efficiency_settings():
     paths = sorted(r.path.split("/branches/{branch_slug}/")[1] for r in main.app.routes
                    if "/branches/{branch_slug}/" in getattr(r, "path", ""))
 
-    # Block 9e added pipeline-status; the five that were here before are exactly as they were.
-    assert paths == ["checkins/by-destination", "checkins/by-hour", "checkins/count", "ingest-status", "pipeline-status", "rejects/by-reason",
+    # Block 9e added pipeline-status; A2 item 3 removed ingest-status (its detail is admin-only now).
+    assert paths == ["checkins/by-destination", "checkins/by-hour", "checkins/count", "pipeline-status", "rejects/by-reason",
                      "rejects/count",
                      # The range reports (customer_api.report_routes) are under the same site prefix.
                      # ... and so is the Efficiency report (customer_api.efficiency_report_routes, Reports R6C).

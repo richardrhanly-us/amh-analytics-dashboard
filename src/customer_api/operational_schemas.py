@@ -21,31 +21,6 @@ class _ResponseModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class IngestStatusFields(_ResponseModel):
-    """A branch's latest Contract v2 collector heartbeat. Timestamps are
-    datetimes here and are serialized as ISO-8601."""
-
-    health_status: str | None
-    last_error_class: str | None
-    pending_outbox_count: int | None
-    quarantined_count: int | None
-    oldest_pending_event_at: datetime | None
-    last_success_at: datetime | None
-    watcher_last_active_at: datetime | None
-    last_heartbeat_at: datetime | None
-    collector_last_run_at: datetime | None
-    collector_next_run_at: datetime | None
-    collector_run_duration_ms: int | None
-    collector_schedule_status: str | None
-
-
-class IngestStatusResponse(_ResponseModel):
-    """`status` is null for a branch with no active Contract v2 ingest key:
-    a valid answer ("nothing to report"), not an error."""
-
-    status: IngestStatusFields | None
-
-
 class CheckinCountResponse(_ResponseModel):
     """Check-ins on one local calendar day. `date` is the day that was asked
     for and `timezone` the IANA zone it was interpreted in. How the count was

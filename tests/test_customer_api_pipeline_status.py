@@ -45,10 +45,7 @@ from sqlalchemy.pool import StaticPool
 import main
 from customer_api import operational_routes, operational_schemas, tenant_scope
 from customer_api import settings as customer_settings
-from customer_api.operational_schemas import (
-    IngestStatusResponse,
-    PipelineStatusResponse,
-)
+from customer_api.operational_schemas import PipelineStatusResponse
 from services import (
     pipeline_state,
     pipeline_status_service,
@@ -60,6 +57,7 @@ from services.pipeline_status_service import PipelineStatus
 
 PATH = "/api/organizations/{org}/branches/{branch}/pipeline-status"
 ACME_MAIN = PATH.format(org="acme", branch="main")
+# A2 item 3 removed this customer route: its heartbeat detail is for platform administrators only (admin_api).
 INGEST_STATUS_ACME_MAIN = "/api/organizations/acme/branches/main/ingest-status"
 REJECT_COUNT_ACME_MAIN = "/api/organizations/acme/branches/main/rejects/count"
 COOKIE = {"Cookie": "__Host-sortview_api_session=synthetic-opaque-session-token"}
@@ -226,7 +224,7 @@ class FakeOperationalDatabase:
         self.current = {
             "health_status": health_status, "collector_schedule_status": schedule,
             "last_heartbeat_at": in_session_offset(heartbeat_at),
-            # the rest of what /ingest-status reads, and what nothing may return:
+            # the rest of the heartbeat row, which nothing here may return:
             "last_error_class": "retryable_infra", "pending_outbox_count": 7003, "quarantined_count": 7004,
             "oldest_pending_event_at": None, "last_success_at": in_session_offset(EARLIER),
             "watcher_last_active_at": in_session_offset(EARLIER), "collector_last_run_at": in_session_offset(EARLIER),
@@ -306,16 +304,16 @@ def test_a_branch_that_has_reported_nothing_is_unknown_with_a_null_time_and_stil
     assert operational.log == ["open", "verify context", "v2_cutovers", "pipeline_status", "close"]   # it really looked
 
 
-def test_the_response_is_json_with_the_same_headers_as_its_sibling_routes(api, saas_db, operational):
+def test_the_response_is_json_with_no_store_and_nothing_that_would_let_it_be_cached(api, saas_db, operational):
+    # A2 item 3: this used to be compared with the ingest-status route, which is gone; the headers are stated instead.
     operational.set_legacy(status="completed", status_at=REPORTED)
     operational.set_current()
 
     status = api.get(ACME_MAIN, headers=COOKIE)
-    sibling = api.get(INGEST_STATUS_ACME_MAIN, headers=COOKIE)
 
-    assert status.headers["content-type"] == sibling.headers["content-type"] == "application/json"
+    assert status.headers["content-type"] == "application/json"
+    assert status.headers["cache-control"] == "no-store"
     assert json.loads(status.content) == status.json()
-    assert sorted(set(status.headers) - {"content-length"}) == sorted(set(sibling.headers) - {"content-length"})
     assert "set-cookie" not in status.headers
     assert "etag" not in status.headers and "last-modified" not in status.headers and "expires" not in status.headers
 
@@ -515,8 +513,9 @@ def test_the_response_schema_declares_only_the_approved_fields():
     assert operational_schemas.PipelineState is pipeline_state.PipelineState      # one definition of the four states
     assert issubclass(PipelineStatusResponse, operational_schemas._ResponseModel)
     assert PipelineStatusResponse.model_config["extra"] == "forbid"
-    assert PipelineStatusResponse is not IngestStatusResponse
-    assert list(IngestStatusResponse.model_fields) == ["status"]                  # untouched
+    # A2 item 3: the customer API has no heartbeat-detail model any more.
+    assert not hasattr(operational_schemas, "IngestStatusResponse")
+    assert not hasattr(operational_schemas, "IngestStatusFields")
 
 
 @pytest.mark.parametrize("state", PIPELINE_STATES)
@@ -754,11 +753,11 @@ def test_the_unreachable_responses_are_byte_for_byte_identical(api, saas_db, ope
 def test_an_unreachable_tenant_answers_exactly_as_it_does_on_the_sibling_routes(api, saas_db, operational):
     for org, branch in (("beta", "north"), ("acme", "no-such-branch"), ("acme", "unmapped")):
         status = api.get(PATH.format(org=org, branch=branch), headers=COOKIE)
-        ingest = api.get(f"/api/organizations/{org}/branches/{branch}/ingest-status", headers=COOKIE)
         rejects = api.get(f"/api/organizations/{org}/branches/{branch}/rejects/count", headers=COOKIE,
                           params={"date": "2026-06-10"})
 
-        assert (status.status_code, status.content) == (ingest.status_code, ingest.content) == (404, rejects.content)
+        assert (status.status_code, status.content) == (404, rejects.content)
+        assert status.json() == TENANT_NOT_FOUND
 
 
 def test_nothing_reported_and_an_unreachable_tenant_are_different_answers(api, saas_db, operational):
@@ -779,16 +778,17 @@ def test_a_suspended_organization_reads_exactly_like_a_full_one(api, saas_db, op
 
 
 @pytest.mark.parametrize("status", ["active", "trial", "suspended", "cancelled"])
-def test_an_organizations_status_decides_this_route_exactly_as_it_decides_ingest_status(api, saas_db, operational, status):
+def test_an_organizations_status_decides_this_route_by_the_shared_lifecycle_policy(api, saas_db, operational, status):
     with saas_db.begin() as conn:
         conn.execute(text("UPDATE organizations SET status = :s WHERE slug = 'acme'"), {"s": status})
 
     pipeline = api.get(ACME_MAIN, headers=COOKIE)
-    ingest = api.get(INGEST_STATUS_ACME_MAIN, headers=COOKIE)
 
-    assert pipeline.status_code == ingest.status_code
-    if pipeline.status_code != 200:
-        assert pipeline.content == ingest.content
+    # Readable for a full and a read-only (suspended) organization; a cancelled one is not found.
+    if status == "cancelled":
+        assert (pipeline.status_code, pipeline.json()) == (404, TENANT_NOT_FOUND)
+    else:
+        assert pipeline.status_code == 200
 
 
 def test_any_role_may_read_as_on_the_sibling_routes(api, saas_db, operational):
@@ -797,7 +797,6 @@ def test_any_role_may_read_as_on_the_sibling_routes(api, saas_db, operational):
             conn.execute(text("UPDATE memberships SET role = :r WHERE organization_id = 1"), {"r": role})
 
         assert api.get(ACME_MAIN, headers=COOKIE).status_code == 200, role
-        assert api.get(INGEST_STATUS_ACME_MAIN, headers=COOKIE).status_code == 200, role
 
 
 def test_operational_ids_and_other_hints_in_the_request_change_nothing(api, saas_db, operational):
@@ -958,13 +957,10 @@ def test_a_result_that_is_not_a_public_answer_is_500_never_passed_through(api, m
         assert leaked not in response.text, leaked
 
 
-def test_a_500_here_is_the_same_as_on_the_ingest_status_route(api, saas_db, operational):
+def test_a_failure_setting_the_tenant_context_is_the_generic_500(api, saas_db, operational):
     operational.fail_on = "context"
 
-    pipeline = api.get(ACME_MAIN, headers=COOKIE)
-    ingest = api.get(INGEST_STATUS_ACME_MAIN, headers=COOKIE)
-
-    assert (pipeline.status_code, pipeline.content) == (ingest.status_code, ingest.content) == (500, pipeline.content)
+    _assert_generic_500(api.get(ACME_MAIN, headers=COOKIE))
 
 
 # =====================================================================================================================
@@ -1005,13 +1001,13 @@ def test_the_route_itself_holds_no_sql_no_mapping_no_source_selection_and_no_era
 def test_the_route_is_built_like_its_sibling_operational_routes():
     routes = {r.path.split("/branches/{branch_slug}/")[1]: r for r in main.app.routes
               if "/branches/{branch_slug}/" in getattr(r, "path", "")}
-    pipeline, ingest = routes["pipeline-status"], routes["ingest-status"]
+    pipeline, sibling = routes["pipeline-status"], routes["checkins/count"]
 
-    # The same single declared parameter -- the tenant-scope dependency -- and the same route class.
-    signatures = [{name: p.annotation for name, p in inspect.signature(r.endpoint).parameters.items()} for r in (pipeline, ingest)]
-    assert signatures[0] == signatures[1] == {"tenant": "ResolvedTenant"}
-    assert [d.call for d in pipeline.dependant.dependencies] == [d.call for d in ingest.dependant.dependencies]
-    assert type(pipeline) is type(ingest)
+    # One declared parameter -- the tenant-scope dependency -- and the same route class and tenant scope as a sibling.
+    assert {name: p.annotation for name, p in inspect.signature(pipeline.endpoint).parameters.items()} == {"tenant": "ResolvedTenant"}
+    assert [d.call for d in pipeline.dependant.dependencies] == [tenant_scope.require_resolved_tenant]
+    assert tenant_scope.require_resolved_tenant in [d.call for d in sibling.dependant.dependencies]
+    assert type(pipeline) is type(sibling)
     assert not hasattr(pipeline.endpoint, "__wrapped__")       # no limiter decorator of its own
     # The steps, in order: zone, clock, scoped connection, one service call, then -- outside the block -- the body.
     source = inspect.getsource(pipeline.endpoint)
@@ -1049,30 +1045,22 @@ def test_the_customer_api_still_loads_without_streamlit_or_pandas():
 # G. The sibling routes are as they were
 # =====================================================================================================================
 
-def test_the_ingest_status_route_is_exactly_as_it_was(api, saas_db, operational):
+def test_the_ingest_status_route_is_gone_and_nothing_is_read(api, saas_db, operational):
+    # A2 item 3: a member of the organization, in any role, gets no heartbeat detail from the customer API.
     operational.set_current(health_status="degraded", schedule="task_disabled", heartbeat_at=REPORTED)
 
-    response = api.get(INGEST_STATUS_ACME_MAIN, headers=COOKIE)
+    for role in ("viewer", "manager", "admin", "owner"):
+        with saas_db.begin() as conn:
+            conn.execute(text("UPDATE memberships SET role = :r WHERE organization_id = 1"), {"r": role})
 
-    assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
-    status = response.json()["status"]
-    assert list(response.json()) == ["status"]
-    assert list(status) == ["health_status", "last_error_class", "pending_outbox_count", "quarantined_count",
-                            "oldest_pending_event_at", "last_success_at", "watcher_last_active_at", "last_heartbeat_at",
-                            "collector_last_run_at", "collector_next_run_at", "collector_run_duration_ms",
-                            "collector_schedule_status"]
-    assert (status["health_status"], status["collector_schedule_status"]) == ("degraded", "task_disabled")   # raw, as before
-    assert operational.log == ["open", "verify context", "ingest_key_ids", "close"]     # no cutover lookup, no legacy read
-    assert "state" not in response.text and "last_reported_at" not in response.text
+        response = api.get(INGEST_STATUS_ACME_MAIN, headers=COOKIE)
 
-    source = inspect.getsource(_endpoint("/ingest-status"))
-    assert "get_latest_ingest_status(conn, tenant)" in source
-    for added in ("pipeline", "datetime.now", "product_timezone", "state"):
-        assert added not in source, added
-
-
-def test_ingest_status_with_no_key_is_still_status_null(api, saas_db, operational):
-    assert api.get(INGEST_STATUS_ACME_MAIN, headers=COOKIE).json() == {"status": None}
+        assert response.status_code == 404, role
+        for field in ("health_status", "last_error_class", "pending_outbox_count", "quarantined_count",
+                      "collector_schedule_status", "retryable_infra", "7003", "7004"):
+            assert field not in response.text, (role, field)
+    assert operational.log == []
+    assert not [r for r in main.app.routes if getattr(r, "path", "").endswith("/ingest-status")]
 
 
 def test_the_dated_metric_routes_still_require_their_date_and_do_not_read_a_status_table(api, saas_db, operational):
@@ -1085,11 +1073,12 @@ def test_the_dated_metric_routes_still_require_their_date_and_do_not_read_a_stat
     assert operational.log == []
 
 
-def test_the_branch_routes_are_exactly_the_seven_operational_endpoints_the_six_reports_and_the_efficiency_settings():
+def test_the_branch_routes_are_exactly_the_six_operational_endpoints_the_six_reports_and_the_efficiency_settings():
     paths = sorted(r.path.split("/branches/{branch_slug}/")[1] for r in main.app.routes
                    if "/branches/{branch_slug}/" in getattr(r, "path", ""))
 
-    assert paths == ["checkins/by-destination", "checkins/by-hour", "checkins/count", "ingest-status", "pipeline-status", "rejects/by-reason",
+    # A2 item 3 removed ingest-status (its detail is admin-only now).
+    assert paths == ["checkins/by-destination", "checkins/by-hour", "checkins/count", "pipeline-status", "rejects/by-reason",
                      "rejects/count",
                      # The range reports (customer_api.report_routes) are under the same site prefix.
                      # ... and so is the Efficiency report (customer_api.efficiency_report_routes, Reports R6C).
@@ -1103,7 +1092,7 @@ def test_the_branch_routes_are_exactly_the_seven_operational_endpoints_the_six_r
                      "settings/efficiency", "settings/efficiency"]
 
 
-def test_the_customer_api_has_exactly_forty_one_routes_and_every_one_that_is_not_a_get_is_named_here():
+def test_the_customer_api_has_exactly_forty_routes_and_every_one_that_is_not_a_get_is_named_here():
     customer = sorted((method, route.path) for route in main.customer_router.routes for method in route.methods)
 
     # Reports R4 added three: the organization-level reports (customer_api.organization_report_routes).
@@ -1124,7 +1113,8 @@ def test_the_customer_api_has_exactly_forty_one_routes_and_every_one_that_is_not
     # customer_api.sortview_value_routes. The PUT requires an allowed Origin
     # (tests/test_customer_api_sortview_value_settings.py pins that).
     # R10F added one: an organization's SortView Value report (customer_api.sortview_value_report_routes), a GET.
-    assert len(customer) == 41
+    # A2 item 3 removed one: the branch's ingest-status GET (its heartbeat detail is admin-only now).
+    assert len(customer) == 40
     assert [path for method, path in customer if method == "POST"] == [
         "/api/account/change-password",
         "/api/auth/login",
@@ -1142,7 +1132,7 @@ def test_the_customer_api_has_exactly_forty_one_routes_and_every_one_that_is_not
         "/api/organizations/{org_slug}/settings/routing",
         "/api/organizations/{org_slug}/settings/sortview-value",
     ]
-    assert sum(1 for method, _ in customer if method == "GET") == 28
+    assert sum(1 for method, _ in customer if method == "GET") == 27
     assert ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/pipeline-status") in customer
 
 
