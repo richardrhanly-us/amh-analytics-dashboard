@@ -470,6 +470,33 @@ def create_collector_installation(
     status: str = "provisioning",
     required_contract: int = COLLECTOR_CONTRACT_LEGACY,
 ) -> dict[str, Any]:
+    engine = get_engine()
+    with engine.begin() as conn:
+        return insert_collector_installation(
+            conn,
+            organization_id=organization_id,
+            branch_id=branch_id,
+            name=name,
+            hostname=hostname,
+            collector_version=collector_version,
+            status=status,
+            required_contract=required_contract,
+        )
+
+
+def insert_collector_installation(
+    conn: Any,
+    *,
+    organization_id: int,
+    branch_id: int,
+    name: str,
+    hostname: str | None = None,
+    collector_version: str | None = None,
+    status: str = "provisioning",
+    required_contract: int = COLLECTOR_CONTRACT_LEGACY,
+) -> dict[str, Any]:
+    """create_collector_installation inside the CALLER's transaction (A2 item 5's administration API records its audit
+    row in that same transaction). Same checks, same row, same answer."""
     name = _validate_installation_fields(name, status)
     # Exactly an int: True, "2" and 2.0 all compare equal to a contract and are none of them one.
     if type(required_contract) is not int or required_contract not in COLLECTOR_CONTRACTS:
@@ -500,35 +527,33 @@ def create_collector_installation(
             status, required_contract, installed_at, last_seen_at, created_at, updated_at
     """)
 
-    engine = get_engine()
-    with engine.begin() as conn:
-        branch = conn.execute(
-            sql_find_branch,
-            {"branch_id": branch_id, "organization_id": organization_id},
-        ).mappings().first()
-        if not branch:
-            raise RuntimeError(
-                f"Branch {branch_id} not found for organization {organization_id}"
-            )
-        # A cancelled (permanently offboarded) organization can never gain a
-        # new installation. Authoritative here, whatever the page shows.
-        if branch.get("organization_status") == "cancelled":
-            raise RuntimeError(
-                f"Organization {organization_id} is cancelled; it cannot have a new Collector installation"
-            )
+    branch = conn.execute(
+        sql_find_branch,
+        {"branch_id": branch_id, "organization_id": organization_id},
+    ).mappings().first()
+    if not branch:
+        raise RuntimeError(
+            f"Branch {branch_id} not found for organization {organization_id}"
+        )
+    # A cancelled (permanently offboarded) organization can never gain a
+    # new installation. Authoritative here, whatever the page shows.
+    if branch.get("organization_status") == "cancelled":
+        raise RuntimeError(
+            f"Organization {organization_id} is cancelled; it cannot have a new Collector installation"
+        )
 
-        row = conn.execute(
-            sql_insert,
-            {
-                "organization_id": organization_id,
-                "branch_id": branch_id,
-                "name": name,
-                "hostname": _clean_optional(hostname),
-                "collector_version": _clean_optional(collector_version),
-                "status": status,
-                "required_contract": required_contract,
-            },
-        ).mappings().first()
+    row = conn.execute(
+        sql_insert,
+        {
+            "organization_id": organization_id,
+            "branch_id": branch_id,
+            "name": name,
+            "hostname": _clean_optional(hostname),
+            "collector_version": _clean_optional(collector_version),
+            "status": status,
+            "required_contract": required_contract,
+        },
+    ).mappings().first()
 
     return dict(row) if row else {}
 

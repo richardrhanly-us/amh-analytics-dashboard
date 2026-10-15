@@ -503,6 +503,14 @@ classification rules), and is labelled as needing Collector 1.0.14 or later. The
 installation is created; an existing installation's contract cannot be changed. A branch has one Contract v2 Collector:
 adding a second or replacement installation to a branch that has already enrolled on Contract v2 is not supported yet.
 
+SortView administration's *Installations* page (A2 item 5, platform administrators only) is the React path for an
+existing library: it adds an installation at the library's active primary branch on Contract 2 (the default, which needs
+the library's *Collector configuration*) or Contract 1, renames, deactivates, returns an inactive installation to
+provisioning, and retires (final there). It issues a one-time enrollment code -- shown once, never stored -- and refuses
+one for a Contract 2 installation whose branch already has an active ingest key or any v2 cutover
+(`branch_already_enrolled`), since such a code could never be redeemed. Super Admin's *Manage Libraries* paths remain
+until Super Admin retires (A2 item 8).
+
 *Provision Library* (A3b):
 
 * The contract selector is the first field, and the form is submitted only by its button -- pressing Enter in a field

@@ -212,6 +212,12 @@ def test_every_admin_route_requires_a_platform_admin_and_the_admin_origin_guard(
         ("PUT", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/collector-settings"),
         ("GET", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/internal-routing"),
         ("PUT", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/internal-routing"),
+        # A2 item 5: a library's Collector installations (admin_api.installation_routes).
+        ("GET", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/installations"),
+        ("POST", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/installations"),
+        ("PUT", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/installations/{{installation_id}}"),
+        ("PUT", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/installations/{{installation_id}}/status"),
+        ("POST", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/installations/{{installation_id}}/enrollment-codes"),
     }
     for route in admin_routes:
         router_level = {dependency.dependency for dependency in route.dependencies}

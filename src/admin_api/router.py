@@ -8,6 +8,9 @@
     GET/PUT /api/admin/libraries/{org_slug}/collector-settings
     GET/PUT /api/admin/libraries/{org_slug}/internal-routing
                                            a library's collector configuration (admin_api.collector_config_routes)
+    GET/POST /api/admin/libraries/{org_slug}/installations, PUT .../{installation_id}, PUT .../{installation_id}/status,
+    POST .../{installation_id}/enrollment-codes
+                                           a library's Collector installations (admin_api.installation_routes)
 
 WHO. Platform administrators only, decided on every request by the router's own dependencies (so a route added
 later cannot leave them out):
@@ -30,6 +33,7 @@ from starlette.responses import JSONResponse, Response
 from admin_api.collector_config_routes import create_collector_config_router
 from admin_api.dependencies import require_admin_origin, require_platform_admin
 from admin_api.diagnostics_routes import create_diagnostics_router
+from admin_api.installation_routes import create_installation_router
 from admin_api.library_routes import create_library_router
 from customer_api.auth_schemas import CurrentUserResponse
 from customer_api.errors import NO_STORE_HEADERS, CustomerApiRoute
@@ -59,5 +63,6 @@ def create_admin_router() -> APIRouter:
     router.include_router(create_library_router())
     router.include_router(create_diagnostics_router())
     router.include_router(create_collector_config_router())
+    router.include_router(create_installation_router())
 
     return router

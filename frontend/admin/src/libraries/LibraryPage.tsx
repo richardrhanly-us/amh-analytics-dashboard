@@ -80,6 +80,9 @@ function Overview({ library }: { library: LibraryDetail }) {
         <p>
           <Link to={`/libraries/${encodeURIComponent(library.slug)}/collector`}>Collector configuration</Link>
         </p>
+        <p>
+          <Link to={`/libraries/${encodeURIComponent(library.slug)}/installations`}>Installations</Link>
+        </p>
       </section>
 
       <section aria-labelledby="sorters-heading">

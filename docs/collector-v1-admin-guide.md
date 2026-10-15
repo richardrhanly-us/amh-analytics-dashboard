@@ -41,8 +41,9 @@ module docstrings).
 
 For a new library machine this replaces the manual sequence below. A
 SortView administrator generates a one-time **enrollment code** for the
-installation in Super Admin (Manage Libraries -> the installation -> Generate
-Enrollment Code). On the Tech Logic machine, from an **elevated** PowerShell
+installation in SortView administration (the library -> Installations -> Issue
+enrollment code), or in Super Admin (Manage Libraries -> the installation ->
+Generate Enrollment Code) until Super Admin retires. On the Tech Logic machine, from an **elevated** PowerShell
 in the extracted release folder:
 
 ```powershell
