@@ -49,3 +49,15 @@ jobs:
       # Same-origin API by default: no VITE_* variable, secret or production address is given to the build.
       - name: Build
         run: npm run build
+
+      # The separate admin app (admin/, A2 item 1): its own entry, built to dist-admin/.
+      - name: Build admin app
+        run: npm run build:admin
+
+      # Nothing of the admin app, and no call to the admin API, may be in the customer build.
+      - name: Check the customer build has no admin code
+        run: |
+          if grep -rqF -e '/api/admin' -e 'SortView Administration' dist; then
+            echo "The customer build in dist/ contains admin code." >&2
+            exit 1
+          fi

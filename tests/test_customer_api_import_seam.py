@@ -52,9 +52,17 @@ CUSTOMER_CORE_MODULES = [
     "database",
     "tenant_db",
 ]
+# A2 item 1: the administration API (src/admin_api/) and the one service it adds. Flat and Streamlit-free like the rest.
+ADMIN_CORE_MODULES = [
+    "admin_api.router",
+    "admin_api.dependencies",
+    "admin_api.settings",
+    "services.platform_admin_service",
+]
+API_CORE_MODULES = CUSTOMER_CORE_MODULES + ADMIN_CORE_MODULES
 # The same files under their OTHER name. Loading any of these next to the flat
 # one would give the process two module objects for one file.
-SECOND_IDENTITIES = [f"src.{name}" for name in CUSTOMER_CORE_MODULES]
+SECOND_IDENTITIES = [f"src.{name}" for name in API_CORE_MODULES]
 
 COLLECTOR_ROUTES = {
     ("GET", "/"),
@@ -113,6 +121,10 @@ CUSTOMER_ROUTES = {
     # R10F: an organization's SortView Value report (customer_api.sortview_value_report_routes).
     ("GET", "/api/organizations/{org_slug}/reports/sortview-value"),
 }
+# A2 item 1: the administration API (admin_api.router), separate from the customer router.
+ADMIN_ROUTES = {
+    ("GET", "/api/admin/session"),
+}
 
 _PROBE = """
 import importlib
@@ -151,7 +163,7 @@ def _probe(mode: str, *, cwd: Path, pythonpath: str | None = None) -> dict:
     if pythonpath is not None:
         env["PYTHONPATH"] = pythonpath
 
-    code = _PROBE.format(modules=CUSTOMER_CORE_MODULES, second=SECOND_IDENTITIES)
+    code = _PROBE.format(modules=API_CORE_MODULES, second=SECOND_IDENTITIES)
     completed = subprocess.run(
         [sys.executable, "-B", "-c", textwrap.dedent(code), str(ROOT), mode],
         cwd=cwd,
@@ -176,7 +188,7 @@ def api_process() -> dict:
 # --- the import seam ---------------------------------------------------------------------------------------------
 
 def test_every_customer_core_module_imports_flat_from_the_api_process(api_process):
-    assert api_process["flat_loaded"] == sorted(CUSTOMER_CORE_MODULES)
+    assert api_process["flat_loaded"] == sorted(API_CORE_MODULES)
 
 
 def test_the_api_process_holds_one_module_object_per_customer_core_module(api_process):
@@ -197,7 +209,7 @@ def test_the_seam_does_not_depend_on_the_working_directory(tmp_path):
 
     assert result["src_dir"] == str(SRC)
     assert result["src_entries"] == 1
-    assert result["flat_loaded"] == sorted(CUSTOMER_CORE_MODULES)
+    assert result["flat_loaded"] == sorted(API_CORE_MODULES)
     assert result["second_identities"] == []
 
 
@@ -266,7 +278,7 @@ def test_customer_api_code_never_imports_a_second_module_identity_or_main():
 # --- the collector surface is unchanged --------------------------------------------------------------------------
 
 def test_the_route_table_is_exactly_the_collector_routes_plus_the_customer_routes(api_process):
-    assert {(method, path) for method, path in api_process["routes"]} == COLLECTOR_ROUTES | CUSTOMER_ROUTES
+    assert {(method, path) for method, path in api_process["routes"]} == COLLECTOR_ROUTES | CUSTOMER_ROUTES | ADMIN_ROUTES
 
 
 def test_every_customer_route_is_under_api_and_every_collector_route_is_not():
@@ -275,7 +287,7 @@ def test_every_customer_route_is_under_api_and_every_collector_route_is_not():
     assert all(isinstance(route, APIRoute) for route in routes)
     under_api = {(method, route.path) for route in routes for method in route.methods if route.path.startswith("/api/")}
     elsewhere = {(method, route.path) for route in routes for method in route.methods} - under_api
-    assert under_api == CUSTOMER_ROUTES
+    assert under_api == CUSTOMER_ROUTES | ADMIN_ROUTES
     assert elsewhere == COLLECTOR_ROUTES
 
 

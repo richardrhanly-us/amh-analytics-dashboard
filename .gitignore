@@ -50,6 +50,7 @@ dist/
 /release/
 
 # Node / frontend (frontend/): installed packages and local environment overrides.
-# frontend/dist is already covered by dist/ above.
+# frontend/dist is already covered by dist/ above; dist-admin/ is the separate admin app's build output.
+dist-admin/
 node_modules/
 .env*.local
