@@ -57,7 +57,8 @@ its own data. New Braunfels Public Library (NBPL) stays live throughout.
 
 ## 3. Current focus
 
-**Phase 1 / Workstream A, milestone A1 (parity checklist).**
+**Phase 1 / Workstream A, milestone A2 (not started).** A1 and A1b completed 2026-10-14. First A2 item: admin API
+foundation + separate React admin shell.
 
 Phase 0 (completed 2026-10-14):
 
@@ -89,7 +90,8 @@ exact scope is set by A1b.
 
 **Milestones:**
 
-- [ ] **A1. Parity checklist.** A written list of every customer-facing Streamlit capability, each marked
+- [x] **A1. Parity checklist.** **Completed 2026-10-14:** D1–D9 decided and recorded below; none adds customer
+      React feature work to A2. A written list of every customer-facing Streamlit capability, each marked
       *in React* / *needs building* / *dropped on purpose*. Known candidates to decide:
   - Director PDF export (Streamlit `reports_labor.py`) — **decided 2026-10-14 (D1): dropped for cutover.** React
     Print report + CSV are the supported export story; the server-side PDF is not rebuilt. A single printable React
@@ -176,14 +178,48 @@ exact scope is set by A1b.
     `history_days` enabled with 3650, so React/API give NBPL a 3650-day window. No 30-day fallback risk at NBPL
     cutover. The general rule stands for other customers: a missing or disabled `history_days` falls back to
     30 days (`entitlement_service.DEFAULT_HISTORY_DAYS`); Streamlit never enforced it.
-- [ ] **A1b. Super Admin parity audit** (read-only; immediately after D9, before any A2 work). Inventory every
+- [x] **A1b. Super Admin parity audit** (read-only; immediately after D9, before any A2 work). Inventory every
       Super Admin capability needed to provision and manage libraries, classify each as migrate / drop /
-      redesign, and set the React administration scope. D6 shows at least the Internal Routing lists belong there;
-      do not assume that is the whole list.
+      redesign, and set the React administration scope. **Completed 2026-10-14** (audit plus follow-up, including
+      `docs/SortView_Internal_Customer_Provisioning_Checklist.docx`, which added no new capability).
   - Must also decide (from D9): the customer-accessible `GET …/ingest-status` route returns the full v2 heartbeat to
     any organization member, and React deliberately never calls it. Move it behind internal/admin/support
-    authorization, or retire it.
-- [ ] **A2. Close parity gaps** decided in A1 and A1b (each its own small PR). Starts after A1b.
+    authorization, or retire it. **Decided: move it into the admin diagnostics route and remove customer access
+    (A2 item 3).**
+  - **Decisions (2026-10-14):**
+    1. *Admin UI:* a separate React admin frontend/origin, not `/admin` inside the customer bundle — privileged
+       code stays out of the customer bundle, the customer scope tests stand, and authorization sits behind a
+       separate `/api/admin` server boundary.
+    2. *Internal Routing:* platform admins may view and edit the entries in React admin. Platform-admin only;
+       never returned through customer APIs; never in logs or audit text (audit counts/metadata only). Replaces
+       the customer-Streamlit-only editing path.
+    3. *A4 sequencing:* A2 items 1–4 are required before A4, so Internal Routing editing and v2 diagnostics never
+       disappear.
+    4. *`system_name`:* dropped, not migrated. Vendor/equipment metadata, if ever needed, is modelled deliberately.
+    5. *Multi-branch:* non-primary-branch / multi-site provisioning is out of Workstream A and assigned to C (C8).
+  - **Required before Super Admin Streamlit retires:** admin API/auth foundation; v2-aware libraries list and
+    detail; provisioning; operational identity assign/retry; installations add/edit/retire; enrollment code
+    generation; collector site settings; Internal Routing editing; lifecycle suspend/reactivate/offboard; v1/v2
+    diagnostics; customer `ingest-status` moved behind admin/support access.
+  - **Deferred:** first owner → C3; legacy agent config / installer values → C5/C2; replacement machine, key
+    rotation, installed-rule refresh → C6; plans, entitlements, subscription management → C7; multi-branch → C8;
+    platform-admin management and MFA → B3; demo tenant → future C / sales tooling.
+  - **Dropped:** Super Admin home stubs; raw `st.json` dumps; dead provisioning keys (`security`, `library_name`,
+    `account_settings.organization_name`, `account_settings.plan_name`); `system_name`.
+  - **Operator-only, outside React:** tenant purge (`scripts/purge_tenant_data.py`); uptime and pipeline
+    monitoring scripts; legacy credential scripts while still needed, until C removes them.
+- [ ] **A2. Close parity gaps** decided in A1 and A1b (each its own small PR). **Not started.** No customer React
+      feature work came out of A1; the backlog is the React admin, in this order:
+  1. Admin API foundation + separate React admin shell.
+  2. Libraries list + library overview, v2-aware.
+  3. Admin diagnostics + move/remove customer `ingest-status`.
+  4. Collector site settings + Internal Routing editor.
+  5. Installations + enrollment code.
+  6. Library lifecycle (suspend/reactivate/offboard).
+  7. Provision library.
+  8. Retire Super Admin Streamlit, after 1–7 are proven in production.
+
+  A4 critical path: 1 → 2 → 3 → 4.
 - [ ] **A3. Production hosting:** CloudFront (per runbook) on a SortView custom domain, TLS, production API origin.
 - [ ] **A4. Cutover:** NBPL moved to React; Streamlit customer access removed or redirected.
 - [ ] **A5. Retire** Streamlit customer code paths no longer reachable.
@@ -197,8 +233,7 @@ exact scope is set by A1b.
     `guest@gmail.com` account through a supported process if it has no remaining purpose.
 
 **Exit:** no customer signs in to Streamlit, and the provisioning/library-management functions A1b finds necessary
-have a supported React replacement, so the Super Admin Streamlit app can be retired (milestone wording refined
-after A1b).
+have a supported React replacement, so the Super Admin Streamlit app can be retired (A2 item 8).
 
 ### B. Government readiness
 
@@ -261,13 +296,17 @@ without us on site, and lands in the React app with a working account.
 - [ ] **C2. One signed download** a library can run, replacing hand-copied bundles.
 - [ ] **C3. First-owner account at provisioning** — today no code path creates a new library's first login
       (memberships can only be added by an existing admin).
-- [ ] **C4. Current customer install guide** — the published guide is for Collector 1.0.2.
+- [ ] **C4. Current customer install guide** — the published guide is for Collector 1.0.2. So is the internal
+      `docs/SortView_Internal_Customer_Provisioning_Checklist.docx` (assisted 1.0.2 onboarding: manual token,
+      `install.ps1`): update or retire it with the guide (A1b finding, 2026-10-14).
 - [ ] **C5. Decide the legacy contract's future** — Super Admin still offers Contract 1 for new installs.
 - [ ] **C6. Deferred Collector work** from `docs/collector-v2.md`: replacement-machine workflow, key rotation,
       installation-status linkage.
 - [ ] **C7. Self-serve commercial flow** (Stripe against the existing plans/subscriptions schema; guided signup) —
       last, and only once a second customer is real. Includes deciding customer-visible plan/subscription display
       (deferred here by D8).
+- [ ] **C8. Multi-branch / multi-site provisioning** (assigned by A1b decision 5, 2026-10-14) — adding non-primary
+      branches and sorter sites; no code path exists today. Not built in A2.
 
 **Exit:** a new library goes from signed download to "ready" with no one on site.
 
@@ -275,6 +314,7 @@ without us on site, and lands in the React app with a working account.
 
 ## 5. Done recently (newest first)
 
+- 2026-10-14 — A1 (parity checklist, D1–D9) and A1b (Super Admin parity audit, decisions 1–5) completed.
 - 2026-10-14 — React "Waiting for first data" state (PR #191, merged).
 - 2026-10-14 — Legacy v1 uploads mark a pending branch ready (PR #190).
 - 2026-10-14 — Customer API exposes normalized sorter `onboarding_status` (PR #189).
