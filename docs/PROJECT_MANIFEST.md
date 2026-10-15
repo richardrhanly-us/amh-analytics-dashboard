@@ -57,9 +57,9 @@ its own data. New Braunfels Public Library (NBPL) stays live throughout.
 
 ## 3. Current focus
 
-**Phase 1 / Workstream A, milestone A2 (in progress).** A1 and A1b completed 2026-10-14. A2 items 1–4 are merged;
-item 5 (installations + enrollment code) is implemented on `feature/a2-admin-installations`, not yet merged; items 6–8
-are pending.
+**Phase 1 / Workstream A, milestone A2 (in progress).** A1 and A1b completed 2026-10-14. A2 items 1–5 are merged
+(item 5: PR #208, `eb3b304`); item 6 (library lifecycle) is implemented on `feature/a2-admin-lifecycle`, not yet
+merged; items 7–8 are pending.
 
 Phase 0 (completed 2026-10-14):
 
@@ -210,7 +210,7 @@ exact scope is set by A1b.
   - **Operator-only, outside React:** tenant purge (`scripts/purge_tenant_data.py`); uptime and pipeline
     monitoring scripts; legacy credential scripts while still needed, until C removes them.
 - [ ] **A2. Close parity gaps** decided in A1 and A1b (each its own small PR). **In progress:** items
-      1–4 merged; item 5 implemented on its branch, not yet merged; items 6–8 pending. No customer React
+      1–5 merged; item 6 implemented on its branch, not yet merged; items 7–8 pending. No customer React
       feature work came out of A1; the backlog is the React admin, in this order:
   1. Admin API foundation + separate React admin shell.
   2. Libraries list + library overview, v2-aware.
@@ -220,13 +220,20 @@ exact scope is set by A1b.
      time zone + review record and the four Internal Routing lists; transit shown read-only (customers keep editing it
      in React Settings › Routing); audit counts only; customer Streamlit no longer shows or saves Internal Routing.
      Saved to SortView only -- installed Contract v2 collectors are not updated (C6).
-  5. Installations + enrollment code. **Implemented 2026-10-15** on `feature/a2-admin-installations` (not yet
-     merged): library-level admin routes and React page to list every installation, add one at the active primary
-     branch (Contract 2 by default, needing item 4's settings; Contract 1 still offered), rename, deactivate, return to
+  5. Installations + enrollment code. **Implemented 2026-10-15**, merged (PR #208, `eb3b304`): library-level admin
+     routes and React page to list every installation, add one at the active primary branch (Contract 2 by default, needing item 4's settings; Contract 1 still offered), rename, deactivate, return to
      provisioning, retire (final in React), and issue a one-time enrollment code shown once. A Contract 2 code is
      refused for a branch already enrolled (`branch_already_enrolled`); replacement is C6. No hostname, Collector
      version or legacy Installer Values (C5/C2); no branch choice (C8). Audit ids and counts only, never a code.
-  6. Library lifecycle (suspend/reactivate/offboard).
+  6. Library lifecycle (suspend/reactivate/offboard). **Implemented 2026-10-15** on `feature/a2-admin-lifecycle` (not
+     yet merged): three explicit admin actions (`POST …/lifecycle/suspend|reactivate|offboard`, no generic status
+     write) on the two existing `platform_admin_service` functions, and a React page `/libraries/:orgSlug/lifecycle`
+     linked from the overview. Semantics unchanged: suspension writes only the status (Collector refused, members keep
+     read-only access); reactivation always returns to `active`; offboarding is the existing one-transaction cutoff and
+     is refused (409) for an already-cancelled library. Each change writes `admin_library_suspended` /
+     `_reactivated` / `_offboarded` to `auth_audit_log` in the same transaction (status names and counts only); the
+     offboarding's lifecycle evidence names the administrator as `platform_admin:<id>`, never by e-mail. No purge, no
+     un-offboard.
   7. Provision library.
   8. Retire Super Admin Streamlit, after 1–7 are proven in production.
 
@@ -370,6 +377,10 @@ One line each, dated. Pick up only when a milestone needs it, or when it is prom
 - 2026-10-15 — A Contract 1 installation enrolled again leaves its earlier bound agent tokens active.
 - 2026-10-15 — An unused enrollment code can be revoked only by issuing a new one (or by offboarding); there is no revoke-only action.
 - 2026-10-15 — The item-2 sorter list (and the customer's) hides installations on inactive branches; the item-5 admin Installations list shows every installation. Intentional; revisit with C8.
+- 2026-10-15 — Reversing an offboarding (`access_cutoff_reverted`) remains manual and operator-only; no tool or admin control exists (A2 item 6 deliberately adds none).
+- 2026-10-15 — The React Collector configuration page does not know a library is cancelled: its forms look editable until a save is refused with 409 `library_cancelled` (clear message). Its responses carry no library status.
+- 2026-10-15 — Suspension leaves unused enrollment codes stored and unrevoked; redemption is refused while suspended, but a code still within its 30-minute TTL can be redeemed after reactivation.
+- 2026-10-15 — Super Admin suspend/reactivate still write no audit row (React admin does, A2 item 6); goes away when Super Admin retires (item 8).
 - 2026-10-01 — `ruleset_id`: `docs/contract-v2-design.md` §5 contradicts the deliberate code behavior; fix the doc or the code.
 
 ---

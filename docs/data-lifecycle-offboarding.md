@@ -13,11 +13,17 @@ is not classified in it.
 | What it is | A reversible pause | The permanent end of service | Deletion of the tenant's rows |
 | Organization status | `suspended` | `cancelled` (terminal) | row deleted |
 | Reversible | Yes: Reactivate | Not from the product | No |
-| Who | Super Admin | Super Admin | SortView operator, as the table owner |
-| How | Manage Libraries: Suspend Library | Manage Libraries: Offboard Library (permanent) | `scripts/purge_tenant_data.py` |
+| Who | Platform administrator | Platform administrator | SortView operator, as the table owner |
+| How | SortView administration: Library lifecycle › Suspend library | SortView administration: Library lifecycle › Offboard library permanently | `scripts/purge_tenant_data.py` |
 | Deletes data | No | No | Yes |
 | Changes tokens, installations, keys | No | Revokes all of them | Deletes them |
 | Dashboard access | Read-only | None | None |
+
+Suspension and offboarding are done in the React administration app
+(`/libraries/<slug>/lifecycle`, A2 item 6), through
+`POST /api/admin/libraries/<slug>/lifecycle/suspend`, `.../reactivate` and
+`.../offboard`. Super Admin's Manage Libraries page calls the same two
+functions and remains only until Super Admin is retired (A2 item 8).
 
 They are deliberately three code paths. Suspension
 (`set_library_active_status`) never reaches offboarding, offboarding
@@ -32,13 +38,25 @@ purge tool refuses a tenant that is active, trial or suspended.
 Unchanged by this work. `organizations.status` becomes `suspended` and
 nothing else is written: data, operational identity, installations,
 subscriptions and agent tokens are all preserved. Collector uploads are
-rejected while suspended; the dashboard is read-only. Reactivating sets
-`active` and never reactivates a token.
+rejected while suspended (uploads, heartbeats and enrollment); members keep
+their sessions and a read-only dashboard. Reactivating sets `active` -- a
+library that was `trial` comes back as `active` -- and never reactivates a
+token. Suspending a suspended library, or reactivating an active or trial
+one, changes nothing.
+
+From the administration app, each change (never a no-op) writes one
+`auth_audit_log` row in the same transaction: `admin_library_suspended` or
+`admin_library_reactivated`, with metadata `target_org_slug`,
+`previous_status`, `status` and `actor_user_id` only. Suspension writes no
+lifecycle evidence.
 
 ## offboarding: the access cutoff
 
-Super Admin, Manage Libraries, **Offboard Library (permanent)**, with the Org
-Slug typed as confirmation. In one database transaction:
+SortView administration, Library lifecycle, **Offboard library permanently**
+(or, until it is retired, Super Admin's **Offboard Library (permanent)**), with
+the library's slug typed as confirmation. The administration API refuses an
+already-cancelled library (409 `library_cancelled`); only a direct call of
+the service repeats the sweep (below). In one database transaction:
 
 | Surface | What happens |
 |---|---|
@@ -49,6 +67,7 @@ Slug typed as confirmation. In one database transaction:
 | `ingest_key_ids` | Every active key is retired |
 | `auth_sessions` | Revoked for users left with no usable organization (see below) |
 | `tenant_lifecycle_events` | One `access_cutoff` row: who, when, counts, and the ids of the rows changed |
+| `auth_audit_log` | From the administration app: one `admin_library_offboarded` row (status names and counts, no ids) |
 
 Nothing is deleted. Subscriptions are not touched: `cancelled` on the
 organization is the authoritative service state, and billing is not coupled
@@ -360,8 +379,8 @@ The downgrade drops the table and every lifecycle record in it.
 
 After the access cutoff:
 
-- [ ] Manage Libraries shows the library as **Cancelled**, with no Suspend,
-      Reactivate, Add installation or Generate Enrollment Code control.
+- [ ] Library lifecycle shows the library as **Cancelled — permanently
+      offboarded**, with no action; its Installations page is read-only.
 - [ ] Every installation shows `retired`.
 - [ ] A Collector run on the customer's machine is rejected (403).
 - [ ] A member with no other organization is signed out; a member of another
@@ -421,13 +440,13 @@ tamper-evidence is ever required, it needs a copy outside this database.
 | `organization_id`, `organization_slug`, `operational_customer_id` | The tenant's identifiers, as plain values with no foreign key |
 | `event_type` | `access_cutoff`, `access_cutoff_reverted` or `purge_executed` |
 | `occurred_at` | When it happened |
-| `actor_user_id`, `actor_label` | Who did it. For a cutoff, `actor_label` is the Super Admin operator's sign-in name, which is their staff e-mail address; for a purge it is the `--operator` value |
+| `actor_user_id`, `actor_label` | Who did it. For a cutoff from the administration app, `actor_label` is `platform_admin:<user id>` (no e-mail address); for one from Super Admin it is the operator's sign-in name, which is their staff e-mail address (rows written that way are kept as they are); for a purge it is the `--operator` value |
 | `details` | Validated metadata: counts, internal row ids, status names, a schema revision |
 
 This is platform and operator audit data, not patron or item data. It
 survives the purge of the tenant it describes, and under the current policy
 it is retained with no expiry, including the operator's e-mail address in
-`actor_label`.
+`actor_label` for a cutoff made from Super Admin.
 
 `details` must never contain a patron identifier, a barcode, a title, a token
 or its hash, an enrollment code, or raw AMH content. The code that writes a

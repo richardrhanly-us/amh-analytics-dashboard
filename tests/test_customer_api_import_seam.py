@@ -74,6 +74,9 @@ ADMIN_CORE_MODULES = [
     "admin_api.installation_routes",
     "admin_api.installation_schemas",
     "services.admin_installation_service",
+    # A2 item 6 (its service is platform_admin_service, above).
+    "admin_api.lifecycle_routes",
+    "admin_api.lifecycle_schemas",
 ]
 API_CORE_MODULES = CUSTOMER_CORE_MODULES + ADMIN_CORE_MODULES
 # The same files under their OTHER name. Loading any of these next to the flat
@@ -156,6 +159,10 @@ ADMIN_ROUTES = {
     ("PUT", "/api/admin/libraries/{org_slug}/installations/{installation_id}"),
     ("PUT", "/api/admin/libraries/{org_slug}/installations/{installation_id}/status"),
     ("POST", "/api/admin/libraries/{org_slug}/installations/{installation_id}/enrollment-codes"),
+    # A2 item 6.
+    ("POST", "/api/admin/libraries/{org_slug}/lifecycle/suspend"),
+    ("POST", "/api/admin/libraries/{org_slug}/lifecycle/reactivate"),
+    ("POST", "/api/admin/libraries/{org_slug}/lifecycle/offboard"),
 }
 
 _PROBE = """

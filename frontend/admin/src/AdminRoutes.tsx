@@ -5,6 +5,7 @@ import { SorterDiagnosticsPage } from './diagnostics/SorterDiagnosticsPage.tsx'
 import { InstallationsPage } from './installations/InstallationsPage.tsx'
 import { LibrariesPage } from './libraries/LibrariesPage.tsx'
 import { LibraryPage } from './libraries/LibraryPage.tsx'
+import { LifecyclePage } from './lifecycle/LifecyclePage.tsx'
 
 function NotFoundPage() {
   return (
@@ -26,6 +27,7 @@ export function AdminRoutes() {
       <Route path="libraries/:orgSlug" element={<LibraryPage />} />
       <Route path="libraries/:orgSlug/collector" element={<CollectorConfigPage />} />
       <Route path="libraries/:orgSlug/installations" element={<InstallationsPage />} />
+      <Route path="libraries/:orgSlug/lifecycle" element={<LifecyclePage />} />
       <Route path="libraries/:orgSlug/sorters/:sorterSlug" element={<SorterDiagnosticsPage />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
