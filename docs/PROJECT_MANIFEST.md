@@ -154,6 +154,16 @@ exact scope is set by A1b.
       NBPL membership removed through the supported app path (verified read-only: `removed_at =
       2026-10-15 00:49:21.772118+00`), so the account has no NBPL access. The account itself was not deleted or
       deactivated (still active at the last check). Remaining cleanup is under A5.
+  - Leftover Admin Settings fields — **decided 2026-10-14 (D8): React customer settings are sufficient; no D8 work
+    in A2.** Already covered: organization name, status and role (General), branch/sorter inventory (Branches),
+    routing (Routing). Moved to A1b's admin scope, not customer settings: renaming the real organization, branch or
+    sorter records; system/vendor name; support contact name/email; internal support notes; plan/subscription
+    management. Dropped: the `library_name` and `branch_name` display copies, `account_settings.organization_name`,
+    the free-text `account_settings.plan_name`, the "Current DB Preview", and the raw readiness code. Why:
+    duplicate names are multiple sources of truth, the free-text plan conflicts with the real subscription, the
+    preview is a raw-settings debug surface, and React already shows readiness in plain language. React does not
+    reproduce Streamlit's exposure of provisioning notes and support contacts to customer admins.
+    Customer-visible plan/subscription display is deferred to C7.
   - History window — verified 2026-10-14 in NBPL production: plan `enterprise` (one subscription),
     `history_days` enabled with 3650, so React/API give NBPL a 3650-day window. No 30-day fallback risk at NBPL
     cutover. The general rule stands for other customers: a missing or disabled `history_days` falls back to
@@ -245,7 +255,8 @@ without us on site, and lands in the React app with a working account.
 - [ ] **C6. Deferred Collector work** from `docs/collector-v2.md`: replacement-machine workflow, key rotation,
       installation-status linkage.
 - [ ] **C7. Self-serve commercial flow** (Stripe against the existing plans/subscriptions schema; guided signup) —
-      last, and only once a second customer is real.
+      last, and only once a second customer is real. Includes deciding customer-visible plan/subscription display
+      (deferred here by D8).
 
 **Exit:** a new library goes from signed download to "ready" with no one on site.
 
