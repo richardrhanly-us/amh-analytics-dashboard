@@ -54,6 +54,7 @@ _SRC_DIR = str(Path(__file__).resolve().parent / "src")
 if _SRC_DIR not in sys.path:
     sys.path.append(_SRC_DIR)
 
+from admin_api.router import create_admin_router
 from customer_api.router import create_customer_router
 
 logging.basicConfig(
@@ -1331,3 +1332,7 @@ app.include_router(v2_status_router)
 # limiter, so customer code never imports this module; collector limits above are separate per-route buckets.
 customer_router = create_customer_router(limiter)
 app.include_router(customer_router)
+
+# Administration routes, under /api/admin, for the separate admin app. See src/admin_api/.
+admin_router = create_admin_router()
+app.include_router(admin_router)
