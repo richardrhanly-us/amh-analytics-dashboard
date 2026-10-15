@@ -164,6 +164,14 @@ exact scope is set by A1b.
     preview is a raw-settings debug surface, and React already shows readiness in plain language. React does not
     reproduce Streamlit's exposure of provisioning notes and support contacts to customer admins.
     Customer-visible plan/subscription display is deferred to C7.
+  - Pipeline / collector diagnostics — **decided 2026-10-14 (D9): React's current status is sufficient; no D9 work
+    in A2.** React already answers "is my sorter sending data?" with the pipeline state (OK / Degraded / Failed /
+    Unknown), last reported time, today's figures and hourly activity, refresh status, the waiting-for-first-data
+    state and sorter status labels. No separate "last successful upload" line. Moved to A1b's admin/support scope:
+    last attempt vs. last success, raw status codes, heartbeat detail, `last_error_class`, pending outbox and
+    quarantined counts, oldest pending event, collector schedule / next run / duration, v1 per-run counters,
+    status-row timestamps, ingest-key/authentication troubleshooting. Dropped: the schema-validation message that
+    shows table/column names, the v1 run destination breakdown, and other raw detail customers cannot act on.
   - History window — verified 2026-10-14 in NBPL production: plan `enterprise` (one subscription),
     `history_days` enabled with 3650, so React/API give NBPL a 3650-day window. No 30-day fallback risk at NBPL
     cutover. The general rule stands for other customers: a missing or disabled `history_days` falls back to
@@ -172,6 +180,9 @@ exact scope is set by A1b.
       Super Admin capability needed to provision and manage libraries, classify each as migrate / drop /
       redesign, and set the React administration scope. D6 shows at least the Internal Routing lists belong there;
       do not assume that is the whole list.
+  - Must also decide (from D9): the customer-accessible `GET …/ingest-status` route returns the full v2 heartbeat to
+    any organization member, and React deliberately never calls it. Move it behind internal/admin/support
+    authorization, or retire it.
 - [ ] **A2. Close parity gaps** decided in A1 and A1b (each its own small PR). Starts after A1b.
 - [ ] **A3. Production hosting:** CloudFront (per runbook) on a SortView custom domain, TLS, production API origin.
 - [ ] **A4. Cutover:** NBPL moved to React; Streamlit customer access removed or redirected.
