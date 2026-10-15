@@ -1,5 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { BrowserRouter } from 'react-router'
 
 import '../../src/index.css'
 import { AdminApp } from './AdminApp.tsx'
@@ -11,6 +12,8 @@ if (container === null) {
 
 createRoot(container).render(
   <StrictMode>
-    <AdminApp />
+    <BrowserRouter>
+      <AdminApp />
+    </BrowserRouter>
   </StrictMode>,
 )

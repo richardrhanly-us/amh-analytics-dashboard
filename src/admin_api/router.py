@@ -1,6 +1,8 @@
 """The administration API's router: everything under /api/admin.
 
-    GET /api/admin/session   the signed-in platform administrator
+    GET /api/admin/session                 the signed-in platform administrator
+    GET /api/admin/libraries               every library (admin_api.library_routes)
+    GET /api/admin/libraries/{org_slug}    one library's read-only overview
 
 WHO. Platform administrators only, decided on every request by the router's own dependencies (so a route added
 later cannot leave them out):
@@ -21,6 +23,7 @@ from fastapi import APIRouter, Depends
 from starlette.responses import JSONResponse, Response
 
 from admin_api.dependencies import require_admin_origin, require_platform_admin
+from admin_api.library_routes import create_library_router
 from customer_api.auth_schemas import CurrentUserResponse
 from customer_api.errors import NO_STORE_HEADERS, CustomerApiRoute
 
@@ -44,5 +47,8 @@ def create_admin_router() -> APIRouter:
         # is what says the user is a platform administrator: the flag itself is never sent.
         body = CurrentUserResponse(id=user["id"], email=user["email"], full_name=user["full_name"])
         return JSONResponse(content=body.model_dump(), headers=NO_STORE_HEADERS)
+
+    # Included, so its routes carry this router's dependencies as well as their own.
+    router.include_router(create_library_router())
 
     return router

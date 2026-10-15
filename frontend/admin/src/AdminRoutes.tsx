@@ -1,0 +1,27 @@
+import { Link, Navigate, Route, Routes } from 'react-router'
+
+import { LibrariesPage } from './libraries/LibrariesPage.tsx'
+import { LibraryPage } from './libraries/LibraryPage.tsx'
+
+function NotFoundPage() {
+  return (
+    <section aria-labelledby="not-found-heading">
+      <h2 id="not-found-heading">Page not found</h2>
+      <p>
+        <Link to="/libraries">Libraries</Link>
+      </p>
+    </section>
+  )
+}
+
+/** The signed-in administrator's pages. Rendered only once GET /api/admin/session has answered 200. */
+export function AdminRoutes() {
+  return (
+    <Routes>
+      <Route index element={<Navigate to="/libraries" replace />} />
+      <Route path="libraries" element={<LibrariesPage />} />
+      <Route path="libraries/:orgSlug" element={<LibraryPage />} />
+      <Route path="*" element={<NotFoundPage />} />
+    </Routes>
+  )
+}

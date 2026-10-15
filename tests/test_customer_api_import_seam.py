@@ -58,6 +58,10 @@ ADMIN_CORE_MODULES = [
     "admin_api.dependencies",
     "admin_api.settings",
     "services.platform_admin_service",
+    # A2 item 2.
+    "admin_api.library_routes",
+    "admin_api.library_schemas",
+    "services.admin_library_service",
 ]
 API_CORE_MODULES = CUSTOMER_CORE_MODULES + ADMIN_CORE_MODULES
 # The same files under their OTHER name. Loading any of these next to the flat
@@ -124,6 +128,9 @@ CUSTOMER_ROUTES = {
 # A2 item 1: the administration API (admin_api.router), separate from the customer router.
 ADMIN_ROUTES = {
     ("GET", "/api/admin/session"),
+    # A2 item 2: read-only libraries (admin_api.library_routes).
+    ("GET", "/api/admin/libraries"),
+    ("GET", "/api/admin/libraries/{org_slug}"),
 }
 
 _PROBE = """
