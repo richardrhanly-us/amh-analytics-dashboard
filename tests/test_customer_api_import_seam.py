@@ -70,6 +70,10 @@ ADMIN_CORE_MODULES = [
     "admin_api.collector_config_routes",
     "admin_api.collector_config_schemas",
     "services.internal_routing",
+    # A2 item 5.
+    "admin_api.installation_routes",
+    "admin_api.installation_schemas",
+    "services.admin_installation_service",
 ]
 API_CORE_MODULES = CUSTOMER_CORE_MODULES + ADMIN_CORE_MODULES
 # The same files under their OTHER name. Loading any of these next to the flat
@@ -146,6 +150,12 @@ ADMIN_ROUTES = {
     ("PUT", "/api/admin/libraries/{org_slug}/collector-settings"),
     ("GET", "/api/admin/libraries/{org_slug}/internal-routing"),
     ("PUT", "/api/admin/libraries/{org_slug}/internal-routing"),
+    # A2 item 5: a library's Collector installations (admin_api.installation_routes).
+    ("GET", "/api/admin/libraries/{org_slug}/installations"),
+    ("POST", "/api/admin/libraries/{org_slug}/installations"),
+    ("PUT", "/api/admin/libraries/{org_slug}/installations/{installation_id}"),
+    ("PUT", "/api/admin/libraries/{org_slug}/installations/{installation_id}/status"),
+    ("POST", "/api/admin/libraries/{org_slug}/installations/{installation_id}/enrollment-codes"),
 }
 
 _PROBE = """

@@ -57,9 +57,9 @@ its own data. New Braunfels Public Library (NBPL) stays live throughout.
 
 ## 3. Current focus
 
-**Phase 1 / Workstream A, milestone A2 (in progress).** A1 and A1b completed 2026-10-14. A2 items 1–3 are merged;
-item 4 (collector site settings + Internal Routing editor) is implemented on `feature/a2-admin-collector-config`, not
-yet merged; items 5–8 are pending.
+**Phase 1 / Workstream A, milestone A2 (in progress).** A1 and A1b completed 2026-10-14. A2 items 1–4 are merged;
+item 5 (installations + enrollment code) is implemented on `feature/a2-admin-installations`, not yet merged; items 6–8
+are pending.
 
 Phase 0 (completed 2026-10-14):
 
@@ -210,17 +210,22 @@ exact scope is set by A1b.
   - **Operator-only, outside React:** tenant purge (`scripts/purge_tenant_data.py`); uptime and pipeline
     monitoring scripts; legacy credential scripts while still needed, until C removes them.
 - [ ] **A2. Close parity gaps** decided in A1 and A1b (each its own small PR). **In progress:** items
-      1–3 merged; item 4 implemented on its branch, not yet merged; items 5–8 pending. No customer React
+      1–4 merged; item 5 implemented on its branch, not yet merged; items 6–8 pending. No customer React
       feature work came out of A1; the backlog is the React admin, in this order:
   1. Admin API foundation + separate React admin shell.
   2. Libraries list + library overview, v2-aware.
   3. Admin diagnostics + move/remove customer `ingest-status`.
-  4. Collector site settings + Internal Routing editor. **Implemented 2026-10-15** on
-     `feature/a2-admin-collector-config` (not yet merged): library-level admin routes and React page for the Collector
+  4. Collector site settings + Internal Routing editor. **Implemented 2026-10-15**, merged
+     (`feature/a2-admin-collector-config`): library-level admin routes and React page for the Collector
      time zone + review record and the four Internal Routing lists; transit shown read-only (customers keep editing it
      in React Settings › Routing); audit counts only; customer Streamlit no longer shows or saves Internal Routing.
      Saved to SortView only -- installed Contract v2 collectors are not updated (C6).
-  5. Installations + enrollment code.
+  5. Installations + enrollment code. **Implemented 2026-10-15** on `feature/a2-admin-installations` (not yet
+     merged): library-level admin routes and React page to list every installation, add one at the active primary
+     branch (Contract 2 by default, needing item 4's settings; Contract 1 still offered), rename, deactivate, return to
+     provisioning, retire (final in React), and issue a one-time enrollment code shown once. A Contract 2 code is
+     refused for a branch already enrolled (`branch_already_enrolled`); replacement is C6. No hostname, Collector
+     version or legacy Installer Values (C5/C2); no branch choice (C8). Audit ids and counts only, never a code.
   6. Library lifecycle (suspend/reactivate/offboard).
   7. Provision library.
   8. Retire Super Admin Streamlit, after 1–7 are proven in production.
@@ -361,6 +366,10 @@ One line each, dated. Pick up only when a milestone needs it, or when it is prom
 - 2026-10-15 — `test_when_keeps_its_whole_second_format_and_its_delta_semantics` fails when the full suite runs more than ~1h after import (wall-clock dependence).
 - 2026-10-15 — `src/branch_settings.json` is tracked in a public repository with one library's real Internal Routing lists (institutional account labels; no patron-card numbers found) and its names; git history holds the same plus an old admin password. Replace with synthetic data of the same shape; decide on a history rewrite separately. Not part of A2 item 4.
 - 2026-10-15 — `lines_to_list` in `src/pages/1_admin_settings.py` is unused since A2 item 4 removed the Internal Routing form; remove with the Streamlit settings page.
+- 2026-10-15 — `collector_installations.required_contract` is fixed only by convention (no service updates it); there is no database-level immutability.
+- 2026-10-15 — A Contract 1 installation enrolled again leaves its earlier bound agent tokens active.
+- 2026-10-15 — An unused enrollment code can be revoked only by issuing a new one (or by offboarding); there is no revoke-only action.
+- 2026-10-15 — The item-2 sorter list (and the customer's) hides installations on inactive branches; the item-5 admin Installations list shows every installation. Intentional; revisit with C8.
 - 2026-10-01 — `ruleset_id`: `docs/contract-v2-design.md` §5 contradicts the deliberate code behavior; fix the doc or the code.
 
 ---

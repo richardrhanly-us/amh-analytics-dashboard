@@ -43,6 +43,8 @@ describe('admin app boundary', () => {
       './collector/collectorApi.ts',
       './diagnostics/SorterDiagnosticsPage.tsx',
       './diagnostics/diagnosticsApi.ts',
+      './installations/InstallationsPage.tsx',
+      './installations/installationsApi.ts',
       './libraries/LibrariesPage.tsx',
       './libraries/LibraryPage.tsx',
       './libraries/labels.ts',
