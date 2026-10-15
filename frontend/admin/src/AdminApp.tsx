@@ -1,8 +1,11 @@
+import { QueryClientProvider } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 
 import { login, logout, type User } from '../../src/api/auth.ts'
 import { isApiError } from '../../src/api/client.ts'
+import { createQueryClient } from '../../src/query/queryClient.ts'
 import { getAdminSession } from './adminSession.ts'
+import { AdminRoutes } from './AdminRoutes.tsx'
 
 const CHECK_FAILED = 'We could not check your administration access. Please try again.'
 const SIGN_IN_FAILED = 'Sign-in failed. Please try again.'
@@ -124,7 +127,22 @@ function SignOutButton({ onSignedOut }: { onSignedOut: () => void }) {
   )
 }
 
-/** The separate SortView administration app (A2 item 1): a session check and an empty home, nothing more yet. */
+/**
+ * Everything a signed-in administrator sees. Its query client is made at sign-in and gone, with everything it holds,
+ * when this unmounts -- at sign-out, or when any read is answered 401 -- so nothing loaded for one session is shown
+ * in the next.
+ */
+function SignedInAdmin({ onSessionExpired }: { onSessionExpired: () => void }) {
+  const [queryClient] = useState(() => createQueryClient(onSessionExpired))
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AdminRoutes />
+    </QueryClientProvider>
+  )
+}
+
+/** The separate SortView administration app: a session check, then the administrator's pages. */
 export function AdminApp() {
   const [state, setState] = useState<State>({ status: 'checking' })
   // React StrictMode runs an effect twice in development; the session is still asked once.
@@ -176,7 +194,7 @@ export function AdminApp() {
             <SignOutButton onSignedOut={signedOut} />
           </section>
         )}
-        {state.status === 'admin' && <p>No administration features yet.</p>}
+        {state.status === 'admin' && <SignedInAdmin onSessionExpired={signedOut} />}
         {state.status === 'error' && (
           <section aria-labelledby="check-error-heading">
             <h2 id="check-error-heading">Something went wrong</h2>
