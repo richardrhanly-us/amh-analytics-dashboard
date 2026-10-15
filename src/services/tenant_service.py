@@ -9,7 +9,7 @@ from sqlalchemy import text
 
 from database import get_engine
 
-from . import collector_rules
+from . import auth_service, collector_rules, internal_routing
 from .routing_destination import destination_key
 from .routing_settings import (
     MEANS_HOME,
@@ -1014,3 +1014,183 @@ def set_collector_site_settings(
             raise RuntimeError(f"Organization {organization_id} is cancelled; its collector site settings cannot be changed")
 
     return site
+
+
+# --- the administration API's collector configuration (A2 item 4) ----------------------------------------------------
+#
+# A platform administrator's two writes to an ORGANIZATION's own settings document, each touching only its own keys and
+# each recorded in the auth audit log in the same transaction as the change:
+#
+#   set_collector_enrollment_settings   `collector_timezone` and the `collector_rules` review record
+#   replace_internal_routing            the whole `internal_routing` block
+#
+# Neither reads, merges or writes a branch's document, and neither touches `transit`: the library edits that itself.
+# A Collector already installed keeps the rules and time zone it was given at enrollment: nothing here reaches it.
+#
+# THE AUDIT RECORD names the library as `target_org_slug` -- never `org_slug`, which is what marks an event as one
+# that happened IN an organization, for that organization's own members to see (user_admin_service). For the
+# Internal Routing lists it holds how many entries each had and has: never an entry.
+
+ADMIN_COLLECTOR_SETTINGS_UPDATED = "admin_collector_settings_updated"
+ADMIN_INTERNAL_ROUTING_REPLACED = "admin_internal_routing_replaced"
+
+
+class OrganizationCancelledError(RuntimeError):
+    """The organization is cancelled (permanently offboarded): its settings are not written."""
+
+
+_ORGANIZATION_SETTINGS_FOR_UPDATE_SQL = """
+    SELECT o.status AS organization_status, os.settings_json AS settings_json
+    FROM organizations o
+    LEFT JOIN organization_settings os
+      ON os.organization_id = o.id
+    WHERE o.id = :organization_id
+"""
+
+# Merges the two enrollment keys into the organization's document, creating the row if there is none. Every other key
+# is left as it is. A cancelled organization is not written to: the statement then touches no row.
+_MERGE_ORGANIZATION_SETTINGS_SQL = """
+    INSERT INTO organization_settings (organization_id, settings_json)
+    SELECT o.id, CAST(:keys AS JSONB)
+    FROM organizations o
+    WHERE o.id = :organization_id
+      AND o.status <> 'cancelled'
+    ON CONFLICT (organization_id) DO UPDATE
+    SET settings_json = COALESCE(organization_settings.settings_json, '{}'::jsonb) || CAST(:keys AS JSONB),
+        updated_at = NOW()
+    RETURNING organization_id
+"""
+
+# Replaces the `internal_routing` block of the organization's document, creating the row if there is none. Every
+# other key is left as it is. A cancelled organization is not written to.
+_SET_INTERNAL_ROUTING_SQL = """
+    INSERT INTO organization_settings (organization_id, settings_json)
+    SELECT o.id, jsonb_build_object('internal_routing', CAST(:block AS JSONB))
+    FROM organizations o
+    WHERE o.id = :organization_id
+      AND o.status <> 'cancelled'
+    ON CONFLICT (organization_id) DO UPDATE
+    SET settings_json = jsonb_set(
+            COALESCE(organization_settings.settings_json, '{}'::jsonb), '{internal_routing}', CAST(:block AS JSONB), true
+        ),
+        updated_at = NOW()
+    RETURNING organization_id
+"""
+
+
+def _stored_document_for_write(conn: Any, organization_id: int) -> dict[str, Any]:
+    """The organization's stored document, read in the writing transaction. Raises RuntimeError for an organization
+    that does not exist and OrganizationCancelledError for a cancelled one."""
+    row = conn.execute(text(_ORGANIZATION_SETTINGS_FOR_UPDATE_SQL), {"organization_id": organization_id}).mappings().first()
+    if not row:
+        raise RuntimeError(f"Organization {organization_id} not found")
+    if row["organization_status"] == "cancelled":
+        raise OrganizationCancelledError(f"Organization {organization_id} is cancelled; its settings cannot be changed")
+    return _organization_settings_document(row["settings_json"])
+
+
+def _write_or_refuse(conn: Any, sql: str, parameters: dict[str, Any], organization_id: int) -> None:
+    if not conn.execute(text(sql), parameters).mappings().first():
+        # Cancelled between the read and the write: the statement itself refused it.
+        raise OrganizationCancelledError(f"Organization {organization_id} is cancelled; its settings cannot be changed")
+
+
+def get_internal_routing(organization_id: int) -> dict[str, list[str]]:
+    """The organization's four Internal Routing lists as stored (internal_routing.stored_internal_routing: lenient,
+    so what is there can be seen and corrected). For a platform administrator only: the entries are never logged."""
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(text(_COLLECTOR_SITE_SQL), {"organization_id": organization_id}).mappings().first()
+    if not row:
+        raise RuntimeError(f"Organization {organization_id} not found")
+    stored = _organization_settings_document(row["settings_json"])
+    return internal_routing.stored_internal_routing(stored.get(internal_routing.INTERNAL_ROUTING_KEY))
+
+
+def replace_internal_routing(
+    organization_id: int,
+    lists: dict[str, list[str]],
+    *,
+    target_org_slug: str,
+    actor: dict[str, Any],
+) -> dict[str, list[str]]:
+    """Replaces the organization's whole `internal_routing` block with `lists` -- already normalized by
+    internal_routing.validate_internal_routing -- and records it, in the same transaction, as
+    ADMIN_INTERNAL_ROUTING_REPLACED: the library's slug and each list's entry count before and after. Every other key
+    of the document is left exactly as it is. Returns what was stored.
+
+    `actor` is the platform administrator ({"id", "email"}). An organization that does not exist raises RuntimeError;
+    a cancelled one OrganizationCancelledError. Nothing is written for either."""
+    block = {name: list(lists[name]) for name in internal_routing.LISTS}
+
+    engine = get_engine()
+    with engine.begin() as conn:
+        stored = _stored_document_for_write(conn, organization_id)
+        previous = internal_routing.stored_internal_routing(stored.get(internal_routing.INTERNAL_ROUTING_KEY))
+        _write_or_refuse(
+            conn, _SET_INTERNAL_ROUTING_SQL,
+            {"organization_id": organization_id, "block": json.dumps(block)}, organization_id,
+        )
+        auth_service.log_auth_event_with_connection(
+            conn,
+            event_type=ADMIN_INTERNAL_ROUTING_REPLACED,
+            is_success=True,
+            user_id=int(actor["id"]),
+            email=actor.get("email"),
+            message="Internal Routing replaced.",
+            metadata={
+                "target_org_slug": target_org_slug,
+                "previous_counts": internal_routing.entry_counts(previous),
+                "counts": internal_routing.entry_counts(block),
+                "actor_user_id": int(actor["id"]),
+            },
+        )
+    return block
+
+
+def set_collector_enrollment_settings(
+    organization_id: int,
+    *,
+    timezone: str,
+    target_org_slug: str,
+    actor: dict[str, Any],
+    reviewed_at: datetime | None = None,
+) -> dict[str, Any]:
+    """Records, on the organization's own settings, the two things a Contract v2 enrollment reads there: its Collector
+    time zone and the record that `actor` (the platform administrator, {"id", "email"}) reviewed its routing
+    configuration at `reviewed_at` (now, if not given). Nothing else of the document changes -- not `transit`, not
+    `internal_routing`. Recorded in the same transaction as ADMIN_COLLECTOR_SETTINGS_UPDATED. Returns the two keys as
+    stored.
+
+    A time zone that is not a known IANA name raises collector_rules.CollectorSettingsError before anything is read.
+    An organization that does not exist raises RuntimeError; a cancelled one OrganizationCancelledError."""
+    zone = collector_rules.collector_timezone({collector_rules.TIMEZONE_KEY: timezone})
+    marker = collector_rules.rules_review_marker(
+        reviewed_at=reviewed_at or datetime.now(UTC), reviewed_by_user_id=int(actor["id"])
+    )
+    keys = {collector_rules.TIMEZONE_KEY: zone, collector_rules.RULES_REVIEW_KEY: marker}
+
+    engine = get_engine()
+    with engine.begin() as conn:
+        stored = _stored_document_for_write(conn, organization_id)
+        previous_zone = stored.get(collector_rules.TIMEZONE_KEY)
+        _write_or_refuse(
+            conn, _MERGE_ORGANIZATION_SETTINGS_SQL,
+            {"organization_id": organization_id, "keys": json.dumps(keys)}, organization_id,
+        )
+        auth_service.log_auth_event_with_connection(
+            conn,
+            event_type=ADMIN_COLLECTOR_SETTINGS_UPDATED,
+            is_success=True,
+            user_id=int(actor["id"]),
+            email=actor.get("email"),
+            message="Collector settings updated.",
+            metadata={
+                "target_org_slug": target_org_slug,
+                "previous_collector_timezone": previous_zone if isinstance(previous_zone, str) else None,
+                "collector_timezone": zone,
+                "rules_reviewed": True,
+                "actor_user_id": int(actor["id"]),
+            },
+        )
+    return keys

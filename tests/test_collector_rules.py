@@ -312,7 +312,9 @@ def test_the_collector_accepts_a_zone_the_server_accepts(tmp_path):
 def test_the_zone_is_the_collectors_and_is_read_by_nothing_that_draws_a_report():
     # Stage A1 hands it to a Collector at enrollment and does nothing else with it. Stage A3b adds the one other
     # place it is named: services.tenant_service, where Super Admin reads and records a site's Collector settings
-    # (get_collector_site_settings / set_collector_site_settings). Neither draws a report.
+    # (get_collector_site_settings / set_collector_site_settings). A2 item 4 adds the administration API's collector
+    # settings (admin_api.collector_config_routes / _schemas), which read and record it through that same service.
+    # None of them draws a report.
     readers = sorted(
         str(path.relative_to(ROOT)).replace("\\", "/")
         for path in (ROOT / "src").rglob("*.py")
@@ -320,6 +322,8 @@ def test_the_zone_is_the_collectors_and_is_read_by_nothing_that_draws_a_report()
     )
 
     assert readers == [
+        "src/admin_api/collector_config_routes.py",
+        "src/admin_api/collector_config_schemas.py",
         "src/services/collector_enrollment_service.py",
         "src/services/collector_rules.py",
         "src/services/tenant_service.py",

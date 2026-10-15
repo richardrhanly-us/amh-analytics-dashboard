@@ -207,6 +207,11 @@ def test_every_admin_route_requires_a_platform_admin_and_the_admin_origin_guard(
         ("GET", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}"),
         # A2 item 3: a sorter site's diagnostics (admin_api.diagnostics_routes).
         ("GET", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/sorters/{{sorter_slug}}/diagnostics"),
+        # A2 item 4: a library's collector configuration (admin_api.collector_config_routes) -- the first writes.
+        ("GET", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/collector-settings"),
+        ("PUT", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/collector-settings"),
+        ("GET", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/internal-routing"),
+        ("PUT", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/internal-routing"),
     }
     for route in admin_routes:
         router_level = {dependency.dependency for dependency in route.dependencies}

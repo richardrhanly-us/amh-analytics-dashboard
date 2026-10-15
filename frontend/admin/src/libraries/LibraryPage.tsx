@@ -75,6 +75,13 @@ function Overview({ library }: { library: LibraryDetail }) {
         <p>{identityLabel(library.operational_identity)}</p>
       </section>
 
+      <section aria-labelledby="collector-heading">
+        <h3 id="collector-heading">Collector</h3>
+        <p>
+          <Link to={`/libraries/${encodeURIComponent(library.slug)}/collector`}>Collector configuration</Link>
+        </p>
+      </section>
+
       <section aria-labelledby="sorters-heading">
         <h3 id="sorters-heading">Sorters</h3>
         {library.sorters.length === 0 ? (

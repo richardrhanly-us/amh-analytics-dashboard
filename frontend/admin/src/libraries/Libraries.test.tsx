@@ -178,9 +178,11 @@ describe('Library overview', () => {
       'Subscription',
       'Primary branch',
       'Operational identity',
+      'Collector',
       'Sorters',
     ])
     expect(screen.getByRole('link', { name: 'Libraries' })).toHaveAttribute('href', '/libraries')
+    expect(screen.getByRole('link', { name: 'Collector configuration' })).toHaveAttribute('href', '/libraries/nbpl/collector')
     expect(screen.getByText('Assigned')).toBeInTheDocument()
     expect(screen.getByText('Enterprise')).toBeInTheDocument()
     expect(cells(rowOf('Main AMH'))).toEqual(['Main Branch', 'Active', '1', 'Ready', 'Degraded', 'Oct 14, 2026, 10:30 AM CDT'])

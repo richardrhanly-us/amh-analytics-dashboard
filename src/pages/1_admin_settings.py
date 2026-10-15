@@ -72,12 +72,6 @@ DEFAULT_SETTINGS = {
         "home_branch_label": "",
         "destinations": [],
     },
-    "internal_routing": {
-        "branch_services_names": [],
-        "collection_services_names": [],
-        "collection_services_da_patterns": [],
-        "branch_services_da_patterns": [],
-    },
     "account_settings": {
         "organization_name": "",
         "contact_name": "",
@@ -175,7 +169,9 @@ def load_settings(org_slug: str, branch_slug: str) -> dict:
         },
         "security": settings.get("security", {}),
         "transit": settings.get("transit", {}),
-        "internal_routing": settings.get("internal_routing", {}),
+        # Only how many entries each Internal Routing list has -- never an entry. The lists are edited by SortView
+        # administration alone (A2 item 4): this page neither shows nor saves them.
+        "internal_routing": public_internal_routing_view(settings.get("internal_routing")),
         "account_settings": settings.get("account_settings", {}),
     }
 
@@ -210,12 +206,8 @@ def save_settings(org_slug: str, branch_slug: str, settings: dict) -> None:
             "home_branch_label": settings["transit"]["home_branch_label"].strip(),
             "destinations": list(settings["transit"]["destinations"]),
         },
-        "internal_routing": {
-            "branch_services_names": list(settings["internal_routing"]["branch_services_names"]),
-            "collection_services_names": list(settings["internal_routing"]["collection_services_names"]),
-            "collection_services_da_patterns": list(settings["internal_routing"]["collection_services_da_patterns"]),
-            "branch_services_da_patterns": list(settings["internal_routing"]["branch_services_da_patterns"]),
-        },
+        # No `internal_routing`: org_payload starts from the stored document, so the stored lists are kept exactly as
+        # they are. Only SortView administration replaces them (A2 item 4).
         "account_settings": {
             "organization_name": settings["account_settings"]["organization_name"].strip(),
             "contact_name": settings["account_settings"]["contact_name"].strip(),
@@ -405,7 +397,6 @@ except Exception as exc:
 library_settings = settings.get("library", {})
 security_settings = settings.get("security", {})
 transit_settings = settings.get("transit", {})
-internal_routing = settings.get("internal_routing", {})
 account_settings = settings.get("account_settings", {})
 
 admin_enabled = bool(security_settings.get("admin_enabled", True))
@@ -413,7 +404,7 @@ password_is_set = has_admin_password(security_settings)
 
 st.caption("SortView Admin")
 st.title("Admin Settings")
-st.caption("Manage branch configuration, routing rules, transit labels, and future account settings.")
+st.caption("Manage branch configuration, transit labels, and future account settings.")
 
 if admin_enabled and password_is_set and not admin_unlocked:
     st.info("Admin access required.")
@@ -580,37 +571,6 @@ with st.form("admin_settings_form"):
 
     st.divider()
 
-    st.subheader("Internal Routing")
-    route_col1, route_col2 = st.columns(2)
-
-    with route_col1:
-        branch_services_names_text = st.text_area(
-            "Branch Services Names (one per line)",
-            value="\n".join(internal_routing.get("branch_services_names", [])),
-            height=180,
-        )
-
-        branch_services_da_patterns_text = st.text_area(
-            "Branch Services DA Patterns (one per line)",
-            value="\n".join(internal_routing.get("branch_services_da_patterns", [])),
-            height=180,
-        )
-
-    with route_col2:
-        collection_services_names_text = st.text_area(
-            "Collection Services Names (one per line)",
-            value="\n".join(internal_routing.get("collection_services_names", [])),
-            height=180,
-        )
-
-        collection_services_da_patterns_text = st.text_area(
-            "Collection Services DA Patterns (one per line)",
-            value="\n".join(internal_routing.get("collection_services_da_patterns", [])),
-            height=180,
-        )
-
-    st.divider()
-
     st.subheader("Account Settings")
 
     acct_col1, acct_col2 = st.columns(2)
@@ -665,12 +625,6 @@ with st.form("admin_settings_form"):
                     if d["key"] and d["label"]
                 ],
             },
-            "internal_routing": {
-                "branch_services_names": lines_to_list(branch_services_names_text),
-                "collection_services_names": lines_to_list(collection_services_names_text),
-                "collection_services_da_patterns": lines_to_list(collection_services_da_patterns_text),
-                "branch_services_da_patterns": lines_to_list(branch_services_da_patterns_text),
-            },
             "account_settings": {
                 "organization_name": organization_name.strip(),
                 "contact_name": contact_name.strip(),
@@ -720,9 +674,7 @@ with st.expander("Current DB Preview", expanded=False):
         )
         # Only whether the lock is on and a password is set -- never the password or its hash.
         preview_settings["security"] = public_security_view(preview_settings.get("security"))
-        # And only how many internal routing entries there are -- never a patron account name or a pattern. The
-        # entries themselves are in the form above, for the people allowed to edit them.
-        preview_settings["internal_routing"] = public_internal_routing_view(preview_settings.get("internal_routing"))
+        # Internal Routing is already only how many entries each list has (load_settings): never an entry.
         st.json(preview_settings)
     except Exception as exc:
         log_safe_exception(logger, "Admin settings preview failed", exc)
