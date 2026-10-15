@@ -125,8 +125,10 @@ def test_no_v1_status_value_leaks_into_a_v2_context():
     # app_refreshed_str / latest_checkin_* are not v1 status fields (now_ct and the live dataframe).
     shared = {"app_refreshed_str", "latest_checkin_str", "latest_checkin_ago"}
     leaked = {k for k in v1_only if k not in shared and v1_only[k] not in ("N/A", None) and ctx[k] == v1_only[k]}
-    # The label/colors legitimately coincide ("Pipeline Healthy" for both a completed v1 run and a healthy v2).
-    assert leaked <= {"pipeline_status_label", "pipeline_status_color", "pipeline_status_bg", "pipeline_expanded"}
+    # The label/colors legitimately coincide ("Pipeline Healthy" for both a completed v1 run and a healthy v2), and so
+    # does the customer wording of that label (A2 item 3).
+    assert leaked <= {"pipeline_status_label", "pipeline_status_color", "pipeline_status_bg", "pipeline_expanded",
+                      "customer_status_label"}
     rendered = " ".join(str(v) for v in ctx.values())
     assert "Oct 04" not in rendered
     assert "hrs ago" not in rendered

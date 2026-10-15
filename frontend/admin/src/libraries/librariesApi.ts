@@ -71,28 +71,30 @@ export interface LibraryDetail {
 
 type Json = Record<string, unknown>
 
-function record(value: unknown): Json {
+// The checks below are shared with the sorter diagnostics client (A2 item 3).
+
+export function record(value: unknown): Json {
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
     return value as Json
   }
   throw unexpectedResponse(200)
 }
 
-function text(value: unknown): string {
+export function text(value: unknown): string {
   if (typeof value === 'string') {
     return value
   }
   throw unexpectedResponse(200)
 }
 
-function count(value: unknown): number {
+export function count(value: unknown): number {
   if (typeof value === 'number' && Number.isInteger(value) && value >= 0) {
     return value
   }
   throw unexpectedResponse(200)
 }
 
-function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T {
+export function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T {
   if (typeof value === 'string' && (allowed as readonly string[]).includes(value)) {
     return value as T
   }
@@ -106,7 +108,7 @@ function list(value: unknown): unknown[] {
   throw unexpectedResponse(200)
 }
 
-function orNull<T>(value: unknown, read: (value: unknown) => T): T | null {
+export function orNull<T>(value: unknown, read: (value: unknown) => T): T | null {
   return value === null ? null : read(value)
 }
 
@@ -114,7 +116,7 @@ const PIPELINE_STATES = ['ok', 'degraded', 'failed', 'unknown'] as const
 const ONBOARDING_STATUSES = ['ready', 'pending'] as const
 const IDENTITIES = ['assigned', 'partial', 'missing'] as const
 
-function pipeline(value: unknown): Pipeline {
+export function pipeline(value: unknown): Pipeline {
   const body = record(value)
   return { state: oneOf(body.state, PIPELINE_STATES), last_reported_at: orNull(body.last_reported_at, text) }
 }

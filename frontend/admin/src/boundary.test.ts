@@ -39,6 +39,8 @@ describe('admin app boundary', () => {
       './AdminApp.tsx',
       './AdminRoutes.tsx',
       './adminSession.ts',
+      './diagnostics/SorterDiagnosticsPage.tsx',
+      './diagnostics/diagnosticsApi.ts',
       './libraries/LibrariesPage.tsx',
       './libraries/LibraryPage.tsx',
       './libraries/labels.ts',

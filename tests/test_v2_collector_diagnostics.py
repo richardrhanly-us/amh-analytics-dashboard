@@ -7,6 +7,7 @@ clock. A healthy, current heartbeat at that moment: last run 2:45 PM, next run 3
 """
 
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -335,16 +336,17 @@ def test_a_v1_branch_has_no_collector_diagnostics_lines_and_an_identical_context
     assert v1["pipeline_status_label"] == "Pipeline Healthy"
 
 
-def test_the_v1_panel_renders_exactly_as_before_with_no_new_line():
+def test_the_v1_panel_shows_a_customer_only_the_state_and_its_freshness():
+    # A2 item 3: no attempt or success line, no status code, and a result sentence not made from the run's counters.
     v1 = build_pipeline_context(V1_STATUS, pd.DataFrame(columns=["datetime"]), NOW_CT, APP_TZ, "light")
 
     panel = next(body for body in _render_run_summary(v1) if "##### Pipeline Status" in body)
 
-    for label in ("Last Collector Run", "Next Scheduled Run", "Latest Run Duration", "Collector Schedule"):
-        assert label not in panel
-    assert ("Last Successful Upload Run: Oct 01, 2026 02:58 PM (2 min ago)  \n"
-            "Latest Result: Uploaded 5 new checkins and 1 new rejects this run  \n"
-            "Status Code: `completed`") in panel  # the lines around the insertion point are untouched
+    for label in ("Last Collector Run", "Next Scheduled Run", "Latest Run Duration", "Collector Schedule",
+                  "Last Successful Upload Run", "Last Pipeline Attempt", "Status Code", "Uploaded 5 new checkins"):
+        assert label not in panel, label
+    assert "Latest Report Received: " in panel
+    assert panel.endswith("Latest Result: Latest run completed")
 
 
 def test_the_v2_and_v1_contexts_still_have_the_same_keys_and_bind_to_the_view():
@@ -365,35 +367,37 @@ def test_the_v2_and_v1_contexts_still_have_the_same_keys_and_bind_to_the_view():
 # the real view
 # ======================================================================================================================
 
-def test_the_real_panel_renders_the_four_lines_as_plain_text_between_the_run_and_result_lines():
+# A2 item 3: the four lines are still built (the context is unchanged, and the headline still follows the schedule),
+# but the customer panel renders none of them -- the collector's run and schedule facts are admin-only now.
+COLLECTOR_LINES = ("Last Collector Run", "Next Scheduled Run", "Latest Run Duration", "Collector Schedule")
+
+
+def test_the_real_panel_renders_none_of_the_collector_lines_to_a_customer():
     panel = next(body for body in _render_run_summary(context(heartbeat())) if "##### Pipeline Status" in body)
 
-    assert "Last Collector Run: Oct 01, 2026 02:45 PM (15 min ago)  \n" in panel
-    assert "Next Scheduled Run: Oct 01, 2026 03:12 PM (in 12 min)  \n" in panel
-    assert "Latest Run Duration: 3.24 seconds  \n" in panel
-    assert "Collector Schedule: " in panel
-    assert ">Healthy</span>  \n" in panel
-    assert "Latest Result: " in panel
-    assert ">Contract v2 collector reporting healthy</span>  \n" in panel
-    assert panel.index("Last Successful Upload Run:") < panel.index("Last Collector Run:")
+    for line in COLLECTOR_LINES + ("Last Successful Upload Run", "Last Pipeline Attempt", "Status Code", "<span"):
+        assert line not in panel, line
+    assert "Latest Report Received: " in panel
+    assert panel.endswith("Latest Result: Collector reporting healthy")
 
 
-def test_the_real_panel_shows_a_schedule_error_in_words():
+def test_the_real_panel_says_a_schedule_error_only_as_a_failure():
     ctx = context(heartbeat(collector_schedule_status="no_next_run", collector_next_run_at=None))
 
     panel = next(body for body in _render_run_summary(ctx) if "##### Pipeline Status" in body)
 
-    assert "Collector Schedule: " in panel
-    assert ">Error — no future run scheduled</span>  \n" in panel
-    assert "Next Scheduled Run: N/A  \n" in panel
+    assert ctx["pipeline_status_label"] == "Pipeline Schedule Error"      # the headline is still decided by the schedule
+    assert ctx["customer_status_label"] == "Pipeline Failed"
+    assert panel.endswith("Latest Result: Collector reporting failed")
+    for detail in COLLECTOR_LINES + ("no future run", "schedule", "Error —"):
+        assert detail not in panel, detail
 
 
 def test_the_real_panel_renders_an_old_collectors_heartbeat_without_crashing():
     panel = next(body for body in _render_run_summary(context(heartbeat(**OLD_COLLECTOR))) if "##### Pipeline Status" in body)
 
-    assert "Latest Run Duration: N/A  \n" in panel
-    assert "Collector Schedule: " in panel
-    assert ">Unknown (not reported by this collector version)</span>  \n" in panel
+    assert "not reported by this collector version" not in panel
+    assert "Latest Result: " in panel
 
 
 # ======================================================================================================================
@@ -460,3 +464,122 @@ def test_a_loaded_row_flows_into_the_panel(monkeypatch):
         "Latest Run Duration: 3.24 seconds",
         "Collector Schedule: Healthy",
     ]
+
+
+# ======================================================================================================================
+# A2 item 3: what a customer is shown -- the same headline state, worded without its diagnostics
+# ======================================================================================================================
+
+V2_CASES = [
+    # (heartbeat overrides, the headline label as derived before A2 item 3, the customer label, the customer result)
+    ({}, "Pipeline Healthy", "Pipeline Healthy", "Collector reporting healthy"),
+    ({"health_status": "degraded", "last_error_class": "retryable_infra", "pending_outbox_count": 12,
+      "quarantined_count": 3}, "Pipeline Degraded", "Pipeline Degraded", "Collector reporting degraded"),
+    ({"health_status": "error", "last_error_class": "configuration_error"},
+     "Pipeline Failed", "Pipeline Failed", "Collector reporting failed"),
+    ({"health_status": "error", "last_error_class": "auth_failure"},
+     "Pipeline Auth Failure", "Pipeline Failed", "Collector reporting failed"),
+    ({"collector_schedule_status": "task_missing", "collector_next_run_at": None},
+     "Pipeline Schedule Error", "Pipeline Failed", "Collector reporting failed"),
+    ({"collector_next_run_at": utc_iso(-600)}, "Pipeline Schedule Error", "Pipeline Failed", "Collector reporting failed"),
+]
+
+
+@pytest.mark.parametrize(("overrides", "headline", "customer_label", "customer_result"), V2_CASES)
+def test_a_v2_headline_is_derived_as_before_and_worded_for_a_customer(overrides, headline, customer_label,
+                                                                      customer_result):
+    ctx = context(heartbeat(**overrides))
+
+    assert ctx["pipeline_status_label"] == headline
+    assert ctx["customer_status_label"] == customer_label
+    assert ctx["customer_result_text"] == customer_result
+
+
+def test_a_v2_branch_with_no_health_yet_says_so_in_plain_words():
+    ctx = context(heartbeat(health_status=None, **OLD_COLLECTOR))
+
+    assert ctx["customer_result_text"] == "No collector status has been recorded yet"
+
+
+V2_DEEP_TEXT = (
+    "Pending", "pending", "Quarantine", "quarantine", "last_error_class", "retryable_infra", "configuration_error",
+    "auth_failure", "authenticate", "ingest key", "Contract v2", "Collector Schedule", "Next Scheduled Run",
+    "Last Collector Run", "Latest Run Duration", "Status Code", "Last Pipeline Attempt", "Last Successful Upload Run",
+    "Run Summary", "Destination Breakdown", "<span",
+)
+
+
+@pytest.mark.parametrize(("overrides", "headline", "customer_label", "customer_result"), V2_CASES)
+def test_no_deep_v2_diagnostic_is_rendered_to_a_customer(overrides, headline, customer_label, customer_result):
+    panel = next(body for body in _render_run_summary(context(heartbeat(**overrides))) if "##### Pipeline Status" in body)
+
+    for text in V2_DEEP_TEXT:
+        assert text not in panel, text
+    assert panel.endswith(f"Latest Result: {customer_result}")
+
+
+V1_RUN_CASES = [
+    ("completed", "Pipeline Healthy", "Latest run completed"),
+    ("completed_no_new_rows", "Pipeline Healthy", "Latest run completed"),
+    ("skipped_no_source_changes", "Pipeline Healthy", "Latest run completed"),
+    ("failed_upload", "Pipeline Failed", "Latest run failed"),
+    ("started", "Pipeline Running", "Run in progress"),
+    ("preflight_check", "Pipeline Status Unknown", "Unknown"),
+]
+
+
+@pytest.mark.parametrize(("run_status", "headline", "customer_result"), V1_RUN_CASES)
+def test_a_v1_run_keeps_its_headline_and_gets_a_fixed_customer_sentence(run_status, headline, customer_result):
+    ctx = build_pipeline_context({**V1_STATUS, "status": run_status}, pd.DataFrame(columns=["datetime"]), NOW_CT,
+                                 APP_TZ, "light")
+
+    assert ctx["pipeline_status_label"] == headline == ctx["customer_status_label"]
+    assert ctx["customer_result_text"] == customer_result
+
+
+V1_AGENT_CASES = [
+    ("healthy", "Pipeline Healthy", "Pipeline Healthy", "Continuous agent reporting healthy"),
+    ("degraded", "Pipeline Degraded", "Pipeline Degraded", "Continuous agent reporting degraded"),
+    ("auth_failure", "Pipeline Auth Failure", "Pipeline Failed", "Continuous agent reporting failed"),
+    ("something_new", "Pipeline Status Unknown", "Pipeline Status Unknown", "Unknown"),
+]
+
+
+@pytest.mark.parametrize(("health", "headline", "customer_label", "customer_result"), V1_AGENT_CASES)
+def test_a_v1_agent_keeps_its_headline_and_gets_a_fixed_customer_sentence(health, headline, customer_label,
+                                                                          customer_result):
+    agent = {**V1_STATUS, "health_status": health, "watcher_last_active_at": "2026-10-01T19:59:30Z"}
+    ctx = build_pipeline_context(agent, pd.DataFrame(columns=["datetime"]), NOW_CT, APP_TZ, "light")
+
+    assert ctx["pipeline_status_label"] == headline
+    assert ctx["customer_status_label"] == customer_label
+    assert ctx["customer_result_text"] == customer_result
+
+
+V1_DEEP_TEXT = (
+    "Status Code", "Last Pipeline Attempt", "Last Successful Upload Run", "Run Summary", "Destination Breakdown",
+    "This Run", "Transit Items", "Problem Items", "Bad Checkin", "Bad Reject", "Bin A", "Uploaded", "completed`",
+    "failed_upload", "auth_failure", "agent token", "backlog", "quarantine",
+)
+
+
+@pytest.mark.parametrize("v1_status", [
+    {**V1_STATUS, "status": "failed_upload", "transit_items": 7, "problem_items": 3, "checkins_bad_datetime_rows": 4,
+     "destination_breakdown": {"Bin A": 12}},
+    {**V1_STATUS, "health_status": "auth_failure", "watcher_last_active_at": "2026-10-01T19:59:30Z"},
+    {**V1_STATUS, "health_status": "degraded", "watcher_last_active_at": "2026-10-01T19:59:30Z"},
+])
+def test_no_v1_counter_raw_code_or_destination_is_rendered_to_a_customer(v1_status):
+    ctx = build_pipeline_context(v1_status, pd.DataFrame(columns=["datetime"]), NOW_CT, APP_TZ, "light")
+
+    panel = next(body for body in _render_run_summary(ctx) if "##### Pipeline Status" in body)
+
+    for text in V1_DEEP_TEXT:
+        assert text not in panel, text
+
+
+def test_the_screen_reader_announcement_uses_the_customer_label():
+    source = (Path(__file__).resolve().parents[1] / "src" / "app.py").read_text(encoding="utf-8")
+
+    assert 'current_pipeline_status_label = live_view_context["live_today_args"]["customer_status_label"]' in source
+    assert 'live_today_args"]["pipeline_status_label"]' not in source

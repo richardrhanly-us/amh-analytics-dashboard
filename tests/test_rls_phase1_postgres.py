@@ -836,21 +836,18 @@ def test_the_resolver_needs_no_tenant_context_and_leaves_none_behind(runtime_eng
         assert conn.execute(text("SELECT COUNT(*) FROM checkins")).scalar() == 0
 
 
-# --- GET /api/organizations/{org}/branches/{branch}/ingest-status, end to end, as the runtime role ---
+# --- GET /api/organizations/{org}/branches/{branch}/pipeline-status, end to end, as the runtime role ---
 #
-# The first customer route that reads an RLS-protected table. Only the
-# authenticated user is stubbed (the runtime role in this harness has no
-# grant on auth_sessions). Everything after authentication is real: the
-# tenant-scope dependency, the tenant resolver, tenant_connection, the
-# context read-back, the read service's SQL, the RLS policy on
-# ingest_key_ids, and the response serialization.
+# A customer route that reads an RLS-protected table: for a branch cut over to Contract v2, pipeline-status reads its
+# ingest_key_ids heartbeat. (These tests used to drive the ingest-status route, which A2 item 3 removed from the
+# customer API; its heartbeat detail is admin-only now.) Each tenant here is cut over, so the status is read from
+# ingest_key_ids under row level security. Only the authenticated user is stubbed (the runtime role in this harness
+# has no grant on auth_sessions). Everything after authentication is real: the tenant-scope dependency, the tenant
+# resolver, tenant_connection, the context read-back, the service's SQL, the RLS policy on ingest_key_ids, and the
+# response serialization.
 
-INGEST_STATUS_PATH = "/api/organizations/{org}/branches/{branch}/ingest-status"
-INGEST_STATUS_FIELDS = {
-    "health_status", "last_error_class", "pending_outbox_count", "quarantined_count", "oldest_pending_event_at",
-    "last_success_at", "watcher_last_active_at", "last_heartbeat_at", "collector_last_run_at",
-    "collector_next_run_at", "collector_run_duration_ms", "collector_schedule_status",
-}
+PIPELINE_STATUS_FIELDS = {"timezone", "state", "last_reported_at"}
+# PIPELINE_STATUS_PATH and _pipeline_status are the pipeline-status section's own, further down this module.
 TENANT_NOT_FOUND = {"code": "tenant_not_found", "message": "Organization or branch not found."}
 
 SESSION_A, SESSION_B = "synthetic-session-a", "synthetic-session-b"
@@ -889,37 +886,50 @@ def customer_api(owner_engine, runtime_engine, monkeypatch):
     return TestClient(main.app, raise_server_exceptions=False)
 
 
-def _ingest_status(client, session, org, branch):
-    return client.get(
-        INGEST_STATUS_PATH.format(org=org, branch=branch),
-        headers={"Cookie": f"__Host-sortview_api_session={session}"},
-    )
+@pytest.fixture
+def cut_over_api(customer_api, owner_engine):
+    """customer_api with every one of the three branches cut over to Contract v2, so pipeline-status reads each one's
+    status from ingest_key_ids, under row level security. The cutovers are removed again afterwards: the per-test seed
+    does not truncate v2_cutovers, and other tests here read the same branches as never cut over."""
+    with owner_engine.begin() as conn:
+        for customer_id, branch_id in ((CUSTOMER_A, BRANCH_A), (CUSTOMER_B, BRANCH_B), (CUSTOMER_B, BRANCH_B_NORTH)):
+            conn.execute(text(
+                "INSERT INTO v2_cutovers (customer_id, branch_id, cutover_at, set_by) "
+                "VALUES (:c, :b, now() - interval '1 day', 'rls-phase1-test')"
+            ), {"c": customer_id, "b": branch_id})
+    try:
+        yield customer_api
+    finally:
+        with owner_engine.begin() as conn:
+            conn.execute(text("TRUNCATE v2_cutovers RESTART IDENTITY"))
 
 
-def test_ingest_status_route_returns_each_user_only_their_own_branch_status(customer_api):
-    a = _ingest_status(customer_api, SESSION_A, "tenant-a", "main")
-    b_main = _ingest_status(customer_api, SESSION_B, "tenant-b", "main")
-    b_north = _ingest_status(customer_api, SESSION_B, "tenant-b", "north")
+def test_pipeline_status_route_returns_each_user_only_their_own_branch_status(cut_over_api):
+    a = _pipeline_status(cut_over_api, SESSION_A, "tenant-a", "main")
+    b_main = _pipeline_status(cut_over_api, SESSION_B, "tenant-b", "main")
+    b_north = _pipeline_status(cut_over_api, SESSION_B, "tenant-b", "north")
 
     assert (a.status_code, b_main.status_code, b_north.status_code) == (200, 200, 200)
     # Tenant B's rows are both newer than tenant A's; neither may win for user A.
-    assert a.json()["status"]["health_status"] == "healthy"
-    assert b_main.json()["status"]["health_status"] == "error"
-    assert b_north.json()["status"]["health_status"] == "degraded"
+    assert a.json()["state"] == "ok"            # healthy
+    assert b_main.json()["state"] == "failed"   # error
+    assert b_north.json()["state"] == "degraded"
 
-    assert set(a.json()) == {"status"}
-    assert set(a.json()["status"]) == INGEST_STATUS_FIELDS
-    assert datetime.fromisoformat(a.json()["status"]["last_heartbeat_at"]).tzinfo is not None
+    assert set(a.json()) == PIPELINE_STATUS_FIELDS
+    assert datetime.fromisoformat(a.json()["last_reported_at"]).tzinfo is not None
     for key_id in (KEY_A, KEY_B_MAIN, KEY_B_NORTH):
         assert key_id not in a.text + b_main.text + b_north.text
+    # Nothing of the heartbeat beyond the state and its time reaches a customer.
+    for raw in ("healthy", "health_status", "last_heartbeat_at"):
+        assert raw not in a.text, raw
 
 
-def test_ingest_status_route_refuses_another_tenants_organization_or_branch(customer_api):
+def test_pipeline_status_route_refuses_another_tenants_organization_or_branch(cut_over_api):
     refused = [
-        _ingest_status(customer_api, SESSION_A, "tenant-b", "main"),    # not a member of tenant B
-        _ingest_status(customer_api, SESSION_A, "tenant-b", "north"),
-        _ingest_status(customer_api, SESSION_A, "tenant-a", "north"),   # tenant B's branch slug under tenant A
-        _ingest_status(customer_api, SESSION_B, "tenant-a", "main"),
+        _pipeline_status(cut_over_api, SESSION_A, "tenant-b", "main"),    # not a member of tenant B
+        _pipeline_status(cut_over_api, SESSION_A, "tenant-b", "north"),
+        _pipeline_status(cut_over_api, SESSION_A, "tenant-a", "north"),   # tenant B's branch slug under tenant A
+        _pipeline_status(cut_over_api, SESSION_B, "tenant-a", "main"),
     ]
 
     for response in refused:
@@ -928,23 +938,23 @@ def test_ingest_status_route_refuses_another_tenants_organization_or_branch(cust
         assert "degraded" not in response.text and "error" not in response.text.replace("not_found", "")
 
 
-def test_ingest_status_route_reports_no_status_when_only_other_tenants_have_an_active_key(owner_engine, customer_api):
+def test_pipeline_status_route_reports_nothing_when_only_other_tenants_have_an_active_key(owner_engine, cut_over_api):
     with owner_engine.begin() as conn:
         conn.execute(
             text("UPDATE ingest_key_ids SET status = 'retired', retired_at = now() WHERE customer_id = :c"),
             {"c": CUSTOMER_A},
         )
 
-    response = _ingest_status(customer_api, SESSION_A, "tenant-a", "main")
+    response = _pipeline_status(cut_over_api, SESSION_A, "tenant-a", "main")
 
-    # Tenant B still has two active keys. A valid tenant with none of its own gets "no status", never B's.
+    # Tenant B still has two active keys. A valid tenant with none of its own gets "nothing reported", never B's.
     assert response.status_code == 200
-    assert response.json() == {"status": None}
-    assert _ingest_status(customer_api, SESSION_B, "tenant-b", "main").json()["status"]["health_status"] == "error"
+    assert (response.json()["state"], response.json()["last_reported_at"]) == ("unknown", None)
+    assert _pipeline_status(cut_over_api, SESSION_B, "tenant-b", "main").json()["state"] == "failed"
 
 
-def test_ingest_status_route_requires_a_session(customer_api):
-    response = customer_api.get(INGEST_STATUS_PATH.format(org="tenant-a", branch="main"))
+def test_pipeline_status_route_requires_a_session(customer_api):
+    response = customer_api.get(PIPELINE_STATUS_PATH.format(org="tenant-a", branch="main"))
 
     assert response.status_code == 401
 
@@ -974,7 +984,7 @@ def test_the_production_tenant_connection_is_verified_and_scoped_by_rls(customer
 
 
 def test_sequential_requests_on_one_pooled_connection_never_see_each_others_tenant(
-    customer_api, runtime_engine, monkeypatch
+    cut_over_api, runtime_engine, monkeypatch
 ):
     # A one-connection pool makes the reuse deterministic: every request below
     # -- resolver query and tenant-scoped read alike -- runs on the same server backend.
@@ -982,7 +992,7 @@ def test_sequential_requests_on_one_pooled_connection_never_see_each_others_tena
     monkeypatch.setattr(database, "_engine", single)
     try:
         seen = [
-            _ingest_status(customer_api, session, org, branch).json()["status"]["health_status"]
+            _pipeline_status(cut_over_api, session, org, branch).json()["state"]
             for session, org, branch in (
                 (SESSION_A, "tenant-a", "main"),
                 (SESSION_B, "tenant-b", "main"),
@@ -991,8 +1001,8 @@ def test_sequential_requests_on_one_pooled_connection_never_see_each_others_tena
                 (SESSION_A, "tenant-a", "main"),
             )
         ]
-        assert seen == ["healthy", "error", "healthy", "degraded", "healthy"]
-        assert _ingest_status(customer_api, SESSION_A, "tenant-b", "main").status_code == 404
+        assert seen == ["ok", "failed", "ok", "degraded", "ok"]
+        assert _pipeline_status(cut_over_api, SESSION_A, "tenant-b", "main").status_code == 404
 
         # Nothing of any request's tenant context is left on the pooled connection.
         with single.connect() as conn:
@@ -2395,6 +2405,12 @@ def _pipeline_status(client, session, org, branch):
                       headers={"Cookie": f"__Host-sortview_api_session={session}"})
 
 
+def _sibling_checkin_count(client, session, org, branch):
+    """A sibling operational route, for comparing how a refused tenant is answered."""
+    return client.get(f"/api/organizations/{org}/branches/{branch}/checkins/count", params={"date": "2026-06-10"},
+                      headers={"Cookie": f"__Host-sortview_api_session={session}"})
+
+
 def _server_now(engine) -> datetime:
     with engine.connect() as conn:
         return conn.execute(text("SELECT clock_timestamp()")).scalar().astimezone(UTC)
@@ -2648,7 +2664,7 @@ def test_pipeline_status_refuses_a_cross_tenant_request_exactly_as_the_sibling_r
     for session, org, branch in ((SESSION_A, "tenant-b", "main"), (SESSION_A, "tenant-b", "north"),
                                  (SESSION_A, "tenant-a", "north"), (SESSION_B, "tenant-a", "main")):
         refused = _pipeline_status(pipeline_api, session, org, branch)
-        sibling = _ingest_status(pipeline_api, session, org, branch)
+        sibling = _sibling_checkin_count(pipeline_api, session, org, branch)
 
         assert refused.status_code == 404 and refused.json() == TENANT_NOT_FOUND
         assert (refused.status_code, refused.content) == (sibling.status_code, sibling.content)
@@ -2661,7 +2677,7 @@ def test_pipeline_status_of_an_active_branch_with_no_operational_mapping_is_the_
         _legacy_status(conn, (CUSTOMER_A, 31), status="completed", status_mins=1)   # a row its id WOULD match, if mapped
 
     refused = _pipeline_status(pipeline_api, SESSION_A, "tenant-a", "unmapped")
-    sibling = _ingest_status(pipeline_api, SESSION_A, "tenant-a", "unmapped")
+    sibling = _sibling_checkin_count(pipeline_api, SESSION_A, "tenant-a", "unmapped")
 
     assert refused.status_code == 404 and refused.json() == TENANT_NOT_FOUND
     assert refused.content == sibling.content
@@ -2703,7 +2719,7 @@ def test_pipeline_status_on_one_pooled_connection_never_sees_another_tenant(
             answer = _status_of(pipeline_api, session, org, branch)
             assert answer[0] == expected and answer == first[(org, branch)], (org, branch)
         # Another operational route for another tenant in between, on the same connection, changes nothing.
-        assert _ingest_status(pipeline_api, SESSION_B, "tenant-b", "north").json()["status"]["health_status"] == "degraded"
+        assert _sibling_checkin_count(pipeline_api, SESSION_B, "tenant-b", "north").status_code == 200
         assert _status_of(pipeline_api, SESSION_A, "tenant-a", "main") == first[("tenant-a", "main")]
 
         # Change the pooled connection's SESSION time zone for good, then ask again: the same UTC answers.

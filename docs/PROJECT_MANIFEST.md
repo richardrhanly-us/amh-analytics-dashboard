@@ -350,6 +350,9 @@ One line each, dated. Pick up only when a milestone needs it, or when it is prom
 - 2026-10-14 — `tests/test_collector_setup.py` token-wrapper tests fail on a byte-order mark in the stdin capture file (pre-existing).
 - 2026-10-14 — `app.py` checks operational mapping twice (readiness gate and line ~652).
 - 2026-10-14 — Two stale unmerged branches from 2026-09-25, `fix/live-today-controls-layout` and `fix/live-today-spacing`: decide merge, rebase or delete. Not a blocker for A1.
+- 2026-10-15 — `ingest_v2_service.latest_ingest_status` has no callers (dead); kept unchanged in A2 item 3 by decision. Delete or reuse later.
+- 2026-10-15 — After A2 item 3, `render_live_today` still receives the run/collector diagnostics args (attempt, status code, counters, destination breakdown, collector lines) and `_format_count` is unused; trim when Streamlit Live Today is retired.
+- 2026-10-15 — `test_when_keeps_its_whole_second_format_and_its_delta_semantics` fails when the full suite runs more than ~1h after import (wall-clock dependence).
 - 2026-10-01 — `ruleset_id`: `docs/contract-v2-design.md` §5 contradicts the deliberate code behavior; fix the doc or the code.
 
 ---

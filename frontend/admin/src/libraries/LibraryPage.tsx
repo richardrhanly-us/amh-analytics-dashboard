@@ -96,7 +96,11 @@ function Overview({ library }: { library: LibraryDetail }) {
               <tbody>
                 {library.sorters.map((sorter) => (
                   <tr key={sorter.slug}>
-                    <th scope="row">{sorter.name}</th>
+                    <th scope="row">
+                      <Link to={`/libraries/${encodeURIComponent(library.slug)}/sorters/${encodeURIComponent(sorter.slug)}`}>
+                        {sorter.name}
+                      </Link>
+                    </th>
                     <td>{sorter.host_branch.name}</td>
                     <td>{installationStatusLabel(sorter.status)}</td>
                     <td>{sorter.collector_count}</td>

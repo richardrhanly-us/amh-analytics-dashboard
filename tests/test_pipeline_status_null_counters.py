@@ -109,13 +109,15 @@ def load(monkeypatch, record):
 
 
 def _render_run_summary(context):
-    """Run the REAL render_live_today up to and including the Run Summary block.
+    """Run the REAL render_live_today up to and including the Pipeline Status block.
 
     render_live_today needs ~60 arguments and a live Streamlit session, so
     `st` is replaced with a recorder and every argument except the ones under
-    test is a MagicMock. The first st.caption() after the Run Summary
-    (destination breakdown) stops the render -- nothing after that block is
-    relevant here. Returns every string passed to st.markdown().
+    test is a MagicMock. The Pipeline Status markdown stops the render --
+    since A2 item 3 it is the panel's whole body for every branch (the Run
+    Summary and Destination Breakdown are no longer rendered for customers),
+    and nothing after it is relevant here. Returns every string passed to
+    st.markdown().
     """
     import inspect
 
@@ -128,7 +130,7 @@ def _render_run_summary(context):
     fake_st.button.return_value = False
     def _record_markdown(body, **kwargs):
         markdown_calls.append(body)
-        if context.get("collector_diagnostics_lines") is not None and "##### Pipeline Status" in body:
+        if "##### Pipeline Status" in body:
             raise _StopAfterRunSummary
 
     fake_st.markdown.side_effect = _record_markdown
@@ -276,32 +278,37 @@ def test_pipeline_context_builds_for_a_collector_created_row(monkeypatch):
     assert context["uploaded_checkins_rows"] == 20
 
 
-def test_live_today_run_summary_renders_and_shows_zero_for_null_counters(monkeypatch):
+# A2 item 3: the run's counters are no longer shown to customers. They are still loaded (NULL -> 0, above) and still
+# in the context; the admin diagnostics serve them (admin_api). The customer panel shows none of them.
+RUN_COUNTER_LINES = (
+    "##### Run Summary", "##### Destination Breakdown", "New Checkins This Run", "New Rejects This Run",
+    "Uploaded Checkins This Run", "Uploaded Rejects This Run", "Bad Checkin Datetimes", "Bad Reject Datetimes",
+    "Transit Items", "Problem Items",
+)
+
+
+def test_live_today_shows_no_run_counters_to_a_customer_even_for_null_counters(monkeypatch):
     status = load(monkeypatch, collector_created_row())
     now_ct = datetime(2026, 9, 18, 12, 0, tzinfo=LOCAL_TZ)
     context = build_pipeline_context(status, pd.DataFrame(), now_ct, LOCAL_TZ, "light")
 
     rendered = "\n".join(_render_run_summary(context))
 
-    assert "Transit Items: 0" in rendered
-    assert "Problem Items: 0" in rendered
-    assert "Bad Checkin Datetimes: 0" in rendered
-    assert "Bad Reject Datetimes: 0" in rendered
-    assert "Uploaded Checkins This Run: 20" in rendered
-    assert "New Checkins This Run: 20" in rendered
+    assert "##### Pipeline Status" in rendered and "Latest Result: " in rendered
+    for line in RUN_COUNTER_LINES:
+        assert line not in rendered, line
 
 
-def test_live_today_run_summary_is_unchanged_for_a_full_legacy_row(monkeypatch):
+def test_live_today_shows_no_run_counters_to_a_customer_for_a_full_legacy_row(monkeypatch):
     status = load(monkeypatch, legacy_agent_row())
     now_ct = datetime(2026, 9, 18, 12, 0, tzinfo=LOCAL_TZ)
     context = build_pipeline_context(status, pd.DataFrame(), now_ct, LOCAL_TZ, "light")
 
     rendered = "\n".join(_render_run_summary(context))
 
-    assert "Transit Items: 7" in rendered
-    assert "Problem Items: 3" in rendered
-    assert "New Rejects This Run: 2" in rendered
-    assert "Uploaded Rejects This Run: 1" in rendered
+    for line in RUN_COUNTER_LINES:
+        assert line not in rendered, line
+    assert context["transit_items"] == 7 and context["problem_items"] == 3    # still loaded; just not shown
 
 
 def test_live_today_hides_legacy_run_summary_for_a_v2_branch(monkeypatch):

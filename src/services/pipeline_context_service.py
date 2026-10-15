@@ -66,6 +66,35 @@ def _status_colors(family: str, theme_base: str) -> tuple[str, str]:
 _FAMILY_FOR_STATE = {"ok": "healthy", "degraded": "degraded", "failed": "failed", "unknown": "unknown"}
 
 
+# --- what a CUSTOMER is shown (A2 item 3) -----------------------------------------------------------------------------
+#
+# The Live Today panel is a customer surface. It shows a headline label and one result sentence, worded from the state
+# this module has ALREADY derived -- nothing here changes how that state is decided -- and never an error class, an
+# authentication or schedule detail, a raw status code or a counter. The deep collector facts are for platform
+# administrators only (admin_api, GET /api/admin/libraries/{org}/sorters/{sorter}/diagnostics).
+#
+#   customer_status_label   the panel's label, with the auth- and schedule-specific ones said as "Pipeline Failed"
+#   customer_result_text    one fixed sentence per state, for the legacy run, the legacy agent and the v2 collector
+_CUSTOMER_LABELS = {"Pipeline Auth Failure": "Pipeline Failed", "Pipeline Schedule Error": "Pipeline Failed"}
+_AGENT_RESULT_TEXT = {
+    "ok": "Continuous agent reporting healthy",
+    "degraded": "Continuous agent reporting degraded",
+    "failed": "Continuous agent reporting failed",
+}
+_COLLECTOR_RESULT_TEXT = {
+    "healthy": "Collector reporting healthy",
+    "degraded": "Collector reporting degraded",
+    "failed": "Collector reporting failed",
+    "unknown": "No collector status has been recorded yet",
+}
+_UNKNOWN_RESULT_TEXT = "Unknown"
+
+
+def customer_status_label(label: str) -> str:
+    """The panel's label as a customer sees it: the same, except that no failure says what kind of failure it is."""
+    return _CUSTOMER_LABELS.get(label, label)
+
+
 def _parse_status_datetime(value, local_tz):
     if not value:
         return None
@@ -194,6 +223,7 @@ def build_pipeline_context(pipeline_status, df_live_raw, now_ct, local_tz, theme
         else:  # a value pipeline_state does not recognise is `unknown`, as the customer API shows it
             pipeline_status_label = "Pipeline Status Unknown"
             pipeline_result_text = "Unknown"
+        customer_result_text = _AGENT_RESULT_TEXT.get(state, _UNKNOWN_RESULT_TEXT)
         pipeline_status_color, pipeline_status_bg = _status_colors(_FAMILY_FOR_STATE[state], theme_base)
 
         pipeline_expanded = state != "ok"
@@ -226,6 +256,14 @@ def build_pipeline_context(pipeline_status, df_live_raw, now_ct, local_tz, theme
         else:
             pipeline_status_label = "Pipeline Status Unknown"
             pipeline_result_text = "Unknown"
+        if state == "ok":
+            customer_result_text = "Latest run completed"
+        elif state == "failed":
+            customer_result_text = "Latest run failed"
+        elif pipeline_run_status == "started":
+            customer_result_text = "Run in progress"
+        else:
+            customer_result_text = _UNKNOWN_RESULT_TEXT
         pipeline_status_color, pipeline_status_bg = _status_colors(family, theme_base)
 
         pipeline_expanded = state != "ok"
@@ -265,6 +303,9 @@ def build_pipeline_context(pipeline_status, df_live_raw, now_ct, local_tz, theme
         # Collector run/schedule diagnostics exist only in the Contract v2 heartbeat. None = no such lines at all, so
         # a v1 branch's panel renders exactly as it did before they existed.
         "collector_diagnostics_lines": None,
+        # What the customer panel shows (A2 item 3): see customer_status_label above.
+        "customer_status_label": customer_status_label(pipeline_status_label),
+        "customer_result_text": customer_result_text,
     }
 
 
@@ -505,4 +546,8 @@ def build_v2_aware_pipeline_context(pipeline_status, v2_ingest_status, df_live_r
         "problem_items": None,
         "destination_breakdown_text": "N/A (not reported by the Contract v2 collector)",
         "collector_diagnostics_lines": collector_diagnostics_lines,
+        # What the customer panel shows (A2 item 3): see customer_status_label above. Worded from the FINAL family,
+        # after the schedule has made the headline worse where it does.
+        "customer_status_label": customer_status_label(pipeline_status_label),
+        "customer_result_text": _COLLECTOR_RESULT_TEXT[family],
     }

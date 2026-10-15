@@ -3,6 +3,8 @@
     GET /api/admin/session                 the signed-in platform administrator
     GET /api/admin/libraries               every library (admin_api.library_routes)
     GET /api/admin/libraries/{org_slug}    one library's read-only overview
+    GET /api/admin/libraries/{org_slug}/sorters/{sorter_slug}/diagnostics
+                                           one sorter site's collector facts (admin_api.diagnostics_routes)
 
 WHO. Platform administrators only, decided on every request by the router's own dependencies (so a route added
 later cannot leave them out):
@@ -23,6 +25,7 @@ from fastapi import APIRouter, Depends
 from starlette.responses import JSONResponse, Response
 
 from admin_api.dependencies import require_admin_origin, require_platform_admin
+from admin_api.diagnostics_routes import create_diagnostics_router
 from admin_api.library_routes import create_library_router
 from customer_api.auth_schemas import CurrentUserResponse
 from customer_api.errors import NO_STORE_HEADERS, CustomerApiRoute
@@ -50,5 +53,6 @@ def create_admin_router() -> APIRouter:
 
     # Included, so its routes carry this router's dependencies as well as their own.
     router.include_router(create_library_router())
+    router.include_router(create_diagnostics_router())
 
     return router

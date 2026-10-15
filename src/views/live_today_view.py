@@ -94,7 +94,17 @@ def render_live_today(
     can_view_internal_workflow=True,
     collector_diagnostics_lines=None,
     controls_container=None,
+    customer_status_label=None,
+    customer_result_text=None,
 ):
+    # A2 item 3: this panel is a CUSTOMER surface. It shows the headline state, when the app last refreshed, the
+    # latest check-in, when the latest report was received, and one result sentence -- nothing else. The run and
+    # collector diagnostics passed in above (attempt and success times, status code, run counters, destination
+    # breakdown, collector schedule lines) are still part of the context this view is handed, but they are not
+    # rendered: they are for platform administrators only (admin_api). The headline state itself is derived exactly as
+    # before (services.pipeline_context_service); only its wording is customer_status_label / customer_result_text.
+    shown_label = customer_status_label or "Pipeline Status Unknown"
+    shown_result = customer_result_text or "Unknown"
     if controls_container is None:
         controls_container = st.container(key="sv_live_controls_row")
 
@@ -113,7 +123,7 @@ def render_live_today(
                 on_toggle_live_updates()
                 st.rerun()
 
-        expander_label = f"● {pipeline_status_label}"
+        expander_label = f"● {shown_label}"
 
         st.markdown(
             f"""
@@ -142,71 +152,15 @@ def render_live_today(
             unsafe_allow_html=True,
         )
 
-        # Collector run/schedule diagnostics: four plain-text lines, present only for a Contract v2 branch
-        # (None for v1, whose panel is unchanged). Each ends with markdown's two-space hard line break. In the
-        # f-string below the block sits on its own line ending in a backslash: a line continuation, so an
-        # empty block adds nothing at all -- not even a newline -- and the lines around it are untouched.
-        collector_diagnostics_block = "".join(
-            (
-                f'Collector Schedule: <span style="color: {pipeline_status_color}; '
-                f'font-weight: 600;">{line.removeprefix("Collector Schedule: ")}</span>  \n'
-                if line.startswith("Collector Schedule: ")
-                else f"{line}  \n"
-            )
-            for line in (collector_diagnostics_lines or [])
-        )
-
         with st.expander(expander_label, expanded=pipeline_expanded):
             hard_break = "  \n"
-            latest_result_display = (
-                pipeline_result_text
-                if collector_diagnostics_lines is None
-                else f'<span style="color: {pipeline_status_color}; font-weight: 600;">{pipeline_result_text}</span>'
-            )
-
-            pipeline_status_body = (
+            st.markdown(
                 "##### Pipeline Status\n"
                 f"App Last Refreshed: {app_refreshed_str}{hard_break}"
                 f"Latest Checkin in DB: {latest_checkin_str} ({latest_checkin_ago}){hard_break}"
-                f"Latest Status Row Written: {pipeline_status_written_str} ({pipeline_status_written_ago}){hard_break}"
-                f"Last Pipeline Attempt: {pipeline_last_attempt_str} ({pipeline_last_attempt_ago}){hard_break}"
-                f"Last Successful Upload Run: {pipeline_last_run_str} ({pipeline_last_run_ago}){hard_break}"
-                f"{collector_diagnostics_block}"
-                f"Latest Result: {latest_result_display}{hard_break}"
-                f"Status Code: `{status_code_text}`"
+                f"Latest Report Received: {pipeline_status_written_str} ({pipeline_status_written_ago}){hard_break}"
+                f"Latest Result: {shown_result}"
             )
-
-            st.markdown(
-                pipeline_status_body,
-                unsafe_allow_html=collector_diagnostics_lines is not None,
-            )
-
-            if collector_diagnostics_lines is None:
-                st.markdown("##### Run Summary")
-                s1, s2 = st.columns(2)
-
-                with s1:
-                    st.markdown(
-                        f"""
-New Checkins This Run: {_format_count(checkins_rows)}
-New Rejects This Run: {_format_count(rejects_rows)}
-Uploaded Checkins This Run: {_format_count(uploaded_checkins_rows)}
-Uploaded Rejects This Run: {_format_count(uploaded_rejects_rows)}
-                        """
-                    )
-
-                with s2:
-                    st.markdown(
-                        f"""
-Bad Checkin Datetimes: {_format_count(checkins_bad_datetime_rows)}
-Bad Reject Datetimes: {_format_count(rejects_bad_datetime_rows)}
-Transit Items: {_format_count(transit_items)}
-Problem Items: {_format_count(problem_items)}
-                        """
-                    )
-
-                st.markdown("##### Destination Breakdown")
-                st.caption(destination_breakdown_text)
 
     if can_view_transits:
         live_group1, live_group2, live_group3 = st.columns(3)

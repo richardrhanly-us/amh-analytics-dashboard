@@ -62,6 +62,10 @@ ADMIN_CORE_MODULES = [
     "admin_api.library_routes",
     "admin_api.library_schemas",
     "services.admin_library_service",
+    # A2 item 3.
+    "admin_api.diagnostics_routes",
+    "admin_api.diagnostics_schemas",
+    "services.admin_diagnostics_service",
 ]
 API_CORE_MODULES = CUSTOMER_CORE_MODULES + ADMIN_CORE_MODULES
 # The same files under their OTHER name. Loading any of these next to the flat
@@ -88,7 +92,7 @@ CUSTOMER_ROUTES = {
     ("POST", "/api/auth/password-reset/complete"),
     ("GET", "/api/organizations"),
     ("GET", "/api/organizations/{org_slug}"),
-    ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/ingest-status"),
+    # A2 item 3 removed GET .../ingest-status: its heartbeat detail is admin-only (admin_api.diagnostics_routes).
     ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/pipeline-status"),
     ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/checkins/count"),
     ("GET", "/api/organizations/{org_slug}/branches/{branch_slug}/checkins/by-destination"),
@@ -131,6 +135,8 @@ ADMIN_ROUTES = {
     # A2 item 2: read-only libraries (admin_api.library_routes).
     ("GET", "/api/admin/libraries"),
     ("GET", "/api/admin/libraries/{org_slug}"),
+    # A2 item 3: a sorter site's diagnostics (admin_api.diagnostics_routes).
+    ("GET", "/api/admin/libraries/{org_slug}/sorters/{sorter_slug}/diagnostics"),
 }
 
 _PROBE = """
