@@ -158,7 +158,7 @@ def test_deactivate_writes_suspended_never_inactive(db):
     result = platform_admin_service.set_library_active_status(1, is_active=False)
 
     assert db.orgs[1]["status"] == "suspended"
-    assert result == {"organization_id": 1, "status": "suspended", "changed": True}
+    assert result == {"organization_id": 1, "status": "suspended", "previous_status": "active", "changed": True}
     assert not any("inactive" in s for s in db.statements)
 
 
@@ -176,7 +176,7 @@ def test_reactivate_writes_active(db):
     result = platform_admin_service.set_library_active_status(1, is_active=True)
 
     assert db.orgs[1]["status"] == "active"
-    assert result == {"organization_id": 1, "status": "active", "changed": True}
+    assert result == {"organization_id": 1, "status": "active", "previous_status": "suspended", "changed": True}
 
 
 def test_suspend_then_reactivate_round_trips_to_active(db):
@@ -277,7 +277,7 @@ def test_reactivating_a_usable_library_is_a_no_op_and_does_not_promote_trial(db,
 
     result = platform_admin_service.set_library_active_status(1, is_active=True)
 
-    assert result == {"organization_id": 1, "status": status, "changed": False}
+    assert result == {"organization_id": 1, "status": status, "previous_status": status, "changed": False}
     assert db.orgs[1]["status"] == status
     assert db.writes() == []
 

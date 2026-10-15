@@ -83,6 +83,9 @@ function Overview({ library }: { library: LibraryDetail }) {
         <p>
           <Link to={`/libraries/${encodeURIComponent(library.slug)}/installations`}>Installations</Link>
         </p>
+        <p>
+          <Link to={`/libraries/${encodeURIComponent(library.slug)}/lifecycle`}>Library lifecycle</Link>
+        </p>
       </section>
 
       <section aria-labelledby="sorters-heading">

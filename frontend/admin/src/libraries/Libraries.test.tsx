@@ -183,6 +183,8 @@ describe('Library overview', () => {
     ])
     expect(screen.getByRole('link', { name: 'Libraries' })).toHaveAttribute('href', '/libraries')
     expect(screen.getByRole('link', { name: 'Collector configuration' })).toHaveAttribute('href', '/libraries/nbpl/collector')
+    // The lifecycle actions are on their own page; the overview only links to it (and assertReadOnly holds).
+    expect(screen.getByRole('link', { name: 'Library lifecycle' })).toHaveAttribute('href', '/libraries/nbpl/lifecycle')
     expect(screen.getByText('Assigned')).toBeInTheDocument()
     expect(screen.getByText('Enterprise')).toBeInTheDocument()
     expect(cells(rowOf('Main AMH'))).toEqual(['Main Branch', 'Active', '1', 'Ready', 'Degraded', 'Oct 14, 2026, 10:30 AM CDT'])

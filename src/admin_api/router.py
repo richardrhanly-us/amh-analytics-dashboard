@@ -11,6 +11,8 @@
     GET/POST /api/admin/libraries/{org_slug}/installations, PUT .../{installation_id}, PUT .../{installation_id}/status,
     POST .../{installation_id}/enrollment-codes
                                            a library's Collector installations (admin_api.installation_routes)
+    POST /api/admin/libraries/{org_slug}/lifecycle/suspend, .../reactivate, .../offboard
+                                           a library's lifecycle (admin_api.lifecycle_routes)
 
 WHO. Platform administrators only, decided on every request by the router's own dependencies (so a route added
 later cannot leave them out):
@@ -35,6 +37,7 @@ from admin_api.dependencies import require_admin_origin, require_platform_admin
 from admin_api.diagnostics_routes import create_diagnostics_router
 from admin_api.installation_routes import create_installation_router
 from admin_api.library_routes import create_library_router
+from admin_api.lifecycle_routes import create_lifecycle_router
 from customer_api.auth_schemas import CurrentUserResponse
 from customer_api.errors import NO_STORE_HEADERS, CustomerApiRoute
 
@@ -64,5 +67,6 @@ def create_admin_router() -> APIRouter:
     router.include_router(create_diagnostics_router())
     router.include_router(create_collector_config_router())
     router.include_router(create_installation_router())
+    router.include_router(create_lifecycle_router())
 
     return router

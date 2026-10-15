@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy import text
 
 from database import get_engine
+from services import auth_service
 from services.data_lifecycle_policy import (
     EVENT_ACCESS_CUTOFF,
     record_tenant_lifecycle_event,
@@ -101,19 +102,55 @@ def list_libraries_with_status():
 #
 #   'cancelled' is terminal here: neither action will change it. Cancellation
 #   semantics are out of scope for this function.
+#
+# The administration API (admin_api.lifecycle_routes) passes `admin_actor`: the
+# change then also writes one auth_audit_log row IN THE SAME TRANSACTION, naming
+# the library as `target_org_slug` (never `org_slug`, which marks an event its
+# members may see) with status names and counts only. Super Admin passes none and
+# behaves exactly as before.
 _ORGANIZATION_STATUSES = ("active", "trial", "suspended", "cancelled")
 
+ADMIN_LIBRARY_SUSPENDED = "admin_library_suspended"
+ADMIN_LIBRARY_REACTIVATED = "admin_library_reactivated"
+ADMIN_LIBRARY_OFFBOARDED = "admin_library_offboarded"
 
-def set_library_active_status(organization_id: int, is_active: bool) -> dict[str, Any]:
+
+class LibraryLifecycleError(RuntimeError):
+    """A lifecycle refusal. `code` is fixed and public (library_not_found, library_cancelled, invalid_transition); the
+    message is for operators and is never sent to an API caller. A RuntimeError, so Super Admin's handling is unchanged."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def _audit_admin_lifecycle(
+    conn, event_type: str, message: str, actor: dict[str, Any], target_org_slug: str, **details: Any
+) -> None:
+    auth_service.log_auth_event_with_connection(
+        conn,
+        event_type=event_type,
+        is_success=True,
+        user_id=int(actor["id"]),
+        email=actor.get("email"),
+        message=message,
+        metadata={"target_org_slug": target_org_slug, **details, "actor_user_id": int(actor["id"])},
+    )
+
+
+def set_library_active_status(
+    organization_id: int, is_active: bool, *, admin_actor: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Suspend (is_active=False) or reactivate (is_active=True) a library.
 
     Only organizations.status is written, and only when it actually needs to
     change: suspending an already-suspended library and reactivating an
     active/trial one are no-ops (a trial library is not promoted to 'active').
-    Raises RuntimeError, writing nothing, if the organization does not exist,
-    is cancelled, or has an unrecognised status.
+    Raises LibraryLifecycleError, writing nothing, if the organization does not
+    exist, is cancelled, or has an unrecognised status. With `admin_actor`, a
+    change (never a no-op) is audited in the same transaction.
 
-    Returns {organization_id, status, changed}.
+    Returns {organization_id, status, previous_status, changed}.
     """
     sql_lock = text("""
         select status
@@ -133,26 +170,28 @@ def set_library_active_status(organization_id: int, is_active: bool) -> dict[str
     with engine.begin() as conn:
         row = conn.execute(sql_lock, {"organization_id": organization_id}).mappings().first()
         if not row:
-            raise RuntimeError(f"Organization {organization_id} not found")
+            raise LibraryLifecycleError("library_not_found", f"Organization {organization_id} not found")
 
         current = row["status"]
         if current not in _ORGANIZATION_STATUSES:
-            raise RuntimeError(
-                f"Organization {organization_id} has unrecognised status {current!r}"
+            raise LibraryLifecycleError(
+                "invalid_transition", f"Organization {organization_id} has unrecognised status {current!r}"
             )
         if current == "cancelled":
-            raise RuntimeError(
+            raise LibraryLifecycleError(
+                "library_cancelled",
                 f"Organization {organization_id} is cancelled; it cannot be "
-                f"{'reactivated' if is_active else 'suspended'} from here"
+                f"{'reactivated' if is_active else 'suspended'} from here",
             )
 
+        unchanged = {"organization_id": organization_id, "status": current, "previous_status": current, "changed": False}
         if is_active:
             if current in ("active", "trial"):
-                return {"organization_id": organization_id, "status": current, "changed": False}
+                return unchanged
             new_status = "active"
         else:
             if current == "suspended":
-                return {"organization_id": organization_id, "status": current, "changed": False}
+                return unchanged
             new_status = "suspended"
 
         conn.execute(
@@ -160,7 +199,21 @@ def set_library_active_status(organization_id: int, is_active: bool) -> dict[str
             {"organization_id": organization_id, "new_status": new_status},
         )
 
-    return {"organization_id": organization_id, "status": new_status, "changed": True}
+        if admin_actor is not None:
+            slug = conn.execute(
+                text("SELECT slug FROM organizations WHERE id = :organization_id"), {"organization_id": organization_id}
+            ).scalar_one()
+            _audit_admin_lifecycle(
+                conn,
+                ADMIN_LIBRARY_REACTIVATED if is_active else ADMIN_LIBRARY_SUSPENDED,
+                "Library reactivated." if is_active else "Library suspended.",
+                admin_actor,
+                slug,
+                previous_status=current,
+                status=new_status,
+            )
+
+    return {"organization_id": organization_id, "status": new_status, "previous_status": current, "changed": True}
 
 
 # --- permanent offboarding: access cutoff ------------------------------------------------------------------------------
@@ -299,9 +352,13 @@ def offboard_library(
     *,
     actor_user_id: int | None,
     actor_label: str,
+    admin_actor: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Permanently cuts off a library's access to SortView. One transaction; fails closed (nothing is written) if the
     organization does not exist, has an unrecognised status, or `confirm_slug` is not exactly its slug.
+
+    With `admin_actor` (the administration API): an already-cancelled organization is refused (library_cancelled)
+    instead of swept again, and one auth_audit_log row with counts only is written in the same transaction.
 
     Sets organizations.status = 'cancelled'; deactivates every agent token of the tenant (installation-bound and legacy
     unbound); retires every collector installation; revokes every unused enrollment code; retires every active ingest
@@ -314,6 +371,10 @@ def offboard_library(
 
     Returns {organization_id, status, changed, status_before, counts}.
     """
+    if admin_actor is not None:
+        # The lifecycle evidence is kept with no expiry: an administrator is named by id, never by e-mail address.
+        actor_user_id = int(admin_actor["id"])
+        actor_label = f"platform_admin:{actor_user_id}"
     params = {"organization_id": organization_id}
 
     engine = get_engine()
@@ -323,13 +384,15 @@ def offboard_library(
         lock_sql = _OFFBOARD_LOCK_ORGANIZATION_SQL + (" FOR UPDATE" if postgresql else "")
         organization = conn.execute(text(lock_sql), params).mappings().first()
         if not organization:
-            raise RuntimeError(f"Organization {organization_id} not found")
+            raise LibraryLifecycleError("library_not_found", f"Organization {organization_id} not found")
 
         status_before = organization["status"]
         if status_before not in _ORGANIZATION_STATUSES:
-            raise RuntimeError(
-                f"Organization {organization_id} has unrecognised status {status_before!r}"
+            raise LibraryLifecycleError(
+                "invalid_transition", f"Organization {organization_id} has unrecognised status {status_before!r}"
             )
+        if admin_actor is not None and status_before == "cancelled":
+            raise LibraryLifecycleError("library_cancelled", f"Organization {organization_id} is already cancelled")
         if (confirm_slug or "").strip() != organization["slug"]:
             raise ValueError("Confirmation does not match the organization slug")
 
@@ -410,6 +473,19 @@ def offboard_library(
                 "session_ids": session_ids,
             },
         )
+
+        if admin_actor is not None:
+            # Counts only: the row ids are in the lifecycle evidence above.
+            _audit_admin_lifecycle(
+                conn,
+                ADMIN_LIBRARY_OFFBOARDED,
+                "Library offboarded.",
+                admin_actor,
+                organization["slug"],
+                previous_status=status_before,
+                status="cancelled",
+                counts=counts,
+            )
 
     return {
         "organization_id": organization_id,

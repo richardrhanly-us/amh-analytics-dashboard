@@ -418,7 +418,9 @@ def test_the_document_states_the_migration_first_deployment_order(document):
 def test_the_document_says_what_the_evidence_table_retains_including_the_operators_identity(document):
     flat = _flat(document)
 
-    assert "`actor_label` is the Super Admin operator's sign-in name, which is their staff e-mail address" in flat
+    # A2 item 6: a cutoff from the administration app names the administrator by id; Super Admin's rows keep the e-mail.
+    assert "For a cutoff from the administration app, `actor_label` is `platform_admin:<user id>` (no e-mail address)" in flat
+    assert "for one from Super Admin it is the operator's sign-in name, which is their staff e-mail address" in flat
     assert "This is platform and operator audit data, not patron or item data." in flat
     assert "survives the purge of the tenant it describes" in flat
     assert "`details` must never contain a patron identifier, a barcode, a title, a token" in flat

@@ -218,6 +218,10 @@ def test_every_admin_route_requires_a_platform_admin_and_the_admin_origin_guard(
         ("PUT", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/installations/{{installation_id}}"),
         ("PUT", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/installations/{{installation_id}}/status"),
         ("POST", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/installations/{{installation_id}}/enrollment-codes"),
+        # A2 item 6: a library's lifecycle (admin_api.lifecycle_routes) -- explicit actions, no generic status write.
+        ("POST", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/lifecycle/suspend"),
+        ("POST", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/lifecycle/reactivate"),
+        ("POST", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/lifecycle/offboard"),
     }
     for route in admin_routes:
         router_level = {dependency.dependency for dependency in route.dependencies}
