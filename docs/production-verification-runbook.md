@@ -1,6 +1,6 @@
 # Production verification runbook
 
-Three things the merged work cannot finish from the repository alone:
+Four things the merged work cannot finish from the repository alone:
 
 1. **Legacy plaintext admin-lock passwords** may still sit in production rows written by older versions of the Admin
    Settings page. The application now stores only hashes and still *accepts* a legacy plaintext value; this runbook
@@ -9,9 +9,11 @@ Three things the merged work cannot finish from the repository alone:
    platform* honors the configuration and captures only the scrubbed output has to be checked on a live deployment.
 3. **The production React admin app** (`https://admin.sortviewapp.com`, A3): that its hosting, sign-in, origin
    guards and admin operations work in production. The recorded result is in Part 3.
+4. **The production React customer app** (`https://app.sortviewapp.com`, A4): that the NBPL customer cutover works
+   in production. The recorded result is in Part 4.
 
 **Parts 1 and 2 have not been run against production** (Part 2's hosted checks used temporary non-production apps).
-**Part 3 is a production verification**, recorded with its evidence. Every production step needs explicit approval
+**Parts 3 and 4 are production verifications**, recorded with their evidence. Every production step needs explicit approval
 first (see "Rules"). Everything the repository *can* prove is proved by automated tests, named where relevant.
 
 ## Rules
@@ -394,5 +396,87 @@ No customer was moved, and the customer React trial is separate from the admin a
 prerequisite for A2 item 8 (retiring Super Admin Streamlit).
 
 Super Admin Streamlit stayed live as the temporary fallback until item 8's retirement sequence ran. The hosted app was
-deleted on 2026-10-15 (its old URL no longer serves the app; customer Streamlit still works), before item 8's code
-removal is merged (see `docs/PROJECT_MANIFEST.md`).
+deleted on 2026-10-15 (its old URL no longer serves the app; customer Streamlit still works), and item 8's code
+removal was then merged (PR #212; see `docs/PROJECT_MANIFEST.md`).
+
+---
+
+# Part 4 -- Production React customer app verification (A4)
+
+The hosting is described in [`react-hosting-runbook.md`](react-hosting-runbook.md), section M. This part records the
+NBPL customer React production cutover. Recorded 2026-10-16.
+
+No credential, session cookie, token, IP address or personal data is recorded here, and none may be added.
+
+## 4.1 What was under test
+
+| Item | Value |
+|---|---|
+| Customer app | `https://app.sortviewapp.com`: the existing customer CloudFront distribution (first set up as the trial) and its existing private S3 bucket (OAC), with the existing ACM certificate attached |
+| DNS | Cloudflare `CNAME` from `app.sortviewapp.com` to the customer distribution, DNS only |
+| Frontend artifact | `npm ci` + `npm run build` → `frontend/dist`, built from `main` at `2a8e40f`; uploaded and invalidated as in the hosting runbook, M.4 |
+| Backend | DigitalOcean `sortview-app-2p336.ondigitalocean.app`. The environment change redeployed it, and it was healthy afterwards |
+| Allowed origins | `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS` includes `https://app.sortviewapp.com` and `https://admin.sortviewapp.com`, and temporarily the trial origin; `SORTVIEW_CUSTOMER_APP_URL` = `https://app.sortviewapp.com`; `SORTVIEW_ADMIN_ALLOWED_ORIGINS` = `https://admin.sortviewapp.com`, unchanged |
+
+## 4.2 Results
+
+**Build**
+
+| Check | Result |
+|---|---|
+| Customer bundle boundary: no `/api/admin`, no "SortView Administration" | PASS |
+
+**Hosting and session**
+
+| Check | Result |
+|---|---|
+| `https://app.sortviewapp.com` served over HTTPS on the custom hostname | PASS |
+| Sign in | PASS |
+| NBPL's organization and sorter visible | PASS |
+| Sign out, then sign in again | PASS |
+| Deep route loaded directly, then refreshed | PASS |
+
+**Customer features (NBPL)**
+
+| Check | Result |
+|---|---|
+| Live Today | PASS |
+| Reports, including historical reporting | PASS |
+| Transits, rejects and holds | PASS |
+| CSV download and print | PASS |
+| Settings, Members and My Account | PASS. These pages' writes carry the browser's Origin, so they passed the customer Origin guard with the new origin |
+
+**Regression**
+
+| Check | Result |
+|---|---|
+| `https://admin.sortviewapp.com` | PASS: remained healthy |
+| Customer Streamlit app | PASS: remained healthy |
+| Collectors and pipeline | PASS: remained healthy |
+
+## 4.3 Client IP verification
+
+**PASSED.** For real customer `/api` traffic through `https://app.sortviewapp.com`, the viewer's external IP matched the
+client IP in DigitalOcean's Uvicorn access lines (hosting runbook section I). The current customer CloudFront path
+therefore keeps `request.client.host`, and the per-IP rate limits keyed on it, working. This completes the check
+that A3 could only observe (Part 3, section 3.3). The address itself is not recorded.
+
+## 4.4 Not re-tested in A4
+
+- **A forged-Origin request was not re-tested on `app.sortviewapp.com`.** The guard is the same code path that refused
+  a forged Origin with 403 `origin_not_allowed` on the admin distribution (Part 3) and that the automated tests cover;
+  that is established behavior, not part of this live smoke test.
+- **Only NBPL** was moved. No other customer was part of this cutover.
+
+## 4.5 Left in place
+
+- **The customer Streamlit app** (`https://sortview.streamlit.app/`) is still live, as a temporary rollback target.
+  Retiring it is A5.
+- **The trial CloudFront origin** is still in `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS` for the soak, and is removed after it.
+- No customer data migration was needed: the React and Streamlit apps operate on the same production data.
+
+## 4.6 Result
+
+**PASSED.** The NBPL customer React cutover is complete (A4, 2026-10-16). `https://app.sortviewapp.com` is the
+production customer entry point. The customer Streamlit app remains temporarily available as rollback; A5 owns its
+retirement.
