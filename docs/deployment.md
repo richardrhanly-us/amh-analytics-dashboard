@@ -4,17 +4,19 @@ This document explains how to deploy and validate the main parts of SortView.
 
 ## system parts
 
-SortView currently has three operational parts:
+SortView currently has four operational parts:
 
 - backend API
-- Streamlit dashboard
+- Streamlit dashboard (the customer UI)
+- React admin app, `https://admin.sortviewapp.com` (platform administrators only)
 - AMH agent
 
 These parts are related, but they are deployed differently.
 
-The React customer app (`frontend/`) is not one of them yet: it is not deployed. Its planned hosting, and
-the manual steps for a first CloudFront trial alongside Streamlit, are in
-[react-hosting-runbook.md](react-hosting-runbook.md).
+The React customer app (`frontend/`) is not one of them yet. It runs only as a CloudFront trial alongside Streamlit,
+and customers still use Streamlit. Its future production hostname is `https://app.sortviewapp.com`; moving
+customers there is the A4 cutover. Both React apps' hosting is in [react-hosting-runbook.md](react-hosting-runbook.md):
+sections A to K cover the customer trial, and section L covers the production admin app.
 
 ## backend API deployment
 
@@ -100,6 +102,34 @@ After dashboard deployment, verify:
 - reports and overview pages load
 - super admin pages load if applicable
 
+## React admin app deployment
+
+The admin app (`frontend/admin/`) is served from its own private S3 bucket through its own CloudFront distribution
+at `https://admin.sortviewapp.com`. The distribution's `/api/*` behavior sends API requests to the backend above.
+
+Deployment is manual:
+
+1. build `npm run build:admin` from a clean checkout of the commit being deployed (output `frontend/dist-admin`);
+2. upload `assets/` (cached for a year), then `index.html` (`no-cache`);
+3. invalidate `/` and `/index.html`.
+
+The exact commands, the CloudFront settings, the backend environment it needs and the rollback are in
+[react-hosting-runbook.md](react-hosting-runbook.md), section L. The production verification is in
+[production-verification-runbook.md](production-verification-runbook.md), Part 3.
+
+The backend must list the admin origin in **both** `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS` (sign-in and sign-out) and
+`SORTVIEW_ADMIN_ALLOWED_ORIGINS` (admin writes); see "environment variables" below.
+
+## admin app validation checklist
+
+After an admin deployment, verify:
+
+- `https://admin.sortviewapp.com` loads, and a direct load or refresh of a deep route (e.g. `/libraries/<slug>`) shows the app
+- a platform administrator can sign in, navigate and sign out
+- `/api/admin/session` answers 401 JSON when signed out (never the app's HTML)
+- a POST with a forged `Origin` is refused with 403 `origin_not_allowed`
+- the customer dashboard and collector uploads are unaffected
+
 ## AMH agent deployment
 
 The AMH agent is the Windows-side process that runs near the sorter and uploads data to the API.
@@ -145,8 +175,9 @@ If multiple parts change at once, use this order:
 
 1. database migration
 2. backend API
-3. dashboard
-4. AMH agent
+3. React admin app (after the backend routes it calls are deployed)
+4. dashboard
+5. AMH agent
 
 This reduces the chance of payload/schema mismatches.
 

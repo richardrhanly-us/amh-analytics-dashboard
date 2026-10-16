@@ -1,7 +1,11 @@
-# React hosting runbook: the CloudFront trial
+# React hosting runbook: the customer trial and the production admin app
 
 How to host the React customer app (`frontend/`) behind Amazon CloudFront, with its `/api/*` requests sent
-to the existing FastAPI service, for a trial on CloudFront's generated hostname.
+to the existing FastAPI service, for a trial on CloudFront's generated hostname (sections A to K).
+
+The separate React **admin** app (`frontend/admin/`, built to `frontend/dist-admin`) is in production at
+**`https://admin.sortviewapp.com`** on its own distribution and bucket, built the same way. Its production setup,
+deployment and rollback are in **section L**.
 
 > **THIS RUNBOOK DOES NOT CUT CUSTOMERS OVER FROM STREAMLIT.**
 >
@@ -317,19 +321,187 @@ reviewed before any customer is moved.
 | **Login or origin configuration wrong** | Restore the two DigitalOcean values recorded in section F. Streamlit and the collectors never read them and are untouched. |
 | **The trial itself** | Leave it unused while debugging, or disable the distribution. No customer address points at it, so nothing depends on it. |
 
-## K. Future: a custom domain (NOT part of this trial)
+## K. Future: a custom domain for the customer app (NOT part of this trial)
 
-> SortView does not currently own or use a custom domain such as sortview.com. Nothing in this trial
-> needs one. This section is the outline for later, if a domain is wanted.
+> SortView now uses the domain **`sortviewapp.com`**, with its DNS on Cloudflare (section L). An ACM certificate
+> in us-east-1 already covers **`app.sortviewapp.com`**, the customer app's future production hostname, as well as
+> `admin.sortviewapp.com`. The customer trial still runs on its generated hostname. Moving customers to
+> `app.sortviewapp.com` is the A4 cutover, a separate step. The outline below is what that step does for the
+> customer distribution. Section L.4 shows it already done for the admin app.
 
-1. Register the domain, then choose where its DNS is hosted. Route 53 is not required; any provider works.
-2. In **AWS Certificate Manager in us-east-1** (CloudFront only uses certificates from that region),
-   request a certificate for the chosen hostname, and validate it by DNS: add the CNAME record ACM gives
-   at the DNS provider.
+1. **Done:** the domain is `sortviewapp.com`, with DNS on Cloudflare.
+2. **Done:** an ACM certificate in **us-east-1** (CloudFront only uses certificates from that region), validated by
+   DNS. It covers `app.sortviewapp.com` and `admin.sortviewapp.com` and is **Issued**. Its validation CNAMEs stay in
+   Cloudflare so it can renew.
 3. Add the hostname to the distribution's **alternate domain names** and select the certificate.
-4. At the DNS provider, point the hostname at `<DISTRIBUTION_DOMAIN>`: a CNAME, or an alias record if the
-   DNS is in Route 53.
+4. In Cloudflare, point the hostname at `<DISTRIBUTION_DOMAIN>` with a CNAME set to **DNS only** (not proxied), as
+   for the admin app (L.4).
 5. Update DigitalOcean: add `https://<hostname>` to `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS`, and set
    `SORTVIEW_CUSTOMER_APP_URL=https://<hostname>`. The session cookie is per hostname, so users sign in
    again on the new name.
 6. Repeat section H on the new hostname, including section I.
+
+---
+
+## L. Production: the admin app at `https://admin.sortviewapp.com`
+
+In production since 2026-10-15 (A3), for platform administrators only. It is the same pattern as sections A to G,
+on **its own private bucket and its own CloudFront distribution**. The customer trial above is unchanged, and
+customers still use Streamlit.
+
+```
+Browser ──► https://admin.sortviewapp.com   (Cloudflare DNS, CNAME, DNS only ──► the admin distribution)
+              ├── default behavior  ──► private S3 bucket (frontend/dist-admin)
+              └── /api/*            ──► https://sortview-app-2p336.ondigitalocean.app (origin "sortview-fastapi-prod")
+```
+
+Placeholders, as in the rest of this runbook. The real values are in the AWS console and are not committed:
+
+| Placeholder | Meaning |
+| --- | --- |
+| `<ADMIN_BUCKET>` | the admin app's bucket (its name contains the AWS account id) |
+| `<ADMIN_DISTRIBUTION_ID>` | the admin distribution's id |
+| `<ADMIN_DISTRIBUTION_DOMAIN>` | its generated `*.cloudfront.net` hostname, the target of the DNS record |
+
+### L.1 Why a separate distribution and hostname
+
+For the current SortView security model and frontend builds, the admin app uses a separate distribution and hostname:
+
+- **The admin write guard needs its own origin.** Every non-GET/HEAD `/api/admin` request must carry an `Origin`
+  listed in `SORTVIEW_ADMIN_ALLOWED_ORIGINS` (`src/admin_api/dependencies.py`, `require_admin_origin`). That keeps
+  a page served from the customer app's origin from ever sending an admin write. Admin on the customer host, for
+  example under `/admin`, would make the two origins the same and defeat the guard.
+- **Both builds are root-based.** Each serves `/assets/index-<hash>.*`, and neither router uses a basename. With the
+  current root-based builds, they are not designed to share one bucket root or hostname without changing the
+  build/router layout.
+- **The session cookie is host-only.** `__Host-sortview_api_session` is Secure, HttpOnly, SameSite=Lax, Path=/ and
+  carries no Domain (`src/customer_api/errors.py`). The admin host therefore has its own session: an administrator
+  signs in there separately, and no cookie-domain change is needed.
+- **The API is same-origin.** The shared client sends `credentials: 'same-origin'` to `/api/...` on the page's own
+  host (`frontend/src/api/client.ts`), so each distribution needs its own `/api/*` behavior.
+
+### L.2 Bucket
+
+The admin bucket is separate from the customer trial's, in us-east-1:
+
+- private, with **Block Public Access** on;
+- **Bucket owner enforced** (ACLs disabled);
+- **versioning** on;
+- **SSE-S3**;
+- **static website hosting** off.
+
+Only the admin distribution may read it: the policy has the semantics of section E, with `<ADMIN_BUCKET>` and
+`<ADMIN_DISTRIBUTION_ID>`.
+
+### L.3 Distribution
+
+The distribution is on CloudFront's free flat-rate plan.
+
+- **Default root object:** `index.html`.
+- **Custom error responses:** none. The rule in section D applies here too.
+- **Default behavior (`*`), to the bucket's private S3 REST origin:**
+  - Redirect HTTP to HTTPS;
+  - Managed-CachingOptimized;
+  - the existing CloudFront Function **`sortview-spa-routing`** (`infra/cloudfront/spa-routing.js`), associated
+    on **Viewer request only**.
+
+  The function needs no change for this app. The admin routes (`/libraries`, `/libraries/:slug`, `.../collector`,
+  `.../installations`, `.../lifecycle`, `.../sorters/:sorter`, `/provision`) are not under `/assets/` or `/api/`,
+  so they are served `/index.html`, and `/` uses the default root object.
+- **`/api/*` behavior, ordered ahead of the default behavior, to origin `sortview-fastapi-prod`
+  (`sortview-app-2p336.ondigitalocean.app`):**
+  - origin connection: HTTPS only, port 443, minimum origin TLS **TLSv1.2**;
+  - Redirect HTTP to HTTPS;
+  - methods GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE;
+  - **Managed-CachingDisabled**;
+  - **Managed-AllViewerExceptHostHeader**;
+  - no function association.
+
+  These are the same settings as the trial's `/api/*` behavior in section D.
+
+### L.4 Domain and TLS
+
+- **Alternate domain name:** `admin.sortviewapp.com`, using the ACM certificate in **us-east-1** that covers
+  `app.sortviewapp.com` and `admin.sortviewapp.com`. The certificate is **Issued**.
+- **Cloudflare DNS:** a `CNAME` from `admin.sortviewapp.com` to `<ADMIN_DISTRIBUTION_DOMAIN>`, set to **DNS only**
+  (not proxied), so CloudFront terminates TLS with the ACM certificate.
+- **Certificate validation:** the ACM validation CNAMEs stay in Cloudflare. ACM needs them to renew the
+  certificate. Do not delete them.
+- **`app.sortviewapp.com`:** covered by the certificate but not part of this work (section K, A4).
+
+### L.5 Build and upload
+
+Build from a clean checkout of the commit being deployed (Node per `frontend/.nvmrc`). Keep the `dist-admin` folder,
+named by commit, as the rollback artifact. PowerShell, from `frontend/`:
+
+```powershell
+npm ci
+npm run build:admin          # tsc -b tsconfig.admin.json && vite build --config vite.admin.config.ts -> dist-admin/
+
+# 1. FIRST: the hashed assets, cached for a year.
+aws s3 sync .\dist-admin\assets\ s3://<ADMIN_BUCKET>/assets/ `
+  --cache-control "public,max-age=31536000,immutable"
+
+# 2. LAST: index.html, never cached for long.
+aws s3 cp .\dist-admin\index.html s3://<ADMIN_BUCKET>/index.html `
+  --cache-control "no-cache"
+
+# 3. Invalidate.
+aws cloudfront create-invalidation `
+  --distribution-id <ADMIN_DISTRIBUTION_ID> `
+  --paths "/" "/index.html"
+```
+
+- The build is `dist-admin/index.html` plus hashed CSS and JS under `dist-admin/assets/`.
+- `VITE_API_BASE_URL` stays empty or unset (section B).
+- Do not use `--delete`, for the same reasons as section G.
+- The rules of section G apply unchanged: assets first, `index.html` last, always with the cache-control values
+  above.
+
+### L.6 Backend environment (DigitalOcean)
+
+Production holds:
+
+```
+SORTVIEW_CUSTOMER_ALLOWED_ORIGINS=<the customer trial origin, https://<DISTRIBUTION_DOMAIN>>,https://admin.sortviewapp.com
+SORTVIEW_ADMIN_ALLOWED_ORIGINS=https://admin.sortviewapp.com
+```
+
+- **The admin origin must be in BOTH lists.**
+  - The admin app signs in and out through `POST /api/auth/login` and `/api/auth/logout`. Those routes check only
+    the customer list (`require_allowed_origin`, `src/customer_api/auth_dependencies.py`).
+  - Every admin write checks only the admin list (`require_admin_origin`).
+  - A value missing from the customer list breaks sign-in. A value missing from the admin list refuses every admin
+    write with 403 `origin_not_allowed`.
+- **Leave these alone:**
+  - `SORTVIEW_CUSTOMER_APP_URL` is unchanged. It is the customer app's address for password-reset links, and the
+    admin app has no reset page.
+  - `SORTVIEW_CUSTOMER_COOKIE_SECURE` stays unset (secure).
+  - `SORTVIEW_ALLOWED_ORIGINS` (CORS) is unchanged: the app's requests are same-origin.
+- **Record the current values privately before any change** (section F). Saving environment values redeploys the
+  backend; confirm afterwards that the deployed commit is unchanged and that `GET /` still answers.
+
+### L.7 Verification
+
+- The production smoke test and its recorded result are in
+  [`production-verification-runbook.md`](production-verification-runbook.md), Part 3.
+- After every later admin deployment, repeat at least:
+  - sign-in, refresh and sign-out;
+  - a direct load and refresh of `/libraries/<slug>/installations`;
+  - `/api/admin/session` answering 401 JSON when signed out;
+  - a forged-Origin POST answering 403 `origin_not_allowed`;
+  - a check that the customer Streamlit app and the collectors are unaffected.
+
+### L.8 Rollback
+
+| Problem | Do this |
+| --- | --- |
+| **Bad admin build** | Put back the previous known-good build: restore the prior `index.html` version (versioned bucket), or upload the saved `dist-admin` of the previous commit with the commands in L.5. Invalidate `/` and `/index.html`. The previous hashed assets are still in the bucket (no `--delete`). |
+| **Allowed-origin values wrong** (sign-in refused, or admin writes 403 `origin_not_allowed`) | Restore the DigitalOcean values recorded before the change and let the backend redeploy. Streamlit and the collectors never read them. |
+| **CloudFront behavior wrong** (HTML instead of JSON, missing cookies, S3 errors on app routes) | Correct the behavior, origin or function association to L.3. Invalidate the affected paths if cached content is wrong. |
+| **Auth or cookie problem** | Check the cookie attributes (L.1) and the `/api/*` origin request policy, then the allowed-origin values. |
+
+- **Before A2 item 8 retires Super Admin Streamlit,** Super Admin remains the temporary fallback for platform
+  administration.
+- **After item 8,** rollback is this section: artifact, configuration and CloudFront rollback. Restoring Super
+  Admin is not the rollback path.

@@ -3,7 +3,7 @@
 The big picture, kept in one place so a single task does not swallow the plan. Read this before starting any
 non-trivial task, and check the task against it before widening scope.
 
-Last reviewed: 2026-10-14. Facts marked **(verify)** were not confirmed against production or the person who
+Last reviewed: 2026-10-15. Facts marked **(verify)** were not confirmed against production or the person who
 knows; everything else was checked in the repository on that date.
 
 ---
@@ -57,9 +57,13 @@ its own data. New Braunfels Public Library (NBPL) stays live throughout.
 
 ## 3. Current focus
 
-**Phase 1 / Workstream A, milestone A2 (in progress).** A1 and A1b completed 2026-10-14. A2 items 1–6 are merged
-(item 6: PR #209, `7f3fd6d`); item 7 (provision library + operational identity) is implemented on
-`feature/a2-admin-provisioning`, not yet merged; item 8 is pending.
+**Phase 1 / Workstream A, milestone A2 (in progress).**
+- A1 and A1b completed 2026-10-14.
+- A2 items 1–7 are merged (item 7: PR #210, `64c7d7b`).
+- A3 completed 2026-10-15: React admin is in production at `https://admin.sortviewapp.com`, and items 1–7 passed a
+  production smoke test.
+- **Next:** A2 item 8 (retire Super Admin Streamlit). It is unblocked; follow its retirement sequence (section 4, A2
+  item 8). Customer cutover (A4) stays separate.
 
 Phase 0 (completed 2026-10-14):
 
@@ -84,8 +88,10 @@ exact scope is set by A1b.
   Organization Reports (operations, value), Members, Account (including password reset), Settings (general,
   branches, routing, efficiency), Sorter Live Today, Sorter Reports (operations, efficiency). Keyboard and
   screen-reader behavior is tested (`frontend/src/accessibility.test.tsx`).
-- React is hosted through CloudFront for trial/testing only (`docs/react-hosting-runbook.md`). It is **not yet the
-  production customer entry point**; `docs/deployment.md` still says the React app is not deployed.
+- The React customer app is hosted through CloudFront for trial/testing only (`docs/react-hosting-runbook.md`). It is
+  **not yet the production customer entry point**; its production hostname will be `https://app.sortviewapp.com` (A4).
+- The React **admin** app is in production at `https://admin.sortviewapp.com` (A3, 2026-10-15; hosting runbook
+  section L). Super Admin Streamlit is still live as its temporary fallback until A2 item 8.
 - Recent "decoupling" slices extracted shared policy out of Streamlit (pipeline rules, access mode, settings
   merge, readiness, onboarding status).
 
@@ -210,7 +216,7 @@ exact scope is set by A1b.
   - **Operator-only, outside React:** tenant purge (`scripts/purge_tenant_data.py`); uptime and pipeline
     monitoring scripts; legacy credential scripts while still needed, until C removes them.
 - [ ] **A2. Close parity gaps** decided in A1 and A1b (each its own small PR). **In progress:** items
-      1–6 merged; item 7 implemented on its branch, not yet merged; item 8 pending. No customer React
+      1–7 merged and smoke-tested in production (2026-10-15); item 8 pending, now unblocked. No customer React
       feature work came out of A1; the backlog is the React admin, in this order:
   1. Admin API foundation + separate React admin shell.
   2. Libraries list + library overview, v2-aware.
@@ -233,8 +239,8 @@ exact scope is set by A1b.
      `_reactivated` / `_offboarded` to `auth_audit_log` in the same transaction (status names and counts only); the
      offboarding's lifecycle evidence names the administrator as `platform_admin:<id>`, never by e-mail. No purge, no
      un-offboard.
-  7. Provision library + assign operational identity. **Implemented 2026-10-15** on `feature/a2-admin-provisioning`
-     (not yet merged): `POST /api/admin/libraries` and React `/provision` (linked from Libraries) create, in ONE
+  7. Provision library + assign operational identity. **Implemented 2026-10-15**, merged (PR #210, `64c7d7b`; the
+     commit DigitalOcean runs): `POST /api/admin/libraries` and React `/provision` (linked from Libraries) create, in ONE
      transaction, the organization (active), its one active primary branch, a trial subscription on an explicitly
      chosen active plan (`GET /api/admin/plans`), the existing empty settings rows, the operational identity and an
      `admin_library_provisioned` audit row, through the existing `tenant_service` functions on one connection (Super
@@ -245,11 +251,44 @@ exact scope is set by A1b.
      (C3). `POST /api/admin/libraries/{slug}/operational-identity` and an overview button replace Super Admin's assign /
      retry for a library whose identity is missing or partial; an inconsistent mapping is refused, never rebuilt. No
      numeric id is shown, returned or audited.
-  8. Retire Super Admin Streamlit, after 1–7 are proven in production.
+  8. Retire Super Admin Streamlit, after 1–7 are proven in production. **Unblocked 2026-10-15**
+     (`docs/production-verification-runbook.md` Part 3). The item 8 audit's only blocker was that React admin had not
+     been production-hosted or proven. React admin is now production-hosted (A3) and items 1–7 passed a production
+     smoke test. The retirement sequence still stands:
+     1. React admin proven in production. **Done.**
+     2. Items 1–7 smoke-tested in production. **Done.**
+     3. Keep the hosted Super Admin app as the temporary fallback until the retirement sequence runs.
+     4. Delete or disable the hosted Super Admin app on Streamlit Community Cloud **before** merging the source
+        deletion. Otherwise Community Cloud redeploys from `main` into a broken app.
+     5. Then implement and merge item 8's source, test, docs and CI cleanup.
+
+     First-owner onboarding stays C3, unchanged by item 8.
 
   A4 critical path: 1 → 2 → 3 → 4.
-- [ ] **A3. Production hosting:** CloudFront (per runbook) on a SortView custom domain, TLS, production API origin.
+- [x] **A3. Production hosting.** **Completed 2026-10-15** for the admin app; the customer production hostname is
+      locked and its move is A4.
+  - **Admin:** in production at `https://admin.sortviewapp.com`, on its own CloudFront distribution (free flat-rate
+    plan) and its own private, versioned S3 bucket.
+    - `/api/*` goes to the DigitalOcean backend (HTTPS only, TLS 1.2+, caching disabled, all viewer data except Host);
+      the default behavior goes to S3 with the `sortview-spa-routing` function on viewer request.
+    - TLS is an ACM us-east-1 certificate (Issued) covering `admin.sortviewapp.com` and `app.sortviewapp.com`.
+      Cloudflare DNS holds a DNS-only CNAME to the distribution, plus the validation CNAMEs.
+    - DigitalOcean lists the admin origin in **both** `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS` (sign-in and sign-out) and
+      `SORTVIEW_ADMIN_ALLOWED_ORIGINS` (admin writes).
+    - Deployment is manual: `docs/react-hosting-runbook.md` section L, with the evidence in
+      `docs/production-verification-runbook.md` Part 3.
+  - **Locked (2026-10-15):** admin production is `https://admin.sortviewapp.com`, and future customer React production
+    is `https://app.sortviewapp.com`. They are separate CloudFront distributions and hosting surfaces, because the
+    admin write guard requires an origin of its own.
+  - **Not done here:** no customer was moved. The customer React trial stays on its generated CloudFront hostname, and
+    Streamlit stays the customer UI.
 - [ ] **A4. Cutover:** NBPL moved to React; Streamlit customer access removed or redirected.
+  - First, the customer distribution goes on `https://app.sortviewapp.com`: alternate domain, DNS-only Cloudflare
+    CNAME, the existing certificate, `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS` and `SORTVIEW_CUSTOMER_APP_URL`
+    (`docs/react-hosting-runbook.md` section K).
+  - Before any customer is moved, the hosting runbook's section I client-IP check must be completed on the customer
+    path. A3's admin observation was consistent with viewer-IP preservation, but its exact cross-check was not
+    completed.
 - [ ] **A5. Retire** Streamlit customer code paths no longer reachable.
   - Admin-lock cleanup (added 2026-10-14, D2): inventory and remove legacy `security` settings; handle any
     remaining plaintext `security.admin_password` through the existing approved process
@@ -342,6 +381,10 @@ without us on site, and lands in the React app with a working account.
 
 ## 5. Done recently (newest first)
 
+- 2026-10-15 — A3: React admin in production at `https://admin.sortviewapp.com`, on its own CloudFront distribution
+  and private S3 bucket, ACM certificate and Cloudflare DNS. DigitalOcean origins set, and items 1–7 smoke-tested in
+  production with no customer or Collector regression (`docs/production-verification-runbook.md` Part 3).
+- 2026-10-15 — A2 items 1–7 all merged; the last, item 7, is PR #210 (`64c7d7b`).
 - 2026-10-14 — A1 (parity checklist, D1–D9) and A1b (Super Admin parity audit, decisions 1–5) completed.
 - 2026-10-14 — React "Waiting for first data" state (PR #191, merged).
 - 2026-10-14 — Legacy v1 uploads mark a pending branch ready (PR #190).
@@ -357,7 +400,8 @@ without us on site, and lands in the React app with a working account.
 Not engineering, but slow; starting them early shortens the plan without moving it.
 
 - Code-signing certificate procurement (C1, B10).
-- SortView domain and DNS (A3).
+- SortView domain and DNS (A3): **done 2026-10-15**. The domain is `sortviewapp.com` on Cloudflare DNS; the ACM
+  certificate for `app.` and `admin.` is issued.
 - Legal drafting/review: privacy policy, DPA, ToS, SLA (B5, B6).
 - Ask a target city IT contact for their actual vendor questionnaire (shapes B8).
 
@@ -398,6 +442,12 @@ One line each, dated. Pick up only when a milestone needs it, or when it is prom
 - 2026-10-15 — No first-owner flow or documented procedure exists; a newly provisioned library has no one who can sign in (C3).
 - 2026-10-15 — Super Admin's `slugify` can produce an empty slug, and its provisioning stays three non-atomic commits, until Super Admin retires (item 8).
 - 2026-10-15 — Support contacts and internal notes are no longer collected at provisioning (React); a proper admin feature for them is still to be decided (D8 admin scope).
+- 2026-10-15 — Node engine mismatch: the admin build ran on Node v24.12.0, while some dependencies ask for >=24.15.0 (or qualifying 22/26 releases). The build succeeded and `npm audit` reported 0 vulnerabilities. Align the local Node version (and `frontend/.nvmrc`, `24`) before the next frontend release.
+- 2026-10-15 — The A3 client-IP check is an observation only: the admin requests came from one consistent source address in the DigitalOcean logs, consistent with viewer-IP preservation. The external-IP cross-check was not completed because of a local Windows TLS trust/SNI failure (unrelated to SortView). Repeat it on the customer path before A4.
+- 2026-10-15 — Local Windows TLS trust/SNI failure on the home PC blocked an external check-IP request; investigate separately.
+- 2026-10-15 — Production `alembic current` cannot be read with the runtime role (`permission denied for table alembic_version`, by design). The schema is proven only functionally, plus deployed head `f7b3d2c81a46`. Read it with the migration/owner role when one is next used; do not widen the runtime role.
+- 2026-10-15 — The disposable production library "SortView Admin Smoke Test" (`sortview-admin-smoke-test`) is cancelled but not purged; purging it is an operator decision (`scripts/purge_tenant_data.py`).
+- 2026-10-15 — `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS` still lists the customer React trial's CloudFront origin. Revisit at A4, when the customer app moves to `app.sortviewapp.com`.
 - 2026-10-01 — `ruleset_id`: `docs/contract-v2-design.md` §5 contradicts the deliberate code behavior; fix the doc or the code.
 
 ---
