@@ -5,6 +5,7 @@ This document defines the standard release flow for SortView.
 It covers:
 - database migrations
 - backend API deployment
+- React admin app deployment
 - dashboard deployment
 - AMH agent validation and deployment
 
@@ -18,8 +19,9 @@ When a release includes multiple types of changes, use this order:
 
 1. database migration
 2. backend API
-3. dashboard
-4. AMH agent
+3. React admin app
+4. dashboard
+5. AMH agent
 
 This reduces the chance of schema mismatches, API payload mismatches, or stale dashboard assumptions.
 
@@ -82,6 +84,12 @@ From the backend repo root:
     alembic current
 
 Confirm the current revision matches expectations.
+
+Run it with a database role that can read `alembic_version`, i.e. the role that applies migrations. The application's
+runtime role (`sortview_app`, which the DigitalOcean backend connects as) is deliberately
+given no access to `alembic_version` (`scripts/runtime_role_privileges.py`), and is refused with
+`permission denied for table alembic_version`. Do not grant it access to make this check work. From the runtime
+environment, `alembic heads` shows only which revision the deployed code expects.
 
 ### step 2: create migration if not already created
 
@@ -165,6 +173,35 @@ Check:
 - latest `pipeline_status.updated_at`
 
 If these stop moving unexpectedly after deploy, pause and investigate.
+
+---
+
+## part 2b: React admin app deployment
+
+Use this section when the admin app (`frontend/admin/`), or the customer-app modules it shares, change.
+
+### admin app responsibilities
+
+The admin app is responsible for platform administration at `https://admin.sortviewapp.com`:
+- libraries and their overview
+- diagnostics
+- Collector configuration and Internal Routing
+- installations and enrollment codes
+- lifecycle
+- provisioning
+
+### deployment steps
+
+1. deploy the backend first if the release adds or changes `/api/admin` routes the app calls
+2. `npm ci` and `npm run build:admin` from a clean checkout of the release commit; keep `frontend/dist-admin`,
+   named by commit, as the rollback artifact
+3. upload `assets/` first, then `index.html`, and invalidate `/` and `/index.html`, exactly as in
+   `docs/react-hosting-runbook.md`, section L.5
+
+### admin app validation checklist
+
+After deployment, verify the checks in `docs/deployment.md`, "admin app validation checklist". For a rollback, see
+`docs/react-hosting-runbook.md`, section L.8.
 
 ---
 
@@ -307,6 +344,10 @@ Use this when a release affects more than one layer.
 - deploy backend
 - verify API health
 - verify upload behavior
+
+### admin app
+- build and upload `dist-admin` if included (assets first, `index.html` last, then invalidate)
+- verify sign-in, a deep route and the origin guard
 
 ### dashboard
 - deploy dashboard

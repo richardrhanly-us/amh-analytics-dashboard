@@ -1,14 +1,17 @@
 # Production verification runbook
 
-Two things the merged security work cannot finish from the repository alone:
+Three things the merged work cannot finish from the repository alone:
 
 1. **Legacy plaintext admin-lock passwords** may still sit in production rows written by older versions of the Admin
    Settings page. The application now stores only hashes and still *accepts* a legacy plaintext value; this runbook
    is how the remaining rows are found and converted.
 2. **Streamlit browser and log redaction** are enforced by code in this repository, but whether the *hosting
    platform* honors the configuration and captures only the scrubbed output has to be checked on a live deployment.
+3. **The production React admin app** (`https://admin.sortviewapp.com`, A3): that its hosting, sign-in, origin
+   guards and admin operations work in production. The recorded result is in Part 3.
 
-**Nothing in this document has been run against production.** Every production step below needs explicit approval
+**Parts 1 and 2 have not been run against production** (Part 2's hosted checks used temporary non-production apps).
+**Part 3 is a production verification**, recorded with its evidence. Every production step needs explicit approval
 first (see "Rules"). Everything the repository *can* prove is proved by automated tests, named where relevant.
 
 ## Rules
@@ -295,3 +298,100 @@ traceback exposure recorded in the follow-up above no longer occurs on any of th
 **Not covered by this record:** the two real-app checks (2.2 B, checklist items 5-7) and checklist items 8-9.
 
 **Clean up (2.4):** the temporary canary apps were deleted after verification, including the one used for the final hosted verification.
+
+---
+
+# Part 3 -- Production React admin app verification
+
+The hosting itself is described in [`react-hosting-runbook.md`](react-hosting-runbook.md), section L. This part
+records the production smoke test of A2 items 1-7 through that hosting. Recorded 2026-10-15.
+
+No credential, session cookie, token or enrollment code is recorded here, and none may be added.
+
+## 3.1 What was under test
+
+| Item | Value |
+|---|---|
+| Admin app | `https://admin.sortviewapp.com`: its own CloudFront distribution and private, versioned S3 bucket |
+| Frontend artifact | `npm ci` + `npm run build:admin` → `frontend/dist-admin`; uploaded and invalidated as in the hosting runbook, L.5 |
+| Backend | DigitalOcean `sortview-app-2p336.ondigitalocean.app`, source `main` at `64c7d7b` (PR #210, A2 item 7). The environment-variable redeploy kept that commit; the app was healthy. |
+| Allowed origins | `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS` = the customer trial origin + `https://admin.sortviewapp.com`; `SORTVIEW_ADMIN_ALLOWED_ORIGINS` = `https://admin.sortviewapp.com`; `SORTVIEW_CUSTOMER_APP_URL` unchanged |
+| Database schema | The deployed code's Alembic head is `f7b3d2c81a46` (`alembic heads`). **`alembic current` could not be read**, because the application's runtime role is refused `alembic_version` (`permission denied for table alembic_version`). That refusal is by design (`scripts/runtime_role_privileges.py`: no access to `alembic_version`), so the grant was not changed. Every A2 admin flow below ran successfully in production, which proves functionally that the schema they need is present. It is not a direct reading of the revision. |
+
+## 3.2 Results
+
+**Sign-in and session**
+
+| Check | Result |
+|---|---|
+| Platform administrator signs in at `admin.sortviewapp.com` | PASS |
+| Session survives navigation; `/libraries` loads authenticated admin data | PASS |
+| Sign out, then sign in again | PASS |
+| A normal customer account signs in | PASS: refused with "No access" / "This account does not have SortView administration access." |
+
+**Origin guard**
+
+| Check | Result |
+|---|---|
+| `POST` through the admin distribution's `/api/*` with `Origin: https://evil.example` | PASS: HTTP 403, `{"code":"origin_not_allowed","message":"Request origin is not allowed."}` |
+
+**Reads**
+
+All PASS:
+- libraries list;
+- library overview;
+- Collector configuration;
+- Internal Routing;
+- sorter list;
+- sorter diagnostics, including Contract v2 heartbeat, cutover and health data.
+
+**Writes on an existing test library ("Rehearsal Library")**
+
+| Check | Result |
+|---|---|
+| Save Collector settings | PASS: the routing-review marker updated, and "Last reviewed" moved to the time of the save |
+| Rename installation "Main AMH Sorter" to a temporary name, then back | PASS: both saves succeeded, and the name is "Main AMH Sorter" again |
+
+**Provisioning and the disposable library**
+
+| Check | Result |
+|---|---|
+| Provision "SortView Admin Smoke Test" (`sortview-admin-smoke-test`), primary branch "Main Branch" (`main`), plan Starter | PASS: active library, Starter trial subscription, active primary branch, operational identity Assigned. No owner was created (first owner is C3). |
+| Prepare it for Contract 2 and add installation #6, "Smoke Test Sorter" | PASS: Contract 2, status Provisioning |
+| Issue an enrollment code | PASS: issued and shown once. It was never used, and its value is not recorded. |
+| Suspend, then reactivate | PASS: Active → Suspended with the correct notice, then Suspended → Active |
+| Offboard permanently | PASS: Active → Cancelled. 0 agent tokens deactivated, 1 installation retired, 1 unused enrollment code revoked, 0 ingest keys retired, 0 sessions revoked. |
+
+**Customer and Collector regression**
+
+| Check | Result |
+|---|---|
+| NBPL customer UI (Streamlit) after the admin deployment and the backend redeploy | PASS: loads normally, with the LIVE indicator, Pipeline OK, today's metrics, a recent pipeline report and working sign-in |
+| Production collectors | PASS: Contract v2 and status calls continued to appear in the DigitalOcean runtime logs |
+
+No customer was moved, and the customer React trial is separate from the admin app.
+
+## 3.3 Client IP observation
+
+- **What was seen:** the DigitalOcean runtime logs showed the admin session's requests consistently from one
+  client/source address, while unrelated requests came from other addresses. The forged-Origin request (02:40:43 UTC)
+  came from the same address as the rest of that session.
+- **What it suggests:** the behavior is consistent with the viewer's IP being preserved through CloudFront, rather
+  than every request collapsing to one CloudFront edge address.
+- **What was not done:** the exact cross-check against the machine's external IP (runbook section I) was not
+  completed, because of an unrelated local Windows TLS trust failure. This is an observation, not a proof. The
+  section I check remains required before any customer is moved (A4).
+
+## 3.4 Left in production by the test
+
+- **"SortView Admin Smoke Test":** **Cancelled**. Offboarding is not a purge: its rows remain, and deleting them is a
+  separate operator decision (`scripts/purge_tenant_data.py`).
+- **"Rehearsal Library":** its routing-review marker now carries the smoke test's time. Its installation name was
+  restored.
+
+## 3.5 Result
+
+**PASSED.** React admin is hosted in production and A2 items 1-7 work there. This clears the production-hosting
+prerequisite for A2 item 8 (retiring Super Admin Streamlit).
+
+Super Admin Streamlit is still live, as the temporary fallback, until item 8's retirement sequence runs.
