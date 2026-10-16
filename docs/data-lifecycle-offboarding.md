@@ -22,8 +22,8 @@ is not classified in it.
 Suspension and offboarding are done in the React administration app
 (`/libraries/<slug>/lifecycle`, A2 item 6), through
 `POST /api/admin/libraries/<slug>/lifecycle/suspend`, `.../reactivate` and
-`.../offboard`. Super Admin's Manage Libraries page calls the same two
-functions and remains only until Super Admin is retired (A2 item 8).
+`.../offboard`. (The Super Admin Streamlit app's Manage Libraries page called
+the same two functions until A2 item 8 retired it.)
 
 They are deliberately three code paths. Suspension
 (`set_library_active_status`) never reaches offboarding, offboarding
@@ -52,8 +52,7 @@ lifecycle evidence.
 
 ## offboarding: the access cutoff
 
-SortView administration, Library lifecycle, **Offboard library permanently**
-(or, until it is retired, Super Admin's **Offboard Library (permanent)**), with
+SortView administration, Library lifecycle, **Offboard library permanently**, with
 the library's slug typed as confirmation. The administration API refuses an
 already-cancelled library (409 `library_cancelled`); only a direct call of
 the service repeats the sweep (below). In one database transaction:
@@ -88,8 +87,8 @@ cancelled organization with live tokens.
 | Dashboard | The organization disappears from every member's list and its access mode is `blocked`, checked on every rerun |
 | Suspend / Reactivate | Refused: `cancelled` is terminal |
 
-The Super Admin page also hides the corresponding controls, but the service
-checks are what enforce this.
+The administration app also refuses or hides the corresponding actions, but
+the service checks are what enforce this.
 
 ### sessions and users in several organizations
 
@@ -363,7 +362,8 @@ created by Alembic migration `a7c4e19d5b02`. Deploy in this order:
      `SELECT tgname FROM pg_trigger WHERE tgrelid = 'public.tenant_lifecycle_events'::regclass AND NOT tgisinternal;`
      returns `trg_tenant_lifecycle_events_append_only`.
 3. **Deploy the application code** that contains `offboard_library` and the
-   Super Admin "Offboard Library (permanent)" control.
+   control that calls it (Super Admin's "Offboard Library (permanent)" when
+   this migration shipped; React admin's lifecycle page now).
 
 Migration first is the supported procedure. If the application were deployed
 first, offboarding would fail when it tries to insert its evidence row into a

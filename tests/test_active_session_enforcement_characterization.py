@@ -4,7 +4,7 @@ These pin what auth_service.enforce_active_session does TODAY, before its
 Streamlit-facing part is extracted into an adapter: the two termination
 branches and their exact messages, the order of the checks, what is cleaned
 out of session state, which persistent-session calls are made, and that each
-of the four Streamlit entry points that call it stops before anything
+of the three Streamlit entry points that call it stops before anything
 protected runs. No production behavior is asserted that the code does not
 already have.
 
@@ -16,7 +16,7 @@ Three layers, from narrowest seam to widest:
 2. enforce_active_session with the REAL persistent_auth_service, faking only
    session_service -- pins the persistent-token rules (no token, wrong user,
    rejected token) and the real session-state / cookie cleanup.
-3. The real entry scripts (src/app.py and the three src/pages/ scripts).
+3. The real entry scripts (src/app.py and the two src/pages/ admin scripts).
 
 Modules are imported the "flat" way (services.auth_service), matching how
 Streamlit loads them with src/ as the script root -- src.services.auth_service
@@ -47,7 +47,6 @@ SRC = ROOT / "src"
 APP = SRC / "app.py"
 SETTINGS_PAGE = SRC / "pages" / "1_admin_settings.py"
 USERS_PAGE = SRC / "pages" / "2_admin_users.py"
-SUPER_ADMIN_PAGE = SRC / "pages" / "Super_Admin_Home.py"
 
 DEACTIVATED_MESSAGE = "Your account has been deactivated. Please contact an administrator."
 INVALID_SESSION_MESSAGE = "Your session is no longer valid. Please log in again."
@@ -368,7 +367,6 @@ def _record_anything_past_the_guard(monkeypatch) -> list[str]:
     [
         pytest.param(SETTINGS_PAGE, id="admin_settings"),
         pytest.param(USERS_PAGE, id="admin_users"),
-        pytest.param(SUPER_ADMIN_PAGE, id="super_admin_home"),
     ],
 )
 def test_page_stops_before_protected_content_when_enforcement_fails(monkeypatch, page, failure):

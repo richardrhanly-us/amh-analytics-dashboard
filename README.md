@@ -92,8 +92,11 @@ Streamlit Dashboard
 - Reject analysis
 - Alerts
 - Pipeline health
-- Super-admin tools
 ```
+
+Platform administration (library provisioning, collector installations, enrollment codes, lifecycle) is the
+React admin app (`frontend/admin`, served at https://admin.sortviewapp.com) over the backend's `/api/admin` routes.
+The former Super Admin Streamlit app was retired in A2 item 8.
 
 ---
 
@@ -159,8 +162,8 @@ Schema changes are tracked through Alembic rather than being created dynamically
 amh-analytics-dashboard/
 ├── agent/                  # AMH agent and parser code
 ├── alembic/                # Database migration files
-├── src/                    # Streamlit dashboard
-├── super_admin/            # Super-admin pages and authentication
+├── frontend/               # React apps (customer, and platform admin)
+├── src/                    # Streamlit dashboard, FastAPI routes and shared services
 ├── tests/                  # Automated tests
 ├── alembic.ini             # Alembic configuration
 ├── main.py                 # FastAPI backend entrypoint

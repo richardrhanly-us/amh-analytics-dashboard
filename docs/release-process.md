@@ -55,7 +55,7 @@ Two checks enforce this, both fast, dependency-free and run by CI on every pull 
 - `python scripts/check_test_freshness.py` -- flags a test that compares `collector.__version__` with a literal, asserts
   the current release as a literal, has a release number in its name, or treats a fixed timestamp as "now"
   (a `NOW`/`TODAY` constant) without the shared controlled clock. It also flags production code that hardcodes a
-  Collector release as a default -- e.g. the Super Admin "Collector version" fields, which import
+  Collector release as a default -- e.g. a "Collector version" form field, which must import
   `collector.__version__` instead. Historical version fixtures, other kinds of version (schema, API, agent) and
   explicit expiry/boundary timestamps are not flagged. A legitimate exception is annotated where it lives:
   `# freshness: allow FRESH004 -- <reason>` (the reason is required).
@@ -215,7 +215,8 @@ The dashboard is responsible for:
 - loading live and historical data from Neon
 - rendering views and KPIs
 - displaying pipeline health and status
-- providing admin and super admin pages where applicable
+- providing the library's admin pages (platform administration is the React admin app; the Super Admin Streamlit
+  app was retired in A2 item 8)
 
 ### deployment steps
 
@@ -233,7 +234,6 @@ After deployment, verify:
 - latest checkin in DB is not unexpectedly missing
 - live today view behaves correctly
 - overview and reports pages load
-- super admin pages load if applicable
 
 ### data validation checks
 

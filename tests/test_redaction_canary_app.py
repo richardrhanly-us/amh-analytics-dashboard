@@ -151,11 +151,10 @@ def test_it_is_inert_unless_explicitly_enabled(disabled_run):
 
 
 def test_it_is_not_part_of_any_deployed_app():
-    for base in ("src", "super_admin"):
-        for path in (ROOT / base).rglob("*.py"):
-            assert "redaction_canary" not in path.read_text(encoding="utf-8"), path
+    for path in (ROOT / "src").rglob("*.py"):
+        assert "redaction_canary" not in path.read_text(encoding="utf-8"), path
     assert "redaction_canary" not in (ROOT / "main.py").read_text(encoding="utf-8")
-    served = [p for base in ("src", "super_admin") for p in (ROOT / base / "pages").glob("*canary*")]
+    served = list((ROOT / "src" / "pages").glob("*canary*"))
     assert served == []  # never a page a production app would serve
 
 

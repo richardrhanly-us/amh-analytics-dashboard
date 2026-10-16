@@ -6,7 +6,7 @@ WHY. Two failure modes recur around every Collector release, and neither shows u
     passing against a stale copy) on the next version bump, so every bump edits arbitrary test files;
   * a test that treats a FIXED calendar timestamp as "now" while the code under test reads the REAL clock -- it
     passes for a while, then fails on a day nobody touched anything;
-  * production code (the Super Admin forms, the services behind them) that hardcodes the Collector release it
+  * production code (an administration form, the services behind it) that hardcodes the Collector release it
     offers as a default -- correct the day it is written, stale after the next bump, and invisible to any test.
 
 The version authority is collector.__version__; ordinary tests compare against it (or against what a component
@@ -72,7 +72,7 @@ CONTROLLED_CLOCK_MODULE = "controlled_clock"
 
 # Production code that offers, records or displays a Collector version. Scanned for FRESH006 (a hardcoded release
 # default). Deliberately not agent/ -- the legacy continuous agent is a different product with its own version.
-PRODUCTION_ROOTS: tuple[str, ...] = ("super_admin", "src", "main.py")
+PRODUCTION_ROOTS: tuple[str, ...] = ("src", "main.py")
 _WIDGET_DEFAULT_KEYWORDS = {"value", "default"}
 
 _RELEASE_LITERAL = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?$")

@@ -202,7 +202,7 @@ def test_file_backed_settings_are_stripped_too_and_a_failed_database_load_never_
 
 def test_no_tracked_settings_file_carries_an_admin_password():
     offenders = []
-    for base in (ROOT / "src", ROOT / "super_admin"):
+    for base in (ROOT / "src",):
         for path in base.rglob("*.json"):
             text = path.read_text(encoding="utf-8")
             data = json.loads(text)
@@ -212,10 +212,9 @@ def test_no_tracked_settings_file_carries_an_admin_password():
     assert offenders == []
 
 
-def test_neither_page_writes_or_defaults_a_plaintext_password_key():
-    for path in (PAGE, ROOT / "super_admin" / "pages" / "Provision_Library.py"):
-        source = path.read_text(encoding="utf-8")
-        assert '"admin_password"' not in source and "'admin_password'" not in source, path.name
+def test_the_admin_settings_page_never_writes_or_defaults_a_plaintext_password_key():
+    source = PAGE.read_text(encoding="utf-8")
+    assert '"admin_password"' not in source and "'admin_password'" not in source
 
 
 # =====================================================================================================================

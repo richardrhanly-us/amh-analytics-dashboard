@@ -2,7 +2,7 @@
 # .streamlit/secrets.toml (git-ignored) or the hosting platform's Secrets panel.
 #
 # Streamlit reads this file from the directory `streamlit run` is started in, so start the dashboard
-# and Super Admin from the repository root (see docs/deployment.md, "streamlit error display").
+# from the repository root (see docs/deployment.md, "streamlit error display").
 
 [client]
 # Never show an uncaught exception's message, type or traceback in the browser -- the user sees only

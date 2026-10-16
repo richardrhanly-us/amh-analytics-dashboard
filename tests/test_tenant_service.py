@@ -1,5 +1,6 @@
 import inspect
 import json
+import re
 from datetime import UTC, datetime
 
 import pytest
@@ -439,3 +440,91 @@ def test_get_effective_settings_raises_when_branch_not_found(monkeypatch):
 
     with pytest.raises(RuntimeError, match="Branch not found"):
         tenant_service.get_effective_settings(org_slug="acme", branch_slug="ghost-branch")
+
+
+# --- transit destination keys ------------------------------------------------
+
+# One canonical key for a destination, wherever it is saved: services.routing_destination.destination_key(label).
+CANONICAL_KEYS = [
+    ("North Branch", "north_branch"),
+    ("3rd Street Branch", "d_3rd_street_branch"),  # a slug starts with a letter
+    ("The Very Long Named Regional Library Annex", "the_very_long_named_regional_lib"),  # ... and is at most 32 long
+    ("St. Mary's   Branch", "st_mary_s_branch"),  # punctuation and repeated spaces
+    ("Westside Annex", "westside"),  # the collector's built-in rule for that text
+]
+
+
+@pytest.mark.parametrize("label, key", CANONICAL_KEYS, ids=[label for label, _key in CANONICAL_KEYS])
+def test_a_saved_destinations_key_is_the_one_key_the_collector_and_the_reports_both_use(label, key):
+    """The regression: stored as {"key": "dest_1", "label": "North Branch"}, a destination went to the Collector as the
+    slug `dest_1` while the reports looked for `north_branch` -- so its check-ins were counted as "other". And a key
+    that is not a valid collector slug (one starting with a digit, or longer than 32) could never be met at all."""
+    from collector import v2_rules
+    from services.ingest_v2_models import DESTINATION_PATTERN
+    from services.routing_destination import build_routing_config, destination_key
+
+    (entry,) = tenant_service.transit_destination_entries([f"  {label} "])
+    settings = {"transit": {"home_branch_label": "Central", "destinations": [entry]}}
+    (rule,) = collector_rules.build_classification_rules(settings)["destinations"]
+    (routed,) = build_routing_config(settings, site_name="Central").transit
+
+    # stored key == destination_key(label) == the Collector's rule slug == the reports' routing key
+    assert entry == {"key": key, "label": label, "enabled": True}
+    assert entry["key"] == destination_key(label) == rule["slug"] == routed.key == key
+    assert rule["contains"] == label.upper()
+    # ... and it is a destination slug the contract allows, so a Collector CAN store a check-in under it.
+    assert re.fullmatch(DESTINATION_PATTERN, key) and len(key) <= 32
+    assert not key.startswith("dest_")
+    # The stored key passes through the rules builder -- the server's copy and the Collector's own -- unchanged,
+    # and a check-in stored under it is keyed back to it.
+    assert collector_rules._slugify(key) == v2_rules._slugify(key) == key
+    assert destination_key(key) == key
+    # The Collector's own seeder gives the same rule for the same stored entry.
+    assert v2_rules.seed_from_settings(settings)["destinations"] == [{"slug": key, "contains": label.upper()}]
+
+
+def test_transit_destination_entries_are_trimmed_and_a_blank_or_repeated_label_is_left_out():
+    entries = tenant_service.transit_destination_entries(["  East Side Annex  ", "", None, "east side annex", "Riverside"])
+
+    assert entries == [{"key": "east_side_annex", "label": "East Side Annex", "enabled": True},
+                       {"key": "riverside", "label": "Riverside", "enabled": True}]
+    assert tenant_service.transit_destination_entries([]) == []
+
+
+@pytest.mark.parametrize("labels, groups", [
+    # Two long labels that are the same in their first 32 letters and digits.
+    (["The Very Long Named Regional Library Annex", "North Branch", "The Very Long Named Regional Library Bookmobile"],
+     [["The Very Long Named Regional Library Annex", "The Very Long Named Regional Library Bookmobile"]]),
+    (["North Branch", "North-Branch", "NORTH  BRANCH!"], [["North Branch", "North-Branch", "NORTH  BRANCH!"]]),
+    (["Westside", "Westside Annex", "3rd Street", "3rd  street."], [["Westside", "Westside Annex"], ["3rd Street", "3rd  street."]]),
+])
+def test_different_labels_that_share_one_canonical_key_are_reported_as_a_collision(labels, groups):
+    assert tenant_service.transit_destination_key_collisions(labels) == groups
+    messages = tenant_service.transit_destination_collision_messages(labels)
+    assert len(messages) == len(groups)
+    for message, group in zip(messages, groups, strict=True):
+        assert all(f'"{label}"' in message for label in group) and "share one key" in message
+
+
+@pytest.mark.parametrize("labels", [
+    [],
+    ["North Branch", "South Branch", "3rd Street Branch", "The Very Long Named Regional Library Annex"],
+    ["North Branch", "north branch", "  NORTH BRANCH  "],  # the same label again is one label, not a collision
+])
+def test_labels_that_are_each_a_destination_of_their_own_are_no_collision(labels):
+    assert tenant_service.transit_destination_key_collisions(labels) == []
+    assert tenant_service.transit_destination_collision_messages(labels) == []
+
+
+def test_the_synthetic_key_was_the_defect_this_guards_against():
+    from services.routing_destination import build_routing_config
+
+    old = {"transit": {"destinations": [{"key": "dest_1", "label": "North Branch", "enabled": True}]}}
+
+    assert [d["slug"] for d in collector_rules.build_classification_rules(old)["destinations"]] == ["dest_1"]
+    assert [d.key for d in build_routing_config(old, site_name="Central").transit] == ["north_branch"]  # ... which never met
+
+
+def test_create_collector_installations_contract_default_and_validation_are_unchanged():
+    assert inspect.signature(tenant_service.create_collector_installation).parameters["required_contract"].default == 1
+    assert tenant_service.COLLECTOR_CONTRACTS == (1, 2)

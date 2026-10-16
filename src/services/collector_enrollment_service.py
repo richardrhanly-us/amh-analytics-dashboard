@@ -1,6 +1,6 @@
 """One-time Collector enrollment: code generation and redemption.
 
-FLOW. A Super Admin generates a short-lived, single-use enrollment code for ONE
+FLOW. A platform administrator generates a short-lived, single-use enrollment code for ONE
 explicit collector_installations row (create_enrollment_code). On the library's
 machine the Collector redeems it over HTTPS (POST /collector/enroll ->
 redeem_enrollment_code) and receives a long-lived agent token scoped to the
@@ -9,9 +9,9 @@ installation's OPERATIONAL customer/branch and bound to that installation
 module runs server-side only.
 
 THIS MODULE IS DELIBERATELY FREE OF STREAMLIT AND OF ANY ENGINE. Both public
-operations take an open SQLAlchemy connection, so the API (main.py) and Super
-Admin (via generate_enrollment_code_for_installation) share one implementation
-and tests can drive it against any database with the right tables.
+operations take an open SQLAlchemy connection, so the API (main.py, the admin
+API) and the standalone generate_enrollment_code_for_installation share one
+implementation and tests can drive it against any database with the right tables.
 
 IDENTITY. The tenant is resolved from the installation row, never from a
 hostname, a branch guess, or a SaaS id posing as an operational one:
@@ -369,7 +369,7 @@ def resolve_installation_scope(
     )
 
 
-# --- generation (Super Admin) --------------------------------------------------------------
+# --- generation (platform admin) -----------------------------------------------------------
 
 _REVOKE_UNUSED_SQL = """
     UPDATE collector_enrollment_codes
@@ -463,7 +463,8 @@ def generate_enrollment_code_for_installation(
     created_by_user_id: int | None = None,
     expected_organization_id: int | None = None,
 ) -> dict[str, Any]:
-    """Super Admin entry point: create_enrollment_code in its own transaction."""
+    """Standalone entry point (used by the retired Super Admin Streamlit app): create_enrollment_code in its own
+    transaction."""
     with _get_engine().begin() as conn:
         return create_enrollment_code(
             conn,

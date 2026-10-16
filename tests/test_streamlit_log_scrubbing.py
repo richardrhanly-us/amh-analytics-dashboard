@@ -379,12 +379,7 @@ def test_control_without_the_scrubber_the_rich_path_writes_every_canary_to_stdou
 # 3. Every Streamlit entry script installs it, before it does anything else with Streamlit
 # =====================================================================================================================
 
-ENTRY_SCRIPTS = (
-    [SRC / "app.py"]
-    + sorted((SRC / "pages").glob("*.py"))
-    + [ROOT / "super_admin" / "Super_Admin_Home.py"]
-    + sorted((ROOT / "super_admin" / "pages").glob("*.py"))
-)
+ENTRY_SCRIPTS = [SRC / "app.py"] + sorted((SRC / "pages").glob("*.py"))
 
 
 def _install_problems(source: str) -> list[str]:
@@ -415,10 +410,10 @@ def _install_problems(source: str) -> list[str]:
 
 def test_the_entry_script_list_is_complete():
     # Every script that configures a Streamlit page is an entry script -- a page opened by its own URL runs only itself.
-    configuring = sorted(str(p.relative_to(ROOT)) for base in (SRC, ROOT / "super_admin") for p in base.rglob("*.py")
+    configuring = sorted(str(p.relative_to(ROOT)) for p in SRC.rglob("*.py")
                          if "set_page_config" in p.read_text(encoding="utf-8"))
     assert sorted(str(p.relative_to(ROOT)) for p in ENTRY_SCRIPTS) == configuring
-    assert len(ENTRY_SCRIPTS) == 7
+    assert len(ENTRY_SCRIPTS) == 3
 
 
 @pytest.mark.parametrize("path", ENTRY_SCRIPTS, ids=lambda p: str(p.relative_to(ROOT)))

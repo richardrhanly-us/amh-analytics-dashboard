@@ -136,15 +136,14 @@ SQL-side encryption is deliberately not used -- and because it can prove its own
 |---|---|---|
 | The setting `client.showErrorDetails = "none"` is valid and read from `.streamlit/config.toml` when Streamlit starts in the repo root | `tests/test_streamlit_error_details.py` | repo |
 | An uncaught exception shows the browser only the generic message (no message, type, traceback, secret) | `tests/test_streamlit_error_details.py`, `tests/test_real_apps_redaction.py` | repo |
-| Streamlit's own log of that exception carries no message/values, only type, SQLSTATE and SortView's frames; the `rich` console print is off | `tests/test_streamlit_log_scrubbing.py`, `tests/test_real_apps_redaction.py` (real main app + real Super Admin app, real DB failure) | repo |
+| Streamlit's own log of that exception carries no message/values, only type, SQLSTATE and SortView's frames; the `rich` console print is off | `tests/test_streamlit_log_scrubbing.py`, `tests/test_real_apps_redaction.py` (real main app, real DB failure) | repo |
 | Every Streamlit entry script installs the scrubber before anything else | guard in `tests/test_streamlit_log_scrubbing.py` | repo |
 | The same on Streamlit **1.63.0** (the pinned production version) without `rich` | those suites re-run against the pinned dependency set | repo |
 | The hosting platform starts the app from the repository root (so the file is found) | **cannot be proved from the repo** | **hosting** |
 | Whether the platform overrides `client.showErrorDetails` at startup (an environment variable or `--client.showErrorDetails` flag outranks the file) | **it does, on Streamlit Community Cloud**: the platform [documents](https://docs.streamlit.io/deploy/streamlit-community-cloud/status) forcing the legacy `false`, and the hosted canary confirmed it (2.6) | **hosting** |
-| Every entry script then pins `client.showErrorDetails` to `"none"` in code, over whatever the host set (unconditional, no opt-out), on Streamlit 1.63.0 with `false` supplied by environment variable and by flag | `tests/test_streamlit_error_details_enforcement.py`, `tests/test_real_apps_redaction.py` (main + Super Admin), `tests/test_redaction_canary_app.py` | repo |
+| Every entry script then pins `client.showErrorDetails` to `"none"` in code, over whatever the host set (unconditional, no opt-out), on Streamlit 1.63.0 with `false` supplied by environment variable and by flag | `tests/test_streamlit_error_details_enforcement.py`, `tests/test_real_apps_redaction.py` (main app), `tests/test_redaction_canary_app.py` | repo |
 | That Community Cloud lets the in-code `"none"` win over its startup value | **it does**: verified on a hosted canary, PASSED and CLOSED (2.6, final hosted verification) | **hosting** |
 | The platform captures only the process's stdout/stderr, and its log viewer shows the scrubbed line | **cannot be proved from the repo** | **hosting** |
-| The Super Admin app's launch command and working directory | not documented anywhere in the repo | **hosting** |
 | Import-time failures on a cold start, before the scrubber runs; text from other libraries' loggers or `print`; the platform's own infrastructure logs | not covered by the scrubber | residual |
 
 ## 2.2 Set up an isolated check (never in the production apps)
@@ -160,9 +159,10 @@ release under test). Do not change the production apps' secrets or settings. Del
   contains: a fake password, database URL, API token, patron/card number and e-mail, a fake SQL statement and bound
   value, and `Failing row contains (...)`. All values start with `CANARY-` / `canary-` / `canary_`.
 
-**B. The two real apps** -- prove each real entry script, with a real failure and no code changes.
+**B. The real app** -- proves the real entry script, with a real failure and no code changes. (The Super Admin
+Streamlit app was a second real app here until A2 item 8 retired it.)
 
-- One app with main file `src/app.py`, one with `super_admin/Super_Admin_Home.py`.
+- One app with main file `src/app.py`.
 - Secret `DATABASE_URL = "postgresql://canary_svc_user:CANARY-DB-PASSWORD-LIVE-0001@canary-db-host-live.example.invalid:5432/canary_db?connect_timeout=3"`
   -- a database that does not exist. Leave every other secret as the app requires to start.
 - Submit the login form with fake credentials (`nobody@example.invalid` / any password). `authenticate_user` queries
@@ -201,14 +201,13 @@ Record the result of each line. **Any FAIL means redaction is not effective on t
    `postgresql://`, `Failing row`, `Bearer`, `Traceback (most recent call last)`, `example.invalid`. **Every search must
    return nothing.** Any hit = the exception text leaked into the hosting log.
 
-**On the real apps (B), one at a time:**
+**On the real app (B):**
 
 5. Open the app, submit the fake login. Browser: the same generic message only (no type, no traceback).
 6. Log: one `Uncaught app execution | error_type=sqlalchemy.exc.OperationalError cause_type=psycopg2.OperationalError ...`
-   line whose `app=` names `get_user_by_email < authenticate_user <` and `app.py` (main app) or `super_auth.py`
-   (Super Admin). Search for `canary-db-host-live`, `canary_svc_user`, `CANARY-DB-PASSWORD`, `canary_db`,
-   `postgresql://`: **no hits.**
-7. This proves the repository config **and** the scrubber reached each real app on this platform. If either real app
+   line whose `app=` names `get_user_by_email < authenticate_user <` and `app.py`. Search for `canary-db-host-live`,
+   `canary_svc_user`, `CANARY-DB-PASSWORD`, `canary_db`, `postgresql://`: **no hits.**
+7. This proves the repository config **and** the scrubber reached the real app on this platform. If the real app
    fails while the canary app passes, that app is being started differently (working directory or entry script).
 
 **Also confirm:**
@@ -394,4 +393,6 @@ No customer was moved, and the customer React trial is separate from the admin a
 **PASSED.** React admin is hosted in production and A2 items 1-7 work there. This clears the production-hosting
 prerequisite for A2 item 8 (retiring Super Admin Streamlit).
 
-Super Admin Streamlit is still live, as the temporary fallback, until item 8's retirement sequence runs.
+Super Admin Streamlit stayed live as the temporary fallback until item 8's retirement sequence ran. The hosted app was
+deleted on 2026-10-15 (its old URL no longer serves the app; customer Streamlit still works), before item 8's code
+removal is merged (see `docs/PROJECT_MANIFEST.md`).
