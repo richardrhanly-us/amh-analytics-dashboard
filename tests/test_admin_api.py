@@ -222,6 +222,10 @@ def test_every_admin_route_requires_a_platform_admin_and_the_admin_origin_guard(
         ("POST", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/lifecycle/suspend"),
         ("POST", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/lifecycle/reactivate"),
         ("POST", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/lifecycle/offboard"),
+        # A2 item 7: provisioning a library (admin_api.provisioning_routes).
+        ("GET", f"{ADMIN_API_PREFIX}/plans"),
+        ("POST", f"{ADMIN_API_PREFIX}/libraries"),
+        ("POST", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/operational-identity"),
     }
     for route in admin_routes:
         router_level = {dependency.dependency for dependency in route.dependencies}

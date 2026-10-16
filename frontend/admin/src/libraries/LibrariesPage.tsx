@@ -25,6 +25,9 @@ export function LibrariesPage() {
   return (
     <section aria-labelledby="libraries-heading">
       <h2 id="libraries-heading">Libraries</h2>
+      <p>
+        <Link to="/provision">Provision a library</Link>
+      </p>
       {query.isPending && <p role="status">Loading libraries…</p>}
       {query.isError && (
         <>
