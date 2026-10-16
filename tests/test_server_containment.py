@@ -166,7 +166,7 @@ def test_the_dashboard_engine_hides_bound_parameters(monkeypatch):
 def _engine_call_sites():
     """(path, line, call) for every create_engine / engine_from_config call in production Python code."""
     sources = [ROOT / "main.py", ROOT / "alembic" / "env.py"]
-    for directory in ("src", "scripts", "super_admin", "collector", "agent"):
+    for directory in ("src", "scripts", "collector", "agent"):
         sources += sorted((ROOT / directory).rglob("*.py"))
     for path in sources:
         if "SortViewAgent" in path.parts or "__pycache__" in path.parts:

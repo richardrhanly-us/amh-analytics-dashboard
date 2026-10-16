@@ -1,5 +1,6 @@
 """Tests for operational identity provisioning in tenant_service:
-assign_operational_identity and build_collector_agent_config.
+assign_operational_identity, build_collector_agent_config and
+format_collector_install_parameters.
 
 Identity model under test:
     organizations.id                      SaaS organization ID
@@ -22,6 +23,7 @@ per statement. IDs are deliberately chosen so the operational customer_id
 from __future__ import annotations
 
 import copy
+import inspect
 
 import pytest
 from db_fakes import FakeQueryResult
@@ -390,3 +392,37 @@ def test_clean_install_style_saas_ids_with_null_bridges_are_not_provisioned(db):
     assigned = tenant_service.assign_operational_identity(organization_id=2, branch_id=2)
     assert assigned["operational_customer_id"] == 50
     assert 2 not in db.customers
+
+
+def test_build_collector_agent_config_keeps_its_prior_signature():
+    parameters = list(inspect.signature(tenant_service.build_collector_agent_config).parameters)
+
+    assert parameters == [
+        "operational_customer_id", "operational_branch_id", "api_url",
+        "raw_checkins_file", "raw_rejects_file", "raw_acs_file",
+    ]
+
+
+# --- the paste-ready installer fragment ----------------------------------------
+
+def test_install_parameters_are_the_three_labelled_ids_in_installer_order():
+    fragment = tenant_service.format_collector_install_parameters(
+        operational_customer_id=50, operational_branch_id=2, installation_id=41,
+    )
+
+    assert fragment == "-CustomerId 50 -BranchId 2 -InstallationId 41"
+
+
+@pytest.mark.parametrize(
+    ("customer_id", "branch_id", "installation_id", "message"),
+    [
+        (None, 2, 41, "Operational identity is not assigned"),
+        (50, None, 41, "Operational identity is not assigned"),
+        (50, 2, None, "Installation ID is not available"),
+        (50, 2, 0, "Installation ID is not available"),
+        (50, 2, True, "Installation ID is not available"),
+    ],
+)
+def test_install_parameters_are_refused_when_any_id_is_missing(customer_id, branch_id, installation_id, message):
+    with pytest.raises(ValueError, match=message):
+        tenant_service.format_collector_install_parameters(customer_id, branch_id, installation_id)

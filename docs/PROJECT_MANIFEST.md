@@ -62,8 +62,10 @@ its own data. New Braunfels Public Library (NBPL) stays live throughout.
 - A2 items 1–7 are merged (item 7: PR #210, `64c7d7b`).
 - A3 completed 2026-10-15: React admin is in production at `https://admin.sortviewapp.com`, and items 1–7 passed a
   production smoke test.
-- **Next:** A2 item 8 (retire Super Admin Streamlit). It is unblocked; follow its retirement sequence (section 4, A2
-  item 8). Customer cutover (A4) stays separate.
+- A2 item 8 (retire Super Admin Streamlit): the hosted Super Admin app was **deleted** from Streamlit Community Cloud
+  (2026-10-15; its old URL no longer serves the app; customer Streamlit still works). **Code retirement implemented
+  and fully validated** on `feature/a2-retire-super-admin-streamlit`. **Next:** commit, PR and merge it (section 4,
+  A2 item 8); A2 is complete once it is merged. Customer cutover (A4) stays separate.
 
 Phase 0 (completed 2026-10-14):
 
@@ -78,8 +80,8 @@ Phase 0 (completed 2026-10-14):
 
 **Goal:** every customer uses the React app on a SortView domain; the Streamlit customer dashboard is retired.
 The migration also includes the internal provisioning and library-management surface SortView needs to operate
-(today the Super Admin Streamlit app). Super Admin stays on Streamlit only until its React replacement is ready; its
-exact scope is set by A1b.
+(formerly the Super Admin Streamlit app, whose scope A1b set). React admin is that replacement; the Super Admin code is
+removed by A2 item 8.
 
 **Where it stands (verified):**
 
@@ -91,7 +93,7 @@ exact scope is set by A1b.
 - The React customer app is hosted through CloudFront for trial/testing only (`docs/react-hosting-runbook.md`). It is
   **not yet the production customer entry point**; its production hostname will be `https://app.sortviewapp.com` (A4).
 - The React **admin** app is in production at `https://admin.sortviewapp.com` (A3, 2026-10-15; hosting runbook
-  section L). Super Admin Streamlit is still live as its temporary fallback until A2 item 8.
+  section L). The hosted Super Admin Streamlit app, its temporary fallback, was deleted on 2026-10-15 (A2 item 8).
 - Recent "decoupling" slices extracted shared policy out of Streamlit (pipeline rules, access mode, settings
   merge, readiness, onboarding status).
 
@@ -114,9 +116,8 @@ exact scope is set by A1b.
   - Internal-routing lists (Branch/Collection Services names, patron account names) — **decided 2026-10-14 (D6):**
     still necessary: they decide which holds are subtracted from Public Holds (v1 on the server, v2 on the
     collector), even though D3 hides the service counts. Not added to ordinary customer React settings. Long-term
-    owner: the future React SortView administration/provisioning surface (scoped by A1b); Super Admin already
-    collects them at provisioning (`super_admin/pages/Provision_Library.py`). The existing Streamlit paths stay
-    until that replacement is ready. Known limit: hosted edits do not update an installed v2 collector's
+    owner: the React SortView administration surface (scoped by A1b), which edits them since A2 item 4; the Super
+    Admin Streamlit path that collected them at provisioning is removed by A2 item 8. Known limit: hosted edits do not update an installed v2 collector's
     `classification_rules.json` (delivered once, at enrollment) — separate collector work under C6.
   - Streamlit admin-password lock (`security` settings) — **decided 2026-10-14 (D2): not rebuilt in React.** React
     relies on the API's server-side owner/admin role checks on every settings and members request. The Streamlit
@@ -216,7 +217,8 @@ exact scope is set by A1b.
   - **Operator-only, outside React:** tenant purge (`scripts/purge_tenant_data.py`); uptime and pipeline
     monitoring scripts; legacy credential scripts while still needed, until C removes them.
 - [ ] **A2. Close parity gaps** decided in A1 and A1b (each its own small PR). **In progress:** items
-      1–7 merged and smoke-tested in production (2026-10-15); item 8 pending, now unblocked. No customer React
+      1–7 merged and smoke-tested in production (2026-10-15); the hosted Super Admin app is deleted and item 8's code
+      retirement is implemented and validated, ready to merge; A2 is complete once it is merged. No customer React
       feature work came out of A1; the backlog is the React admin, in this order:
   1. Admin API foundation + separate React admin shell.
   2. Libraries list + library overview, v2-aware.
@@ -257,12 +259,19 @@ exact scope is set by A1b.
      smoke test. The retirement sequence still stands:
      1. React admin proven in production. **Done.**
      2. Items 1–7 smoke-tested in production. **Done.**
-     3. Keep the hosted Super Admin app as the temporary fallback until the retirement sequence runs.
+     3. Keep the hosted Super Admin app as the temporary fallback until the retirement sequence runs. **Done.**
      4. Delete or disable the hosted Super Admin app on Streamlit Community Cloud **before** merging the source
-        deletion. Otherwise Community Cloud redeploys from `main` into a broken app.
-     5. Then implement and merge item 8's source, test, docs and CI cleanup.
+        deletion. Otherwise Community Cloud redeploys from `main` into a broken app. **Done 2026-10-15:** deleted; the
+        old URL no longer serves the app, and customer Streamlit still works.
+     5. Then implement and merge item 8's source, test, docs and CI cleanup. **Implemented** on
+        `feature/a2-retire-super-admin-streamlit`, fully validated, ready to merge: `super_admin/` and `src/pages/Super_Admin_Home.py`
+        deleted with their UI-only tests; still-valid service tests moved to `tests/test_tenant_service.py` and
+        `tests/test_operational_identity.py`; guards, CI (bandit path) and current docs updated. Shared services, the
+        admin API, React admin, customer Streamlit, operator scripts and Collector code are unchanged. Item 8
+        (and with it A2) is complete once this change is merged.
 
-     First-owner onboarding stays C3, unchanged by item 8.
+     First-owner onboarding stays C3, unchanged by item 8. Legacy installer values / `agent_config.json` stay C5/C2,
+     replacement-machine work C6, plans C7, multi-branch C8; customer Streamlit retirement is A5.
 
   A4 critical path: 1 → 2 → 3 → 4.
 - [x] **A3. Production hosting.** **Completed 2026-10-15** for the admin app; the customer production hostname is
@@ -366,7 +375,8 @@ without us on site, and lands in the React app with a working account.
 - [ ] **C4. Current customer install guide** — the published guide is for Collector 1.0.2. So is the internal
       `docs/SortView_Internal_Customer_Provisioning_Checklist.docx` (assisted 1.0.2 onboarding: manual token,
       `install.ps1`): update or retire it with the guide (A1b finding, 2026-10-14).
-- [ ] **C5. Decide the legacy contract's future** — Super Admin still offers Contract 1 for new installs.
+- [ ] **C5. Decide the legacy contract's future** — React admin still offers Contract 1 for new installs (as Super
+      Admin did).
 - [ ] **C6. Deferred Collector work** from `docs/collector-v2.md`: replacement-machine workflow, key rotation,
       installation-status linkage.
 - [ ] **C7. Self-serve commercial flow** (Stripe against the existing plans/subscriptions schema; guided signup) —
@@ -434,13 +444,14 @@ One line each, dated. Pick up only when a milestone needs it, or when it is prom
 - 2026-10-15 — Reversing an offboarding (`access_cutoff_reverted`) remains manual and operator-only; no tool or admin control exists (A2 item 6 deliberately adds none).
 - 2026-10-15 — The React Collector configuration page does not know a library is cancelled: its forms look editable until a save is refused with 409 `library_cancelled` (clear message). Its responses carry no library status.
 - 2026-10-15 — Suspension leaves unused enrollment codes stored and unrevoked; redemption is refused while suspended, but a code still within its 30-minute TTL can be redeemed after reactivation.
-- 2026-10-15 — Super Admin suspend/reactivate still write no audit row (React admin does, A2 item 6); goes away when Super Admin retires (item 8).
+- 2026-10-15 — Super Admin suspend/reactivate still write no audit row (React admin does, A2 item 6); goes away when Super Admin retires (item 8). Code removed by item 8; resolved once it merges.
 - 2026-10-15 — The `internal_workflow` (holds), `transits` and `max_sorters` entitlements are not seeded by any migration; a newly provisioned library may lack features an existing one has (C7).
 - 2026-10-15 — The database does not enforce exactly one primary branch per organization, and `branches.organization_id` has no foreign key; provisioning creates exactly one by construction.
 - 2026-10-15 — Organization and branch rename have no React path (D8 admin scope).
-- 2026-10-15 — Legacy installer values / `agent_config.json` are still referenced as Super Admin output by `docs/collector-v1-admin-guide.md` (manual install) and `install-release.ps1` help (C5/C2).
+- 2026-10-15 — Legacy installer values / `agent_config.json` are still referenced as Super Admin output by Collector-shipped text (`collector/preflight.py`, `setup-collector.ps1`, `install-release.ps1` help, `collector_config.example.json`); change with the next Collector release (C5/C2). `docs/collector-v1-admin-guide.md` now says React admin does not show them yet (A2 item 8).
 - 2026-10-15 — No first-owner flow or documented procedure exists; a newly provisioned library has no one who can sign in (C3).
-- 2026-10-15 — Super Admin's `slugify` can produce an empty slug, and its provisioning stays three non-atomic commits, until Super Admin retires (item 8).
+- 2026-10-15 — Super Admin's `slugify` can produce an empty slug, and its provisioning stays three non-atomic commits, until Super Admin retires (item 8). Code removed by item 8; resolved once it merges.
+- 2026-10-15 — After A2 item 8, these service helpers have no production caller (kept on purpose; some are C5/C2 compatibility material): `tenant_service.format_collector_install_parameters`, `_require_installation_id`, `build_collector_agent_config` and the legacy agent-config path constants, `create_collector_installation` (wrapper), `update_collector_installation`, `list_collector_installations_for_organization`, `set_collector_site_settings`; `collector_enrollment_service.generate_enrollment_code_for_installation`; `platform_admin_service.list_libraries_with_status`. Remove or reuse later.
 - 2026-10-15 — Support contacts and internal notes are no longer collected at provisioning (React); a proper admin feature for them is still to be decided (D8 admin scope).
 - 2026-10-15 — Node engine mismatch: the admin build ran on Node v24.12.0, while some dependencies ask for >=24.15.0 (or qualifying 22/26 releases). The build succeeded and `npm audit` reported 0 vulnerabilities. Align the local Node version (and `frontend/.nvmrc`, `24`) before the next frontend release.
 - 2026-10-15 — The A3 client-IP check is an observation only: the admin requests came from one consistent source address in the DigitalOcean logs, consistent with viewer-IP preservation. The external-IP cross-check was not completed because of a local Windows TLS trust/SNI failure (unrelated to SortView). Repeat it on the customer path before A4.

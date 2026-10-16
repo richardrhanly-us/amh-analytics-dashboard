@@ -1,7 +1,7 @@
 """Redaction canary: a standalone Streamlit app for verifying, on a NON-PRODUCTION deployment, that an uncaught exception
 neither reaches the browser nor the hosting log.
 
-NOT part of the dashboard or the Super Admin app: nothing imports it, it sits outside `src/` and `super_admin/`, and it is
+NOT part of the dashboard: nothing imports it, it sits outside `src/`, and it is
 INERT unless SORTVIEW_REDACTION_CANARY_ENABLED=true is set (an environment variable or an app secret). Deploy it as its
 OWN Streamlit app (main file `scripts/redaction_canary/app.py`), never inside the production apps, and delete that app when
 the check is done. docs/production-verification-runbook.md has the procedure and the pass/fail criteria.

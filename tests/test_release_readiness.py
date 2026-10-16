@@ -47,8 +47,6 @@ def _ready_repo(root: Path, version: str = FAKE) -> Path:
         "collector/build_release.py": "from . import __version__, deploy_manifest\n",
         "collector/freeze/dispatcher.py": "def main():\n    from collector import __version__\n    print(__version__)\n",
         "collector/freeze/build_frozen.ps1": '$code = "import collector; print(collector.__version__)"\n',
-        "super_admin/pages/Provision_Library.py": _PAGE,
-        "super_admin/pages/Manage_Libraries.py": _PAGE,
         "tests/controlled_clock.py": "",
         "tests/test_collector_enrollment.py": _CLEAN_ENROLLMENT_TESTS,
     }
@@ -83,12 +81,6 @@ def test_everything_that_reports_or_packages_the_version_derives_it_from_the_aut
     assert readiness.check_tooling_derives_from_authority(REPO_ROOT) == []
     for relative in readiness.DERIVING_MODULES:
         assert (REPO_ROOT / relative).is_file(), relative
-
-
-def test_the_super_admin_forms_that_default_the_collector_version_must_derive_it():
-    # Named explicitly (not just "whatever the list holds"), so dropping one from the list is itself a failure.
-    for page in ("super_admin/pages/Provision_Library.py", "super_admin/pages/Manage_Libraries.py"):
-        assert page in readiness.DERIVING_MODULES, page
 
 
 def test_the_releaser_supplies_the_exact_release_and_it_is_checked_against_the_authority():
@@ -136,7 +128,7 @@ def test_a_missing_authority_is_reported(tmp_path):
         ("collector/freeze/sortview_collector.spec", f"version='{FAKE}'\n"),
         ("collector/other.py", 'COLLECTOR_VERSION = "1.0.0"\n'),                       # a stale copy is a copy too
         ("collector/other.py", 'class Meta:\n    VERSION: str = "2.0.1"\n'),
-        ("super_admin/pages/Other.py", f'DEFAULT = "{FAKE}"\n'),                     # ...or in production code
+        ("src/pages/Other.py", f'DEFAULT = "{FAKE}"\n'),                     # ...or in production code
         ("src/services/other.py", f"DEFAULT = '{FAKE}'\n"),
         ("main.py", f'DEFAULT = "{FAKE}"\n'),
     ],
@@ -204,25 +196,13 @@ def test_historical_release_strings_in_production_code_are_not_mistaken_for_copi
 
 def test_a_production_default_that_hardcodes_a_collector_release_blocks_the_release(tmp_path):
     repo = _ready_repo(tmp_path)
-    page = repo / "super_admin" / "pages" / "Provision_Library.py"
+    page = repo / "src" / "pages" / "Example_Admin.py"
+    page.parent.mkdir(parents=True)
     page.write_text(_PAGE + 'installation_version = st.text_input("Collector version", value="1.0.3")\n', encoding="utf-8")
 
     findings = readiness.check_release_readiness(repo)
 
-    assert [(f.path, f.rule) for f in findings] == [("super_admin/pages/Provision_Library.py", "FRESH006")]
-
-
-def test_a_page_that_goes_back_to_a_literal_default_and_drops_the_import_is_caught_twice(tmp_path):
-    repo = _ready_repo(tmp_path)
-    page = repo / "super_admin" / "pages" / "Manage_Libraries.py"
-    page.write_text('new_version = st.text_input("Collector version", value="1.0.3")\n', encoding="utf-8")
-
-    findings = readiness.check_release_readiness(repo)
-
-    assert sorted((f.path, f.rule) for f in findings) == [
-        ("super_admin/pages/Manage_Libraries.py", "FRESH006"),
-        ("super_admin/pages/Manage_Libraries.py", "READY003"),
-    ]
+    assert [(f.path, f.rule) for f in findings] == [("src/pages/Example_Admin.py", "FRESH006")]
 
 
 def test_the_shared_controlled_clock_must_exist(tmp_path):

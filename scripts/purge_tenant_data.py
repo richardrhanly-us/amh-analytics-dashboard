@@ -3,8 +3,8 @@
 
 THIS IS THE DATA PURGE -- the third and last lifecycle step, and the only destructive one:
 
-    suspension   reversible; organizations.status = 'suspended'            (Super Admin)
-    cutoff       permanent; status = 'cancelled' and all access revoked    (Super Admin, offboard_library)
+    suspension   reversible; organizations.status = 'suspended'            (React admin)
+    cutoff       permanent; status = 'cancelled' and all access revoked    (React admin, offboard_library)
     purge        the tenant's rows are deleted                             (THIS TOOL, the table owner, by hand)
 
 WHO MAY RUN IT, AND FROM WHERE.
@@ -272,7 +272,7 @@ def cutoff_problems(conn, tenant: Tenant) -> list[str]:
     if tenant.status != "cancelled":
         problems.append(
             f"organization status is {tenant.status!r}, not 'cancelled' -- run the access cutoff "
-            "(Super Admin: Offboard Library) first; a suspended or active tenant is never purged"
+            "(React admin: Offboard library) first; a suspended or active tenant is never purged"
         )
         return problems
 

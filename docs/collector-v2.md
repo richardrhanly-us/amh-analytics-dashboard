@@ -327,11 +327,13 @@ It contains patron account names and is never logged.
 
 **Contract 1 is still the server's default.** A new installation is contract 2 only when it is created so explicitly: the
 `required_contract` column, `create_collector_installation` and an enrollment request that names no contract all still mean 1.
-Super Admin always says which it wants -- a contract selector on both creation forms, which since onboarding stage A3b starts on
-**Contract v2** (see *Fresh Contract v2 installation* > *Provisioning*). The legacy contract stays selectable and supported.
+SortView administration (the React admin app) always says which it wants -- its *Installations* page defaults to
+**Contract v2**, as the retired Super Admin forms' selector did from onboarding stage A3b (see *Fresh Contract v2
+installation* > *Provisioning*). The legacy contract stays selectable and supported.
 
 **Deployment order.** (1) apply migration `f7b3d2c81a46` (the two `required_contract` columns, and `INSERT` on `v2_cutovers` for the
-runtime role -- no `UPDATE`, no `DELETE`); (2) deploy the API; (3) deploy Super Admin. The migration is safe against the previous API.
+runtime role -- no `UPDATE`, no `DELETE`); (2) deploy the API; (3) deploy the administration app (Super Admin then; React admin now). The migration is safe
+against the previous API.
 `v2_cutovers` has no row level security, so that insert is scoped by the enrollment code path itself; database-level scoping is
 future hardening.
 
@@ -407,7 +409,7 @@ state before its task has run once. A neutral, non-reporting validation endpoint
 Collector **1.0.14**'s guided setup (`setup.ps1`, frozen bundles) installs a new machine directly on Contract v2 when the
 enrollment code was generated for a **contract 2 installation**. Nothing about an existing install changes, and the same
 bundle still installs a contract 1 code on the legacy contract. **Contract 2 is the provisioning default (onboarding stage
-A3b):** Super Admin's contract selector starts on Contract v2, and the legacy contract is chosen explicitly (see
+A3b):** the administration app's contract choice starts on Contract v2, and the legacy contract is chosen explicitly (see
 *Provisioning* below). The steps and every stop are the script's own text; this is the order and the guarantees.
 
 | Step | What happens | If it fails |
@@ -433,7 +435,7 @@ A3b):** Super Admin's contract selector starts on Contract v2, and the legacy co
 * **The secret is the machine's.** `v2-key init` generates it locally; setup never sees it and it is never sent. An existing
   secret is reused only if `v2-key check` accepts it for this installation's key id; one that it does not accept is never
   overwritten.
-* **The time zone is the administrator's.** `v2.timezone` is the IANA zone recorded for the site in Super Admin. Setup does
+* **The time zone is the administrator's.** `v2.timezone` is the IANA zone recorded for the site in SortView administration (*Collector configuration*). Setup does
   not compare it with the Windows time zone.
 * **The task.** No task exists until the secret, both preflights and the bootstrap have succeeded; it is registered
   Disabled and enabled only as setup's final action. A failure at any earlier point leaves no active task. Setup never
@@ -495,50 +497,40 @@ rule. A legacy enrollment's record is unchanged.
 
 ### Provisioning
 
-Super Admin's two creation paths -- *Provision Library* and *Manage Libraries > Add installation* -- have an explicit
-contract selector. **Its default is 2 (Contract v2)** since onboarding stage A3b; 1 (legacy) stays selectable and needs
-none of what follows. Contract 2 requires the site's Collector time zone and its reviewed classification lists (and, when
-provisioning, a confirmation that the transit destinations entered are complete, because for Contract v2 they become its
-classification rules), and is labelled as needing Collector 1.0.14 or later. The choice is made once, when the
-installation is created; an existing installation's contract cannot be changed. A branch has one Contract v2 Collector:
-adding a second or replacement installation to a branch that has already enrolled on Contract v2 is not supported yet.
+Installations are created in SortView administration (the React admin app, platform administrators only). Every
+creation names its contract explicitly. **The default is 2 (Contract v2)**; 1 (legacy) stays selectable and needs none of
+what follows. Contract 2 requires the site's Collector time zone and its reviewed classification lists, and needs
+Collector 1.0.14 or later. The choice is made once, when the installation is created; an existing installation's contract
+cannot be changed. A branch has one Contract v2 Collector: adding a second or replacement installation to a branch that
+has already enrolled on Contract v2 is not supported yet.
 
 SortView administration's *Installations* page (A2 item 5, platform administrators only) is the React path for an
 existing library: it adds an installation at the library's active primary branch on Contract 2 (the default, which needs
 the library's *Collector configuration*) or Contract 1, renames, deactivates, returns an inactive installation to
 provisioning, and retires (final there). It issues a one-time enrollment code -- shown once, never stored -- and refuses
 one for a Contract 2 installation whose branch already has an active ingest key or any v2 cutover
-(`branch_already_enrolled`), since such a code could never be redeemed. Super Admin's *Manage Libraries* paths remain
-until Super Admin retires (A2 item 8).
+(`branch_already_enrolled`), since such a code could never be redeemed.
 
 SortView administration's *Provision a library* page (A2 item 7) creates a library with no installation and no Collector
 settings: only the organization, its one primary branch, a trial subscription and its operational identity. A Contract 2
 installation is then added on *Installations* once *Collector configuration* holds the time zone and the routing review.
 No ingest key or cutover exists until that installation enrolls.
 
-*Provision Library* (A3b):
+Transit destinations are stored with their **canonical key**, `services.routing_destination.destination_key(label)`:
+the one key the reports look a destination up by, and always a valid destination slug (a letter first, at most 32
+characters -- a label that starts with a digit gets `d_` before it), so the rules the Collector is given carry that same
+key. Two different labels that share a key are refused where they are saved rather than treated as one.
 
-* The contract selector is the first field, and the form is submitted only by its button -- pressing Enter in a field
-  does nothing.
-* Everything is checked before anything is created: the names, a chosen plan, and for Contract v2 the three Collector
-  Site Settings entries (marked `*`). Every problem is listed at once and no organization, installation or operational
-  identity exists until there is none.
-* The plan is chosen from the active rows of `plans`; none is pre-selected and none can be typed. (`trial` is a
-  subscription status, not a plan.)
-* No transit label is pre-filled. Destinations are entered one per line and each is stored with its **canonical key**,
-  `services.routing_destination.destination_key(label)`: the one key the reports look a destination up by, and always a
-  valid destination slug (a letter first, at most 32 characters -- a label that starts with a digit gets `d_` before
-  it), so the rules the Collector is given carry that same key. Two different labels that share a key are refused
-  where they are saved (here, in *Collector Site Settings*, and in Admin Settings) rather than treated as one.
+*Collector configuration* (A2 item 4) edits what a Contract v2 enrollment reads from the **organization's** own
+settings: the Collector time zone, the four Internal Routing lists (patron account names) and a review confirmation that
+records the signed-in platform administrator and the time. The library edits its own home label and transit destinations;
+*Collector configuration* shows them for context only. The customer Admin Settings page no longer shows or saves the
+Internal Routing lists (A2 item 4). A change there is saved to SortView: it is used by the
+v1 hold reports and by the next Contract v2 enrollment, and a Collector that is already installed keeps the rules it
+received at enrollment.
 
-*Manage Libraries > Collector Site Settings* (A3b) shows whether an existing library is ready for Contract v2 and
-repairs it: the Collector time zone, the enabled transit destination labels, and a review confirmation that records the
-signed-in Super Admin and the time. It reads and writes the **organization's** own settings -- where the enrollment
-reads them -- and leaves every other setting as it is. The four Internal Routing lists hold patron account names: this
-page shows only how many entries each has, and they are edited in SortView administration (the library's *Collector
-configuration*, platform administrators only). The customer Admin Settings page no longer shows or saves them (A2 item 4).
-A change there is saved to SortView: it is used by the v1 hold reports and by the next Contract v2 enrollment, and a
-Collector that is already installed keeps the rules it received at enrollment.
+The Super Admin Streamlit pages (*Provision Library*, *Manage Libraries*) that did this before React admin were retired in
+A2 item 8.
 
 Admin Settings no longer offers another library's values where an organization has none: a missing home label or
 destination list is shown blank, and an empty destination row is not saved.

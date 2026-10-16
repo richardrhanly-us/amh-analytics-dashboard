@@ -106,8 +106,8 @@ def list_libraries_with_status():
 # The administration API (admin_api.lifecycle_routes) passes `admin_actor`: the
 # change then also writes one auth_audit_log row IN THE SAME TRANSACTION, naming
 # the library as `target_org_slug` (never `org_slug`, which marks an event its
-# members may see) with status names and counts only. Super Admin passes none and
-# behaves exactly as before.
+# members may see) with status names and counts only. A caller that passes none
+# (the retired Super Admin Streamlit app did not) behaves exactly as before.
 _ORGANIZATION_STATUSES = ("active", "trial", "suspended", "cancelled")
 
 ADMIN_LIBRARY_SUSPENDED = "admin_library_suspended"
@@ -117,7 +117,7 @@ ADMIN_LIBRARY_OFFBOARDED = "admin_library_offboarded"
 
 class LibraryLifecycleError(RuntimeError):
     """A lifecycle refusal. `code` is fixed and public (library_not_found, library_cancelled, invalid_transition); the
-    message is for operators and is never sent to an API caller. A RuntimeError, so Super Admin's handling is unchanged."""
+    message is for operators and is never sent to an API caller. A RuntimeError, so a caller's existing RuntimeError handling still applies."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)

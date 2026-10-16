@@ -6,7 +6,7 @@
 
 Included in the admin router (admin_api.router), so every route inherits its platform-administrator check and the
 admin Origin guard. Every answer is no-store. What each action does is services.platform_admin_service's -- the same
-two functions Super Admin calls -- run with the administrator as `admin_actor`, so the change and its auth_audit_log row
+two functions the retired Super Admin Streamlit app called -- run with the administrator as `admin_actor`, so the change and its auth_audit_log row
 commit together. There is no generic status write.
 
     unknown library                                  404 library_not_found
@@ -99,7 +99,7 @@ def create_lifecycle_router() -> APIRouter:
         library = _library(org_slug)
         if library.status == "cancelled":
             raise _refusal("library_cancelled")
-        # Trimmed, as Super Admin and the service compare it. The service checks it again under its lock.
+        # Trimmed, as the service compares it. The service checks it again under its lock.
         if body.confirm_slug.strip() != library.slug:
             raise CustomerApiError(422, "confirmation_mismatch", "The confirmation does not match this library's slug.")
         try:

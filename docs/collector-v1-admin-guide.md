@@ -42,8 +42,7 @@ module docstrings).
 For a new library machine this replaces the manual sequence below. A
 SortView administrator generates a one-time **enrollment code** for the
 installation in SortView administration (the library -> Installations -> Issue
-enrollment code), or in Super Admin (Manage Libraries -> the installation ->
-Generate Enrollment Code) until Super Admin retires. On the Tech Logic machine, from an **elevated** PowerShell
+enrollment code). On the Tech Logic machine, from an **elevated** PowerShell
 in the extracted release folder:
 
 ```powershell
@@ -133,8 +132,8 @@ a machine with a running or enabled Collector (use `tools\update.ps1` there).
 
 **Enrollment codes and the ingest contract.** An enrollment code carries the
 contract its installation requires. This installer performs the legacy
-enrollment (it sends no `contract_version`), which is what every installation
-Super Admin creates today requires. A code for an installation that requires
+enrollment (it sends no `contract_version`), which is what every legacy
+(contract 1) installation requires. A code for an installation that requires
 Contract v2 is refused here with an unexpected-status message (HTTP 409) and is
 **not** used up; it needs an installer that can enroll on Contract v2. See
 `docs/collector-v2.md`, *Server-enforced Contract v2 enrollment*.
@@ -149,12 +148,12 @@ cd collector\deploy
 ```
 
 `-CustomerId` / `-BranchId` / `-InstallationId` are the **Operational
-Customer ID**, **Operational Branch ID** and **Installation ID** shown for
-this Collector in SortView Super Admin (Provision Library, or Manage
-Libraries -> Collector Installer Values, which also shows the paste-ready
-`-CustomerId -BranchId -InstallationId` fragment). Copy them; never choose a
-number. Super Admin's downloadable `agent_config.json` is the legacy agent's
-config, not this Collector's `collector_config.json`. (The
+Customer ID**, **Operational Branch ID** and **Installation ID** of this
+Collector's installation. The retired Super Admin Streamlit app showed them
+(with a paste-ready fragment and the legacy agent's `agent_config.json`, which
+is not this Collector's `collector_config.json`); React admin does not show
+them yet -- that legacy installer path is parked for later work. Never choose a
+number; for a new machine prefer guided setup with an enrollment code (above). (The
 commercial release bundle's `install.ps1` *requires* all three; this
 source-checkout installer treats `-InstallationId` as optional.)
 

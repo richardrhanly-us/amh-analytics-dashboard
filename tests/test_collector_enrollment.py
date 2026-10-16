@@ -1172,12 +1172,13 @@ def test_upload_never_touches_the_enrollment_tables_or_writes_installations(monk
 
 
 # ======================================================================================
-# Super Admin
+# generate_enrollment_code_for_installation (the entry point the retired Super Admin
+# Streamlit app used; kept, with these tests, until its own cleanup)
 # ======================================================================================
 
 @pytest.fixture
 def super_admin_engine(world, monkeypatch):
-    """The Super Admin entry point runs through the service's own engine hook."""
+    """The standalone generation entry point runs through the service's own engine hook."""
     monkeypatch.setattr(enrollment, "_get_engine", lambda: world)
     return world
 
@@ -1225,63 +1226,8 @@ def test_super_admin_generation_refuses_an_unenrollable_installation(super_admin
     assert _codes(super_admin_engine) == []
 
 
-_MANAGE_PAGE = "super_admin/pages/Manage_Libraries.py"
-
-
-def _manage_source() -> str:
-    from pathlib import Path
-
-    return (Path(__file__).resolve().parent.parent / _MANAGE_PAGE).read_text(encoding="utf-8")
-
-
-def test_manage_libraries_offers_generate_enrollment_code_for_the_selected_installation_only():
-    source = _manage_source()
-    action = source[source.index('"Generate Enrollment Code"'):]
-    action = action[: action.index("else:\n            # Shown once")]
-
-    assert "installation_id=selected_installation_id" in action
-    assert "expected_organization_id=organization_id" in action
-    assert 'created_by_user_id=int(auth_user["id"])' in action
-    assert "key=f\"generate_enrollment_code_{selected_installation_id}\"" in source
-
-
-def test_manage_libraries_shows_the_code_name_id_expiry_and_a_single_use_warning():
-    source = _manage_source()
-    shown = source[source.index("# Shown once, in this run only"):]
-    shown = shown[: shown.index("if generated[\"revoked_previous_count\"]")]
-
-    assert 'st.code(generated["enrollment_code"]' in shown
-    assert "installation_name" in shown and "installation_id" in shown
-    assert "expires_at" in shown and "UTC" in shown
-    assert "SINGLE USE" in shown and "cannot be displayed again" in shown
-
-
-def test_manage_libraries_never_keeps_the_code_and_never_exposes_a_permanent_token():
-    source = _manage_source()
-
-    assert "st.session_state" not in source[source.index("Generate Enrollment Code"):
-                                            source.index("Collector Installer Values")]
-    assert "agent_token" not in source
-    # No rerun after generating: the code stays on screen only for this run.
-    assert "st.rerun()" not in source[source.index("# Shown once, in this run only"):
-                                      source.index('st.info("No collector installations')]
-
-
-def test_manage_libraries_only_offers_enrollment_for_provisioning_or_active_installations():
-    source = _manage_source()
-
-    assert "ALLOWED_INSTALLATION_STATUSES as ENROLLABLE_INSTALLATION_STATUSES" in source
-    assert 'installation["status"] not in ENROLLABLE_INSTALLATION_STATUSES' in source
+def test_only_provisioning_or_active_installations_are_enrollable():
     assert enrollment.ALLOWED_INSTALLATION_STATUSES == ("provisioning", "active")
-
-
-def test_manage_libraries_keeps_the_manual_operational_id_display_and_the_legacy_config():
-    source = _manage_source()
-
-    for expected in ("Operational Customer ID", "Operational Branch ID", "Installation ID",
-                     "Collector Installer Values", "Download agent_config.json",
-                     "format_collector_install_parameters"):
-        assert expected in source, expected
 
 
 # ======================================================================================

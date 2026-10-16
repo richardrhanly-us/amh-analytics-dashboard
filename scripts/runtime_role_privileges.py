@@ -1,8 +1,8 @@
 """The runtime database role's intended privileges, as data -- and two ways to use them.
 
 WHY THIS EXISTS. The production application connects as `sortview_app`, a non-owning role. That was verified on 2026-10-01
-for the API backend and, separately, for the Super Admin deployment (every app in this repository takes its role from
-its own DATABASE_URL setting). Its grants were originally applied by hand from a script that was never committed, so the single most
+for the API backend and, separately, for the Super Admin deployment (since retired, A2 item 8; every app in this
+repository takes its role from its own DATABASE_URL setting). Its grants were originally applied by hand from a script that was never committed, so the single most
 important authorization fact about production -- what the application role can and cannot do -- lived only in the
 production database. This file records that model so it can be reviewed, reproduced and CHECKED, instead of trusted.
 
@@ -93,8 +93,8 @@ BASELINE: dict[str, frozenset[str]] = {
     # that insert is scoped by the code that makes it; database-level scoping is future hardening.
     "v2_cutovers": frozenset({SEL, INS}),
     # --- lifecycle evidence: the application may append and nothing else, not even read. Granted by migration
-    # a7c4e19d5b02 (INSERT, plus USAGE on the id sequence); required because the Super Admin app, which records a
-    # cutoff, connects as this role (verified 2026-10-01). It is the one entry not yet observable in production: the table does not exist
+    # a7c4e19d5b02 (INSERT, plus USAGE on the id sequence); required because the app that records a cutoff (the Super
+    # Admin app then, verified 2026-10-01; the API backend's admin routes now) connects as this role. It is the one entry not yet observable in production: the table does not exist
     # there until that migration is applied, so `verify` reports it as missing until then.
     "tenant_lifecycle_events": frozenset({INS}),
     # --- no access at all -----------------------------------------------------------------------------------------------

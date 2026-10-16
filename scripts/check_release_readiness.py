@@ -8,16 +8,15 @@ the version anywhere else; it proves the rest of the repository still agrees wit
             in any collector/ file or production module, or a version-named constant with a release-shaped
             literal inside collector/).
   READY003  packaging and release tooling DERIVE from the authority: the runtime modules that report the version
-            (uploader heartbeat, support-info, the frozen `version` command), the build tools and the Super Admin
-            forms that default the Collector version import it, and the frozen-build script reads
-            collector.__version__ rather than carrying a literal.
+            (uploader heartbeat, support-info, the frozen `version` command) and the build tools import it, and
+            the frozen-build script reads collector.__version__ rather than carrying a literal.
   READY004  --expect-version, when given, equals the authority. This is the one place an exact release number is
             asserted (the assertion is supplied by the person releasing, never copied into the tests).
   READY005  the shared controlled clock the time-sensitive tests rely on exists.
   FRESH00x  the freshness guard (scripts/check_test_freshness.py) is clean: no current-state test carries a
             conflicting release literal or a release-named test, the time-sensitive enrollment tests use the
-            controlled clock and never read today's wall clock, and no production default (e.g. the Super Admin
-            "Collector version" fields) hardcodes a Collector release.
+            controlled clock and never read today's wall clock, and no production default (e.g. a "Collector
+            version" form field) hardcodes a Collector release.
 
 USAGE
     python scripts/check_release_readiness.py [--repo-root PATH] [--expect-version X.Y.Z]   # exit 0 ready, 1 not
@@ -56,8 +55,6 @@ DERIVING_MODULES = (
     "collector/support_info.py",      # reported by support-info
     "collector/freeze/dispatcher.py",  # the config-free `version` command of the frozen executable
     "collector/build_release.py",     # the --version assertion and the MANIFEST
-    "super_admin/pages/Provision_Library.py",  # the default of the "Collector version" field
-    "super_admin/pages/Manage_Libraries.py",   # ...and of the "Add installation" form
 )
 FROZEN_BUILD_SCRIPT = "collector/freeze/build_frozen.ps1"
 CONTROLLED_CLOCK = "tests/controlled_clock.py"

@@ -365,8 +365,8 @@ def assign_operational_identity(organization_id: int, branch_id: int, *, conn: A
     }
 
 
-# Defaults match the Tech Logic source paths used by the legacy Super Admin
-# agent-config generators this replaces.
+# Defaults match the Tech Logic source paths used by the legacy (since retired)
+# Super Admin agent-config generators.
 DEFAULT_RAW_CHECKINS_FILE = r"C:\TLCFinalDlls\Checkins.txt"
 DEFAULT_RAW_REJECTS_FILE = r"C:\TLCFinalDlls\Rejects.txt"
 DEFAULT_RAW_ACS_FILE = r"C:\TLCFinalDlls\ACS Log.txt"
@@ -463,8 +463,8 @@ COLLECTOR_INSTALLATION_STATUSES = ("provisioning", "active", "inactive", "retire
 # services.collector_enrollment_service): 1 is the legacy contract, 2 is Contract v2.
 #
 # THIS MODULE'S DEFAULT IS 1, DELIBERATELY: an installation is contract 2 only when a caller says so explicitly.
-# Super Admin's two creation forms always do say -- they pass the contract their selector holds, and since onboarding
-# stage A3b that selector starts on Contract v2 -- so this default is what every OTHER caller gets, and is unchanged.
+# The administration API's creation paths always do say (as the retired Super Admin forms did, whose selector started on
+# Contract v2 from onboarding stage A3b) -- so this default is what every OTHER caller gets, and is unchanged.
 COLLECTOR_CONTRACT_LEGACY = 1
 COLLECTOR_CONTRACT_V2 = 2
 COLLECTOR_CONTRACTS = (COLLECTOR_CONTRACT_LEGACY, COLLECTOR_CONTRACT_V2)
@@ -1004,7 +1004,7 @@ def set_collector_site_settings(
 ) -> dict[str, Any]:
     """Records, on the ORGANIZATION's own settings, what a Contract v2 enrollment needs from a site: its Collector time
     zone, its enabled transit destinations, and the record that an administrator reviewed its collector routing
-    configuration -- `reviewed_by_user_id` (the signed-in Super Admin; never a made-up id) at `reviewed_at` (now, if
+    configuration -- `reviewed_by_user_id` (the signed-in platform administrator; never a made-up id) at `reviewed_at` (now, if
     not given). Returns the two enrollment keys as stored.
 
     Validated BEFORE anything is read or written: a time zone that is not a known IANA name raises

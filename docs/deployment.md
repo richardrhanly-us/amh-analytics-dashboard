@@ -78,7 +78,8 @@ The Streamlit dashboard is responsible for:
 
 - loading checkins, rejects, ACS data, and pipeline status
 - rendering live, overview, report, and transit views
-- providing super admin / settings / user management UI
+- providing the library's settings / user management UI (platform administration is the React admin app, below;
+  the Super Admin Streamlit app was retired in A2 item 8)
 
 Typical dashboard deployment flow:
 
@@ -100,7 +101,6 @@ After dashboard deployment, verify:
 - latest checkin in DB is not unexpectedly missing
 - live today metrics behave correctly
 - reports and overview pages load
-- super admin pages load if applicable
 
 ## React admin app deployment
 
@@ -325,7 +325,7 @@ Users then see only "This app has encountered an error". This is covered by
 `tests/test_streamlit_error_details.py`.
 
 - **The file only applies when Streamlit is started from the repository root** (`streamlit run
-  src/app.py`, as in the README and devcontainer; the Super Admin app likewise). Streamlit reads
+  src/app.py`, as in the README and devcontainer). Streamlit reads
   `$CWD/.streamlit/config.toml`, not a path relative to the script, so a launch from another directory
   silently falls back to `"full"`.
 - **It can be overridden from outside the repository -- and Streamlit Community Cloud does.** An environment
@@ -353,19 +353,18 @@ Users then see only "This app has encountered an error". This is covered by
   `install_streamlit_log_scrubber()` (`src/services/privacy_hardening.py`) first, which rewrites those log
   records to the exception type, SQLSTATE and code location -- never the message -- and turns the `rich`
   print off. `tests/test_streamlit_log_scrubbing.py` covers it, including a guard that fails if a new entry
-  script (`src/app.py`, `src/pages/*`, `super_admin/**`) does not install it.
+  script (`src/app.py`, `src/pages/*`) does not install it.
 - **What that does not cover:** output written before the scrubber is installed in a process's first script run
   (for example an import failure), text written by other means (`print`, other libraries' own loggers, the
   hosting platform's infrastructure logs), and the message arguments of Streamlit log lines that are not
   exception records. Treat the hosting log as sensitive regardless.
 - **After each deployment, verify it on the live app** (this cannot be checked from the repo). The full,
-  step-by-step procedure -- a standalone canary app plus copies of the two real apps, with pass/fail criteria
+  step-by-step procedure -- a standalone canary app plus a copy of the real app, with pass/fail criteria
   and log search strings -- is in [`production-verification-runbook.md`](production-verification-runbook.md), Part 2.
   In short: make a page raise a deliberate error in a non-production copy, confirm the page shows only the generic message,
   then read the hosting log ("Manage app" on Streamlit Cloud) and confirm it shows
   `Uncaught app execution | error_type=... at=...` and NOT the exception's message. Also check that the
-  canary's panel shows the platform's startup value (`false` on Community Cloud) and the enforced `none`, and that
-  the Super Admin app is started from the repository root.
+  canary's panel shows the platform's startup value (`false` on Community Cloud) and the enforced `none`.
 
 ## admin settings password
 

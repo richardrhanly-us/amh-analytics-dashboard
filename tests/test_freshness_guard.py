@@ -475,7 +475,7 @@ def test_the_command_line_exits_zero_when_clean_and_one_with_findings(tmp_path, 
 
 # --- production defaults: a hardcoded Collector release (FRESH006) -----------------------------------------------------
 
-def production(source: str, path: str = "super_admin/pages/Example.py") -> list[str]:
+def production(source: str, path: str = "src/pages/Example.py") -> list[str]:
     return [f.rule for f in guard.scan_production_source(textwrap.dedent(source), path)]
 
 
@@ -491,7 +491,7 @@ def test_the_stale_super_admin_defaults_that_motivated_this_rule_are_caught():
     '''
 
     for source in (provision, manage):
-        (finding,) = guard.scan_production_source(textwrap.dedent(source), "super_admin/pages/Example.py")
+        (finding,) = guard.scan_production_source(textwrap.dedent(source), "src/pages/Example.py")
         assert finding.rule == "FRESH006" and "'1.0.3'" in finding.message
         assert "from collector import __version__" in finding.message  # says how to fix it
 
@@ -572,7 +572,7 @@ def test_the_annotation_on_a_multiline_call_goes_on_the_offending_keyword():
 def test_production_scanning_covers_the_ui_and_services_but_not_tests_or_the_legacy_agent(tmp_path):
     hazard = 'st.text_input("Collector version", value="1.0.3")\n'
     repo = _repo(tmp_path)
-    for relative in ("super_admin/pages/A.py", "src/services/b.py", "tests/test_c.py", "agent/legacy.py", "collector/d.py"):
+    for relative in ("src/pages/A.py", "src/services/b.py", "tests/test_c.py", "agent/legacy.py", "collector/d.py"):
         path = repo / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(hazard, encoding="utf-8")
@@ -580,7 +580,7 @@ def test_production_scanning_covers_the_ui_and_services_but_not_tests_or_the_leg
 
     findings = guard.scan_production(repo)
 
-    assert sorted(f.path for f in findings) == ["main.py", "src/services/b.py", "super_admin/pages/A.py"]
+    assert sorted(f.path for f in findings) == ["main.py", "src/pages/A.py", "src/services/b.py"]
     assert {f.rule for f in findings} == {"FRESH006"}
 
 
@@ -595,13 +595,13 @@ def test_an_unparseable_production_file_is_reported(tmp_path):
 
 def test_the_repository_scan_and_the_command_line_include_production_defaults(tmp_path, capsys):
     repo = _repo(tmp_path, test_collector_enrollment=_CLEAN_CLOCKED)
-    page = repo / "super_admin" / "pages" / "Provision_Library.py"
+    page = repo / "src" / "pages" / "Example_Admin.py"
     page.parent.mkdir(parents=True)
     page.write_text('st.text_input("Collector version", value="1.0.3")\n', encoding="utf-8")
 
-    assert [(f.path, f.rule) for f in guard.scan_repository(repo)] == [("super_admin/pages/Provision_Library.py", "FRESH006")]
+    assert [(f.path, f.rule) for f in guard.scan_repository(repo)] == [("src/pages/Example_Admin.py", "FRESH006")]
     assert guard.main(["--repo-root", str(repo)]) == 1
-    assert "super_admin/pages/Provision_Library.py:1: FRESH006" in capsys.readouterr().out
+    assert "src/pages/Example_Admin.py:1: FRESH006" in capsys.readouterr().out
 
 
 # --- the repository itself ---------------------------------------------------------------------------------------------------------

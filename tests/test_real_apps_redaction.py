@@ -1,12 +1,13 @@
-"""The REAL main app and the REAL Super Admin app, through a genuine uncaught exception (security/privacy verification).
+"""The REAL main app, through a genuine uncaught exception (security/privacy verification). (The Super Admin Streamlit
+app was covered here too until A2 item 8 retired it.)
 
-Not a synthetic page: `src/app.py` and `super_admin/Super_Admin_Home.py` are started the way `streamlit run` starts them
-(from the repository root, so `.streamlit/config.toml` is discovered by Streamlit itself), their login form is submitted
+Not a synthetic page: `src/app.py` is started the way `streamlit run` starts it
+(from the repository root, so `.streamlit/config.toml` is discovered by Streamlit itself), its login form is submitted
 with fake credentials, and the database they are configured with does not exist. `authenticate_user` queries the
 database with nothing catching the failure, so the exception is uncaught: a real one, raised by real code, whose
 message carries the database HOST (SQLAlchemy/psycopg2 quote it).
 
-What it proves about each app (the repository half of "the deployed apps redact"):
+What it proves about the app (the repository half of "the deployed apps redact"):
 
   * the browser payload holds only the generic error -- no message, no exception type, no traceback, no canary;
   * the process's own output (stdout and stderr) holds no canary and no connection-string text;
@@ -129,7 +130,6 @@ def _leaks(text: str) -> list[str]:
 
 APPS = {
     "main-app": ("src/app.py", "app.py"),
-    "super-admin-app": ("super_admin/Super_Admin_Home.py", "super_auth.py"),
 }
 
 
