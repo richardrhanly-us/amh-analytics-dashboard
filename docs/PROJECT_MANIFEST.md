@@ -38,7 +38,7 @@ its own data. New Braunfels Public Library (NBPL) stays live throughout.
 | Order | Workstream | Why it goes here |
 |---|---|---|
 | 0 | **Land in-flight work** | Finished branches that are not merged are the main source of drift. Close them first. |
-| 1 | **A. Streamlit → React cutover** | Government readiness and customer onboarding both target *the customer UI*. Today that is Streamlit Community Cloud; tomorrow it is React. Anything done to the UI surface before the cutover is done twice. |
+| 1 | **A. Streamlit → React cutover** | Government readiness and customer onboarding both target *the customer UI*. When this order was set, that was Streamlit Community Cloud; since A4 (2026-10-16) it is React. Anything done to the UI surface before the cutover is done twice. |
 | 2 | **B. Government readiness** | Evidence (accessibility, hosting, security, privacy) must describe the stack customers will actually use — so it follows A. Paperwork about data flows that are already stable (Contract v2) can start early (section 6). |
 | 3 | **C. Installer commercialization** | The installer's own packaging is independent, but the *onboarding around it* (first account, where the customer lands, the guide, what "pending" looks like) lands on the React app and must meet B's requirements (signing, least privilege, no raw PII). Built last, it is built once. |
 
@@ -57,15 +57,15 @@ its own data. New Braunfels Public Library (NBPL) stays live throughout.
 
 ## 3. Current focus
 
-**Phase 1 / Workstream A, milestone A2 (in progress).**
+**Phase 1 / Workstream A, milestone A5 (next).**
 - A1 and A1b completed 2026-10-14.
-- A2 items 1–7 are merged (item 7: PR #210, `64c7d7b`).
-- A3 completed 2026-10-15: React admin is in production at `https://admin.sortviewapp.com`, and items 1–7 passed a
-  production smoke test.
-- A2 item 8 (retire Super Admin Streamlit): the hosted Super Admin app was **deleted** from Streamlit Community Cloud
-  (2026-10-15; its old URL no longer serves the app; customer Streamlit still works). **Code retirement implemented
-  and fully validated** on `feature/a2-retire-super-admin-streamlit`. **Next:** commit, PR and merge it (section 4,
-  A2 item 8); A2 is complete once it is merged. Customer cutover (A4) stays separate.
+- A2 complete: items 1–7 merged (item 7: PR #210, `64c7d7b`); item 8, Super Admin Streamlit retirement, merged
+  (PR #212, `88f2b5a`).
+- A3 completed 2026-10-15: React admin is in production at `https://admin.sortviewapp.com`.
+- **A4 completed 2026-10-16:** the NBPL customer React cutover. `https://app.sortviewapp.com` is the production
+  customer entry point, and NBPL uses it (`docs/production-verification-runbook.md` Part 4).
+- **Next: A5.** The customer Streamlit app remains temporarily available as rollback; A5 owns retiring its code paths
+  and deployment.
 
 Phase 0 (completed 2026-10-14):
 
@@ -85,13 +85,15 @@ removed by A2 item 8.
 
 **Where it stands (verified):**
 
-- Current production customer UI: Streamlit Community Cloud, `https://sortview.streamlit.app/`.
+- Production customer UI: the React customer app at `https://app.sortviewapp.com` (A4, 2026-10-16), used by NBPL.
+- The customer Streamlit app, `https://sortview.streamlit.app/`, is still live as a temporary rollback target. A5 retires
+  it.
 - React customer app (`frontend/`) is already substantial and functional: Organizations, Organization page,
   Organization Reports (operations, value), Members, Account (including password reset), Settings (general,
   branches, routing, efficiency), Sorter Live Today, Sorter Reports (operations, efficiency). Keyboard and
   screen-reader behavior is tested (`frontend/src/accessibility.test.tsx`).
-- The React customer app is hosted through CloudFront for trial/testing only (`docs/react-hosting-runbook.md`). It is
-  **not yet the production customer entry point**; its production hostname will be `https://app.sortviewapp.com` (A4).
+- The React customer app is hosted through CloudFront on the customer distribution that previously served the trial,
+  now with the alternate domain `app.sortviewapp.com` (`docs/react-hosting-runbook.md` section M).
 - The React **admin** app is in production at `https://admin.sortviewapp.com` (A3, 2026-10-15; hosting runbook
   section L). The hosted Super Admin Streamlit app, its temporary fallback, was deleted on 2026-10-15 (A2 item 8).
 - Recent "decoupling" slices extracted shared policy out of Streamlit (pipeline rules, access mode, settings
@@ -216,10 +218,9 @@ removed by A2 item 8.
     `account_settings.organization_name`, `account_settings.plan_name`); `system_name`.
   - **Operator-only, outside React:** tenant purge (`scripts/purge_tenant_data.py`); uptime and pipeline
     monitoring scripts; legacy credential scripts while still needed, until C removes them.
-- [ ] **A2. Close parity gaps** decided in A1 and A1b (each its own small PR). **In progress:** items
-      1–7 merged and smoke-tested in production (2026-10-15); the hosted Super Admin app is deleted and item 8's code
-      retirement is implemented and validated, ready to merge; A2 is complete once it is merged. No customer React
-      feature work came out of A1; the backlog is the React admin, in this order:
+- [x] **A2. Close parity gaps** decided in A1 and A1b (each its own small PR). **Completed:** items 1–7 merged and
+      smoke-tested in production (2026-10-15); item 8 merged (PR #212, `88f2b5a`). No customer React feature work came
+      out of A1; the backlog was the React admin, in this order:
   1. Admin API foundation + separate React admin shell.
   2. Libraries list + library overview, v2-aware.
   3. Admin diagnostics + move/remove customer `ingest-status`.
@@ -263,12 +264,12 @@ removed by A2 item 8.
      4. Delete or disable the hosted Super Admin app on Streamlit Community Cloud **before** merging the source
         deletion. Otherwise Community Cloud redeploys from `main` into a broken app. **Done 2026-10-15:** deleted; the
         old URL no longer serves the app, and customer Streamlit still works.
-     5. Then implement and merge item 8's source, test, docs and CI cleanup. **Implemented** on
-        `feature/a2-retire-super-admin-streamlit`, fully validated, ready to merge: `super_admin/` and `src/pages/Super_Admin_Home.py`
+     5. Then implement and merge item 8's source, test, docs and CI cleanup. **Merged** (PR #212, `88f2b5a`):
+        `super_admin/` and `src/pages/Super_Admin_Home.py`
         deleted with their UI-only tests; still-valid service tests moved to `tests/test_tenant_service.py` and
         `tests/test_operational_identity.py`; guards, CI (bandit path) and current docs updated. Shared services, the
-        admin API, React admin, customer Streamlit, operator scripts and Collector code are unchanged. Item 8
-        (and with it A2) is complete once this change is merged.
+        admin API, React admin, customer Streamlit, operator scripts and Collector code are unchanged. Item 8, and
+        with it A2, is complete.
 
      First-owner onboarding stays C3, unchanged by item 8. Legacy installer values / `agent_config.json` stay C5/C2,
      replacement-machine work C6, plans C7, multi-branch C8; customer Streamlit retirement is A5.
@@ -286,19 +287,27 @@ removed by A2 item 8.
       `SORTVIEW_ADMIN_ALLOWED_ORIGINS` (admin writes).
     - Deployment is manual: `docs/react-hosting-runbook.md` section L, with the evidence in
       `docs/production-verification-runbook.md` Part 3.
-  - **Locked (2026-10-15):** admin production is `https://admin.sortviewapp.com`, and future customer React production
-    is `https://app.sortviewapp.com`. They are separate CloudFront distributions and hosting surfaces, because the
-    admin write guard requires an origin of its own.
-  - **Not done here:** no customer was moved. The customer React trial stays on its generated CloudFront hostname, and
-    Streamlit stays the customer UI.
-- [ ] **A4. Cutover:** NBPL moved to React; Streamlit customer access removed or redirected.
-  - First, the customer distribution goes on `https://app.sortviewapp.com`: alternate domain, DNS-only Cloudflare
-    CNAME, the existing certificate, `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS` and `SORTVIEW_CUSTOMER_APP_URL`
-    (`docs/react-hosting-runbook.md` section K).
-  - Before any customer is moved, the hosting runbook's section I client-IP check must be completed on the customer
-    path. A3's admin observation was consistent with viewer-IP preservation, but its exact cross-check was not
-    completed.
-- [ ] **A5. Retire** Streamlit customer code paths no longer reachable.
+  - **Locked (2026-10-15):** admin production is `https://admin.sortviewapp.com`, and customer React production is
+    `https://app.sortviewapp.com` (in production since A4, 2026-10-16). They are separate CloudFront distributions
+    and hosting surfaces, because the admin write guard requires an origin of its own.
+  - **Not done in A3:** no customer was moved; at that point the customer React trial stayed on its generated CloudFront
+    hostname and Streamlit stayed the customer UI. The customer move was A4.
+- [x] **A4. Cutover:** NBPL moved to React. **Completed 2026-10-16** (`docs/react-hosting-runbook.md` section M;
+      `docs/production-verification-runbook.md` Part 4).
+  - The existing customer CloudFront distribution and its private S3 bucket (OAC) were reused. The existing ACM
+    certificate (covering `app.sortviewapp.com` and `admin.sortviewapp.com`) was attached with the alternate domain
+    `app.sortviewapp.com`, and Cloudflare holds a DNS-only CNAME to the distribution.
+  - DigitalOcean: `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS` includes `https://app.sortviewapp.com`, still includes
+    `https://admin.sortviewapp.com` (admin sign-in and sign-out use that guard), and temporarily keeps the trial
+    CloudFront origin for the soak. `SORTVIEW_CUSTOMER_APP_URL` is `https://app.sortviewapp.com`.
+    `SORTVIEW_ADMIN_ALLOWED_ORIGINS` is unchanged (`https://admin.sortviewapp.com`). The backend redeployed healthy.
+  - The customer bundle was built from `main` at `2a8e40f` and passed the boundary check. The production smoke test
+    passed; admin, customer Streamlit and the collectors stayed healthy; and the client-IP check passed on the
+    customer path. No customer data migration was needed.
+  - The customer Streamlit app remains live as a temporary rollback target. Removing customer access to it is A5.
+- [ ] **A5. Retire** Streamlit customer code paths and the customer Streamlit deployment. **Next.** Until then the
+      customer Streamlit app stays live as A4's rollback target.
+  - Remove the customer React trial's CloudFront origin from `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS` once the A4 soak ends.
   - Admin-lock cleanup (added 2026-10-14, D2): inventory and remove legacy `security` settings; handle any
     remaining plaintext `security.admin_password` through the existing approved process
     (`docs/production-verification-runbook.md` Part 1); retire `admin_lock_service.py`, its scripts, tests and
@@ -391,6 +400,10 @@ without us on site, and lands in the React app with a working account.
 
 ## 5. Done recently (newest first)
 
+- 2026-10-16 — A4: NBPL customer React cutover completed. `https://app.sortviewapp.com` is the production customer
+  entry point, on the reused customer CloudFront distribution and S3 bucket; the smoke test and the client-IP check
+  passed (`docs/production-verification-runbook.md` Part 4). Customer Streamlit remains as rollback until A5.
+- 2026-10-15 — A2 item 8: Super Admin Streamlit retired; the hosted app deleted and its code removed (PR #212).
 - 2026-10-15 — A3: React admin in production at `https://admin.sortviewapp.com`, on its own CloudFront distribution
   and private S3 bucket, ACM certificate and Cloudflare DNS. DigitalOcean origins set, and items 1–7 smoke-tested in
   production with no customer or Collector regression (`docs/production-verification-runbook.md` Part 3).
@@ -454,11 +467,11 @@ One line each, dated. Pick up only when a milestone needs it, or when it is prom
 - 2026-10-15 — After A2 item 8, these service helpers have no production caller (kept on purpose; some are C5/C2 compatibility material): `tenant_service.format_collector_install_parameters`, `_require_installation_id`, `build_collector_agent_config` and the legacy agent-config path constants, `create_collector_installation` (wrapper), `update_collector_installation`, `list_collector_installations_for_organization`, `set_collector_site_settings`; `collector_enrollment_service.generate_enrollment_code_for_installation`; `platform_admin_service.list_libraries_with_status`. Remove or reuse later.
 - 2026-10-15 — Support contacts and internal notes are no longer collected at provisioning (React); a proper admin feature for them is still to be decided (D8 admin scope).
 - 2026-10-15 — Node engine mismatch: the admin build ran on Node v24.12.0, while some dependencies ask for >=24.15.0 (or qualifying 22/26 releases). The build succeeded and `npm audit` reported 0 vulnerabilities. Align the local Node version (and `frontend/.nvmrc`, `24`) before the next frontend release.
-- 2026-10-15 — The A3 client-IP check is an observation only: the admin requests came from one consistent source address in the DigitalOcean logs, consistent with viewer-IP preservation. The external-IP cross-check was not completed because of a local Windows TLS trust/SNI failure (unrelated to SortView). Repeat it on the customer path before A4.
+- 2026-10-15 — The A3 client-IP check is an observation only: the admin requests came from one consistent source address in the DigitalOcean logs, consistent with viewer-IP preservation. The external-IP cross-check was not completed because of a local Windows TLS trust/SNI failure (unrelated to SortView). **Resolved 2026-10-16:** the exact check passed on the customer path during A4 (`docs/production-verification-runbook.md` Part 4).
 - 2026-10-15 — Local Windows TLS trust/SNI failure on the home PC blocked an external check-IP request; investigate separately.
 - 2026-10-15 — Production `alembic current` cannot be read with the runtime role (`permission denied for table alembic_version`, by design). The schema is proven only functionally, plus deployed head `f7b3d2c81a46`. Read it with the migration/owner role when one is next used; do not widen the runtime role.
 - 2026-10-15 — The disposable production library "SortView Admin Smoke Test" (`sortview-admin-smoke-test`) is cancelled but not purged; purging it is an operator decision (`scripts/purge_tenant_data.py`).
-- 2026-10-15 — `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS` still lists the customer React trial's CloudFront origin. Revisit at A4, when the customer app moves to `app.sortviewapp.com`.
+- 2026-10-15 — `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS` still lists the customer React trial's CloudFront origin. Kept deliberately through the A4 soak (2026-10-16); remove it after the soak (A5).
 - 2026-10-01 — `ruleset_id`: `docs/contract-v2-design.md` §5 contradicts the deliberate code behavior; fix the doc or the code.
 
 ---

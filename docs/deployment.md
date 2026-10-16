@@ -4,19 +4,20 @@ This document explains how to deploy and validate the main parts of SortView.
 
 ## system parts
 
-SortView currently has four operational parts:
+SortView currently has five operational parts:
 
 - backend API
-- Streamlit dashboard (the customer UI)
+- React customer app, `https://app.sortviewapp.com` (the customer UI)
+- Streamlit dashboard (temporary rollback for the customer UI)
 - React admin app, `https://admin.sortviewapp.com` (platform administrators only)
 - AMH agent
 
 These parts are related, but they are deployed differently.
 
-The React customer app (`frontend/`) is not one of them yet. It runs only as a CloudFront trial alongside Streamlit,
-and customers still use Streamlit. Its future production hostname is `https://app.sortviewapp.com`; moving
-customers there is the A4 cutover. Both React apps' hosting is in [react-hosting-runbook.md](react-hosting-runbook.md):
-sections A to K cover the customer trial, and section L covers the production admin app.
+The React customer app (`frontend/`) has been the production customer UI at `https://app.sortviewapp.com` since the
+A4 cutover (2026-10-16), when NBPL moved to it. The Streamlit dashboard stays available temporarily as rollback; A5
+retires it. Both React apps' hosting is in [react-hosting-runbook.md](react-hosting-runbook.md): section M covers the
+production customer app (sections A to K its original trial setup), and section L the production admin app.
 
 ## backend API deployment
 

@@ -6,7 +6,8 @@ It covers:
 - database migrations
 - backend API deployment
 - React admin app deployment
-- dashboard deployment
+- React customer app deployment
+- dashboard (customer Streamlit) deployment
 - AMH agent validation and deployment
 
 The goal is to make releases predictable, repeatable, and low risk.
@@ -20,8 +21,9 @@ When a release includes multiple types of changes, use this order:
 1. database migration
 2. backend API
 3. React admin app
-4. dashboard
-5. AMH agent
+4. React customer app
+5. dashboard (customer Streamlit, while it remains: A5 retires it)
+6. AMH agent
 
 This reduces the chance of schema mismatches, API payload mismatches, or stale dashboard assumptions.
 
@@ -205,9 +207,58 @@ After deployment, verify the checks in `docs/deployment.md`, "admin app validati
 
 ---
 
+## part 2c: React customer app deployment
+
+Use this section when the customer app (`frontend/`, outside `frontend/admin/`) changes. It is the production customer
+entry point at `https://app.sortviewapp.com` (A4, 2026-10-16). The full procedure is
+`docs/react-hosting-runbook.md`, section M.
+
+### customer app hosting
+
+- `https://app.sortviewapp.com`: a Cloudflare CNAME, **DNS only**, to the customer CloudFront distribution, with the
+  existing ACM certificate (which also covers `admin.sortviewapp.com`)
+- the default behavior serves the private S3 bucket (OAC) through the SPA routing function; `/api/*` goes to the
+  DigitalOcean backend, uncached
+
+### deployment steps
+
+1. deploy the backend first if the release adds or changes `/api` routes the app calls
+2. from `frontend/`, on a clean checkout of the release commit: `npm ci`, then `npm run build`; keep `frontend/dist`,
+   named by commit, as the rollback artifact
+3. boundary check: the customer `dist/` must not contain `/api/admin` or "SortView Administration" (section M.4)
+4. upload `assets/` first with `--cache-control "public,max-age=31536000,immutable"`, then `index.html` with
+   `--cache-control "no-cache"`; never use `--delete`
+5. invalidate `/` and `/index.html` on the customer distribution
+
+### backend environment
+
+- `https://app.sortviewapp.com` must be in `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS`
+- `SORTVIEW_CUSTOMER_APP_URL` must be `https://app.sortviewapp.com`
+- `https://admin.sortviewapp.com` stays in `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS` (admin sign-in and sign-out) as well as
+  in `SORTVIEW_ADMIN_ALLOWED_ORIGINS`
+- record the current values privately before any change; saving them redeploys the backend
+
+### customer app validation checklist
+
+After deployment:
+- the customer smoke test (`docs/react-hosting-runbook.md`, section M.7): sign-in, refresh, sign-out, a deep route
+  loaded directly and refreshed, and the pages the release touched
+- client-IP preservation (`docs/react-hosting-runbook.md`, section I) if the distribution's `/api/*` behavior, its
+  origin or the backend's hosting changed
+- `https://admin.sortviewapp.com` unaffected
+- collectors unaffected
+
+### rollback
+
+See `docs/react-hosting-runbook.md`, section M.8. Until A5 retires it, the customer Streamlit app stays available as the
+rollback target.
+
+---
+
 ## part 3: dashboard deployment
 
-Use this section when Streamlit dashboard code changes are included.
+Use this section when Streamlit dashboard code changes are included. Since A4 (2026-10-16) the customer Streamlit app is
+not the production customer entry point: it stays live as a temporary rollback target until A5 retires it.
 
 ### dashboard responsibilities
 

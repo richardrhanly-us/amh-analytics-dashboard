@@ -22,18 +22,18 @@ multi-tenant service that other libraries can be onboarded to.
 
 | Surface | Status |
 |---|---|
-| Customer analytics UI | **Streamlit** dashboard (production) |
+| Customer analytics UI | **React customer app** at https://app.sortviewapp.com (production) |
 | Platform administration | **React admin** at https://admin.sortviewapp.com (production) |
-| React customer app | Implemented and hosted for trial/testing only; **not yet the production customer UI** |
+| Streamlit customer dashboard | Still available temporarily, as rollback during the transition; being retired |
 
-The React customer app is the intended replacement for the Streamlit dashboard. Moving customers to it, at
-`https://app.sortviewapp.com`, is the next major milestone (see [Current Status](#current-status)).
+The React customer app replaced the Streamlit dashboard as the customer entry point. Retiring the Streamlit
+dashboard is the next milestone (see [Current Status](#current-status)).
 
 ---
 
 ## Dashboard Preview
 
-The current customer analytics dashboard (Streamlit), showing a sorter's live day:
+The Streamlit customer dashboard, which the React customer app replaced, showing a sorter's live day:
 
 <p align="center">
   <img src="images/SortViewCapture1.PNG" width="1000" alt="SortView customer analytics dashboard (Streamlit) showing a sorter's live operations, routing and reject figures">
@@ -109,10 +109,10 @@ Neon PostgreSQL
      |                                   |
      v                                   v
 Customer application                React admin
-- Streamlit: production today       - Platform administration
-- React: implemented; production    - admin.sortviewapp.com
-  cutover planned                   - Calls /api/admin
-  (app.sortviewapp.com)
+- React: production                 - Platform administration
+  (app.sortviewapp.com)             - admin.sortviewapp.com
+- Streamlit: temporary rollback,    - Calls /api/admin
+  being retired
 ```
 
 The Streamlit dashboard reads the database directly. The React customer app and the React admin app are static
@@ -157,13 +157,12 @@ world and the database. It provides:
 
 ### Customer Application
 
-**Streamlit (production today).** The customer dashboard in `src/app.py` and `src/pages/` is what library staff use
-in production: live daily activity, transit and routing, reject analysis, reports and pipeline status.
+**React (production).** The React + TypeScript customer app in `frontend/` is what library staff use, at
+https://app.sortviewapp.com: organizations and sorters, Live Today, ranged operations and efficiency reports, members,
+account and password reset, and settings. See [frontend/README.md](frontend/README.md).
 
-**React (implemented, not yet production).** The React + TypeScript customer app in `frontend/` covers
-organizations and sorters, Live Today, ranged operations and efficiency reports, members, account and password
-reset, and settings. It is hosted for trial/testing and is the planned replacement for the Streamlit dashboard.
-See [frontend/README.md](frontend/README.md).
+**Streamlit (temporary rollback).** The earlier customer dashboard in `src/app.py` and `src/pages/` is still available
+during the transition, as a rollback target, and is being retired.
 
 ### React Admin
 
@@ -416,23 +415,21 @@ committed to this repository.
 Current:
 
 * AMH log ingestion, FastAPI backend and Neon PostgreSQL in production
-* Customer analytics on the Streamlit dashboard (production)
-* React customer app implemented and hosted for trial; not yet the production customer UI
+* React customer app in production at https://app.sortviewapp.com
 * React admin in production at https://admin.sortviewapp.com, with the A2 platform-administration migration complete
+* Streamlit customer dashboard still available temporarily, as rollback during the transition
 * Super Admin Streamlit app retired
 * SortView Collector with enrollment, guided setup and the Contract v2 privacy-filtered upload path
 * Multi-tenant architecture
 * Pipeline health monitoring and admin diagnostics
 * Automated backend and frontend tests in CI
 
-**Next major milestone — A4:** move the React customer app to production at https://app.sortviewapp.com and switch
-customers to it, keeping New Braunfels Public Library live throughout.
+**Next milestone — A5:** retire the Streamlit customer dashboard's code paths and deployment.
 
 ---
 
 ## Roadmap
 
-* **Customer cutover (A4):** React customer app in production at `app.sortviewapp.com`
 * **Retire the Streamlit customer dashboard (A5)**
 * **Self-service onboarding:** first-owner account at provisioning, a signed Collector download and a current
   install guide
