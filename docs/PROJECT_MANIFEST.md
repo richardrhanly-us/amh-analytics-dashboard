@@ -57,9 +57,9 @@ its own data. New Braunfels Public Library (NBPL) stays live throughout.
 
 ## 3. Current focus
 
-**Phase 1 / Workstream A, milestone A2 (in progress).** A1 and A1b completed 2026-10-14. A2 items 1–5 are merged
-(item 5: PR #208, `eb3b304`); item 6 (library lifecycle) is implemented on `feature/a2-admin-lifecycle`, not yet
-merged; items 7–8 are pending.
+**Phase 1 / Workstream A, milestone A2 (in progress).** A1 and A1b completed 2026-10-14. A2 items 1–6 are merged
+(item 6: PR #209, `7f3fd6d`); item 7 (provision library + operational identity) is implemented on
+`feature/a2-admin-provisioning`, not yet merged; item 8 is pending.
 
 Phase 0 (completed 2026-10-14):
 
@@ -210,7 +210,7 @@ exact scope is set by A1b.
   - **Operator-only, outside React:** tenant purge (`scripts/purge_tenant_data.py`); uptime and pipeline
     monitoring scripts; legacy credential scripts while still needed, until C removes them.
 - [ ] **A2. Close parity gaps** decided in A1 and A1b (each its own small PR). **In progress:** items
-      1–5 merged; item 6 implemented on its branch, not yet merged; items 7–8 pending. No customer React
+      1–6 merged; item 7 implemented on its branch, not yet merged; item 8 pending. No customer React
       feature work came out of A1; the backlog is the React admin, in this order:
   1. Admin API foundation + separate React admin shell.
   2. Libraries list + library overview, v2-aware.
@@ -225,8 +225,7 @@ exact scope is set by A1b.
      provisioning, retire (final in React), and issue a one-time enrollment code shown once. A Contract 2 code is
      refused for a branch already enrolled (`branch_already_enrolled`); replacement is C6. No hostname, Collector
      version or legacy Installer Values (C5/C2); no branch choice (C8). Audit ids and counts only, never a code.
-  6. Library lifecycle (suspend/reactivate/offboard). **Implemented 2026-10-15** on `feature/a2-admin-lifecycle` (not
-     yet merged): three explicit admin actions (`POST …/lifecycle/suspend|reactivate|offboard`, no generic status
+  6. Library lifecycle (suspend/reactivate/offboard). **Implemented 2026-10-15**, merged (PR #209, `7f3fd6d`): three explicit admin actions (`POST …/lifecycle/suspend|reactivate|offboard`, no generic status
      write) on the two existing `platform_admin_service` functions, and a React page `/libraries/:orgSlug/lifecycle`
      linked from the overview. Semantics unchanged: suspension writes only the status (Collector refused, members keep
      read-only access); reactivation always returns to `active`; offboarding is the existing one-transaction cutoff and
@@ -234,7 +233,18 @@ exact scope is set by A1b.
      `_reactivated` / `_offboarded` to `auth_audit_log` in the same transaction (status names and counts only); the
      offboarding's lifecycle evidence names the administrator as `platform_admin:<id>`, never by e-mail. No purge, no
      un-offboard.
-  7. Provision library.
+  7. Provision library + assign operational identity. **Implemented 2026-10-15** on `feature/a2-admin-provisioning`
+     (not yet merged): `POST /api/admin/libraries` and React `/provision` (linked from Libraries) create, in ONE
+     transaction, the organization (active), its one active primary branch, a trial subscription on an explicitly
+     chosen active plan (`GET /api/admin/plans`), the existing empty settings rows, the operational identity and an
+     `admin_library_provisioned` audit row, through the existing `tenant_service` functions on one connection (Super
+     Admin's non-atomic path is unchanged until item 8). Names trimmed, 1–120; slugs 1–63 in
+     `^[a-z0-9]+(?:-[a-z0-9]+)*$`, never rewritten by the server; a taken slug is 409 `library_slug_taken`. No user,
+     membership, installation, code, token, key, cutover, Collector setting, contact, note or legacy settings copy; the
+     overview then lists the next steps (items 4 and 5) and states that no one can sign in until a first owner exists
+     (C3). `POST /api/admin/libraries/{slug}/operational-identity` and an overview button replace Super Admin's assign /
+     retry for a library whose identity is missing or partial; an inconsistent mapping is refused, never rebuilt. No
+     numeric id is shown, returned or audited.
   8. Retire Super Admin Streamlit, after 1–7 are proven in production.
 
   A4 critical path: 1 → 2 → 3 → 4.
@@ -381,6 +391,13 @@ One line each, dated. Pick up only when a milestone needs it, or when it is prom
 - 2026-10-15 — The React Collector configuration page does not know a library is cancelled: its forms look editable until a save is refused with 409 `library_cancelled` (clear message). Its responses carry no library status.
 - 2026-10-15 — Suspension leaves unused enrollment codes stored and unrevoked; redemption is refused while suspended, but a code still within its 30-minute TTL can be redeemed after reactivation.
 - 2026-10-15 — Super Admin suspend/reactivate still write no audit row (React admin does, A2 item 6); goes away when Super Admin retires (item 8).
+- 2026-10-15 — The `internal_workflow` (holds), `transits` and `max_sorters` entitlements are not seeded by any migration; a newly provisioned library may lack features an existing one has (C7).
+- 2026-10-15 — The database does not enforce exactly one primary branch per organization, and `branches.organization_id` has no foreign key; provisioning creates exactly one by construction.
+- 2026-10-15 — Organization and branch rename have no React path (D8 admin scope).
+- 2026-10-15 — Legacy installer values / `agent_config.json` are still referenced as Super Admin output by `docs/collector-v1-admin-guide.md` (manual install) and `install-release.ps1` help (C5/C2).
+- 2026-10-15 — No first-owner flow or documented procedure exists; a newly provisioned library has no one who can sign in (C3).
+- 2026-10-15 — Super Admin's `slugify` can produce an empty slug, and its provisioning stays three non-atomic commits, until Super Admin retires (item 8).
+- 2026-10-15 — Support contacts and internal notes are no longer collected at provisioning (React); a proper admin feature for them is still to be decided (D8 admin scope).
 - 2026-10-01 — `ruleset_id`: `docs/contract-v2-design.md` §5 contradicts the deliberate code behavior; fix the doc or the code.
 
 ---

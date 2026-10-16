@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query'
-import type { ReactNode } from 'react'
-import { Link, useParams } from 'react-router'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState, type ReactNode } from 'react'
+import { Link, useLocation, useParams } from 'react-router'
 
 import { isApiError } from '../../../src/api/client.ts'
 import { formatInstant } from '../../../src/time/productTime.ts'
@@ -13,6 +13,7 @@ import {
   pipelineStateLabel,
   subscriptionStatusLabel,
 } from './labels.ts'
+import { assignOperationalIdentity } from '../provision/provisionApi.ts'
 import { getLibrary, type LibraryDetail } from './librariesApi.ts'
 
 const LOAD_FAILED = 'This library could not be loaded. Please try again.'
@@ -23,6 +24,77 @@ function Fact({ term, children }: { term: string; children: ReactNode }) {
       <dt>{term}</dt>
       <dd>{children}</dd>
     </div>
+  )
+}
+
+export const NO_OWNER_YET =
+  'No one can sign in to this library yet. Creating its first owner is not available in SortView administration yet.'
+
+/** Shown once, right after provisioning: what is left to do, on which page. */
+function NextSteps({ orgSlug }: { orgSlug: string }) {
+  const base = `/libraries/${encodeURIComponent(orgSlug)}`
+  return (
+    <section aria-labelledby="next-steps-heading" className="notice">
+      <h3 id="next-steps-heading">Library provisioned: next steps</h3>
+      <ol>
+        <li>
+          <Link to={`${base}/collector`}>Configure its Collector settings</Link>.
+        </li>
+        <li>
+          <Link to={`${base}/installations`}>Add a Collector installation</Link>.
+        </li>
+        <li>Issue an enrollment code for that installation, on the same page.</li>
+      </ol>
+      <p>{NO_OWNER_YET}</p>
+    </section>
+  )
+}
+
+/** The identity, and -- while it is not complete -- the one action that completes it. */
+function OperationalIdentity({ library }: { library: LibraryDetail }) {
+  const queryClient = useQueryClient()
+  const [working, setWorking] = useState(false)
+  const [failure, setFailure] = useState<string | null>(null)
+
+  async function assign() {
+    if (working) {
+      return
+    }
+    setWorking(true)
+    setFailure(null)
+    try {
+      await assignOperationalIdentity(library.slug)
+    } catch (caught) {
+      // Only a refusal (4xx) says nothing changed. A malformed answer, a server error or no answer at all may have
+      // followed an assignment that did happen; the refetch below shows what the server holds.
+      const refused = isApiError(caught) && caught.status !== null && caught.status >= 400 && caught.status < 500
+      setFailure(
+        refused
+          ? `Nothing was changed. ${caught.message}`
+          : 'The assignment result could not be confirmed. The library has been refreshed.',
+      )
+    } finally {
+      setWorking(false)
+      void queryClient.invalidateQueries({ queryKey: ['admin', 'library', library.slug] })
+    }
+  }
+
+  return (
+    <section aria-labelledby="identity-heading">
+      <h3 id="identity-heading">Operational identity</h3>
+      <p>{identityLabel(library.operational_identity)}</p>
+      {failure !== null && (
+        <p className="error-message" role="alert">
+          {failure}
+        </p>
+      )}
+      {/* A cancelled library is terminal: the API refuses this for it, so it is not offered. */}
+      {library.operational_identity !== 'assigned' && library.status !== 'cancelled' && (
+        <button type="button" aria-disabled={working} onClick={() => void assign()}>
+          Assign operational identity
+        </button>
+      )}
+    </section>
   )
 }
 
@@ -70,10 +142,7 @@ function Overview({ library }: { library: LibraryDetail }) {
         )}
       </section>
 
-      <section aria-labelledby="identity-heading">
-        <h3 id="identity-heading">Operational identity</h3>
-        <p>{identityLabel(library.operational_identity)}</p>
-      </section>
+      <OperationalIdentity library={library} />
 
       <section aria-labelledby="collector-heading">
         <h3 id="collector-heading">Collector</h3>
@@ -139,9 +208,11 @@ function Overview({ library }: { library: LibraryDetail }) {
   )
 }
 
-/** /libraries/:orgSlug -- one library, read-only. */
+/** /libraries/:orgSlug -- one library. Its one action here completes a missing operational identity. */
 export function LibraryPage() {
   const { orgSlug = '' } = useParams()
+  // Set by the provisioning page's navigation only: a reload or a link here shows no next steps.
+  const provisioned = (useLocation().state as { provisioned?: unknown } | null)?.provisioned === true
   const query = useQuery({
     queryKey: ['admin', 'library', orgSlug],
     queryFn: ({ signal }) => getLibrary(orgSlug, signal),
@@ -166,6 +237,7 @@ export function LibraryPage() {
           </button>
         </>
       )}
+      {query.data !== undefined && provisioned && <NextSteps orgSlug={query.data.slug} />}
       {query.data !== undefined && <Overview library={query.data} />}
     </section>
   )

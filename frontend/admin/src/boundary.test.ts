@@ -52,6 +52,8 @@ describe('admin app boundary', () => {
       './lifecycle/LifecyclePage.tsx',
       './lifecycle/lifecycleApi.ts',
       './main.tsx',
+      './provision/ProvisionPage.tsx',
+      './provision/provisionApi.ts',
     ])
   })
 

@@ -511,6 +511,11 @@ one for a Contract 2 installation whose branch already has an active ingest key 
 (`branch_already_enrolled`), since such a code could never be redeemed. Super Admin's *Manage Libraries* paths remain
 until Super Admin retires (A2 item 8).
 
+SortView administration's *Provision a library* page (A2 item 7) creates a library with no installation and no Collector
+settings: only the organization, its one primary branch, a trial subscription and its operational identity. A Contract 2
+installation is then added on *Installations* once *Collector configuration* holds the time zone and the routing review.
+No ingest key or cutover exists until that installation enrolls.
+
 *Provision Library* (A3b):
 
 * The contract selector is the first field, and the form is submitted only by its button -- pressing Enter in a field

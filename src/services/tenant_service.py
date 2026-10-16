@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from database import get_engine
 
@@ -19,6 +21,15 @@ from .routing_settings import (
 from .settings_merge import merge_settings
 
 
+class PlanNotAvailableError(RuntimeError):
+    """The plan code is not an active plan. A RuntimeError, as it always was."""
+
+
+class OperationalIdentityConflictError(RuntimeError):
+    """An existing operational identity mapping is inconsistent: refused, never rebuilt. A RuntimeError, as it always
+    was."""
+
+
 def create_organization_with_primary_branch(
     org_name: str,
     org_slug: str,
@@ -27,7 +38,12 @@ def create_organization_with_primary_branch(
     plan_code: str,
     org_settings: dict[str, Any] | None = None,
     branch_settings: dict[str, Any] | None = None,
+    *,
+    conn: Any = None,
 ) -> dict[str, Any]:
+    """Creates the organization, its one active primary branch, a trial subscription on an ACTIVE plan and the two
+    settings rows. Its own transaction, or -- given `conn` -- inside the caller's (provision_library). Raises
+    PlanNotAvailableError, writing nothing, for a plan code that is not an active plan."""
     org_settings = org_settings or {}
     branch_settings = branch_settings or {}
 
@@ -69,49 +85,53 @@ def create_organization_with_primary_branch(
         RETURNING id
     """)
 
-    engine = get_engine()
-    with engine.begin() as conn:
-        plan = conn.execute(sql_find_plan, {"plan_code": plan_code}).mappings().first()
-        if not plan:
-            raise RuntimeError(f"Plan not found: {plan_code}")
+    if conn is None:
+        with get_engine().begin() as own:
+            return create_organization_with_primary_branch(
+                org_name, org_slug, branch_name, branch_slug, plan_code, org_settings, branch_settings, conn=own
+            )
 
-        org = conn.execute(
-            sql_insert_org,
-            {"name": org_name, "slug": org_slug},
-        ).mappings().first()
+    plan = conn.execute(sql_find_plan, {"plan_code": plan_code}).mappings().first()
+    if not plan:
+        raise PlanNotAvailableError(f"Plan not found: {plan_code}")
 
-        branch = conn.execute(
-            sql_insert_branch,
-            {
-                "organization_id": org["id"],
-                "name": branch_name,
-                "slug": branch_slug,
-            },
-        ).mappings().first()
+    org = conn.execute(
+        sql_insert_org,
+        {"name": org_name, "slug": org_slug},
+    ).mappings().first()
 
-        subscription = conn.execute(
-            sql_insert_subscription,
-            {
-                "organization_id": org["id"],
-                "plan_id": plan["id"],
-            },
-        ).mappings().first()
+    branch = conn.execute(
+        sql_insert_branch,
+        {
+            "organization_id": org["id"],
+            "name": branch_name,
+            "slug": branch_slug,
+        },
+    ).mappings().first()
 
-        conn.execute(
-            sql_insert_org_settings,
-            {
-                "organization_id": org["id"],
-                "settings_json": json.dumps(org_settings),
-            },
-        )
+    subscription = conn.execute(
+        sql_insert_subscription,
+        {
+            "organization_id": org["id"],
+            "plan_id": plan["id"],
+        },
+    ).mappings().first()
 
-        conn.execute(
-            sql_insert_branch_settings,
-            {
-                "branch_id": branch["id"],
-                "settings_json": json.dumps(branch_settings),
-            },
-        )
+    conn.execute(
+        sql_insert_org_settings,
+        {
+            "organization_id": org["id"],
+            "settings_json": json.dumps(org_settings),
+        },
+    )
+
+    conn.execute(
+        sql_insert_branch_settings,
+        {
+            "branch_id": branch["id"],
+            "settings_json": json.dumps(branch_settings),
+        },
+    )
 
     return {
         "organization": dict(org),
@@ -191,7 +211,7 @@ def get_branch_by_slug(org_slug: str, branch_slug: str) -> dict[str, Any] | None
 # operational pair. organizations.id is NEVER a valid customer_id.
 
 
-def assign_operational_identity(organization_id: int, branch_id: int) -> dict[str, Any]:
+def assign_operational_identity(organization_id: int, branch_id: int, *, conn: Any = None) -> dict[str, Any]:
     """Assign (or confirm) the operational identity for one organization/branch.
 
     Atomic (one transaction) and idempotent:
@@ -211,6 +231,10 @@ def assign_operational_identity(organization_id: int, branch_id: int) -> dict[st
 
     Returns {organization_id, branch_id, operational_customer_id,
     operational_branch_id, created_customer, changed}.
+
+    Its own transaction, or -- given `conn` -- inside the caller's. An
+    inconsistent existing mapping raises OperationalIdentityConflictError (a
+    RuntimeError): it is refused, never rebuilt.
     """
     sql_lock_org = text("""
         SELECT id, name, operational_customer_id
@@ -263,71 +287,73 @@ def assign_operational_identity(organization_id: int, branch_id: int) -> dict[st
           AND operational_branch_id IS NULL
     """)
 
-    engine = get_engine()
-    with engine.begin() as conn:
-        # Row locks serialise concurrent assignments for the same tenant so two
-        # racing runs cannot both allocate a customer.
-        org = conn.execute(
-            sql_lock_org, {"organization_id": organization_id}
+    if conn is None:
+        with get_engine().begin() as own:
+            return assign_operational_identity(organization_id, branch_id, conn=own)
+
+    # Row locks serialise concurrent assignments for the same tenant so two
+    # racing runs cannot both allocate a customer.
+    org = conn.execute(
+        sql_lock_org, {"organization_id": organization_id}
+    ).mappings().first()
+    if not org:
+        raise RuntimeError(f"Organization {organization_id} not found")
+
+    branch = conn.execute(
+        sql_lock_branch,
+        {"branch_id": branch_id, "organization_id": organization_id},
+    ).mappings().first()
+    if not branch:
+        raise RuntimeError(
+            f"Branch {branch_id} not found for organization {organization_id}"
+        )
+
+    existing_branch_identity = branch["operational_branch_id"]
+    if existing_branch_identity is not None and existing_branch_identity != branch["id"]:
+        raise OperationalIdentityConflictError(
+            f"Inconsistent operational identity: branch {branch_id} has "
+            f"operational_branch_id {existing_branch_identity}, expected {branch_id}"
+        )
+
+    customer_id = org["operational_customer_id"]
+    created_customer = False
+
+    if customer_id is not None:
+        customer = conn.execute(
+            sql_customer_exists, {"customer_id": customer_id}
         ).mappings().first()
-        if not org:
-            raise RuntimeError(f"Organization {organization_id} not found")
+        if not customer:
+            raise OperationalIdentityConflictError(
+                f"Inconsistent operational identity: organization {organization_id} "
+                f"maps to customer {customer_id}, which does not exist"
+            )
 
-        branch = conn.execute(
-            sql_lock_branch,
-            {"branch_id": branch_id, "organization_id": organization_id},
+        claimed = conn.execute(
+            sql_customer_claimed_elsewhere,
+            {"customer_id": customer_id, "organization_id": organization_id},
         ).mappings().first()
-        if not branch:
-            raise RuntimeError(
-                f"Branch {branch_id} not found for organization {organization_id}"
+        if claimed:
+            raise OperationalIdentityConflictError(
+                f"Operational customer {customer_id} is already mapped to "
+                f"organization {claimed['id']}"
             )
+    else:
+        new_customer = conn.execute(
+            sql_insert_customer, {"name": org["name"]}
+        ).mappings().first()
+        if not new_customer:
+            raise RuntimeError("Failed to create operational customer")
+        customer_id = new_customer["id"]
+        created_customer = True
 
-        existing_branch_identity = branch["operational_branch_id"]
-        if existing_branch_identity is not None and existing_branch_identity != branch["id"]:
-            raise RuntimeError(
-                f"Inconsistent operational identity: branch {branch_id} has "
-                f"operational_branch_id {existing_branch_identity}, expected {branch_id}"
-            )
+        conn.execute(
+            sql_set_org_customer,
+            {"customer_id": customer_id, "organization_id": organization_id},
+        )
 
-        customer_id = org["operational_customer_id"]
-        created_customer = False
-
-        if customer_id is not None:
-            customer = conn.execute(
-                sql_customer_exists, {"customer_id": customer_id}
-            ).mappings().first()
-            if not customer:
-                raise RuntimeError(
-                    f"Inconsistent operational identity: organization {organization_id} "
-                    f"maps to customer {customer_id}, which does not exist"
-                )
-
-            claimed = conn.execute(
-                sql_customer_claimed_elsewhere,
-                {"customer_id": customer_id, "organization_id": organization_id},
-            ).mappings().first()
-            if claimed:
-                raise RuntimeError(
-                    f"Operational customer {customer_id} is already mapped to "
-                    f"organization {claimed['id']}"
-                )
-        else:
-            new_customer = conn.execute(
-                sql_insert_customer, {"name": org["name"]}
-            ).mappings().first()
-            if not new_customer:
-                raise RuntimeError("Failed to create operational customer")
-            customer_id = new_customer["id"]
-            created_customer = True
-
-            conn.execute(
-                sql_set_org_customer,
-                {"customer_id": customer_id, "organization_id": organization_id},
-            )
-
-        branch_changed = existing_branch_identity is None
-        if branch_changed:
-            conn.execute(sql_set_branch_identity, {"branch_id": branch_id})
+    branch_changed = existing_branch_identity is None
+    if branch_changed:
+        conn.execute(sql_set_branch_identity, {"branch_id": branch_id})
 
     return {
         "organization_id": organization_id,
@@ -1219,3 +1245,170 @@ def set_collector_enrollment_settings(
             },
         )
     return keys
+
+
+# --- provisioning a library from SortView administration (A2 item 7) ---------------------------------------------------
+#
+# ONE transaction creates exactly: the organization (active), its one active primary branch, a trial subscription on
+# the chosen ACTIVE plan, the two empty settings rows, the operational identity (one customers row and both bridge
+# columns) and one auth_audit_log row -- through create_organization_with_primary_branch and assign_operational_identity
+# themselves, on the caller's connection. Nothing else: no user or membership (C3), no installation, code, token, key
+# or cutover (A2 items 4 and 5, enrollment), no Collector settings, contacts or notes. A failure anywhere leaves nothing.
+#
+# Values are validated, never rewritten: a name is trimmed, a slug must already be exactly in the slug form. Nothing
+# returned, audited or raised carries an internal or operational id, a name, or a value that was refused.
+
+MAX_LIBRARY_NAME_LENGTH = 120
+MAX_SLUG_LENGTH = 63
+SLUG_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+ADMIN_LIBRARY_PROVISIONED = "admin_library_provisioned"
+ADMIN_OPERATIONAL_IDENTITY_ASSIGNED = "admin_operational_identity_assigned"
+
+# The unique constraint on organizations.slug (baseline schema: an inline UNIQUE, so PostgreSQL's default name).
+_ORGANIZATION_SLUG_CONSTRAINT = "organizations_slug_key"
+_UNIQUE_VIOLATION = "23505"
+
+
+class AdminProvisioningError(Exception):
+    """A refusal the administration API may answer with: `code` is fixed and public, and the only text."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+def validate_provisioning(
+    *, name: object, slug: object, branch_name: object, branch_slug: object, plan_code: object
+) -> tuple[dict[str, str], list[dict[str, str]]]:
+    """(the values to store, the problems). Each problem is {field, code}: required, too_long or invalid_slug -- never
+    the value. Names are trimmed; slugs and the plan code are taken exactly as given."""
+    values: dict[str, str] = {}
+    problems: list[dict[str, str]] = []
+
+    for field, value in (("name", name), ("branch_name", branch_name)):
+        trimmed = value.strip() if isinstance(value, str) else ""
+        if not trimmed:
+            problems.append({"field": field, "code": "required"})
+        elif len(trimmed) > MAX_LIBRARY_NAME_LENGTH:
+            problems.append({"field": field, "code": "too_long"})
+        values[field] = trimmed
+
+    for field, value in (("slug", slug), ("branch_slug", branch_slug)):
+        exact = value if isinstance(value, str) else ""
+        if not exact:
+            problems.append({"field": field, "code": "required"})
+        elif len(exact) > MAX_SLUG_LENGTH:
+            problems.append({"field": field, "code": "too_long"})
+        elif not SLUG_PATTERN.fullmatch(exact):
+            problems.append({"field": field, "code": "invalid_slug"})
+        values[field] = exact
+
+    code = plan_code if isinstance(plan_code, str) else ""
+    if not code:
+        problems.append({"field": "plan_code", "code": "required"})
+    values["plan_code"] = code
+    return values, problems
+
+
+def _is_organization_slug_violation(error: IntegrityError) -> bool:
+    original = getattr(error, "orig", None)
+    diag = getattr(original, "diag", None)
+    return (
+        getattr(original, "pgcode", None) == _UNIQUE_VIOLATION
+        and getattr(diag, "constraint_name", None) == _ORGANIZATION_SLUG_CONSTRAINT
+    )
+
+
+def _audit_admin(conn: Any, event_type: str, message: str, actor: dict[str, Any], **metadata: Any) -> None:
+    auth_service.log_auth_event_with_connection(
+        conn,
+        event_type=event_type,
+        is_success=True,
+        user_id=int(actor["id"]),
+        email=actor.get("email"),
+        message=message,
+        metadata={**metadata, "actor_user_id": int(actor["id"])},
+    )
+
+
+_SLUG_TAKEN_SQL = "SELECT 1 FROM organizations WHERE slug = :slug"
+
+
+def provision_library(
+    *, name: str, slug: str, branch_name: str, branch_slug: str, plan_code: str, actor: dict[str, Any]
+) -> dict[str, Any]:
+    """Provisions a library in one transaction (see above). The values must already have passed
+    validate_provisioning. Raises AdminProvisioningError library_slug_taken (also when a concurrent request takes the
+    slug first) or plan_not_available, writing nothing.
+
+    Returns {library: {slug, name, status}, primary_branch: {slug, name, status}, subscription: {plan_code, plan_name,
+    status}, operational_identity}: no id of any kind."""
+    try:
+        with get_engine().begin() as conn:
+            if conn.execute(text(_SLUG_TAKEN_SQL), {"slug": slug}).first() is not None:
+                raise AdminProvisioningError("library_slug_taken")
+            try:
+                created = create_organization_with_primary_branch(
+                    name, slug, branch_name, branch_slug, plan_code, conn=conn
+                )
+            except PlanNotAvailableError:
+                raise AdminProvisioningError("plan_not_available") from None
+            organization, branch = created["organization"], created["branch"]
+            assign_operational_identity(int(organization["id"]), int(branch["id"]), conn=conn)
+            _audit_admin(
+                conn, ADMIN_LIBRARY_PROVISIONED, "Library provisioned.", actor,
+                target_org_slug=organization["slug"], branch_slug=branch["slug"], status=organization["status"],
+                plan_code=created["plan"]["code"], operational_identity="assigned",
+            )
+    except IntegrityError as error:
+        if _is_organization_slug_violation(error):
+            raise AdminProvisioningError("library_slug_taken") from None
+        raise
+    return {
+        "library": {"slug": organization["slug"], "name": organization["name"], "status": organization["status"]},
+        "primary_branch": {"slug": branch["slug"], "name": branch["name"], "status": branch["status"]},
+        "subscription": {
+            "plan_code": created["plan"]["code"],
+            "plan_name": created["plan"]["name"],
+            "status": created["subscription"]["status"],
+        },
+        "operational_identity": "assigned",
+    }
+
+
+_LOCK_LIBRARY_BY_SLUG_SQL = "SELECT id, slug, status FROM organizations WHERE slug = :slug FOR UPDATE"
+# LIMIT 2: a library with two primary branches has no one primary branch to assign to.
+_PRIMARY_BRANCHES_SQL = (
+    "SELECT id FROM branches WHERE organization_id = :organization_id AND is_primary = TRUE ORDER BY id LIMIT 2"
+)
+
+
+def assign_library_operational_identity(org_slug: str, *, actor: dict[str, Any]) -> dict[str, bool]:
+    """Assigns (or confirms) the operational identity of an existing library's one primary branch, by
+    assign_operational_identity itself, in one transaction. A change is audited in that transaction; confirming an
+    identity that is already complete changes and records nothing (the item-6 convention).
+
+    Raises AdminProvisioningError: library_not_found; library_cancelled; no_primary_branch (none, or more than one);
+    operational_identity_inconsistent (an existing mapping that contradicts itself -- refused, never rebuilt).
+
+    Returns {changed, created_customer}: no id of any kind."""
+    with get_engine().begin() as conn:
+        library = conn.execute(text(_LOCK_LIBRARY_BY_SLUG_SQL), {"slug": org_slug}).mappings().first()
+        if library is None:
+            raise AdminProvisioningError("library_not_found")
+        if library["status"] == "cancelled":
+            raise AdminProvisioningError("library_cancelled")
+        primaries = conn.execute(text(_PRIMARY_BRANCHES_SQL), {"organization_id": library["id"]}).scalars().all()
+        if len(primaries) != 1:
+            raise AdminProvisioningError("no_primary_branch")
+        try:
+            assigned = assign_operational_identity(int(library["id"]), int(primaries[0]), conn=conn)
+        except OperationalIdentityConflictError:
+            raise AdminProvisioningError("operational_identity_inconsistent") from None
+        if assigned["changed"]:
+            _audit_admin(
+                conn, ADMIN_OPERATIONAL_IDENTITY_ASSIGNED, "Operational identity assigned.", actor,
+                target_org_slug=library["slug"], changed=True, created_customer=bool(assigned["created_customer"]),
+            )
+    return {"changed": bool(assigned["changed"]), "created_customer": bool(assigned["created_customer"])}

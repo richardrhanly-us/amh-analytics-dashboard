@@ -77,6 +77,9 @@ ADMIN_CORE_MODULES = [
     # A2 item 6 (its service is platform_admin_service, above).
     "admin_api.lifecycle_routes",
     "admin_api.lifecycle_schemas",
+    # A2 item 7 (its service is services.tenant_service, as for admin_api.collector_config_routes).
+    "admin_api.provisioning_routes",
+    "admin_api.provisioning_schemas",
 ]
 API_CORE_MODULES = CUSTOMER_CORE_MODULES + ADMIN_CORE_MODULES
 # The same files under their OTHER name. Loading any of these next to the flat
@@ -163,6 +166,10 @@ ADMIN_ROUTES = {
     ("POST", "/api/admin/libraries/{org_slug}/lifecycle/suspend"),
     ("POST", "/api/admin/libraries/{org_slug}/lifecycle/reactivate"),
     ("POST", "/api/admin/libraries/{org_slug}/lifecycle/offboard"),
+    # A2 item 7.
+    ("GET", "/api/admin/plans"),
+    ("POST", "/api/admin/libraries"),
+    ("POST", "/api/admin/libraries/{org_slug}/operational-identity"),
 }
 
 _PROBE = """
