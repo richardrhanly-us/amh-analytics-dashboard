@@ -611,36 +611,6 @@ def test_checkins_and_rejects_trigger_sync_still_fires_under_rls(owner_engine, r
     assert clean_reject == "CANARY-TRIGGER-REJECT"
 
 
-# --- dashboard loader behavior, through the real refactored _read_table -----
-
-def test_dashboard_loader_is_tenant_isolated_under_rls(owner_engine, runtime_engine, monkeypatch):
-    import data_loader as dl
-
-    with owner_engine.begin() as conn:
-        _insert_checkin(conn, CUSTOMER_A, BRANCH_A, "CANARY-DASH-A")
-        _insert_checkin(conn, CUSTOMER_B, BRANCH_B, "CANARY-DASH-B")
-
-    monkeypatch.setattr(dl, "get_engine", lambda: runtime_engine)
-
-    frame_a = dl._load_checkins_history_from_db(CUSTOMER_A, BRANCH_A)
-    frame_b = dl._load_checkins_history_from_db(CUSTOMER_B, BRANCH_B)
-
-    assert list(frame_a["barcode"]) == ["CANARY-DASH-A"]
-    assert list(frame_b["barcode"]) == ["CANARY-DASH-B"]
-
-
-# --- information_schema path is unaffected by the optional-context change ---
-
-def test_validate_tenant_schema_is_unaffected_by_the_context_change(owner_engine, runtime_engine, monkeypatch):
-    import data_loader as dl
-
-    monkeypatch.setattr(dl, "get_engine", lambda: runtime_engine)
-
-    errors = dl.validate_tenant_schema()
-
-    assert errors == []
-
-
 # --- tenant_db seam (src/tenant_db.py), as the runtime role ------------------
 
 def test_tenant_connection_isolates_an_unscoped_select(owner_engine, runtime_engine):

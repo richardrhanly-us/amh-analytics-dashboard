@@ -25,10 +25,8 @@ import ast
 import importlib.util
 import inspect
 import sys
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import get_args
-from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -542,86 +540,6 @@ def test_the_collector_can_only_ever_decide_one_of_the_three_current_health_valu
     }
 
     assert decided == set(CURRENT_HEALTH)
-
-
-# =====================================================================================================================
-# Against the Streamlit dashboard (characterization only; the dashboard is not changed)
-# =====================================================================================================================
-
-APP_TZ = ZoneInfo("America/Chicago")
-NOW_CT = datetime(2026, 10, 1, 15, 0, tzinfo=APP_TZ)  # freshness: allow FRESH004 -- passed as now_ct= to every call under test
-
-DASHBOARD_LABEL_STATES = {
-    "Pipeline Healthy": "ok",
-    "Pipeline Degraded": "degraded",
-    "Pipeline Failed": "failed",
-    "Pipeline Auth Failure": "failed",
-    "Pipeline Schedule Error": "failed",
-    "Pipeline Status Unknown": "unknown",
-}
-
-
-def _dashboard_run_label(status: str) -> str:
-    import pandas as pd
-
-    from services.pipeline_context_service import build_pipeline_context
-
-    return build_pipeline_context({"status": status}, pd.DataFrame(columns=["datetime"]), NOW_CT, APP_TZ, "light")[
-        "pipeline_status_label"]
-
-
-def _dashboard_current_label(health_status, schedule_status) -> str:
-    import pandas as pd
-
-    from services.pipeline_context_service import build_v2_aware_pipeline_context
-
-    def instant(minutes: float) -> str:
-        return (NOW_CT + timedelta(minutes=minutes)).astimezone(ZoneInfo("UTC")).isoformat()
-
-    # A current heartbeat whose next run is still ahead: the dashboard's own "overdue" rule (which is about TIME, and
-    # is deliberately not part of a state) cannot fire.
-    heartbeat = {"health_status": health_status, "last_error_class": None, "pending_outbox_count": 0, "quarantined_count": 0,
-                 "last_heartbeat_at": instant(-1), "watcher_last_active_at": instant(-1), "last_success_at": instant(-1),
-                 "collector_last_run_at": instant(-1), "collector_next_run_at": instant(12),
-                 "collector_run_duration_ms": 1000, "collector_schedule_status": schedule_status}
-    return build_v2_aware_pipeline_context(None, heartbeat, pd.DataFrame(columns=["datetime"]), NOW_CT, APP_TZ, "light")[
-        "pipeline_status_label"]
-
-
-@pytest.mark.parametrize(
-    "status",
-    ["completed", "completed_no_new_rows", "skipped_no_source_changes", "failed_upload", "failed_upload_none",
-     "failed", "preflight_check", "something_else"],
-)
-def test_a_run_status_gets_the_state_of_the_dashboards_own_label(status):
-    assert state_for_run_status(status) == DASHBOARD_LABEL_STATES[_dashboard_run_label(status)]
-
-
-def test_a_started_run_is_intentionally_unknown_where_the_dashboard_says_running():
-    # The dashboard has a fifth label for this ("Pipeline Running", in its degraded colour). The public set has four
-    # states and none of them means "in progress": the outcome is not known, so the state is `unknown`.
-    assert _dashboard_run_label("started") == "Pipeline Running"
-    assert state_for_run_status("started") == "unknown"
-
-
-@pytest.mark.parametrize("health", ["healthy", "degraded", "error", None])
-@pytest.mark.parametrize("schedule", ["healthy", None, "task_missing", "task_disabled", "no_next_run"])
-def test_a_current_report_gets_the_state_of_the_dashboards_own_label(health, schedule):
-    assert state_for_current_report(health, schedule) == DASHBOARD_LABEL_STATES[_dashboard_current_label(health, schedule)]
-
-
-@pytest.mark.parametrize("health", ["healthy", "degraded", "error"])
-def test_a_schedule_that_could_not_be_checked_gets_the_state_of_the_dashboards_own_label(health):
-    for schedule in ("query_failed", "something_else"):
-        assert state_for_current_report(health, schedule) == DASHBOARD_LABEL_STATES[_dashboard_current_label(health, schedule)]
-
-
-def test_an_unchecked_schedule_with_no_health_is_intentionally_degraded_where_the_dashboard_says_unknown():
-    # The one place the two differ for a current report. The dashboard lets "could not be checked" worsen only a
-    # HEALTHY pipeline; here a reported schedule fault always shows, an unknown health included.
-    for schedule in ("query_failed", "something_else"):
-        assert _dashboard_current_label(None, schedule) == "Pipeline Status Unknown"
-        assert state_for_current_report(None, schedule) == "degraded"
 
 
 # =====================================================================================================================

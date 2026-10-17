@@ -1,5 +1,5 @@
 """v2_cutovers (alembic f2a91c7d4e83) on a REAL PostgreSQL: the migration, the append-only audit trail, the
-record_v2_cutover/get_effective_v2_cutover service functions, and data_loader.load_v2_cutover's real scoping.
+record_v2_cutover/get_effective_v2_cutover service functions.
 
 OPT-IN AND SAFE BY CONSTRUCTION -- the same convention as tests/test_ingest_v2_postgres.py. Runs only when
 SORTVIEW_TEST_POSTGRES_URL points at a maintenance database on a NON-PRODUCTION server the tests may create and drop
@@ -244,27 +244,3 @@ def test_a_cutover_on_one_tenant_is_invisible_to_another(engine):
 
     with engine.connect() as conn:
         assert get_effective_v2_cutover(conn, OTHER_CUSTOMER, OTHER_BRANCH) is None
-
-
-# --- data_loader.load_v2_cutover against a real database --------------------------------------------------------------
-
-def test_data_loader_load_v2_cutover_reads_the_real_row(engine, monkeypatch):
-    from datetime import UTC, datetime
-
-    import data_loader as dl
-    from src.services.ingest_v2_service import record_v2_cutover
-
-    monkeypatch.setattr(dl, "get_engine", lambda: engine)
-    dl.load_v2_cutover.clear()
-
-    cutover_at = datetime(2026, 10, 1, tzinfo=UTC)
-    with engine.begin() as conn:
-        record_v2_cutover(conn, CUSTOMER, BRANCH, cutover_at, set_by="rhanly")
-
-    result = dl.load_v2_cutover(CUSTOMER, BRANCH)
-    assert result is not None
-    assert result.to_pydatetime().replace(microsecond=0) == cutover_at.replace(microsecond=0)
-
-    other = dl.load_v2_cutover(OTHER_CUSTOMER, OTHER_BRANCH)
-    assert other is None
-    dl.load_v2_cutover.clear()

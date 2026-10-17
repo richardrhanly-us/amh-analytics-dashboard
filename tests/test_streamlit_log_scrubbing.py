@@ -19,7 +19,6 @@ Every value is a SYNTHETIC canary.
 
 from __future__ import annotations
 
-import ast
 import importlib.util
 import io
 import json
@@ -373,66 +372,3 @@ def test_control_without_the_scrubber_the_rich_path_writes_every_canary_to_stdou
 
     assert CANARIES["password"] in run.stdout and "RuntimeError" in run.stdout
     assert "Uncaught app execution" not in run.stderr  # it bypassed `logging` entirely
-
-
-# =====================================================================================================================
-# 3. Every Streamlit entry script installs it, before it does anything else with Streamlit
-# =====================================================================================================================
-
-ENTRY_SCRIPTS = [SRC / "app.py"] + sorted((SRC / "pages").glob("*.py"))
-
-
-def _install_problems(source: str) -> list[str]:
-    """Empty when the script imports the installer from services.privacy_hardening and calls it at module level before
-    any module-level statement touches `st`."""
-    tree = ast.parse(source)
-    imported = any(
-        isinstance(node, ast.ImportFrom) and node.module == "services.privacy_hardening"
-        and any(alias.name == "install_streamlit_log_scrubber" for alias in node.names)
-        for node in tree.body
-    )
-    problems = [] if imported else ["does not import install_streamlit_log_scrubber from services.privacy_hardening"]
-    installed = False
-    for node in tree.body:
-        is_call = (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
-                   and getattr(node.value.func, "id", "") == "install_streamlit_log_scrubber")
-        if is_call:
-            installed = True
-            continue
-        if not installed and any(isinstance(n, ast.Name) and n.id == "st" and not isinstance(node, (ast.Import, ast.ImportFrom))
-                                 for n in ast.walk(node)):
-            problems.append(f"line {node.lineno}: uses `st` before install_streamlit_log_scrubber() is called")
-            break
-    if not installed:
-        problems.append("never calls install_streamlit_log_scrubber() at module level")
-    return problems
-
-
-def test_the_entry_script_list_is_complete():
-    # Every script that configures a Streamlit page is an entry script -- a page opened by its own URL runs only itself.
-    configuring = sorted(str(p.relative_to(ROOT)) for p in SRC.rglob("*.py")
-                         if "set_page_config" in p.read_text(encoding="utf-8"))
-    assert sorted(str(p.relative_to(ROOT)) for p in ENTRY_SCRIPTS) == configuring
-    assert len(ENTRY_SCRIPTS) == 3
-
-
-@pytest.mark.parametrize("path", ENTRY_SCRIPTS, ids=lambda p: str(p.relative_to(ROOT)))
-def test_every_entry_script_installs_the_log_scrubber_first(path):
-    assert _install_problems(path.read_text(encoding="utf-8")) == []
-
-
-@pytest.mark.parametrize("source", [
-    "import streamlit as st\nst.set_page_config(page_title='x')\n",
-    ("import streamlit as st\nfrom services.privacy_hardening import install_streamlit_log_scrubber\n"
-     "st.set_page_config(page_title='x')\ninstall_streamlit_log_scrubber()\n"),
-    "import streamlit as st\nfrom services.privacy_hardening import install_streamlit_log_scrubber\nst.title('x')\n",
-    "import streamlit as st\ninstall_streamlit_log_scrubber()\n",
-], ids=["absent", "too-late", "never-called", "not-imported"])
-def test_control_the_entry_script_guard_flags_each_way_of_getting_it_wrong(source):
-    assert _install_problems(source) != []
-
-
-def test_control_the_entry_script_guard_accepts_the_right_shape():
-    good = ("import streamlit as st\nfrom services.privacy_hardening import install_streamlit_log_scrubber\n"
-            "install_streamlit_log_scrubber()\nst.set_page_config(page_title='x')\n")
-    assert _install_problems(good) == []

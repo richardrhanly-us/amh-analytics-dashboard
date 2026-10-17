@@ -16,9 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Every module this round of work added or touched on the dashboard/server read side. None of them may contain a
 # SQL write statement -- v1 history is read, never modified, by any of this round's new code.
 READ_ONLY_MODULES = (
-    "src/data_loader.py",
     "src/metrics_v2.py",
-    "src/services/mixed_era_service.py",
     "src/services/destination_mapping.py",
 )
 

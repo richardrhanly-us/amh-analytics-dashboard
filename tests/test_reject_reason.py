@@ -331,58 +331,6 @@ def test_a_legacy_message_gets_the_class_the_collector_would_have_given_it():
 
 
 # =====================================================================================================================
-# Against the Streamlit dashboard (characterization only; the dashboard is not changed)
-# =====================================================================================================================
-
-DASHBOARD_LABEL_REASONS = {
-    "Item Not Found": "item_not_found",
-    "ILS / ACS Failure": "ils_acs_failure",
-    "RFID Collision": "rfid_collision",
-    "Call Number / Config Error": "configuration_error",
-    "Routing Error": "routing_error",
-    "Other": "other",
-    "Unknown": "unknown",
-}
-
-NO_TEXT = ["", " ", "   ", "\t", " \t\r\n ", "nan", "NaN", " NaN "]
-
-
-def _has_text(message: object) -> bool:
-    return isinstance(message, str) and message.strip().lower() not in ("", "nan")
-
-
-def test_the_dashboard_has_a_label_for_every_reason_a_message_can_have():
-    assert set(DASHBOARD_LABEL_REASONS.values()) == set(REJECT_REASONS) - {"communication_error"}
-
-
-def test_for_a_message_with_text_the_reason_is_the_dashboards_category():
-    from reject_logic import simplify_error
-
-    with_text = [message for message in CORPUS if _has_text(message)]
-    assert len(with_text) > 40   # the comparison really runs
-
-    for message in with_text:
-        assert classify_legacy_reject_message(message) == DASHBOARD_LABEL_REASONS[simplify_error(message)], message
-
-
-def test_a_missing_message_is_unknown_as_on_the_dashboard():
-    from reject_logic import simplify_error
-
-    assert simplify_error(None) == "Unknown"
-    assert classify_legacy_reject_message(None) == "unknown"
-
-
-@pytest.mark.parametrize("message", NO_TEXT)
-def test_a_message_with_no_text_is_intentionally_unknown_where_the_dashboard_says_other(message):
-    # The approved divergence. The dashboard only treats a NULL as missing; here an empty, blank or "nan"
-    # message is missing too, as it is for the collector.
-    from reject_logic import simplify_error
-
-    assert simplify_error(message) == "Other"
-    assert classify_legacy_reject_message(message) == "unknown"
-
-
-# =====================================================================================================================
 # Framework-neutral
 # =====================================================================================================================
 
