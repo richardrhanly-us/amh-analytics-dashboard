@@ -1,4 +1,3 @@
-import logging
 import os
 import sys
 
@@ -50,33 +49,6 @@ os.environ.setdefault("SORTVIEW_API_TOKEN", "test-agent-token-placeholder")
 # currently has a real SENTRY_DSN configured.
 os.environ["SENTRY_DSN"] = ""
 os.environ["SENTRY_ENVIRONMENT"] = "test"
-
-
-@pytest.fixture(autouse=True)
-def _restore_log_record_factory():
-    # Every Streamlit entry script calls services.privacy_hardening.install_streamlit_log_scrubber(), which replaces the
-    # PROCESS-WIDE log-record factory. Running a page under AppTest would otherwise leave it installed for every later
-    # test in the run, making tests that inspect raw Streamlit log records depend on test order.
-    original = logging.getLogRecordFactory()
-    yield
-    logging.setLogRecordFactory(original)
-
-
-@pytest.fixture(autouse=True)
-def _restore_streamlit_error_details():
-    # install_streamlit_log_scrubber() also pins Streamlit's PROCESS-WIDE `client.showErrorDetails` to "none" and remembers the
-    # value it replaced (services.privacy_hardening.enforce_streamlit_error_details). Put both back after each test, for the
-    # same reason as the log-record factory above: no test may depend on what an earlier one left behind.
-    from streamlit import config
-
-    from services import privacy_hardening
-
-    option = "client.showErrorDetails"
-    value, where = config.get_option(option), config.get_where_defined(option)
-    startup = privacy_hardening._error_details_startup
-    yield
-    config.set_option(option, value, where)
-    privacy_hardening._error_details_startup = startup
 
 
 @pytest.fixture(autouse=True)

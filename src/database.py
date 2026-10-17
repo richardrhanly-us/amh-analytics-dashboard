@@ -5,10 +5,9 @@
 #  File:         database.py
 #
 #  Description: Provides shared database connection utilities for
-#               the SortView dashboard. This file retrieves the
-#               DATABASE_URL from environment variables or Streamlit
-#               secrets and creates a reusable SQLAlchemy database
-#               engine for the application.
+#               SortView. This file retrieves the DATABASE_URL from
+#               the environment and creates a reusable SQLAlchemy
+#               database engine for the application.
 #
 #***************************************************************
 
@@ -24,34 +23,18 @@ from sqlalchemy.engine import Engine
 #  Function:     get_database_url
 #
 #  Description: Retrieves the database connection URL used by the
-#               application. The function first checks the operating
-#               system environment variables, then falls back to
-#               Streamlit secrets when running in Streamlit Cloud.
+#               application from the DATABASE_URL environment variable.
 #
 #  Parameters:  None
 #
 #  Returns:     str - Database connection URL.
 #
-#  Raises:      RuntimeError - If DATABASE_URL is not found in either
-#                              environment variables or Streamlit
-#                              secrets.
+#  Raises:      RuntimeError - If DATABASE_URL is not set.
 #
 #***************************************************************
 
 def get_database_url() -> str:
-    # First try to load the database URL from the system environment.
     database_url = os.getenv("DATABASE_URL")
-
-    # If the environment variable is not available, try Streamlit secrets.
-    # Streamlit is imported only here, so importing this module (and the
-    # services that use get_engine) does not pull Streamlit in.
-    if not database_url:
-        try:
-            import streamlit as st
-
-            database_url = st.secrets.get("DATABASE_URL")
-        except Exception:
-            database_url = None
 
     # Stop the application if no database URL is configured.
     if not database_url:

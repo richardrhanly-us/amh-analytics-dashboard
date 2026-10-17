@@ -98,7 +98,7 @@ def api(monkeypatch):
     for name, value in _SMTP.items():
         monkeypatch.setenv(name, value)
     for name in ("SORTVIEW_CUSTOMER_COOKIE_SECURE", "SORTVIEW_PASSWORD_ATTEMPT_RATE_LIMIT",
-                 "SORTVIEW_PASSWORD_RESET_REQUEST_RATE_LIMIT", "SORTVIEW_APP_URL"):
+                 "SORTVIEW_PASSWORD_RESET_REQUEST_RATE_LIMIT"):
         monkeypatch.delenv(name, raising=False)
     main.limiter.reset()
     yield TestClient(main.app)
@@ -963,21 +963,7 @@ def smtp(monkeypatch):
     return _Smtp
 
 
-def test_the_dashboards_own_reset_email_still_links_to_the_dashboard(monkeypatch, smtp):
-    # Streamlit calls this with no reset_url, exactly as before R8A.
-    monkeypatch.setenv("SORTVIEW_APP_URL", "https://dashboard.example.test/")
-
-    email_service.send_password_reset_email(recipient_email="user@example.invalid", reset_token="abc123")
-
-    (message,) = smtp.sent
-    assert message["To"] == "user@example.invalid" and message["Subject"] == "Reset your SortView password"
-    assert "https://dashboard.example.test/?reset_token=abc123" in message.get_content()
-    assert "/reset-password" not in message.get_content()
-    assert email_service.build_password_reset_url("abc123") == "https://dashboard.example.test/?reset_token=abc123"
-
-
 def test_the_customer_apis_reset_email_links_to_the_customer_application_and_needs_no_dashboard_address(monkeypatch, smtp):
-    monkeypatch.delenv("SORTVIEW_APP_URL", raising=False)
     monkeypatch.setenv("SORTVIEW_CUSTOMER_ALLOWED_ORIGINS", ORIGIN)
     monkeypatch.setenv("SORTVIEW_CUSTOMER_APP_URL", ORIGIN)
 
