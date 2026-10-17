@@ -1,7 +1,6 @@
 import os
 import smtplib
 from email.message import EmailMessage
-from urllib.parse import urlencode
 
 
 def _get_required_env(name: str) -> str:
@@ -11,16 +10,6 @@ def _get_required_env(name: str) -> str:
         raise RuntimeError(f"Required environment variable is not set: {name}")
 
     return value
-
-
-def build_password_reset_url(reset_token: str) -> str:
-    """Build the SortView password reset URL."""
-
-    app_url = _get_required_env("SORTVIEW_APP_URL").rstrip("/")
-
-    query = urlencode({"reset_token": reset_token})
-
-    return f"{app_url}/?{query}"
 
 
 _SMTP_SETTINGS = ("SORTVIEW_SMTP_HOST", "SORTVIEW_SMTP_USERNAME", "SORTVIEW_SMTP_PASSWORD", "SORTVIEW_EMAIL_FROM")
@@ -36,13 +25,12 @@ def send_password_reset_email(
     recipient_email: str,
     reset_token: str,
     *,
-    reset_url: str | None = None,
+    reset_url: str,
 ) -> None:
     """Send a one-time SortView password reset email.
 
-    The link in it is `reset_url` when the caller gives one -- the customer API does, so that a reset asked for in
-    the React app is completed there -- and otherwise the dashboard's own address (SORTVIEW_APP_URL), exactly as
-    before. Either application can complete a reset started from the other: the token is the same."""
+    The link in it is `reset_url`, which the caller builds: the customer API gives the customer application's own
+    reset page (customer_api.settings.password_reset_url), so a reset asked for in the React app is completed there."""
 
     smtp_host = _get_required_env("SORTVIEW_SMTP_HOST")
     smtp_username = _get_required_env("SORTVIEW_SMTP_USERNAME")
@@ -50,9 +38,6 @@ def send_password_reset_email(
     email_from = _get_required_env("SORTVIEW_EMAIL_FROM")
 
     smtp_port = int(os.getenv("SORTVIEW_SMTP_PORT", "587"))
-
-    if reset_url is None:
-        reset_url = build_password_reset_url(reset_token)
 
     message = EmailMessage()
     message["Subject"] = "Reset your SortView password"
