@@ -15,7 +15,7 @@ THREE CONCEPTS THAT MUST STAY SEPARATE.
 NO RETENTION PERIOD IS INVENTED HERE. A purge is an operator action, not a timer. Where the product already has a period
 (the Collector's local files, Neon's history window) the documentation cites it; this module does not restate or change it.
 
-THIS MODULE HAS NO ENGINE AND NO STREAMLIT, so the purge tool (a plain script) and the Streamlit services can both import it.
+THIS MODULE HAS NO ENGINE AND NO STREAMLIT, so the purge tool (a plain script) and the services can both import it.
 """
 
 from __future__ import annotations

@@ -135,7 +135,6 @@ def password_reset_request_rate_limit() -> str:
 # under -- in the link's FRAGMENT (#token=...), not its query string. A browser never sends a fragment to a
 # server, so the token is not in the request for the page, in a web server's or proxy's access log, or in a
 # Referer header; the page reads it and submits it in the body of POST /api/auth/password-reset/complete.
-# The dashboard's own reset link (SORTVIEW_APP_URL/?reset_token=...) is a different address and is not built here.
 PASSWORD_RESET_PATH = "/reset-password"  # nosec B105 - a URL path
 PASSWORD_RESET_TOKEN_PARAMETER = "token"  # nosec B105 - a fragment parameter's name
 
@@ -161,9 +160,8 @@ def password_reset_url(token: str) -> str | None:
 
 # --- product time zone ---------------------------------------------------------------
 
-# The one time zone in which "a day" is understood. It is the dashboard's
-# existing setting, SORTVIEW_LIVE_TIMEZONE, read here directly so nothing
-# Streamlit-coupled is imported; there is no per-organization zone.
+# The one time zone in which "a day" is understood: SORTVIEW_LIVE_TIMEZONE,
+# read here directly; there is no per-organization zone.
 DEFAULT_PRODUCT_TIMEZONE = "America/Chicago"
 
 

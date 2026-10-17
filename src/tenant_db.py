@@ -68,8 +68,7 @@ def apply_tenant_context(conn: Connection, customer_id: int | str | None, branch
 #               opened. Uses engine.connect(), not engine.begin(): the
 #               first set_config autobegins the transaction the caller's
 #               queries then run in, and leaving the block closes the
-#               connection, which rolls that transaction back -- the
-#               same lifecycle data_loader._read_table uses. A caller
+#               connection, which rolls that transaction back. A caller
 #               that writes must commit explicitly inside the block.
 #
 #  Parameters:  engine - SQLAlchemy engine to connect with.

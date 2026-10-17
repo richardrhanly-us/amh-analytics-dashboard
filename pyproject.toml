@@ -11,7 +11,7 @@ extend-exclude = [".venv", ".venv_old", "agent/SortViewAgent - What is currently
 # These three are deliberately silenced rather than force-fixed:
 ignore = [
     # Broad `except Exception` is an intentional error-boundary pattern used
-    # throughout the API and dashboard (main.py, data_loader.py, etc.), not a
+    # throughout the API and services (main.py, src/services, etc.), not a
     # bug. Narrowing all ~24 call sites is a dedicated hardening task, not
     # something to force through while bootstrapping CI lint.
     "BLE001",

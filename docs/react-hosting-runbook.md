@@ -10,8 +10,8 @@ existing FastAPI service.
 - **Admin app** (`frontend/admin/`, built to `frontend/dist-admin`): in production at
   **`https://admin.sortviewapp.com`** on its own distribution and bucket, built the same way (**section L**).
 
-> **The customer Streamlit app, <https://sortview.streamlit.app/>, is still live** as a temporary rollback target
-> during the transition. Retiring it is A5 (`docs/PROJECT_MANIFEST.md`).
+> **The React customer app is the only customer UI.** The customer Streamlit app was retired in A5: it is not deployed
+> and is not a fallback. Customer rollback is section M.8.
 
 ```
 Browser ──► https://app.sortviewapp.com, or the generated https://<DISTRIBUTION_DOMAIN>   (CloudFront, global)
@@ -204,8 +204,7 @@ SORTVIEW_CUSTOMER_APP_URL=https://<DISTRIBUTION_DOMAIN>
 - **Leave `SORTVIEW_CUSTOMER_COOKIE_SECURE` unset** (secure). The trial is HTTPS end to end.
 - **Leave `SORTVIEW_ALLOWED_ORIGINS` (CORS) alone.** The app's requests are same-origin, so CORS never
   applies to them. Change it only for a verified cross-origin use, which this trial is not.
-- **Do not change collector or agent configuration, or the Streamlit app's settings.** Streamlit's own reset
-  links use `SORTVIEW_APP_URL`, which is untouched.
+- **Do not change collector or agent configuration.**
 
 Saving environment changes redeploys the DigitalOcean app. Check `https://sortview-app-2p336.ondigitalocean.app/`
 still answers `{"status": "SortView API running"}` afterward.
@@ -326,9 +325,9 @@ current CloudFront path keeps `request.client.host`, and the per-IP limits keyed
 | Problem | Do this |
 | --- | --- |
 | **Bad frontend build** | Restore the previous `index.html`: S3 → the object → Versions → restore the prior version, or `aws s3 cp` the saved `dist/index.html` of the previous commit with `--cache-control "no-cache"`. Invalidate `/index.html` and `/`. The previous hashed assets are still in the bucket (no `--delete`), so it works at once. |
-| **`/api/*` behaving wrongly** (HTML instead of JSON, cookies missing, 403s) | Correct or revert the `/api/*` behavior's settings to section D. Check no custom error responses exist. In production, see section M.8: customers can return to Streamlit while it is fixed. |
-| **Login or origin configuration wrong** | Restore the two DigitalOcean values recorded in section F. Streamlit and the collectors never read them and are untouched. |
-| **The trial hostname** | It is the same distribution as production now. Do not disable the distribution: that takes `app.sortviewapp.com` down with it. |
+| **`/api/*` behaving wrongly** (HTML instead of JSON, cookies missing, 403s) | Correct or revert the `/api/*` behavior's settings to section D. Check no custom error responses exist. In production, see section M.8. |
+| **Login or origin configuration wrong** | Restore the two DigitalOcean values recorded in section F. The collectors never read them and are untouched. |
+| **The trial hostname** | It is the same distribution as production now. Do not disable the distribution: that takes `app.sortviewapp.com` down with it. Its origin must also stay in `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS` (M.5). |
 
 ## K. The customer app's custom domain (done in A4)
 
@@ -470,7 +469,7 @@ aws cloudfront create-invalidation `
 Production holds:
 
 ```
-SORTVIEW_CUSTOMER_ALLOWED_ORIGINS=https://app.sortviewapp.com,https://admin.sortviewapp.com,<during the A4 soak only: the customer trial origin, https://<DISTRIBUTION_DOMAIN>>
+SORTVIEW_CUSTOMER_ALLOWED_ORIGINS=https://app.sortviewapp.com,https://admin.sortviewapp.com,https://d22i2vjcxygt0c.cloudfront.net
 SORTVIEW_ADMIN_ALLOWED_ORIGINS=https://admin.sortviewapp.com
 ```
 
@@ -480,6 +479,8 @@ SORTVIEW_ADMIN_ALLOWED_ORIGINS=https://admin.sortviewapp.com
   - Every admin write checks only the admin list (`require_admin_origin`).
   - A value missing from the customer list breaks sign-in. A value missing from the admin list refuses every admin
     write with 403 `origin_not_allowed`.
+- **The customer list also holds the customer distribution's generated hostname, `https://d22i2vjcxygt0c.cloudfront.net`,** which production
+  requires (M.5). Do not remove it.
 - **Leave these alone:**
   - `SORTVIEW_CUSTOMER_APP_URL` belongs to the customer app (`https://app.sortviewapp.com`, section M.5). It is the
     address password-reset links use, and the admin app has no reset page.
@@ -497,15 +498,14 @@ SORTVIEW_ADMIN_ALLOWED_ORIGINS=https://admin.sortviewapp.com
   - a direct load and refresh of `/libraries/<slug>/installations`;
   - `/api/admin/session` answering 401 JSON when signed out;
   - a forged-Origin POST answering 403 `origin_not_allowed`;
-  - a check that the customer app (`app.sortviewapp.com`), the customer Streamlit app while it remains (until A5)
-    and the collectors are unaffected.
+  - a check that the customer app (`app.sortviewapp.com`) and the collectors are unaffected.
 
 ### L.8 Rollback
 
 | Problem | Do this |
 | --- | --- |
 | **Bad admin build** | Put back the previous known-good build: restore the prior `index.html` version (versioned bucket), or upload the saved `dist-admin` of the previous commit with the commands in L.5. Invalidate `/` and `/index.html`. The previous hashed assets are still in the bucket (no `--delete`). |
-| **Allowed-origin values wrong** (sign-in refused, or admin writes 403 `origin_not_allowed`) | Restore the DigitalOcean values recorded before the change and let the backend redeploy. Streamlit and the collectors never read them. |
+| **Allowed-origin values wrong** (sign-in refused, or admin writes 403 `origin_not_allowed`) | Restore the DigitalOcean values recorded before the change and let the backend redeploy. The collectors never read them. |
 | **CloudFront behavior wrong** (HTML instead of JSON, missing cookies, S3 errors on app routes) | Correct the behavior, origin or function association to L.3. Invalidate the affected paths if cached content is wrong. |
 | **Auth or cookie problem** | Check the cookie attributes (L.1) and the `/api/*` origin request policy, then the allowed-origin values. |
 
@@ -516,8 +516,8 @@ SORTVIEW_ADMIN_ALLOWED_ORIGINS=https://admin.sortviewapp.com
 
 ## M. Production: the customer app at `https://app.sortviewapp.com`
 
-In production since **2026-10-16** (A4, the NBPL customer React cutover). It is the production customer entry point.
-The customer Streamlit app stays live as a temporary rollback target until A5.
+In production since **2026-10-16** (A4, the NBPL customer React cutover). It is the production customer entry point and
+the only customer UI: the customer Streamlit app was retired in A5.
 
 ```
 Browser ──► https://app.sortviewapp.com   (Cloudflare DNS, CNAME, DNS only ──► the customer distribution)
@@ -526,7 +526,8 @@ Browser ──► https://app.sortviewapp.com   (Cloudflare DNS, CNAME, DNS only
 ```
 
 The placeholders `<BUCKET>`, `<DISTRIBUTION_ID>` and `<DISTRIBUTION_DOMAIN>` are those of sections A to J: the real
-values are in the AWS console and are not committed.
+values are in the AWS console and are not committed. The one exception is the generated hostname (`<DISTRIBUTION_DOMAIN>`,
+`d22i2vjcxygt0c.cloudfront.net`), which is named in M.5 because production's allowed-origin list requires it.
 
 ### M.1 What was reused
 
@@ -535,8 +536,8 @@ values are in the AWS console and are not committed.
 - **The existing private S3 bucket** (section C), still read only through Origin Access Control (section E).
 - **The existing ACM certificate** in us-east-1, which covers `app.sortviewapp.com` and `admin.sortviewapp.com`.
 
-No customer data migration was needed: both apps operate on the same production database. The React app reaches it
-through FastAPI; the Streamlit app reads it directly.
+No customer data migration was needed: the React app reaches, through FastAPI, the same production database the
+retired Streamlit app read directly.
 
 ### M.2 Distribution
 
@@ -592,7 +593,7 @@ aws cloudfront create-invalidation `
 Production holds:
 
 ```
-SORTVIEW_CUSTOMER_ALLOWED_ORIGINS=https://app.sortviewapp.com,https://admin.sortviewapp.com,<during the A4 soak only: https://<DISTRIBUTION_DOMAIN>>
+SORTVIEW_CUSTOMER_ALLOWED_ORIGINS=https://app.sortviewapp.com,https://admin.sortviewapp.com,https://d22i2vjcxygt0c.cloudfront.net
 SORTVIEW_CUSTOMER_APP_URL=https://app.sortviewapp.com
 SORTVIEW_ADMIN_ALLOWED_ORIGINS=https://admin.sortviewapp.com
 ```
@@ -602,7 +603,7 @@ SORTVIEW_ADMIN_ALLOWED_ORIGINS=https://admin.sortviewapp.com
 - **`SORTVIEW_CUSTOMER_APP_URL` must be `https://app.sortviewapp.com`**, and must also be in the customer list, or
   password-reset requests answer 503. Reset emails link to `https://app.sortviewapp.com/reset-password#token=…`.
 - **`https://admin.sortviewapp.com` stays in the customer list** as well as the admin list (L.6).
-- **The trial origin** stays in the customer list only for the A4 soak, and is removed after it (A5).
+- **The customer distribution's generated hostname, `https://d22i2vjcxygt0c.cloudfront.net`, must stay in the customer list.** Removing it after the A4 soak was tried in production: customer writes from `https://app.sortviewapp.com` then failed with "Request origin is not allowed.", and restoring it immediately restored normal behavior. The cause is not yet explained. Do not remove it.
 - Leave `SORTVIEW_CUSTOMER_COOKIE_SECURE` unset, and `SORTVIEW_ALLOWED_ORIGINS` (CORS) unchanged.
 - Record the current values privately before any change. Saving environment values redeploys the backend; confirm
   afterwards that it is healthy and the deployed commit is unchanged.
@@ -628,7 +629,7 @@ SORTVIEW_ADMIN_ALLOWED_ORIGINS=https://admin.sortviewapp.com
   Part 4.
 - After every later customer deployment, repeat at least: sign-in, refresh and sign-out; a direct load and refresh of a
   deep route (for example a sorter's reports); `/api/auth/session` answering 401 JSON when signed out; and a check that
-  `admin.sortviewapp.com`, the customer Streamlit app while it remains, and the collectors are unaffected.
+  `admin.sortviewapp.com` and the collectors are unaffected.
 - Repeat section I if the distribution's `/api/*` behavior, its origin, or the backend's hosting changes.
 
 ### M.8 Rollback
@@ -636,10 +637,9 @@ SORTVIEW_ADMIN_ALLOWED_ORIGINS=https://admin.sortviewapp.com
 | Problem | Do this |
 | --- | --- |
 | **Bad customer build** | Restore the prior `index.html` version (versioned bucket), or upload the saved `dist` of the previous commit with the commands in M.4. Invalidate `/` and `/index.html`. The previous hashed assets are still in the bucket (no `--delete`). |
-| **The React customer app cannot be used** | Send customers back to the customer Streamlit app, <https://sortview.streamlit.app/>, which stays separately reachable until A5. Both operate on the same production data, so no data migration or data rollback is required. |
-| **Allowed-origin or app-URL values wrong** | Restore the DigitalOcean values recorded before the change and let the backend redeploy. Streamlit and the collectors never read them. |
+| **The React customer app cannot be used** | Roll back whichever change caused it: the build (row above), the DigitalOcean values or CloudFront configuration (rows below), or the backend by redeploying its previous known-good commit on DigitalOcean. There is no other customer UI to move customers to. |
+| **Allowed-origin or app-URL values wrong** | Restore the DigitalOcean values recorded before the change and let the backend redeploy. The collectors never read them. |
 | **CloudFront behavior wrong** | Correct the behavior, origin or function association to M.2. Invalidate the affected paths if cached content is wrong. |
 
-- The distribution, bucket and certificate can stay provisioned even if customer traffic is moved back to Streamlit.
-- Once A5 retires the customer Streamlit app, rollback is this section's artifact, configuration and CloudFront steps
-  only.
+- There is no alternative customer UI: the customer Streamlit app was retired in A5. Rollback is this section's
+  artifact, configuration, CloudFront and backend steps only.

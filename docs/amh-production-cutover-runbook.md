@@ -323,7 +323,7 @@ Reasoning, addressing each option explicitly:
 
 ### Stage 9 -- Backend/database/dashboard confirmation
 
-- [ ] Confirm the Streamlit dashboard reflects the new canonical-sourced
+- [ ] Confirm the customer app reflects the new canonical-sourced
       rows normally (live view, counts, no tracebacks).
 - [ ] Spot-check a handful of canonical-sourced rows against what Tech
       Logic actually recorded for the same events (parity check, same

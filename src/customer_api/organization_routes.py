@@ -2,8 +2,8 @@
 
 These routes describe what the user may reach, in SaaS terms only: an
 organization and a branch are identified by slug. They read the uncached core
-services (services.access_service, services.entitlement_service) -- never the
-Streamlit adapters -- and services.sorter_inventory_service, so membership,
+services (services.access_service, services.entitlement_service) and
+services.sorter_inventory_service, so membership,
 role, organization status and the organization's sorting machines are looked
 up fresh on every request. They run no SQL of their own, set no tenant
 context and read no operational table.

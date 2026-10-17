@@ -135,8 +135,7 @@ never by message, and are raised outside `except` blocks so no message survives 
 ### Run and schedule diagnostics
 
 Each heartbeat also carries four diagnostics about the invocation and its Windows Scheduled Task (`collector/v2_schedule.py`).
-The dashboard's Pipeline Status panel shows them as *Last Collector Run*, *Next Scheduled Run*, *Latest Run Duration* and
-*Collector Schedule*.
+React admin's diagnostics for a library (`/api/admin`, platform administrators only) shows them as reported.
 
 | Field | Source and meaning |
 |---|---|
@@ -166,12 +165,11 @@ The collector fails closed: anything it cannot verify is `query_failed`, and it 
 failed validation. Nothing the child process prints, and no exception text, is ever logged or sent; the only thing recorded
 is the fixed code (`v2 schedule checked | schedule_status=<code>`).
 
-**What the dashboard does with it.** `task_missing`, `task_disabled` and `no_next_run` turn the panel's headline to
-"Pipeline Schedule Error" at once. `query_failed` shows an error on the schedule line but only degrades an otherwise healthy
-pipeline, since arriving heartbeats show the collector is running. An ingestion error, including an auth failure, keeps its own
-headline. The dashboard also checks the clock: a `healthy` schedule whose next run is more than two cadences (30 minutes) in
-the past, with no newer heartbeat, is shown as overdue. Two cadences, not one, because the task's
-`MultipleInstancesPolicy=IgnoreNew` lets one trigger be skipped legitimately while an earlier run is still going.
+**How it is used.** The customer API's pipeline state takes the schedule code into account (`services/pipeline_state.py`)
+but makes no judgement of how old a report is. The retired Streamlit dashboard also flagged a `healthy` schedule whose next run
+was more than two cadences (30 minutes) in the past -- two, not one, because the task's `MultipleInstancesPolicy=IgnoreNew`
+lets one trigger be skipped legitimately while an earlier run is still going. Nothing does that today; the scheduled
+pipeline-health check (`docs/monitoring.md`) is what notices a site that stops reporting.
 
 **Deployment order.** (1) apply migration `c8d5f2a47e91`; (2) deploy the API and dashboard that accept, store and read the
 fields; (3) deploy the new Collector release. A Collector that sends these fields must not be deployed against the old API,
@@ -397,8 +395,8 @@ neither the `key_id`, the secret, a rule nor a server response. It runs the same
 to `active` and stamps `installed_at` / `last_seen_at`, which `/v2/status` never touches. `POST /v2/status` follows only when that
 probe passed **and** every local v2 check passed. No event is uploaded.
 
-**The v2 probe writes a heartbeat.** `/v2/status` stores a full snapshot on the ingest key, and that snapshot is what the dashboard
-shows for a branch on Contract v2. When a run has already written `status_v2.json`, preflight re-sends that run's health, error
+**The v2 probe writes a heartbeat.** `/v2/status` stores a full snapshot on the ingest key, and that snapshot is what React admin's
+diagnostics shows for a branch on Contract v2. When a run has already written `status_v2.json`, preflight re-sends that run's health, error
 class, last success, quarantine count and start time (the run and schedule diagnostics are omitted, so the server holds NULL for
 them until the next scheduled run). On a fresh install there is nothing to re-send, so it sends the smallest valid snapshot,
 `healthy`. **That heartbeat means "v2 preflight passed", not "a production run has happened":** a fresh install can show a healthy
@@ -440,13 +438,12 @@ A3b):** the administration app's contract choice starts on Contract v2, and the 
 * **The task.** No task exists until the secret, both preflights and the bootstrap have succeeded; it is registered
   Disabled and enabled only as setup's final action. A failure at any earlier point leaves no active task. Setup never
   starts a run: the first one is the task's next 15-minute trigger, and it reads from the cursor seeded at step 8.
-* **The dashboard opens on the first stored event.** A branch is created `onboarding_status = 'pending'`, and the
-  dashboard shows nothing for it until it is `ready`. The first `/v2/upload` that actually **inserts** an event moves
+* **The customer app opens on the first stored event.** A branch is created `onboarding_status = 'pending'`, and the
+  customer app shows it as waiting for first data until it is `ready`. The first `/v2/upload` that actually **inserts** an event moves
   the uploading token's own branch from `pending` to `ready`, in that upload's transaction: the events and the
   transition are stored together or not at all (if the transition fails, the upload is a `500` and the Collector
   retries it). An upload of nothing but duplicates, an empty or invalid request, a conflict, a heartbeat and an
-  enrollment never do it, and a branch in any other state (`paused`, for one) is left as it is. The dashboard caches
-  readiness for up to two minutes. **Contract v2 only:** the legacy `/upload` route does not do this, so a fresh
+  enrollment never do it, and a branch in any other state (`paused`, for one) is left as it is. **Contract v2 only:** the legacy `/upload` route does not do this, so a fresh
   contract 1 library still stays `pending` -- to be closed before a fresh contract 1 customer is onboarded.
 * **A legacy code.** The first request is refused `contract_not_permitted` without using the code; setup sends the legacy
   request (no `contract_version`) once and follows the legacy path unchanged -- including its question before enabling

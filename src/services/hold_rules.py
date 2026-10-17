@@ -1,9 +1,8 @@
 """The v1 hold classifier's rules: the `internal_routing` lists of patron account names and `|DA...|` markers, as
 metrics.build_acs_item_summary compares them.
 
-No Streamlit, no database, no request: the dashboard (services.settings_service, which re-exports these) and the
-customer API's hold report (services.hold_report_service) build the same object from the same stored block, and
-nothing else about the rules is decided here.
+No Streamlit, no database, no request: the customer API's hold report (services.hold_report_service) builds the
+object from the stored block, and nothing else about the rules is decided here.
 
 They decide v1 (pre-cutover) holds only. A Contract v2 hold arrives already classified by the collector, from the
 collector's own local rules, and these lists do not reach it.

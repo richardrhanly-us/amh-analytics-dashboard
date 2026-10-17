@@ -73,8 +73,8 @@ def _empty_summary_v2():
 #
 #  Description: Builds the v2 equivalent of build_acs_item_summary's
 #               return shape from an already-privacy-safe,
-#               already-classified acs_item_events dataframe (see
-#               src/data_loader.py::_normalize_acs_item_events_df). Holds
+#               already-classified acs_item_events dataframe (as
+#               services/hold_report_service.py builds it). Holds
 #               parity for holds/ILL/ILL-by-branch/programming
 #               (v2's "branch services")/collection-services totals.
 #
