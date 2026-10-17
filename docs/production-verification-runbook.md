@@ -1,304 +1,40 @@
 # Production verification runbook
 
-Four things the merged work cannot finish from the repository alone:
+How SortView's production is verified, and the record of each production verification so far:
 
-1. **Legacy plaintext admin-lock passwords** may still sit in production rows written by older versions of the Admin
-   Settings page. The application now stores only hashes and still *accepts* a legacy plaintext value; this runbook
-   is how the remaining rows are found and converted.
-2. **Streamlit browser and log redaction** are enforced by code in this repository, but whether the *hosting
-   platform* honors the configuration and captures only the scrubbed output has to be checked on a live deployment.
-3. **The production React admin app** (`https://admin.sortviewapp.com`, A3): that its hosting, sign-in, origin
-   guards and admin operations work in production. The recorded result is in Part 3.
-4. **The production React customer app** (`https://app.sortviewapp.com`, A4): that the NBPL customer cutover works
-   in production. The recorded result is in Part 4.
+- **Routine production check** (below): what to confirm after a deployment or a production change.
+- **Part 3, the production React admin app** (`https://admin.sortviewapp.com`, A3). Recorded 2026-10-15.
+- **Part 4, the production React customer app** (`https://app.sortviewapp.com`, A4). Recorded 2026-10-16.
+- **Part 5, the retirement of the customer Streamlit app** (A5). Recorded 2026-10-17.
 
-**Parts 1 and 2 have not been run against production** (Part 2's hosted checks used temporary non-production apps).
-**Parts 3 and 4 are production verifications**, recorded with their evidence. Every production step needs explicit approval
-first (see "Rules"). Everything the repository *can* prove is proved by automated tests, named where relevant.
+Parts 1 and 2 (the legacy admin-lock password migration and the hosted Streamlit redaction checks) were removed when
+A5 retired the customer Streamlit app, the admin lock and their tooling; they are in git history. The numbering of
+Parts 3 to 5 is kept so that existing references stay valid.
 
 ## Rules
 
-- Start **read-only**. No `UPDATE` runs until a reviewed dry run has been approved.
-- Never print, log, screenshot or paste a password, a hash, or `settings_json`. The tools below never output one.
+- Start **read-only**. No production write runs until its exact statement and target have been reviewed and approved.
+- Never print, log, screenshot or paste a password, a hash, a token, a session cookie or raw `settings_json`.
 - `NBPL` is production. Show the exact statement and the exact target before touching it.
-- Do the migration first against a **non-production copy** (a Neon branch, see 1.3) and only then production.
+- Rehearse a data change on a **non-production copy** (a Neon branch) before production.
 
----
+## Routine production check
 
-# Part 1 -- Admin-lock credentials
+After a backend, customer or admin deployment, or a production configuration change, confirm at least:
 
-## 1.1 Current storage model (verified from the merged code)
-
-| Question | Answer |
+| Area | Check |
 |---|---|
-| Table | `organization_settings` (one row per organization: `organization_id UNIQUE`), column `settings_json JSONB NOT NULL DEFAULT '{}'`, plus `id`, `created_at`, `updated_at`. `branch_settings` has the same shape but current code never writes a `security` block there. |
-| Legacy plaintext path | `settings_json -> 'security' -> 'admin_password'` (a JSON string). Written by older versions of `src/pages/1_admin_settings.py`. |
-| New hash path | `settings_json -> 'security' -> 'admin_password_hash'` (a JSON string, werkzeug scheme `scrypt:...$salt$hash`, the same as `app_users`). |
-| Can both exist? | Yes. `verify_admin_password` (`src/services/admin_lock_service.py`) checks the hash **first**; the legacy value is consulted only when there is no hash. A stale plaintext value next to a hash is therefore inert. |
-| Who writes the hash? | Only `build_security_settings`, when an owner/admin saves Admin Settings. It also converts a legacy value into a hash of the same password on any save (blank password field = keep the current password). |
-| Is removing the legacy key safe once a hash exists? | Yes: the hash already takes precedence, so deleting the plaintext key changes nothing for authentication (`test_a_stored_hash_takes_precedence_over_a_stale_legacy_value`). |
-| What is *not* a credential | An empty `admin_password` (`""`) or JSON `null` -- the old default. The application treats it as "no password". |
-| Odd shapes | A non-string `admin_password` (e.g. a number) is **not** a password to the application (`_text()` returns `""`), so the lock silently would not apply. The migration does not guess: it stops. |
-| Where else it can live | Branch level: `branch_settings.settings_json`. Branch values override the organization's per key, so a branch-level credential is a special case that needs a human decision. |
-| Not affected | `app_users` login passwords (separate table, already hashed). |
+| Backend | `GET https://sortview-app-2p336.ondigitalocean.app/` answers `{"status": "SortView API running"}`; the deployed commit is the intended one |
+| Customer app | `https://app.sortviewapp.com` loads; a deep route (a sorter's reports) loads directly and on refresh |
+| Customer API through CloudFront | `GET https://app.sortviewapp.com/api/auth/session`, signed out, answers 401 JSON (never the app's HTML) |
+| Customer sign-in and data | Sign in as an NBPL user; Live Today and Reports show current data; sign out |
+| Customer writes | A settings save (or sign-in/sign-out, which are guarded writes) succeeds, so the customer Origin guard accepts the app |
+| Admin app | `https://admin.sortviewapp.com` loads; a platform administrator can sign in, open a library and sign out; `/api/admin/session` answers 401 JSON when signed out |
+| Collectors and pipeline | The latest scheduled "Pipeline health check" run is green, and Live Today's "last reported" keeps advancing |
+| Allowed origins | `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS` still contains `https://app.sortviewapp.com`, `https://admin.sortviewapp.com` and `https://d22i2vjcxygt0c.cloudfront.net`; `SORTVIEW_ADMIN_ALLOWED_ORIGINS` contains `https://admin.sortviewapp.com` (hosting runbook, M.5 and L.6) |
 
-## 1.2 Read-only inventory
-
-`scripts/admin_lock_inventory.sql` -- two queries (`detail`, `summary`), `SELECT` only. The stored values are only
-*compared* inside the server; the result contains row ids, owner ids, slugs and a state, never a password, a hash or
-any part of `settings_json`. Safe for the Neon SQL editor. Run one query at a time.
-
-| State | Meaning | Action |
-|---|---|---|
-| `no_lock` | no password stored | none (an empty `admin_password` key is reported in `empty_legacy_key_present`; harmless) |
-| `plaintext_only` | plaintext, no hash | **migrate** |
-| `hash_only` | hash only | none (already safe) |
-| `both` | hash **and** stale plaintext | migrate: drop the stale plaintext key |
-| `unexpected_shape` | JSON not shaped as the application writes it | **stop; a person decides** |
-
-The same classification is implemented in Python (`scripts/migrate_admin_lock_hashes.py`) and
-`tests/test_admin_lock_migration_postgres.py` proves the SQL and the Python agree on every state, including the
-unexpected shapes, and that the query returns no secret.
-
-**Run it only after approval.** Target: the production Neon database, via the Neon SQL editor or any read-only
-session. Decision: if the summary shows no `plaintext_only` and no `both` rows in `organization_settings`, and no
-non-`no_lock` rows in `branch_settings`, Part 1 is finished and no migration is needed.
-
-## 1.3 Migration procedure
-
-The tool is `scripts/migrate_admin_lock_hashes.py`. It is the safest way because the hash must be computed in Python
-by the application's own helper (`hash_admin_password`) -- SQL cannot produce a matching scrypt hash, and reversible
-SQL-side encryption is deliberately not used -- and because it can prove its own result before committing.
-
-**Behavior (all covered by tests against a real PostgreSQL):**
-
-- **Dry run by default**, in a `READ ONLY` transaction (it cannot write). It prints only counts, settings row ids,
-  organization ids and slugs, and state names. `DATABASE_URL` comes from the environment, never the command line.
-- **Fail closed:** any `unexpected_shape` row, or any admin-lock key at branch level, stops the run (exit 2) with no
-  change, and blocks `--execute` for *every* row until resolved.
-- **Execute needs all three:** `--execute`, `--confirm-database <name>` equal to the actual target database, and
-  explicit `--row-id` values copied from the reviewed dry run.
-- **One transaction.** It locks the approved rows (`SELECT ... FOR UPDATE`, so nothing can change between check and
-  update), re-classifies them under the lock, hashes the plaintext in memory, and runs a guarded `UPDATE`
-  (`jsonb_set` / `#-`, so every unrelated setting is untouched). The `WHERE` clause re-tests the row id and the old
-  state **on the server**, so the plaintext is never sent back to the database. Exactly one row must match; the row is
-  then re-read and its whole JSON compared with the expected result; the stored hash must verify the original
-  password. Any failure rolls the whole transaction back.
-- `plaintext_only` -> hash stored, plaintext key removed. `both` -> only the stale plaintext key removed.
-  `hash_only` / `no_lock` -> skipped. **Re-running is a no-op.**
-- Nothing sensitive is printed or logged; SQLAlchemy parameters are hidden; a failure prints only the exception
-  type and location.
-
-**Procedure (each production step needs approval):**
-
-1. **Rehearse on a copy.** Create a Neon branch of production (or restore a snapshot to a throwaway database). Treat it
-   as sensitive -- it contains the same plaintext -- and delete it afterwards. Point `DATABASE_URL` at the copy.
-2. `python scripts/migrate_admin_lock_hashes.py` -- review the counts and ids.
-3. `python scripts/migrate_admin_lock_hashes.py --execute --confirm-database <name> --row-id <id> ...` on the copy.
-4. Re-run the dry run: it must report `plaintext_only 0, both 0`. Run the inventory SQL: same result.
-5. Have an owner/admin of a migrated organization confirm, on a deployment pointed at the copy, that their **existing**
-   password unlocks Admin Settings and a wrong one does not.
-6. Repeat steps 2-4 on production with the approved ids. Record the Neon point-in-time timestamp immediately before
-   (see rollback).
-7. After production: dry run reports nothing left; inventory shows no `plaintext_only` / `both`; an org admin confirms
-   unlock with the existing password and rejection of a wrong one.
-
-## 1.4 Rollback
-
-- **The plaintext is never restored, by design.** The script keeps no copy of it. A "rollback" that put plaintext back
-  would re-create the exposure this work removes.
-- **Roll code forward, not back.** The merged application understands both formats. If application code *must* be
-  rolled back to a version from before the hash was introduced, that old code reads only `admin_password`, so a
-  migrated organization would have **no lock** (the Admin Settings prompt disappears; owner/admin role checks still
-  apply) until the new code is redeployed. Do not set a new password in the old code -- it would store plaintext
-  again.
-- **A wrong hash (locked-out admin).** The script verifies the hash before and after writing, so this is not
-  expected. Break-glass, with approval, for one row: remove the hash so the lock is off, then have the admin set a new
-  password in the application:
-  `UPDATE organization_settings SET settings_json = settings_json #- '{security,admin_password_hash}', updated_at = CURRENT_TIMESTAMP WHERE id = <row id>`.
-- **Point-in-time restore is a last resort.** It restores the whole database (losing everything written since) *and*
-  brings the plaintext back.
-
-## 1.5 Limits -- what migrating the rows does not remove
-
-- **Neon history.** Earlier states of the rows stay in Neon's point-in-time/branch history for the plan's retention
-  window. The plaintext ages out with it; it cannot be purged from the repository side. (Retention setting: check the Neon console.)
-- **Git history.** `src/branch_settings.json` carried a password value in earlier commits (removed from the file since).
-  If that value was or is a real admin password, rotate it: after the migration an owner/admin sets a new password in
-  Admin Settings.
-- Copies made by anyone who read the database or an old backup before the migration are outside our control.
-
----
-
-# Part 2 -- Live Streamlit redaction verification
-
-## 2.1 What is guaranteed where
-
-| | Proved by | Where |
-|---|---|---|
-| The setting `client.showErrorDetails = "none"` is valid and read from `.streamlit/config.toml` when Streamlit starts in the repo root | `tests/test_streamlit_error_details.py` | repo |
-| An uncaught exception shows the browser only the generic message (no message, type, traceback, secret) | `tests/test_streamlit_error_details.py`, `tests/test_real_apps_redaction.py` | repo |
-| Streamlit's own log of that exception carries no message/values, only type, SQLSTATE and SortView's frames; the `rich` console print is off | `tests/test_streamlit_log_scrubbing.py`, `tests/test_real_apps_redaction.py` (real main app, real DB failure) | repo |
-| Every Streamlit entry script installs the scrubber before anything else | guard in `tests/test_streamlit_log_scrubbing.py` | repo |
-| The same on Streamlit **1.63.0** (the pinned production version) without `rich` | those suites re-run against the pinned dependency set | repo |
-| The hosting platform starts the app from the repository root (so the file is found) | **cannot be proved from the repo** | **hosting** |
-| Whether the platform overrides `client.showErrorDetails` at startup (an environment variable or `--client.showErrorDetails` flag outranks the file) | **it does, on Streamlit Community Cloud**: the platform [documents](https://docs.streamlit.io/deploy/streamlit-community-cloud/status) forcing the legacy `false`, and the hosted canary confirmed it (2.6) | **hosting** |
-| Every entry script then pins `client.showErrorDetails` to `"none"` in code, over whatever the host set (unconditional, no opt-out), on Streamlit 1.63.0 with `false` supplied by environment variable and by flag | `tests/test_streamlit_error_details_enforcement.py`, `tests/test_real_apps_redaction.py` (main app), `tests/test_redaction_canary_app.py` | repo |
-| That Community Cloud lets the in-code `"none"` win over its startup value | **it does**: verified on a hosted canary, PASSED and CLOSED (2.6, final hosted verification) | **hosting** |
-| The platform captures only the process's stdout/stderr, and its log viewer shows the scrubbed line | **cannot be proved from the repo** | **hosting** |
-| Import-time failures on a cold start, before the scrubber runs; text from other libraries' loggers or `print`; the platform's own infrastructure logs | not covered by the scrubber | residual |
-
-## 2.2 Set up an isolated check (never in the production apps)
-
-Use **separate, non-production** Streamlit apps from the same repository and branch (or a branch containing the
-release under test). Do not change the production apps' secrets or settings. Delete these apps when done.
-
-**A. The canary app** -- exercises every canary and the callback path.
-
-- Main file: `scripts/redaction_canary/app.py`.
-- Secret/environment variable: `SORTVIEW_REDACTION_CANARY_ENABLED = "true"`. Without it the app is inert.
-- It shows an **Effective configuration** panel (the value at startup, before SortView's enforcement, and the effective value after it) and three buttons that each raise an uncaught exception whose message
-  contains: a fake password, database URL, API token, patron/card number and e-mail, a fake SQL statement and bound
-  value, and `Failing row contains (...)`. All values start with `CANARY-` / `canary-` / `canary_`.
-
-**B. The real app** -- proves the real entry script, with a real failure and no code changes. (The Super Admin
-Streamlit app was a second real app here until A2 item 8 retired it.)
-
-- One app with main file `src/app.py`.
-- Secret `DATABASE_URL = "postgresql://canary_svc_user:CANARY-DB-PASSWORD-LIVE-0001@canary-db-host-live.example.invalid:5432/canary_db?connect_timeout=3"`
-  -- a database that does not exist. Leave every other secret as the app requires to start.
-- Submit the login form with fake credentials (`nobody@example.invalid` / any password). `authenticate_user` queries
-  the database with nothing catching the failure, so this is a genuine uncaught exception. (Only the *host* canary can
-  appear in a connection error message; the other canary classes are exercised by app A.)
-
-## 2.3 Checklist
-
-Record the result of each line. **Any FAIL means redaction is not effective on that platform.**
-
-**On the canary app (A):**
-
-1. Open the app. The **Effective configuration** panel must show
-   - **at startup (before enforcement)**: the value the platform started Streamlit with. On Streamlit Community Cloud this
-     is `false`, defined in `command-line argument or environment variable` -- that is the platform's documented setting,
-     not a failure, and the panel must not hide it. Anywhere the repository file is found and nothing overrides it, it is
-     `none`, defined in a path ending `.streamlit/config.toml`;
-   - **effective (after enforcement)** = `none`, defined in `<user defined>` (SortView set it in code). **FAIL if it is
-     anything else** -- the in-code pin did not take effect on this platform (and the browser check in item 2 will show
-     the exception type and a traceback);
-   - `repository_config_file_in_working_directory` = `true`;
-   - `log_scrubber_installed` = `true`, `logger.enableRich` = `false`.
-   - Startup `<default>` / `full` means the file is not being found (wrong working directory) or a host set `full`;
-     the effective value must still be `none`, but find out why.
-2. Click each of the three buttons in turn, noting the time of each click. For **each**, the browser must show only
-   *"This app has encountered an error. The original error message is redacted to prevent data leaks..."* --
-   **no** exception message, **no** exception type (`RuntimeError`, `DataError`), **no** traceback, and none of the
-   canaries (password, token, database URL, card number, e-mail, SQL, bound value). Also check the browser's developer
-   tools network/WebSocket messages if you can: the same must hold. **No traceback or source-code context** either: the
-   `false` Community Cloud starts with would still show them, so this is what proves the in-code `none` won.
-3. Open the platform's log view (Streamlit Community Cloud: the app's **Manage app** panel, per Streamlit's own message).
-   For each click there must be one line of the form
-   `Uncaught app execution | error_type=<type> [sqlstate=22P02] [cause_type=...] at=... app=...app.py:<line>:raise_...`
-   -- type and location only.
-4. **Search the log** (the viewer's search, or export and `grep`) for each of: `CANARY-`, `canary-`, `canary_`,
-   `postgresql://`, `Failing row`, `Bearer`, `Traceback (most recent call last)`, `example.invalid`. **Every search must
-   return nothing.** Any hit = the exception text leaked into the hosting log.
-
-**On the real app (B):**
-
-5. Open the app, submit the fake login. Browser: the same generic message only (no type, no traceback).
-6. Log: one `Uncaught app execution | error_type=sqlalchemy.exc.OperationalError cause_type=psycopg2.OperationalError ...`
-   line whose `app=` names `get_user_by_email < authenticate_user <` and `app.py`. Search for `canary-db-host-live`,
-   `canary_svc_user`, `CANARY-DB-PASSWORD`, `canary_db`, `postgresql://`: **no hits.**
-7. This proves the repository config **and** the scrubber reached the real app on this platform. If the real app
-   fails while the canary app passes, that app is being started differently (working directory or entry script).
-
-**Also confirm:**
-
-8. The platform's settings/secrets for these apps set no `STREAMLIT_CLIENT_SHOW_ERROR_DETAILS` /
-   `--client.showErrorDetails` of their own. (Check 1's startup line detects a host value; the platform's own `false` is
-   expected and is overridden in code, so this is now a cross-check, not a pass criterion.)
-9. Note the Python and Streamlit versions the platform reports; they should match `requirements.txt`
-   (`streamlit==1.63.0`; Python 3.11 -- see "python version" in `docs/deployment.md`).
-
-## 2.4 Clean up
-
-Delete the canary app and the two check apps, and any secrets you added. Search the hosting log once more for `CANARY-`
--- the log lines from the check are safe by design, but confirm nothing else recorded a canary (for example the
-platform's own request log).
-
-## 2.5 What this check cannot tell you
-
-- Exceptions raised **before** the scrubber is installed on a process's first script run (an import failure at
-  `app.py`'s import lines) are logged by Streamlit unscrubbed. They contain module names and file paths, not data, but
-  they are not covered.
-- Anything the platform logs about the app *outside* the process's stdout/stderr, or retains after you delete the app.
-- Streamlit fragments (`st.fragment`) were not exercised; callbacks were.
-- A different Streamlit version than the one pinned: the tests cover 1.52.0 and 1.63.0. After any Streamlit upgrade,
-  re-run `tests/test_streamlit_log_scrubbing.py`, `tests/test_real_apps_redaction.py` and this checklist.
-
-## 2.6 Recorded result -- hosted canary check (Streamlit Community Cloud)
-
-Run on a temporary, non-production canary app (2.2 A) on Streamlit Community Cloud. Recorded 2026-09-21.
-
-**Effective configuration reported by the app**
-
-| Item | Value |
-|---|---|
-| Streamlit version | 1.63.0 |
-| `log_scrubber_installed` | `true` |
-| `logger.enableRich` | `false` |
-| `client.showErrorDetails` (effective) | `"false"` -- the repository config requests `"none"` (see follow-up) |
-
-**Canary paths (checklist items 2-4)**
-
-| Path | Browser | Hosting log |
-|---|---|---|
-| Database-style `sqlalchemy.exc.DataError` | exception message redacted | only safe metadata: error type, SQLSTATE, file/line/function path |
-| Plain `RuntimeError` | exception message redacted | only safe metadata |
-| Button-callback `RuntimeError` | exception message redacted | only safe metadata |
-
-For all three, none of the synthetic canary values appeared in the hosting log: password, database URL, token,
-patron/card value, e-mail, SQL text, bound value, driver message, failing-row content.
-
-**Result: hosted exception redaction and log scrubbing verification PASSED for all three canary paths.**
-
-**Follow-up (hardening, not a failed redaction test).** Community Cloud's effective `client.showErrorDetails` was
-`"false"`, not the `"none"` requested in `.streamlit/config.toml`, and it still exposed traceback/source context.
-No secret-redaction check failed.
-
-**Cause and fix.** Streamlit Community Cloud
-[documents](https://docs.streamlit.io/deploy/streamlit-community-cloud/status) that it forces
-`client.showErrorDetails = false` at startup, regardless of `config.toml`. In Streamlit 1.63.0 `false` is an alias of
-`"stacktrace"`: generic message, but the exception type and traceback are sent to the browser. Streamlit reads the option
-in-process each time it marshals an exception and lets a script set it, so `install_streamlit_log_scrubber()` now calls
-`enforce_streamlit_error_details()`, which sets `"none"` through `st.set_option` on every script run (unconditional, no
-opt-out; `.streamlit/config.toml` keeps `"none"` as well). The canary's panel now reports both the startup value and the
-effective value, so a hosted run should read *startup `false` (command-line argument or environment variable)* then
-*effective `none` (`<user defined>`)*. That was then verified on Community Cloud (next block).
-
-**Final hosted verification (after the runtime enforcement was merged): PASSED and CLOSED.** Checklist items 1-4 were
-repeated on a new temporary, non-production canary app (2.2 A) on Streamlit Community Cloud. Verified 2026-09-21.
-
-| Item | Value |
-|---|---|
-| Streamlit version | 1.63.0 |
-| `client.showErrorDetails` at startup (before enforcement) | `"false"`, defined in `command-line argument or environment variable` (Community Cloud's own setting) |
-| `client.showErrorDetails` effective (after enforcement) | `"none"`, defined in `<user defined>` -- SortView's runtime enforcement overrode the platform's value |
-| `logger.enableRich` | `false` |
-| `log_scrubber_installed` | `true` |
-
-| Path | Browser | Hosting log |
-|---|---|---|
-| Database-style `sqlalchemy.exc.DataError` | only the generic redacted error message; no exception type, no traceback, no file path/source line, no synthetic sensitive values | only safe metadata: error type, SQLSTATE, safe location information |
-| Plain `RuntimeError` | only the generic redacted error message; no exception type or traceback; no synthetic sensitive values | only safe metadata |
-| Button-callback `RuntimeError` | only the generic redacted error message; no exception type or traceback; no synthetic sensitive values | only safe metadata |
-
-**Result: Streamlit Community Cloud error-detail hardening verification PASSED and CLOSED.** The exception type and
-traceback exposure recorded in the follow-up above no longer occurs on any of the three canary paths.
-
-**Not covered by this record:** the two real-app checks (2.2 B, checklist items 5-7) and checklist items 8-9.
-
-**Clean up (2.4):** the temporary canary apps were deleted after verification, including the one used for the final hosted verification.
+The hosting runbook's sections L.7 and M.7 list the per-app checks after each frontend deployment, and its section I
+the client-IP check to repeat if the `/api/*` path or the backend's hosting changes.
 
 ---
 
@@ -470,13 +206,45 @@ that A3 could only observe (Part 3, section 3.3). The address itself is not reco
 
 ## 4.5 Left in place
 
-- **The customer Streamlit app** (`https://sortview.streamlit.app/`) is still live, as a temporary rollback target.
-  Retiring it is A5.
-- **The trial CloudFront origin** is still in `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS` for the soak, and is removed after it.
-- No customer data migration was needed: the React and Streamlit apps operate on the same production data.
+- **The customer Streamlit app** (`https://sortview.streamlit.app/`) was left live as a temporary rollback target.
+  A5 retired it (Part 5).
+- **The trial CloudFront origin** was left in `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS` for the soak. It turned out to be
+  required by production and must stay (Part 5).
+- No customer data migration was needed: the React and Streamlit apps operated on the same production data.
 
 ## 4.6 Result
 
 **PASSED.** The NBPL customer React cutover is complete (A4, 2026-10-16). `https://app.sortviewapp.com` is the
-production customer entry point. The customer Streamlit app remains temporarily available as rollback; A5 owns its
-retirement.
+production customer entry point. The customer Streamlit app was kept as rollback until A5 retired it (Part 5).
+
+---
+
+# Part 5 -- Retirement of the customer Streamlit app (A5)
+
+This part records the production steps of A5. Recorded 2026-10-17. The source, test and dependency changes are in the
+repository (`docs/PROJECT_MANIFEST.md`, A5).
+
+No credential, session cookie, token, IP address or personal data is recorded here, and none may be added.
+
+## 5.1 Production steps
+
+| Step | Result |
+|---|---|
+| Admin-lock inventory (read-only) | No active admin-lock credential: no non-empty plaintext `admin_password` and no `admin_password_hash` in any row. Four `organization_settings` rows held an obsolete `security` block (nbpl, sortview-clean-install-test, test-install, rehearsal-library); `branch_settings` held none |
+| Guest account | The historical guest account was deactivated through the application's own account service (`user_admin_service.set_global_account_active`, platform-administrator actor; sessions revoked and an audit row written). It had no active membership |
+| Hosted customer Streamlit app | Deleted from Streamlit Community Cloud after pre-checks of the customer, admin, backend and collector paths. Its old URL no longer serves the app. Its database credential was the backend's shared runtime role, so it was kept, not revoked |
+| Stale `security` JSON | Removed from exactly those four `organization_settings` rows in one guarded transaction (exact-shape checks, row locks, a four-row count and before/after fingerprints). Other settings in those rows, every other `organization_settings` row and `branch_settings` were verified unchanged |
+| After the cleanup | The customer app's smoke check passed |
+
+## 5.2 Generated CloudFront origin: required
+
+Removing the customer distribution's generated hostname, `https://d22i2vjcxygt0c.cloudfront.net`, from `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS`
+after the A4 soak was tried in production. Customer writes from `https://app.sortviewapp.com` then failed with
+"Request origin is not allowed.", and restoring the hostname immediately restored normal behavior. The cause is not yet
+explained. Production's customer list must keep `https://app.sortviewapp.com`, `https://admin.sortviewapp.com` and
+`https://d22i2vjcxygt0c.cloudfront.net` (hosting runbook, M.5).
+
+## 5.3 Result
+
+**COMPLETE.** The React customer app is the only customer UI. The customer Streamlit app, its source, its dependencies,
+the admin lock and its stale production data are gone. Customer rollback is the hosting runbook's section M.8.

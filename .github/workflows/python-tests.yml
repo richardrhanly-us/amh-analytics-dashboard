@@ -94,9 +94,9 @@ jobs:
       - name: Run bandit
         run: python -m bandit -r src agent main.py collector -x "agent/SortViewAgent - What is currently sitting on the AMH computer" -q
 
-      # Tracked but not yet blocking: known CVEs in streamlit/weasyprint/
-      # starlette are a deliberate, separate upgrade decision (they touch a
-      # live production app) rather than something to force through here.
+      # Tracked but not yet blocking: known CVEs in starlette/werkzeug
+      # are a deliberate, separate upgrade decision (they touch a live
+      # production app) rather than something to force through here.
       # Flip continue-on-error off once those version bumps have landed.
       - name: Run pip-audit
         continue-on-error: true

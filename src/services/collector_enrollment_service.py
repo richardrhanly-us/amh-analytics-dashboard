@@ -450,8 +450,8 @@ def create_enrollment_code(
 
 
 def _get_engine():
-    # Imported here, not at module load: `database` pulls in Streamlit, and the
-    # API (main.py) imports this module without wanting either.
+    # Imported here, not at module load, so importing this module needs no
+    # database configuration: the API (main.py) imports it at startup.
     from database import get_engine
 
     return get_engine()

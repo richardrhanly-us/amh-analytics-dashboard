@@ -7,12 +7,11 @@ with Vite. It is a static SPA. There is no server-side rendering.
 signs in and signs out against the customer API (`/api/auth/*`), lists the
 signed-in user's organizations, lists each organization's sorting machines,
 and shows a sorter's Live Today dashboard. It is the production customer
-UI at https://app.sortviewapp.com; the Streamlit dashboard is retained
-temporarily as rollback during the transition. The hosting -- the built app
-in a private S3 bucket behind CloudFront, with `/api/*` sent to the existing
-FastAPI service -- is in [docs/react-hosting-runbook.md](../docs/react-hosting-runbook.md).
-Nothing in this directory is used by the Python backend, the Streamlit app
-or the collector.
+UI at https://app.sortviewapp.com, and the only one: the earlier Streamlit
+dashboard was retired. The hosting -- the built app in a private S3 bucket
+behind CloudFront, with `/api/*` sent to the existing FastAPI service -- is
+in [docs/react-hosting-runbook.md](../docs/react-hosting-runbook.md).
+Nothing in this directory is used by the Python backend or the collector.
 
 ## Routes
 

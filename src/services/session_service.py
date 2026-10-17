@@ -1,22 +1,21 @@
-"""Server-side persistent login sessions for the Streamlit dashboard.
+"""Server-side login sessions (auth_sessions), behind the customer API's session cookie.
 
-FLOW. A successful password (or guest) login calls create_session(user_id),
-which generates a cryptographically random opaque token, stores only its
-SHA-256 hex digest in auth_sessions, and returns the raw token once. The
-caller (a later step: app.py) puts that raw token in a browser cookie --
-this module has no browser/cookie logic at all. On a later page load, the
-caller reads the cookie back and calls validate_session(raw_token) to
-restore st.session_state["auth_user"] in the same minimal shape
-auth_service.authenticate_user already returns.
+FLOW. A successful password login calls create_session(user_id), which
+generates a cryptographically random opaque token, stores only its SHA-256
+hex digest in auth_sessions, and returns the raw token once. The caller (the
+customer API, customer_api/auth_routes.py) puts that raw token in its session
+cookie -- this module has no browser/cookie logic at all. On a later request,
+the caller reads the cookie back and calls validate_session(raw_token), which
+returns the user in the same minimal shape auth_service.authenticate_user
+already returns.
 
 Only hashlib.sha256(...).hexdigest() of a token ever reaches auth_sessions.
 Neither the raw token nor its hash is included in audit or application log
 calls -- the identical discipline already used for password_reset_tokens
 (auth_service.py) and agent tokens (collector_enrollment_service.py).
 
-NO MODULE-LEVEL auth_service IMPORT. A later, separately-approved step will
-likely need auth_service.enforce_active_session() to call INTO this module
-(to revoke a deactivated user's persistent sessions), which would create an
+NO MODULE-LEVEL auth_service IMPORT. auth_service imports this module (to
+revoke a user's sessions, for one), which would create an
 auth_service <-> session_service import cycle if this module imported
 auth_service at module scope. _log_auth_event() below imports auth_service
 inside the function body instead, so this module has no top-level
@@ -29,10 +28,9 @@ never its core authenticate_user/get_user_by_email/etc. queries). A real
 DB/connectivity failure here is a genuine operational error, not an
 invalid-session result, and must never be silently collapsed into a
 None/False return -- that would hide an outage behind what looks like an
-ordinary expired cookie. The caller (a later step, in app.py) is the actual
-boundary layer and can wrap a call here in log_safe_exception if it wants a
-graceful fallback, exactly as src/pages/1_admin_settings.py already does
-around its own service calls. Bound values (including token_hash) can never
+ordinary expired cookie. The caller (the customer API's routes and
+dependencies) is the actual boundary layer and decides how such a failure is
+answered. Bound values (including token_hash) can never
 leak through a propagated exception regardless of which layer eventually
 logs it: database.get_engine() sets hide_parameters=True on the engine
 itself, which strips bound parameter values from SQLAlchemy's own

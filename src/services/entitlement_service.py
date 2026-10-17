@@ -27,11 +27,8 @@ from database import get_engine
 logger = logging.getLogger("sortview.entitlements")
 
 # Every function in this module is UNCACHED and framework-neutral: each
-# lookup queries the database, and nothing here imports Streamlit. The
-# dashboard's cached copies of get_org_subscription/get_plan_entitlements
-# (and the build_entitlement_context that uses them) live in
-# services.streamlit_entitlement_adapter; any non-Streamlit caller (e.g. an
-# API route) must use this module directly, never that adapter.
+# lookup queries the database, and nothing here imports Streamlit. Callers
+# (the API routes) use it directly, so every entitlement is read fresh.
 #
 # Role is never cached anywhere: it is the input to every permission
 # check (has_role/can_manage_settings/etc.), so every entitlement context
@@ -195,9 +192,8 @@ def build_entitlement_context(user_id: int, org_slug: str) -> dict[str, Any]:
 #
 #  Description: The single place an entitlement context is assembled.
 #               The subscription and plan-entitlement lookups are
-#               supplied by the caller, so the Streamlit adapter can
-#               pass its cached copies while build_entitlement_context
-#               passes this module's uncached ones. The role lookup is
+#               supplied by the caller (build_entitlement_context
+#               passes this module's uncached ones). The role lookup is
 #               deliberately NOT supplied by the caller: it is always
 #               this module's uncached get_org_role_for_user.
 #

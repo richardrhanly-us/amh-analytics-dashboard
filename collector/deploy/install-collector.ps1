@@ -25,7 +25,7 @@
        <InstallRoot>\.venv using -PythonExe, and installs the pinned
        dependencies from collector/deploy/requirements.txt (NOT this
        repository's own requirements.txt, which is for the unrelated
-       Streamlit/FastAPI backend and must never end up in this venv --
+       FastAPI backend and must never end up in this venv --
        see that file's own comment for why that specifically matters).
     4. Writes collector_config.json from the -CustomerId/-BranchId/
        -InstallationId/-ApiUrl/-SourcePaths parameters (or copies the example template

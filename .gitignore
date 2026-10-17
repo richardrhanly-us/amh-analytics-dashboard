@@ -29,6 +29,7 @@ data/processed/*
 .DS_Store
 Thumbs.db
 .env
+# The retired Streamlit app's local secrets file: still ignored so a leftover copy is never committed.
 .streamlit/secrets.toml
 data/local/
 data/sample/

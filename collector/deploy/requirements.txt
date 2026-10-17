@@ -4,8 +4,8 @@
 # charset-normalizer) PLUS the canonical parser runtime now deployed
 # alongside it (agent/parser/*.py + agent/logger_config.py -- see
 # collector/deploy_manifest.py -- which import pandas). This is NOT the
-# repository's own requirements.txt (that file is for the Streamlit
-# dashboard + FastAPI backend, which the collector must never need -- see
+# repository's own requirements.txt (that file is for the FastAPI
+# backend, which the collector must never need -- see
 # collector/preflight.py's no_direct_database_dependency check, which
 # exists specifically because the live AMH machine's agent venv was once
 # found with psycopg2-binary/SQLAlchemy installed despite never using

@@ -21,10 +21,8 @@ from sqlalchemy import text
 from database import get_engine
 
 # Every function in this module is UNCACHED and framework-neutral: each call
-# queries the database, and nothing here imports Streamlit. The dashboard's
-# cached copies of get_org_branches/get_user_memberships live in
-# services.streamlit_access_adapter; any non-Streamlit caller (e.g. an API
-# route) must use this module directly, never that adapter.
+# queries the database, and nothing here imports Streamlit. Callers (the API
+# routes) use it directly, so every access decision is read fresh.
 #
 # user_can_access_org is the tenant-isolation gate checked before any
 # org-scoped data loads, and get_org_access_mode is the organization

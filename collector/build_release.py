@@ -57,7 +57,7 @@ SUPPORT_FILES below) vs. what is deliberately excluded:
     generated version file); the bundle directory name and
     MANIFEST.json["version"] are both derived from the validated value.
   - Never bundled: tests/, docs/, SortViewAgent/, this repo's own
-    Streamlit/FastAPI backend requirements, agent/runtime/* (frozen
+    FastAPI backend requirements, agent/runtime/* (frozen
     continuous-agent architecture -- see agent/README.md and
     collector/__init__.py's own docstring), .git metadata, __pycache__,
     or any filled-in (non-template) config.

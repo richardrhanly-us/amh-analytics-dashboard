@@ -7,7 +7,6 @@ It covers:
 - backend API deployment
 - React admin app deployment
 - React customer app deployment
-- dashboard (customer Streamlit) deployment
 - AMH agent validation and deployment
 
 The goal is to make releases predictable, repeatable, and low risk.
@@ -22,10 +21,9 @@ When a release includes multiple types of changes, use this order:
 2. backend API
 3. React admin app
 4. React customer app
-5. dashboard (customer Streamlit, while it remains: A5 retires it)
-6. AMH agent
+5. AMH agent
 
-This reduces the chance of schema mismatches, API payload mismatches, or stale dashboard assumptions.
+This reduces the chance of schema mismatches, API payload mismatches, or stale frontend assumptions.
 
 ---
 
@@ -39,7 +37,7 @@ Before deploying anything, confirm:
 - the correct database credentials are available
 - the change scope is understood:
   - backend only
-  - dashboard only
+  - frontend only (customer or admin app)
   - migration only
   - agent only
   - or some combination
@@ -250,52 +248,9 @@ After deployment:
 
 ### rollback
 
-See `docs/react-hosting-runbook.md`, section M.8. Until A5 retires it, the customer Streamlit app stays available as the
-rollback target.
-
----
-
-## part 3: dashboard deployment
-
-Use this section when Streamlit dashboard code changes are included. Since A4 (2026-10-16) the customer Streamlit app is
-not the production customer entry point: it stays live as a temporary rollback target until A5 retires it.
-
-### dashboard responsibilities
-
-The dashboard is responsible for:
-- loading live and historical data from Neon
-- rendering views and KPIs
-- displaying pipeline health and status
-- providing the library's admin pages (platform administration is the React admin app; the Super Admin Streamlit
-  app was retired in A2 item 8)
-
-### deployment steps
-
-1. push dashboard code changes to GitHub
-2. deploy or refresh the Streamlit app
-3. verify dashboard loads successfully
-
-### dashboard validation checklist
-
-After deployment, verify:
-- app loads without a traceback
-- login works
-- main branch dashboard loads
-- pipeline status panel appears
-- latest checkin in DB is not unexpectedly missing
-- live today view behaves correctly
-- overview and reports pages load
-
-### data validation checks
-
-Check that:
-- latest pipeline status is fresh
-- latest checkin in DB is reasonable
-- live counts are not unexpectedly zero
-- historical views still populate
-- tenant schema validation does not fail
-
-If the dashboard looks blank or stale, compare dashboard loader table names to the actual API write targets in Neon.
+See `docs/react-hosting-runbook.md`, section M.8: the previous known-good build (S3 object version or saved `dist`),
+the CloudFront configuration, the DigitalOcean values or the backend's previous commit. There is no other customer UI
+to fall back to; the customer Streamlit app was retired in A5.
 
 ---
 
@@ -361,7 +316,7 @@ After deployment, verify:
 - upload returns HTTP 200
 - completed status returns HTTP 200
 - new rows appear in Neon
-- dashboard reflects the new data
+- the customer app's Live Today reflects the new data
 
 ### agent deployment rules
 
@@ -400,10 +355,9 @@ Use this when a release affects more than one layer.
 - build and upload `dist-admin` if included (assets first, `index.html` last, then invalidate)
 - verify sign-in, a deep route and the origin guard
 
-### dashboard
-- deploy dashboard
-- verify pages and live data
-- verify latest pipeline status
+### customer app
+- build and upload `dist` if included (assets first, `index.html` last, then invalidate)
+- verify sign-in, a deep route, Live Today data and the latest pipeline status
 
 ### agent
 - deploy agent changes if included
@@ -412,7 +366,7 @@ Use this when a release affects more than one layer.
 
 ### post-release
 - confirm recent DB rows are moving
-- confirm dashboard reflects current DB state
+- confirm the customer app reflects current DB state
 - confirm no unexpected errors in logs
 - document any issues or rollback actions taken
 
@@ -425,7 +379,7 @@ Not every release needs a full rollback plan, but every release should consider 
 Examples:
 - migration failure
 - backend starts but upload fails
-- dashboard loads but shows stale data
+- customer app loads but shows stale data
 - AMH agent runs but payload no longer matches backend expectations
 
 When something goes wrong:

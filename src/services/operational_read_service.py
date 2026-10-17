@@ -3,8 +3,7 @@
 The read side of the customer API: plain queries over the operational tables,
 run on a connection the caller has already opened and scoped to one tenant.
 Deliberately separate from the collector's ingestion code
-(services/ingest_v2_service.py) and from the Streamlit dashboard's loaders
-(data_loader.py) -- this module imports neither.
+(services/ingest_v2_service.py) -- this module does not import it.
 
 EVERY QUERY HERE IS TENANT-SCOPED TWICE. Row level security on the
 operational tables is the authoritative boundary: the caller's connection

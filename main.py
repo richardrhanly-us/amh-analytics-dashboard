@@ -46,7 +46,7 @@ from src.services.privacy_hardening import (
 
 # Customer API import seam (transitional). The framework-neutral services the customer API uses
 # (services.auth_service, services.session_service, services.access_service, ..., database, tenant_db) import each
-# other "flat", with src/ as the import root -- the layout Streamlit and the tests already give them. This process
+# other "flat", with src/ as the import root -- the layout the tests also give them. This process
 # starts from the repository root, so src/ is added to sys.path here: once, derived from this file's location (never
 # the working directory), and APPENDED, so nothing the collector routes import can be shadowed by a module in src/.
 # Everything above this line -- the collector's own `src.services.*` imports -- resolved before it and is unaffected.

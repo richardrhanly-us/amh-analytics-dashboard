@@ -24,19 +24,19 @@ multi-tenant service that other libraries can be onboarded to.
 |---|---|
 | Customer analytics UI | **React customer app** at https://app.sortviewapp.com (production) |
 | Platform administration | **React admin** at https://admin.sortviewapp.com (production) |
-| Streamlit customer dashboard | Still available temporarily, as rollback during the transition; being retired |
 
-The React customer app replaced the Streamlit dashboard as the customer entry point. Retiring the Streamlit
-dashboard is the next milestone (see [Current Status](#current-status)).
+The React customer app is the only customer UI. It replaced the earlier Streamlit dashboard, which was retired in
+2026-10 (see [Current Status](#current-status)).
 
 ---
 
 ## Dashboard Preview
 
-The Streamlit customer dashboard, which the React customer app replaced, showing a sorter's live day:
+The earlier Streamlit customer dashboard, since retired and replaced by the React customer app, showing a sorter's
+live day:
 
 <p align="center">
-  <img src="images/SortViewCapture1.PNG" width="1000" alt="SortView customer analytics dashboard (Streamlit) showing a sorter's live operations, routing and reject figures">
+  <img src="images/SortViewCapture1.PNG" width="1000" alt="The retired SortView Streamlit customer dashboard showing a sorter's live operations, routing and reject figures">
 </p>
 
 ---
@@ -108,16 +108,16 @@ Neon PostgreSQL
      +--------+--------------------------+
      |                                   |
      v                                   v
-Customer application                React admin
-- React: production                 - Platform administration
-  (app.sortviewapp.com)             - admin.sortviewapp.com
-- Streamlit: temporary rollback,    - Calls /api/admin
-  being retired
+React customer app                  React admin
+- app.sortviewapp.com               - Platform administration
+- Calls /api                        - admin.sortviewapp.com
+                                    - Calls /api/admin
 ```
 
-The Streamlit dashboard reads the database directly. The React customer app and the React admin app are static
-single-page apps that talk only to the FastAPI backend, under `/api` and `/api/admin` respectively. Each React app
-is served through its own CloudFront distribution, with `/api/*` forwarded to the backend.
+The React customer app and the React admin app are static single-page apps that talk only to the FastAPI backend,
+under `/api` and `/api/admin` respectively. Each React app is served from a private S3 bucket through its own
+CloudFront distribution, with `/api/*` forwarded to the backend. The backend sends password-reset email over SMTP
+(Amazon SES).
 
 ---
 
@@ -159,10 +159,8 @@ world and the database. It provides:
 
 **React (production).** The React + TypeScript customer app in `frontend/` is what library staff use, at
 https://app.sortviewapp.com: organizations and sorters, Live Today, ranged operations and efficiency reports, members,
-account and password reset, and settings. See [frontend/README.md](frontend/README.md).
-
-**Streamlit (temporary rollback).** The earlier customer dashboard in `src/app.py` and `src/pages/` is still available
-during the transition, as a rollback target, and is being retired.
+account and password reset, and settings. See [frontend/README.md](frontend/README.md). It is the only customer UI:
+the earlier Streamlit dashboard was retired, with its source and dependencies.
 
 ### React Admin
 
@@ -197,7 +195,7 @@ amh-analytics-dashboard/
 ├── agent/          # Tech Logic parsers and legacy AMH agent code
 ├── collector/      # SortView Collector (Windows) and its deploy scripts
 ├── frontend/       # React customer app (src/) and React admin app (admin/)
-├── src/            # Streamlit dashboard, customer/admin API routes, shared services
+├── src/            # Customer/admin API routes and shared services
 ├── alembic/        # Database migrations
 ├── scripts/        # Operator scripts: health checks, release guards, maintenance
 ├── tests/          # Python test suite
@@ -274,12 +272,6 @@ uvicorn main:app --reload
 ```
 
 Production deployment uses its own start command and process manager; see [docs/deployment.md](docs/deployment.md).
-
-### Customer dashboard (Streamlit)
-
-```bash
-streamlit run src/app.py
-```
 
 ### React customer app
 
@@ -417,20 +409,19 @@ Current:
 * AMH log ingestion, FastAPI backend and Neon PostgreSQL in production
 * React customer app in production at https://app.sortviewapp.com
 * React admin in production at https://admin.sortviewapp.com, with the A2 platform-administration migration complete
-* Streamlit customer dashboard still available temporarily, as rollback during the transition
-* Super Admin Streamlit app retired
+* Streamlit retired: the Super Admin app (A2) and the customer dashboard (A5), with their source and dependencies
 * SortView Collector with enrollment, guided setup and the Contract v2 privacy-filtered upload path
 * Multi-tenant architecture
 * Pipeline health monitoring and admin diagnostics
 * Automated backend and frontend tests in CI
 
-**Next milestone — A5:** retire the Streamlit customer dashboard's code paths and deployment.
+**Next:** government readiness (accessibility, security, privacy and hosting evidence for a city IT review), then
+repeatable commercial onboarding.
 
 ---
 
 ## Roadmap
 
-* **Retire the Streamlit customer dashboard (A5)**
 * **Self-service onboarding:** first-owner account at provisioning, a signed Collector download and a current
   install guide
 * **Collector lifecycle:** replacement-machine workflow, key rotation and refreshing installed routing rules

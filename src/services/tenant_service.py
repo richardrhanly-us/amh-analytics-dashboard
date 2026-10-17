@@ -1015,7 +1015,7 @@ def set_collector_site_settings(
 
     The enabled destinations become exactly the given labels (transit_destination_entries). A stored destination
     that is DISABLED is kept as it is, and so is the rest of the `transit` block (the home label). Every other key
-    of the document -- the admin lock, the `internal_routing` lists, account settings -- is untouched.
+    of the document -- the `internal_routing` lists, account settings -- is untouched.
 
     A cancelled (permanently offboarded) organization is refused, and so is one that does not exist: RuntimeError,
     with nothing written."""
