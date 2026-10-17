@@ -862,38 +862,17 @@ def test_a_looked_up_cutover_converts_to_the_correct_local_boundary(engine):
 
 
 # =====================================================================================================================
-# How this differs from the Streamlit dashboard's mixed-era path (characterization only)
+# A legacy naive time is counted on the local day it was stamped
 # =====================================================================================================================
 
-def test_the_dashboard_labels_a_naive_v1_time_as_utc_and_this_module_does_not():
-    """The dashboard's mixed_era_service is NOT changed by Block 5. This pins
-    the difference so it is a known one: once a branch has a cutover, the
-    dashboard labels a legacy naive local time as UTC and then converts it to
-    Central, moving it 5-6 hours earlier. A check-in at 02:00 local on 1 June
-    is then shown on 31 May. The bounds here compare the naive value as the
-    local wall-clock time it is, so the same row stays on 1 June."""
-    import pandas as pd
+def test_a_naive_v1_time_is_bounded_on_the_local_day_it_was_stamped():
+    """A check-in at 02:00 local on 1 June, stored naive (a legacy row), falls inside 1 June's bounds and not
+    31 May's: the bounds compare the naive value as the local wall-clock time it is."""
+    stamped = _local(2026, 6, 1, 2, 0)
 
-    import metrics
-    from services import mixed_era_service
-
-    stamped = _local(2026, 6, 1, 2, 0)   # a legacy row: 02:00 local, naive
-    v1 = pd.DataFrame({"datetime": [pd.Timestamp(stamped)], "barcode": ["synthetic"]})
-    cutover = pd.Timestamp("2026-06-10T05:00:00Z")
-
-    # The dashboard today, for a cut-over branch:
-    mixed = mixed_era_service._build_mixed_checkins(v1, pd.DataFrame(), cutover)
-    assert len(metrics.get_date_filtered_df(mixed, date(2026, 6, 1), date(2026, 6, 1))) == 0
-    assert len(metrics.get_date_filtered_df(mixed, date(2026, 5, 31), date(2026, 5, 31))) == 1
-
-    # This module's bounds for the same two days:
     june_1, may_31 = local_day_bounds(date(2026, 6, 1), CHICAGO), local_day_bounds(date(2026, 5, 31), CHICAGO)
     assert june_1.v1_start_local <= stamped < june_1.v1_end_local
     assert not (may_31.v1_start_local <= stamped < may_31.v1_end_local)
-
-    # ...and, with no cutover, the dashboard agrees with them.
-    v1_only = mixed_era_service._build_mixed_checkins(v1, pd.DataFrame(), None)
-    assert len(metrics.get_date_filtered_df(v1_only, date(2026, 6, 1), date(2026, 6, 1))) == 1
 
 
 # =====================================================================================================================
@@ -1479,28 +1458,7 @@ def test_nothing_is_cached_between_counts(db):
     assert _counts(db) == (1, 0, 1)
 
 
-# --- against the Streamlit dashboard (characterization only; the dashboard is not changed) ---------------------------
-
-def _dashboard_count(v1_rows, v2_rows, cutover_at, local_date) -> int:
-    """What the dashboard counts today: mixed_era_service's frame, filtered
-    by metrics.get_date_filtered_df, then len()."""
-    import pandas as pd
-
-    import metrics
-    from services import mixed_era_service
-
-    v1 = pd.DataFrame({"datetime": [pd.Timestamp(row) for row in v1_rows], "barcode": ["synthetic"] * len(v1_rows)})
-    v2 = pd.DataFrame({"datetime": [pd.Timestamp(row) for row in v2_rows], "item_key": ["k"] * len(v2_rows),
-                       "destination": ["main"] * len(v2_rows)})
-    if not v1_rows:
-        v1 = pd.DataFrame(columns=["datetime", "barcode"])
-    if not v2_rows:
-        v2 = pd.DataFrame(columns=["datetime", "item_key", "destination"])
-
-    cutover = None if cutover_at is None else pd.Timestamp(cutover_at)
-    mixed = mixed_era_service._build_mixed_checkins(v1, v2, cutover)
-    return len(metrics.get_date_filtered_df(mixed, local_date, local_date))
-
+# --- legacy rows on either side of local midnight -------------------------------------------------------------------
 
 V1_ROWS = [
     _local(2026, 5, 31, 23, 59, 59), _local(2026, 6, 1, 0, 0), _local(2026, 6, 1, 2, 0), _local(2026, 6, 1, 9, 15),
@@ -1509,32 +1467,29 @@ V1_ROWS = [
 ]
 
 
-@pytest.mark.parametrize("local_date", [date(2026, 5, 30), date(2026, 5, 31), date(2026, 6, 1), date(2026, 6, 2)])
-def test_for_a_v1_only_branch_the_sql_count_equals_the_dashboards_row_count(db, local_date):
+@pytest.mark.parametrize("local_date,expected", [
+    (date(2026, 5, 30), 0), (date(2026, 5, 31), 1), (date(2026, 6, 1), 6), (date(2026, 6, 2), 2),
+])
+def test_for_a_v1_only_branch_each_row_is_counted_on_its_local_day(db, local_date, expected):
     _v1(db, *V1_ROWS)
 
     total, v1_count, v2_count = _counts(db, local_date)
 
-    assert total == _dashboard_count(V1_ROWS, [], None, local_date)
+    assert total == expected
     assert (v1_count, v2_count) == (total, 0)
 
 
-def test_for_a_cut_over_branch_the_count_intentionally_differs_from_the_dashboard_where_its_relabelling_shifts_a_day(db):
-    """Known and deliberate. Once a branch has a cutover, the dashboard labels
-    legacy naive local times as UTC and converts them to Central, moving each
-    5-6 hours earlier; rows from the first hours of a local day land on the
-    day before. This service counts each row on the local day it was stamped.
-    The dashboard is not changed by Block 5."""
+def test_for_a_cut_over_branch_each_legacy_row_stays_on_the_local_day_it_was_stamped(db):
+    """Once a branch has a cutover, its legacy naive local times are still counted on the local day they were
+    stamped -- never relabelled as UTC and moved to the day before."""
     cutover_at = _utc(2026, 6, 10, 5, 0)
     _v1(db, *V1_ROWS)
     _cutover(db, cutover_at)
 
-    intended = {day: _counts(db, day)[0] for day in (date(2026, 5, 31), date(2026, 6, 1), date(2026, 6, 2))}
-    dashboard = {day: _dashboard_count(V1_ROWS, [], cutover_at, day) for day in intended}
+    counted = {day: _counts(db, day)[0] for day in (date(2026, 5, 31), date(2026, 6, 1), date(2026, 6, 2))}
 
-    assert intended == {date(2026, 5, 31): 1, date(2026, 6, 1): 6, date(2026, 6, 2): 2}
-    assert dashboard == {date(2026, 5, 31): 3, date(2026, 6, 1): 5, date(2026, 6, 2): 1}
-    assert sum(intended.values()) == sum(dashboard.values()) == len(V1_ROWS)   # same rows, different days
+    assert counted == {date(2026, 5, 31): 1, date(2026, 6, 1): 6, date(2026, 6, 2): 2}
+    assert sum(counted.values()) == len(V1_ROWS)
 
 
 # =====================================================================================================================
@@ -2292,46 +2247,27 @@ def test_the_hourly_service_knows_nothing_of_operating_hours_or_of_the_dashboard
         assert forbidden not in source, forbidden
 
 
-# --- against the Streamlit dashboard (characterization only; the dashboard is not changed) ---------------------------
+# --- legacy rows, hour by hour --------------------------------------------------------------------------------------
 
-def _dashboard_hours(v1_rows, cutover_at, local_date) -> dict[int, int]:
-    """What the dashboard's "Checkins by Hour" counts today, before its 7-20
-    display window: mixed_era_service's frame, filtered to the day by
-    metrics.get_date_filtered_df, then .dt.hour.value_counts()."""
-    import pandas as pd
-
-    import metrics
-    from services import mixed_era_service
-
-    v1 = pd.DataFrame({"datetime": [pd.Timestamp(row) for row in v1_rows], "barcode": ["synthetic"] * len(v1_rows)})
-    v2 = pd.DataFrame(columns=["datetime", "item_key", "destination"])
-    cutover = None if cutover_at is None else pd.Timestamp(cutover_at)
-
-    mixed = mixed_era_service._build_mixed_checkins(v1, v2, cutover)
-    day = metrics.get_date_filtered_df(mixed, local_date, local_date)
-    return {int(hour): int(count) for hour, count in day["datetime"].dt.hour.value_counts().items()}
-
-
-@pytest.mark.parametrize("local_date", [date(2026, 5, 31), date(2026, 6, 1), date(2026, 6, 2)])
-def test_for_a_v1_only_branch_the_sql_hours_equal_the_dashboards_hours(db, local_date):
+@pytest.mark.parametrize("local_date,expected", [
+    (date(2026, 5, 31), {23: 1}),
+    (date(2026, 6, 1), {0: 1, 2: 1, 9: 2, 19: 1, 23: 1}),
+    (date(2026, 6, 2), {0: 1, 12: 1}),
+])
+def test_for_a_v1_only_branch_each_row_is_counted_in_the_hour_it_was_stamped(db, local_date, expected):
     _v1(db, *V1_ROWS)
 
-    assert _by_hour(db, local_date) == _dashboard_hours(V1_ROWS, None, local_date)
+    assert _by_hour(db, local_date) == expected
 
 
-def test_for_a_cut_over_branch_the_hours_intentionally_differ_from_the_dashboards_shifted_hours(db):
-    """Known and deliberate, as for the day count. Once a branch has a cutover
-    the dashboard moves each legacy row 5 hours earlier (CDT), so its hours
-    are shifted and its earliest rows fall on the day before. This service
-    counts each row in the hour it was stamped. Block 6 does not change the
-    dashboard."""
+def test_for_a_cut_over_branch_each_legacy_row_stays_in_the_hour_it_was_stamped(db):
+    """Once a branch has a cutover, its legacy rows are still counted in the local hour they were stamped -- never
+    relabelled as UTC and shifted 5 hours earlier."""
     cutover_at = _utc(2026, 6, 10, 5, 0)
     _v1(db, *V1_ROWS)
     _cutover(db, cutover_at)
 
     assert _by_hour(db, date(2026, 6, 1)) == {0: 1, 2: 1, 9: 2, 19: 1, 23: 1}
-    # 09:15 twice -> 04:15; 19:30 -> 14:30; 23:59:59 -> 18:59:59; and 2 June's 00:00 arrives as 19:00.
-    assert _dashboard_hours(V1_ROWS, cutover_at, date(2026, 6, 1)) == {4: 2, 14: 1, 18: 1, 19: 1}
 
 
 # =====================================================================================================================
@@ -2988,73 +2924,40 @@ def test_adding_the_reject_count_left_the_check_in_functions_as_they_were():
     assert "REJECT" not in checkin_source.upper() and "REJECT" not in hourly_source.upper()
 
 
-# --- against the Streamlit dashboard (characterization only; the dashboard is not changed) ---------------------------
+# --- legacy and v2 rejects on either side of local midnight --------------------------------------------------------
 
-def _dashboard_reject_count(v1_rows, v2_rows, cutover_at, local_date) -> int:
-    """What Live Today's "Rejects" card shows for `local_date`:
-    mixed_era_service's reject frame, then metrics.get_today_metrics, which
-    filters it to the day and takes len()."""
-    import pandas as pd
-
-    import metrics
-    from services import mixed_era_service
-
-    v1 = pd.DataFrame({"datetime": [pd.Timestamp(row) for row in v1_rows], "barcode": ["synthetic"] * len(v1_rows),
-                       "error_message": ["Item not found"] * len(v1_rows)})
-    v2 = pd.DataFrame({"datetime": [pd.Timestamp(row) for row in v2_rows], "item_key": ["k"] * len(v2_rows),
-                       "error_class": ["item_not_found"] * len(v2_rows)})
-    if not v1_rows:
-        v1 = pd.DataFrame(columns=["datetime", "barcode", "error_message"])
-    if not v2_rows:
-        v2 = pd.DataFrame(columns=["datetime", "item_key", "error_class"])
-
-    cutover = None if cutover_at is None else pd.Timestamp(cutover_at)
-    mixed = mixed_era_service._build_mixed_rejects(v1, v2, cutover)
-    no_checkins = pd.DataFrame(columns=["datetime", "barcode"])
-    return metrics.get_today_metrics(no_checkins, mixed, local_date)["today_rejects"]
-
-
-@pytest.mark.parametrize("local_date", [date(2026, 5, 30), date(2026, 5, 31), date(2026, 6, 1), date(2026, 6, 2)])
-def test_for_a_v1_only_branch_the_sql_reject_count_equals_the_dashboards(reject_db, local_date):
+@pytest.mark.parametrize("local_date,expected", [
+    (date(2026, 5, 30), 0), (date(2026, 5, 31), 1), (date(2026, 6, 1), 6), (date(2026, 6, 2), 2),
+])
+def test_for_a_v1_only_branch_each_reject_is_counted_on_its_local_day(reject_db, local_date, expected):
     _v1_reject(reject_db, *V1_ROWS)
 
     total, v1_count, v2_count = _reject_counts(reject_db, local_date)
 
-    assert total == _dashboard_reject_count(V1_ROWS, [], None, local_date)
+    assert total == expected
     assert (v1_count, v2_count) == (total, 0)
 
 
-def test_for_a_cut_over_branch_v2_rejects_are_counted_as_the_dashboard_counts_them(reject_db):
-    # The dashboard's handling of v2 instants is correct; only its legacy rows are shifted. With v2 rows alone on
-    # each side of a local midnight, the two agree.
+def test_for_a_cut_over_branch_v2_rejects_are_counted_on_their_local_day(reject_db):
     cutover_at = _utc(2026, 6, 1, 5, 0)
     v2_rows = [_utc(2026, 6, 10, 5, 0), _utc(2026, 6, 10, 18, 0), _utc(2026, 6, 11, 4, 59, 59), _utc(2026, 6, 11, 5, 0)]
     _cutover(reject_db, cutover_at)
     _v2_reject(reject_db, *v2_rows)
 
     for day, expected in ((date(2026, 6, 10), 3), (date(2026, 6, 11), 1)):
-        assert _reject_counts(reject_db, day)[0] == _dashboard_reject_count([], v2_rows, cutover_at, day) == expected
+        assert _reject_counts(reject_db, day)[0] == expected
 
 
-def test_for_a_cut_over_branch_the_reject_count_intentionally_differs_from_the_dashboard_on_legacy_days(reject_db):
-    """Known and deliberate, exactly as for check-ins. Once a branch has a
-    cutover, the dashboard labels legacy naive local reject times as UTC and
-    converts them to Central, moving each 5-6 hours earlier; rejects from the
-    first hours of a local day land on the day before. This service counts
-    each reject on the local day it was stamped. The dashboard is not changed
-    by Block 7."""
+def test_for_a_cut_over_branch_each_legacy_reject_stays_on_the_local_day_it_was_stamped(reject_db):
     cutover_at = _utc(2026, 6, 10, 5, 0)
     _v1_reject(reject_db, *V1_ROWS)
     _cutover(reject_db, cutover_at)
 
-    intended = {day: _reject_counts(reject_db, day)[0]
-                for day in (date(2026, 5, 31), date(2026, 6, 1), date(2026, 6, 2))}
-    dashboard = {day: _dashboard_reject_count(V1_ROWS, [], cutover_at, day) for day in intended}
+    counted = {day: _reject_counts(reject_db, day)[0]
+               for day in (date(2026, 5, 31), date(2026, 6, 1), date(2026, 6, 2))}
 
-    assert intended == {date(2026, 5, 31): 1, date(2026, 6, 1): 6, date(2026, 6, 2): 2}
-    assert dashboard == {date(2026, 5, 31): 3, date(2026, 6, 1): 5, date(2026, 6, 2): 1}
-    assert sum(intended.values()) == sum(dashboard.values()) == len(V1_ROWS)   # same rows, different days
-
+    assert counted == {date(2026, 5, 31): 1, date(2026, 6, 1): 6, date(2026, 6, 2): 2}
+    assert sum(counted.values()) == len(V1_ROWS)
 
 # =====================================================================================================================
 # Block 8b: get_reject_counts_by_reason

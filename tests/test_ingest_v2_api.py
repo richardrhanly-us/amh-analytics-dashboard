@@ -33,7 +33,6 @@ from starlette.requests import Request
 
 import main
 from metrics import build_acs_item_summary, prepare_todays_acs_snapshot
-from services import live_context_service as lcs
 from src.services import privacy_hardening as ph
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -1288,7 +1287,7 @@ def test_an_acs_conflict_is_reported_by_position_and_stores_nothing(db):
 # =====================================================================================================================
 #
 # For each sequence of ACS records this file computes what the REAL dashboard code says (Overview: metrics.build_acs_item_summary;
-# Live Today: services.live_context_service.build_live_context) and what a plain reduction of the PERSISTED v2 stream says, after
+# Live Today: the same classifier over metrics.prepare_todays_acs_snapshot, today's latest record per item) and what a plain reduction of the PERSISTED v2 stream says, after
 # the same records went through POST /v2/upload. They must be equal. Dashboard aggregation is not implemented in this step; the
 # small reducer below is the specification the later dashboard step must meet:
 #
@@ -1301,8 +1300,6 @@ SLUG_OF = {"Main": "main", "Westside": "westside", "Library Express": "library_e
 TRANSIT_SLUGS = {"westside": "Westside", "library_express": "Library Express"}
 CLASSIFIER = {"transit_labels": ["Westside", "Library Express"], "branch_services_names": [], "collection_services_names": [],
               "branch_services_da_patterns": [], "collection_services_da_patterns": []}
-PALETTE = {k: "#000000" for k in ("danger_bg", "danger_border", "danger_text", "danger_title", "info_bg", "info_border",
-                                  "info_text", "info_title")}
 
 
 def at(hour, minute=0, day=0):
@@ -1366,37 +1363,11 @@ def dashboard_overview(records, first_day=None, last_day=None):
                     summary["collection_services_total"], summary["ill_main"], summary["ill_by_branch"])
 
 
-def dashboard_live(records, monkeypatch):
-    monkeypatch.setattr(lcs, "get_today_metrics", lambda df, rj, today: {
-        "today_df": pd.DataFrame({"datetime": pd.to_datetime([]), "destination": []}), "today_rejects_df": pd.DataFrame(),
-        "today_checkins": 0, "today_rejects": 0, "today_total_transit": 0, "today_peak_hour": None,
-        "today_peak_hour_count": 0, "today_peak_hour_pct": 0, "today_reject_rate": 0.0})
-    monkeypatch.setattr(lcs, "_build_historical_baseline", lambda *a, **k: {
-        "max_observed_hourly_throughput": 1, "historical_transit_pct_map": {}, "historical_daily_avg_reject": 0.0})
-    # Government-readiness audit: build_live_context now receives a pre-computed acs_item_summary instead of a raw
-    # ACS dataframe -- the "keep latest record per item among today's rows" preparation (metrics.prepare_todays_acs_snapshot)
-    # that build_live_context used to do internally is exactly what makes Live Today differ from Overview in the
-    # "later other_code10" case below, so it must still happen here, before classification, for this test to mean
-    # what it always meant.
-    acs_item_summary = build_acs_item_summary(prepare_todays_acs_snapshot(dashboard_frame(records)), **CLASSIFIER)
-    context = lcs.build_live_context(
-        df_live_raw=pd.DataFrame(), df_history_raw=pd.DataFrame(), rejects_live_raw=pd.DataFrame(),
-        rejects_history_raw=pd.DataFrame(), acs_item_summary=acs_item_summary, pipeline_status={}, refresh_count=0,
-        today=DAY0.date(), now_ct=pd.Timestamp(DAY0), transit_labels=CLASSIFIER["transit_labels"],
-        transit_home_label="Main", theme_palette=PALETTE)
-    found = {}
-
-    def walk(node, depth=0):
-        if isinstance(node, dict) and depth < 3:
-            for key, value in node.items():
-                if key in ("today_holds", "today_ill", "today_programming", "today_collection_services", "today_ill_main",
-                           "today_ill_by_branch"):
-                    found[key] = value
-                walk(value, depth + 1)
-
-    walk(context)
-    return _outcome(found["today_holds"], found["today_ill"], found["today_programming"], found["today_collection_services"],
-                    found["today_ill_main"], found["today_ill_by_branch"])
+def dashboard_live(records):
+    # Live Today's figures: today's latest record per item (metrics.prepare_todays_acs_snapshot), then the same classifier.
+    summary = build_acs_item_summary(prepare_todays_acs_snapshot(dashboard_frame(records)), **CLASSIFIER)
+    return _outcome(summary["holds_total"], summary["ill_total"], summary["programming_total"],
+                    summary["collection_services_total"], summary["ill_main"], summary["ill_by_branch"])
 
 
 def stream_rows(db):
@@ -1478,17 +1449,17 @@ SEQUENCES = {
 
 
 @pytest.mark.parametrize("name", list(SEQUENCES))
-def test_the_real_dashboard_still_behaves_as_the_investigation_found(name, monkeypatch):
+def test_the_real_dashboard_still_behaves_as_the_investigation_found(name):
     records, overview, live = SEQUENCES[name]
 
-    actual_overview, actual_live = dashboard_overview(records), dashboard_live(records, monkeypatch)
+    actual_overview, actual_live = dashboard_overview(records), dashboard_live(records)
 
     assert {k: actual_overview[k] for k in ("holds", "ill")} == overview
     assert {k: actual_live[k] for k in ("holds", "ill")} == live
 
 
 @pytest.mark.parametrize("name", list(SEQUENCES))
-def test_the_persisted_v2_stream_reproduces_both_dashboard_paths_exactly(db, monkeypatch, name):
+def test_the_persisted_v2_stream_reproduces_both_dashboard_paths_exactly(db, name):
     records, _overview, _live = SEQUENCES[name]
     events = to_v2_events(records)
 
@@ -1497,7 +1468,7 @@ def test_the_persisted_v2_stream_reproduces_both_dashboard_paths_exactly(db, mon
     assert response.status_code == 200
     rows = stream_rows(db)
     assert reduce_overview(rows) == dashboard_overview(records)   # every field: holds, ill, programming, collection, ill_main, ill_by_branch
-    assert reduce_live(rows) == dashboard_live(records, monkeypatch)
+    assert reduce_live(rows) == dashboard_live(records)
 
 
 def test_a_message_64_record_never_becomes_a_cloud_event(db):

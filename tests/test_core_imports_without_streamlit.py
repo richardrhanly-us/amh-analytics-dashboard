@@ -22,9 +22,6 @@ SRC = ROOT / "src"
 STREAMLIT_FREE_MODULES = [
     "database",
     "services.session_service",
-    "formatting",
-    "services.filter_context_service",
-    "services.pipeline_context_service",
     "tenant_db",
     "services.auth_service",
     "services.access_service",
@@ -40,8 +37,6 @@ STREAMLIT_FREE_MODULES = [
     "services.hold_rules",
     "services.hold_report_service",
     "customer_api.holds_report_routes",
-    # The collector-schedule judgement shared out of the dashboard's pipeline panel.
-    "services.collector_schedule",
     # The one effective-settings merge, shared by the dashboard, the customer API and Collector enrollment.
     "services.settings_merge",
     # The dashboard's branch-readiness decision, out of the Streamlit-cached readiness_service.

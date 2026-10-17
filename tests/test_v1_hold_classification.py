@@ -16,7 +16,7 @@ import pandas as pd
 import pytest
 
 from metrics import build_acs_item_summary
-from services.settings_service import v1_hold_rules
+from services.hold_rules import v1_hold_rules
 
 ACCOUNT = "EXAMPLE (ST)STAFF ACCOUNT A"
 DEPARTMENT = "(XX) TS(XX)-CATALOGING"
@@ -230,7 +230,7 @@ def test_the_summary_frames_carry_no_patron_or_raw_record_columns():
 
 
 def test_the_settings_object_the_dashboard_passes_classifies_exactly_as_plain_lists_do():
-    # What app.py hands the classifier now: services.settings_service.V1HoldRules, built from the stored block.
+    # The rules object (services.hold_rules.V1HoldRules), built from the stored block.
     stored = {"branch_services_names": [f" {ACCOUNT.lower()} "], "collection_services_names": [],
               "branch_services_da_patterns": [], "collection_services_da_patterns": [f"DA{DEPARTMENT}"]}
     rules = v1_hold_rules(stored)
