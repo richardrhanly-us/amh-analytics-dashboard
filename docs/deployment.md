@@ -68,7 +68,8 @@ Typical backend deployment flow:
 After backend deployment, verify:
 
 - the API starts successfully
-- `/` responds normally
+- `/` responds normally, with the API security headers (`Strict-Transport-Security: max-age=31536000` among them;
+  [react-hosting-runbook.md](react-hosting-runbook.md), section N)
 - agent uploads do not return 500 errors
 - `pipeline_status` rows continue updating
 - recent checkins/rejects/ACS rows continue appearing in Neon

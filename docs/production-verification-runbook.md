@@ -30,6 +30,7 @@ After a backend, customer or admin deployment, or a production configuration cha
 | Customer sign-in and data | Sign in as an NBPL user; Live Today and Reports show current data; sign out |
 | Customer writes | A settings save (or sign-in/sign-out, which are guarded writes) succeeds, so the customer Origin guard accepts the app |
 | Admin app | `https://admin.sortviewapp.com` loads; a platform administrator can sign in, open a library and sign out; `/api/admin/session` answers 401 JSON when signed out |
+| Security headers | `curl -sI` the apps and the API as in the hosting runbook, N.3: the apps carry HSTS, the CSP and the other headers of N.1; the API carries its own and no CSP |
 | Collectors and pipeline | The latest scheduled "Pipeline health check" run is green, and Live Today's "last reported" keeps advancing |
 | Allowed origins | `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS` still contains `https://app.sortviewapp.com`, `https://admin.sortviewapp.com` and `https://d22i2vjcxygt0c.cloudfront.net`; `SORTVIEW_ADMIN_ALLOWED_ORIGINS` contains `https://admin.sortviewapp.com` (hosting runbook, M.5 and L.6) |
 
