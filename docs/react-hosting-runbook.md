@@ -498,6 +498,7 @@ SORTVIEW_ADMIN_ALLOWED_ORIGINS=https://admin.sortviewapp.com
   - a direct load and refresh of `/libraries/<slug>/installations`;
   - `/api/admin/session` answering 401 JSON when signed out;
   - a forged-Origin POST answering 403 `origin_not_allowed`;
+  - the security headers of section N.3;
   - a check that the customer app (`app.sortviewapp.com`) and the collectors are unaffected.
 
 ### L.8 Rollback
@@ -629,7 +630,7 @@ SORTVIEW_ADMIN_ALLOWED_ORIGINS=https://admin.sortviewapp.com
   Part 4.
 - After every later customer deployment, repeat at least: sign-in, refresh and sign-out; a direct load and refresh of a
   deep route (for example a sorter's reports); `/api/auth/session` answering 401 JSON when signed out; and a check that
-  `admin.sortviewapp.com` and the collectors are unaffected.
+  `admin.sortviewapp.com` and the collectors are unaffected; and the security headers of section N.3.
 - Repeat section I if the distribution's `/api/*` behavior, its origin, or the backend's hosting changes.
 
 ### M.8 Rollback
@@ -643,3 +644,130 @@ SORTVIEW_ADMIN_ALLOWED_ORIGINS=https://admin.sortviewapp.com
 
 - There is no alternative customer UI: the customer Streamlit app was retired in A5. Rollback is this section's
   artifact, configuration, CloudFront and backend steps only.
+
+## N. Security headers (both apps and the API)
+
+One layer is authoritative for each response, so no response gets two values for a header:
+
+| Response | Set by | Where |
+|---|---|---|
+| The React apps -- `index.html`, `assets/*` and every SPA route (default behavior `*`) | **CloudFront response headers policy** `sortview-spa-security-headers` | attached to the **default behavior only** of both distributions (customer and admin) |
+| API responses -- `/api/*` through either distribution, and the DigitalOcean hostname directly | **FastAPI** (`SecurityHeadersMiddleware`, `main.py`) | every response, errors included; CloudFront passes them through |
+
+Never attach the policy to the `/api/*` behaviors: the API's headers are FastAPI's, tested in
+`tests/test_security_headers.py`.
+
+### N.1 The values
+
+| Header | React apps (CloudFront) | API (FastAPI) |
+|---|---|---|
+| `Strict-Transport-Security` | `max-age=31536000` | `max-age=31536000` |
+| `Content-Security-Policy` | see below | none (JSON only; nosniff and frame protection cover it) |
+| `X-Content-Type-Options` | `nosniff` | `nosniff` |
+| `X-Frame-Options` | `DENY` | `DENY` |
+| `Referrer-Policy` | `no-referrer` | `no-referrer` |
+| `Permissions-Policy` | `camera=(), microphone=(), geolocation=()` | `camera=(), microphone=(), geolocation=()` |
+
+HSTS is one year for the exact host only: **no `includeSubDomains`, no `preload`**, so no other `sortviewapp.com`
+host is affected. Both apps are already HTTPS-only (Redirect HTTP to HTTPS), so the header changes nothing for a
+working setup; it stops a browser from ever being sent to the plain-HTTP address first.
+
+The CSP, the same for both apps:
+
+```
+default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
+```
+
+Why each part is enough, checked against the built bundles (`npm run build`, `npm run build:admin`):
+
+- **Scripts and styles:** `index.html` loads one module script and one stylesheet from `/assets/`; there is no inline
+  `<script>` or `<style>`, no `eval` or `new Function`, and no style attribute is written as text (React sets
+  `style={...}` through the DOM, which CSP does not block). So no `'unsafe-inline'` and no `'unsafe-eval'`.
+- **`img-src data:`:** only for the `<link rel="icon" href="data:,">` placeholder in both `index.html` files.
+- **`connect-src 'self'`:** the apps call the API on their own origin under `/api` (`VITE_API_BASE_URL` stays
+  empty, section B). Setting `VITE_API_BASE_URL` to another origin would also need that origin added here.
+- **No other origins:** no fonts, images, analytics, browser Sentry, workers, WebSockets or frames are loaded. CSV
+  download (customer app) uses `URL.createObjectURL` and a download link, which CSP does not restrict.
+- **`frame-ancestors 'none'`** and `X-Frame-Options: DENY` say the same thing; the second is kept for older browsers.
+
+A future change that loads anything from another origin, adds an inline script or style, or uses a worker must
+update this policy in the same release.
+
+### N.2 Applying it (manual, in the AWS console)
+
+The CSP goes live in two stages, and the first is **required**: it is applied as `Content-Security-Policy-Report-Only`
+(reported, not enforced) until both apps have been verified with it, and only then as the enforcing
+`Content-Security-Policy`.
+
+**Stage 1 -- Report-Only:**
+
+1. CloudFront → Policies → Response headers → **Create**. Name: `sortview-spa-security-headers`.
+2. **Custom headers**, each with **Origin override** on:
+   - `Content-Security-Policy-Report-Only` = the CSP value above, exactly;
+   - `Permissions-Policy` = `camera=(), microphone=(), geolocation=()`.
+3. **Security headers**, each with **Origin override** on:
+   - Strict-Transport-Security: max-age **31536000** seconds; **leave includeSubDomains and preload off**;
+   - Content-Security-Policy: **leave off** in this stage;
+   - X-Content-Type-Options: on (`nosniff`);
+   - X-Frame-Options: **DENY**;
+   - Referrer-Policy: **no-referrer**;
+   - X-XSS-Protection: **leave off** (obsolete).
+4. Leave CORS and server-timing settings off. Save.
+5. Attach it **only** to the **default behavior (`*`)** of the **customer** distribution (behavior → Edit → Response
+   headers policy), then of the **admin** distribution. Leave both `/api/*` behaviors with **no** response headers
+   policy.
+6. Wait for both distributions to deploy. No invalidation is needed: the headers are added to cached and uncached
+   responses alike.
+7. Verify with the **first-pass** expectations of N.3 -- every `curl` check and the complete browser walkthrough of
+   both apps, with the developer console open.
+8. **Do not go on to stage 2 unless there are zero unexplained CSP violations.** A violation that cannot be explained
+   means fixing the policy or the code and repeating stage 1.
+
+**Stage 2 -- enforce:**
+
+9. Edit `sortview-spa-security-headers`: remove the `Content-Security-Policy-Report-Only` custom header and turn on
+   the **Content-Security-Policy** security header with the **same** value (Origin override on). Change nothing
+   else. Save.
+10. Wait for both distributions to deploy, then repeat N.3 with the **final** expectations: the `curl` header checks
+    and a smoke pass of both apps (sign in, one page per area, a CSV download, sign out) with the console open.
+
+### N.3 Verification
+
+```
+curl -sI https://app.sortviewapp.com/
+curl -sI https://app.sortviewapp.com/organizations/does-not-matter
+curl -sI https://admin.sortviewapp.com/
+curl -sI https://admin.sortviewapp.com/libraries/does-not-matter
+curl -sI https://app.sortviewapp.com/api/auth/session
+curl -sI https://admin.sortviewapp.com/api/admin/session
+curl -sI https://sortview-app-2p336.ondigitalocean.app/
+```
+
+- The four app requests show every header in N.1's React column, each **once**, with the CSP under the stage's name:
+  - **first pass (stage 1):** `Content-Security-Policy-Report-Only` carries the CSP, and there is **no**
+    `Content-Security-Policy` header;
+  - **final (stage 2):** `Content-Security-Policy` carries the CSP, and there is **no**
+    `Content-Security-Policy-Report-Only` header.
+- The three API requests (401 or 200) show the API column: `Strict-Transport-Security: max-age=31536000`, the four
+  others, and **no** `Content-Security-Policy`.
+- In a browser, with the developer console open, use each app end to end. In the first pass a violation shows as a
+  Report-Only report and nothing is blocked; in the final pass it would be blocked. Expect **no CSP violation** in
+  either:
+  - customer: sign in, an organization, a sorter's Live Today, Reports (change the range, compare, a CSV download,
+    Print), Settings (save one value), My account, sign out, and the password-reset page;
+  - admin: sign in, Libraries, a library's overview, Collector configuration, Installations, Diagnostics,
+    Lifecycle and Provision pages (open, no need to submit), sign out.
+- Also check whatever DigitalOcean adds itself on the direct backend hostname: if it sends its own HSTS, record the
+  value; two different HSTS values for one response would need one of them removed.
+
+### N.4 Rollback
+
+| Problem | Do this |
+|---|---|
+| A CSP violation breaks a page | Edit `sortview-spa-security-headers`: switch the CSP to the `Content-Security-Policy-Report-Only` custom header (or remove it), save, and let the distributions deploy. Then fix the policy or the code and re-enforce. |
+| Anything else in the policy is wrong | Detach the policy from the default behavior (behavior → Edit → Response headers policy → none). |
+| The API's headers are wrong | Revert the `SecurityHeadersMiddleware` change and redeploy the backend. |
+
+HSTS cannot be withdrawn from a browser that has already seen it, except by serving `max-age=0` over HTTPS until the
+old value expires. That is acceptable here because both apps and the API are HTTPS-only; do not add
+`includeSubDomains` or `preload` without a separate decision.

@@ -227,6 +227,7 @@ def test_every_account_failure_gets_the_same_generic_401(api, monkeypatch, failu
     assert {k: v for k, v in response.headers.items() if k != "content-length"} == {
         "cache-control": "no-store",
         "content-type": "application/json",
+        "strict-transport-security": "max-age=31536000",
         "x-content-type-options": "nosniff",
         "x-frame-options": "DENY",
         "referrer-policy": "no-referrer",

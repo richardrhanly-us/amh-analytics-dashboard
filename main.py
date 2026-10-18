@@ -169,10 +169,18 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
             )
         return await call_next(request)
 
+# Every API response, error responses included (this is the outermost middleware). The React apps' own headers -- CSP
+# among them -- come from each CloudFront distribution's response headers policy on its default behavior, never on
+# /api/*, so an API response carries only these (docs/react-hosting-runbook.md, section N).
+#
+# HSTS: one year, this host only -- no includeSubDomains, no preload. Browsers ignore it on a plain-HTTP response
+# (local development), so it only ever takes effect over HTTPS. No CSP here: every response is JSON, and nosniff plus
+# X-Frame-Options already cover what a CSP would on an API.
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
 
+        response.headers["Strict-Transport-Security"] = "max-age=31536000"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
