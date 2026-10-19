@@ -103,8 +103,9 @@ removed by A2 item 8.
   deleted and its code, tests, tooling and dependencies are removed. It is not a fallback.
 - React customer app (`frontend/`) is already substantial and functional: Organizations, Organization page,
   Organization Reports (operations, value), Members, Account (including password reset), Settings (general,
-  branches, routing, efficiency), Sorter Live Today, Sorter Reports (operations, efficiency). Keyboard and
-  screen-reader behavior is tested (`frontend/src/accessibility.test.tsx`).
+  branches, routing, efficiency), Sorter Live Today, Sorter Reports (operations, efficiency). Keyboard-relevant
+  accessibility semantics and focus behavior are covered by automated frontend tests; real screen-reader
+  verification is documented separately in `docs/accessibility-verification-2026-10-19.md`.
 - The React customer app is hosted through CloudFront on the customer distribution that previously served the trial,
   now with the alternate domain `app.sortviewapp.com` (`docs/react-hosting-runbook.md` section M).
 - The React **admin** app is in production at `https://admin.sortviewapp.com` (A3, 2026-10-15; hosting runbook
@@ -374,7 +375,7 @@ is the current gap list, rebuilt from the repository on 2026-10-14.
 | # | Gap | Notes | Depends on |
 |---|---|---|---|
 | B1 | Customer UI hosted on Streamlit Community Cloud | **Closed (A4, A5):** the customer UI is the React app on `app.sortviewapp.com`, and the Streamlit app is retired. | A |
-| B2 | No accessibility conformance evidence | Accessibility fixes so far were on **Streamlit** (contrast, KPI semantics, charts/forms/admin, status announcements, tables: PRs #72–#74, #124–#127, 2026-09-22 to 10-03). React has keyboard/screen-reader tests but no automated a11y checks (axe), no WCAG 2.1 AA audit and no ACR/VPAT. U.S. state/local governments must meet WCAG 2.1 AA under the ADA Title II web rule. Do the audit on React. | A |
+| B2 | Accessibility conformance evidence | **In progress, substantially addressed (2026-10-19):** the production React customer and admin apps now have automated axe coverage, blocking JSX accessibility linting, skip-link and route-arrival focus handling, required-field guidance, document-title fixes, and semantic admin breadcrumb navigation. Manual production verification covered keyboard access, visible focus, 200% zoom, 320px reflow, text spacing, Windows contrast mode, NVDA screen-reader behavior, headings, status/error announcements, meaningful sequence, consistent identification, sensory characteristics and navigation. Evidence is recorded in `docs/accessibility-verification-2026-10-19.md`. A formal criterion-by-criterion ACR/VPAT is still pending; do not claim blanket WCAG 2.1 AA conformance yet. | A |
 | B3 | No MFA; no SSO | At minimum MFA for owners/admins; SSO (SAML/OIDC) is often asked for by city IT. | A (UI) |
 | B4 | Historical v1 patron data still stored | `acs_events.patron_id`/`raw_message` kept and re-read by v1 hold classification; needs a backfill of classification columns before nulling. v1 `/upload` still open to v1-contract branches. Contract 1 remains technically supported today; its retirement is a deliberate future decision under C5. | — |
 | B5 | No customer-facing privacy/data-handling policy | Retention, encryption-at-rest posture (Neon/DigitalOcean), patron-confidentiality statutes, subprocessor list. | — (start early) |
