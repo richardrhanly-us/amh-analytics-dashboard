@@ -4,6 +4,7 @@ import { Link } from 'react-router'
 import { formatInstant } from '../../../src/time/productTime.ts'
 import { libraryStatusLabel, primarySorterLabel, subscriptionStatusLabel } from './labels.ts'
 import { getLibraries, type LibrarySummary } from './librariesApi.ts'
+import { AdminPageHeading } from '../AdminPageHeading.tsx'
 
 const LOAD_FAILED = 'The libraries could not be loaded. Please try again.'
 
@@ -24,7 +25,7 @@ export function LibrariesPage() {
 
   return (
     <section aria-labelledby="libraries-heading">
-      <h2 id="libraries-heading">Libraries</h2>
+      <AdminPageHeading id="libraries-heading">Libraries</AdminPageHeading>
       <p>
         <Link to="/provision">Provision a library</Link>
       </p>

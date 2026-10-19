@@ -605,3 +605,29 @@ describe('choosing a new password', () => {
     expect(await screen.findByRole('heading', { name: 'Password reset' })).toBeInTheDocument()
   })
 })
+
+// =====================================================================================================================
+// The browser tab
+// =====================================================================================================================
+
+describe('naming the view in the browser tab', () => {
+  it('names the sign-in form, and the forgot-password form that replaces it', async () => {
+    serve()
+    const user = userEvent.setup(INSTANT)
+    open('/')
+    await screen.findByRole('button', { name: 'Forgot password?' })
+    expect(document.title).toBe('Sign in – SortView')
+
+    await user.click(screen.getByRole('button', { name: 'Forgot password?' }))
+    await screen.findByRole('heading', { level: 2, name: 'Reset your password' })
+    expect(document.title).toBe('Reset your password – SortView')
+  })
+
+  it('names the reset form a link opens', async () => {
+    serve()
+    open(`/reset-password#token=${TOKEN}`)
+
+    await screen.findByRole('heading', { level: 2, name: 'Choose a new password' })
+    expect(document.title).toBe('Choose a new password – SortView')
+  })
+})

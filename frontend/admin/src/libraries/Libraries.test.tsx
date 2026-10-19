@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { describe, expect, it } from 'vitest'
@@ -262,5 +262,31 @@ describe('accessibility', () => {
     renderAt('/libraries/nbpl', { 'GET /api/admin/libraries/nbpl': () => jsonResponse(200, NBPL_DETAIL) })
     await screen.findByRole('heading', { level: 2, name: 'New Braunfels Public Library' })
     expect(await axeViolations()).toEqual([])
+  })
+  it('names the view in the browser tab, and leaves focus alone on the view the app opened on', async () => {
+    renderAt('/', { 'GET /api/admin/libraries': () => jsonResponse(200, LIST) })
+    const heading = await screen.findByRole('heading', { level: 2, name: 'Libraries' })
+
+    expect(document.title).toBe('Libraries – SortView Administration')
+    expect(heading).not.toHaveFocus()
+  })
+
+  it('moves focus to the heading of the view a link leads to, and names it in the browser tab', async () => {
+    renderAt('/', {
+      'GET /api/admin/libraries': () => jsonResponse(200, LIST),
+      'GET /api/admin/libraries/nbpl': () => jsonResponse(200, NBPL_DETAIL),
+    })
+    const person = userEvent.setup()
+
+    await person.click(await screen.findByRole('link', { name: 'New Braunfels Public Library' }))
+    const overview = await screen.findByRole('heading', { level: 2, name: 'New Braunfels Public Library' })
+    await waitFor(() => expect(overview).toHaveFocus())
+    expect(document.title).toBe('New Braunfels Public Library – SortView Administration')
+    expect(await axeViolations()).toEqual([])
+
+    await person.click(screen.getByRole('link', { name: 'Libraries' }))
+    const list = await screen.findByRole('heading', { level: 2, name: 'Libraries' })
+    await waitFor(() => expect(list).toHaveFocus())
+    expect(document.title).toBe('Libraries – SortView Administration')
   })
 })

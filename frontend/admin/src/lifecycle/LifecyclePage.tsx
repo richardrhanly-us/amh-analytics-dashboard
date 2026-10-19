@@ -6,6 +6,7 @@ import { isApiError } from '../../../src/api/client.ts'
 import { libraryStatusLabel } from '../libraries/labels.ts'
 import { getLibrary, type LibraryDetail } from '../libraries/librariesApi.ts'
 import { offboardLibrary, reactivateLibrary, suspendLibrary, type LifecycleResult, type OffboardCounts } from './lifecycleApi.ts'
+import { AdminPageHeading } from '../AdminPageHeading.tsx'
 
 const CANCELLED_NOTICE = 'Cancelled — permanently offboarded. This cannot be undone in SortView administration.'
 
@@ -223,7 +224,7 @@ export function LifecyclePage() {
           <Link to={`/libraries/${encodeURIComponent(orgSlug)}`}>{query.data?.name ?? 'Library'}</Link>
         )}
       </p>
-      <h2 id="lifecycle-heading">{notFound ? 'Library not found' : 'Library lifecycle'}</h2>
+      <AdminPageHeading id="lifecycle-heading">{notFound ? 'Library not found' : 'Library lifecycle'}</AdminPageHeading>
       {notFound && <p>There is no library with this address.</p>}
       {query.isPending && <p role="status">Loading library…</p>}
       {query.isError && !notFound && (

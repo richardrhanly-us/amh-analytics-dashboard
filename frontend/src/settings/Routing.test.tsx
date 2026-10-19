@@ -147,6 +147,24 @@ describe('the way to the page', () => {
 // =====================================================================================================================
 
 describe('the routing as loaded', () => {
+  it('says before anything is saved that each destination needs a label, and marks each label required', async () => {
+    await page()
+
+    expect(screen.getByText('Each destination needs a label.')).toBeVisible()
+    expect(rows()).toHaveLength(2)
+    for (const row of rows()) {
+      expect(labelIn(row)).toBeRequired()
+      expect(labelIn(row)).not.toHaveAttribute('aria-required')
+    }
+  })
+
+  it('does not ask for labels when there are no destinations', async () => {
+    await page({ routing: { home_branch_label: 'Central', destinations: [] } })
+
+    expect(rows()).toHaveLength(0)
+    expect(screen.queryByText('Each destination needs a label.')).not.toBeInTheDocument()
+  })
+
   it('shows the home label and each destination in the stored order, with whether it is enabled', async () => {
     await page()
 

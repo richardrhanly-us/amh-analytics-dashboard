@@ -17,6 +17,7 @@ import {
   type RoutingList,
   type RoutingLists,
 } from './collectorApi.ts'
+import { AdminPageHeading } from '../AdminPageHeading.tsx'
 
 // Saved to SortView, never "to the collector": an installed Contract v2 Collector keeps what it received at enrollment.
 export const SAVED = 'Saved to SortView. Contract v2 collectors that are already installed keep the rules they received at enrollment.'
@@ -394,7 +395,7 @@ export function CollectorConfigPage() {
           <Link to={`/libraries/${encodeURIComponent(orgSlug)}`}>{libraryName ?? 'Library'}</Link>
         )}
       </p>
-      <h2 id="collector-config-heading">{notFound ? 'Library not found' : 'Collector configuration'}</h2>
+      <AdminPageHeading id="collector-config-heading">{notFound ? 'Library not found' : 'Collector configuration'}</AdminPageHeading>
       {notFound ? (
         <p>There is no library with this address.</p>
       ) : (
