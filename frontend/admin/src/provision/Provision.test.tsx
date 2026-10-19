@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router'
 import { describe, expect, it } from 'vitest'
 
 import { ALICE, deferred, jsonResponse, serveApi, type ApiRoutes, type FetchMock } from '../../../src/test/http.ts'
+import { axeViolations } from '../../../src/test/axe.ts'
 import { AdminApp } from '../AdminApp.tsx'
 import { slugify } from './provisionApi.ts'
 
@@ -357,5 +358,13 @@ describe('Assign operational identity', () => {
     await person.click(await screen.findByRole('button', { name: 'Assign operational identity' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(`Nothing was changed. ${message}`)
+  })
+})
+
+describe('accessibility', () => {
+  it('axe finds no violation on the provisioning form', async () => {
+    renderAt('/provision', PLANS)
+    await form()
+    expect(await axeViolations()).toEqual([])
   })
 })

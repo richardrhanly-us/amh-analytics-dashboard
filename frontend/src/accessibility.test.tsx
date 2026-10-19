@@ -207,6 +207,7 @@ describe('controls', () => {
     await dashboard()
 
     expect(await tabStops(user)).toEqual([
+      'a: Skip to main content',
       'a: My account',
       'button: Sign out',
       'a: Organizations',

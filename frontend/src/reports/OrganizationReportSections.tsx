@@ -109,6 +109,7 @@ function DataTable({
     </table>
   )
   return wide ? (
+    // eslint-disable-next-line jsx-a11y-x/no-noninteractive-tabindex -- a labelled table that scrolls sideways must take keyboard focus to be scrolled (axe: scrollable-region-focusable)
     <div className="table-scroll" role="group" aria-labelledby={labelledBy} tabIndex={0}>
       {table}
     </div>
@@ -442,6 +443,7 @@ export function RoutingNetworkSection({ read }: { read: ReportRead<RoutingNetwor
                   has no such destination. A column groups destinations that go by the same name; it is a routing
                   outcome, not a sorting machine.
                 </p>
+                {/* eslint-disable-next-line jsx-a11y-x/no-noninteractive-tabindex -- a labelled table that scrolls sideways must take keyboard focus to be scrolled (axe: scrollable-region-focusable) */}
                 <div className="table-scroll" role="group" aria-labelledby="org-routing-matrix-heading" tabIndex={0}>
                   <table className="data-table" aria-labelledby="org-routing-matrix-heading" aria-describedby="org-routing-matrix-summary">
                     <thead>

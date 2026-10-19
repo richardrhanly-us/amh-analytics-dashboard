@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router'
 import { describe, expect, it } from 'vitest'
 
 import { ALICE, deferred, jsonResponse, requestedUrls, serveApi, type ApiRoutes } from '../../../src/test/http.ts'
+import { axeViolations } from '../../../src/test/axe.ts'
 import { AdminApp } from '../AdminApp.tsx'
 
 const SESSION = { 'GET /api/admin/session': () => jsonResponse(200, ALICE) }
@@ -247,5 +248,19 @@ describe('Library overview', () => {
     renderAt('/nowhere', {})
 
     expect(await screen.findByRole('heading', { level: 2, name: 'Page not found' })).toBeInTheDocument()
+  })
+})
+
+describe('accessibility', () => {
+  it('axe finds no violation on the libraries list', async () => {
+    renderAt('/', { 'GET /api/admin/libraries': () => jsonResponse(200, LIST) })
+    await screen.findByRole('rowheader', { name: 'New Braunfels Public Library' })
+    expect(await axeViolations()).toEqual([])
+  })
+
+  it('axe finds no violation on a library overview', async () => {
+    renderAt('/libraries/nbpl', { 'GET /api/admin/libraries/nbpl': () => jsonResponse(200, NBPL_DETAIL) })
+    await screen.findByRole('heading', { level: 2, name: 'New Braunfels Public Library' })
+    expect(await axeViolations()).toEqual([])
   })
 })

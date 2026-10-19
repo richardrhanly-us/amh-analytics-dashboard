@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ALICE, jsonResponse, requestedUrls, serveApi, type ApiRoutes, type FetchMock } from '../../../src/test/http.ts'
+import { axeViolations } from '../../../src/test/axe.ts'
 import { AdminApp } from '../AdminApp.tsx'
 
 // Every query client the admin app makes, so a test can look inside its cache for the enrollment code.
@@ -373,5 +374,13 @@ describe('Installations', () => {
     await person.click(await screen.findByRole('link', { name: 'Installations' }))
 
     expect(await screen.findByRole('heading', { level: 2, name: 'Installations' })).toBeInTheDocument()
+  })
+})
+
+describe('accessibility', () => {
+  it('axe finds no violation on the installations page', async () => {
+    renderAt('/libraries/acme/installations', { [`GET ${BASE}`]: () => jsonResponse(200, LIST) })
+    await loaded()
+    expect(await axeViolations()).toEqual([])
   })
 })

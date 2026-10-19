@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router'
 import { describe, expect, it } from 'vitest'
 
 import { ALICE, deferred, jsonResponse, requestedUrls, serveApi, type ApiRoutes, type FetchMock } from '../../../src/test/http.ts'
+import { axeViolations } from '../../../src/test/axe.ts'
 import { AdminApp } from '../AdminApp.tsx'
 import { SAVED } from './CollectorConfigPage.tsx'
 
@@ -343,5 +344,13 @@ describe('Collector configuration', () => {
     await person.click(await screen.findByRole('link', { name: 'Collector configuration' }))
 
     expect(await screen.findByRole('heading', { level: 2, name: 'Collector configuration' })).toBeInTheDocument()
+  })
+})
+
+describe('accessibility', () => {
+  it('axe finds no violation on the collector configuration forms', async () => {
+    renderAt('/libraries/acme/collector', readyRoutes())
+    await loaded()
+    expect(await axeViolations()).toEqual([])
   })
 })
