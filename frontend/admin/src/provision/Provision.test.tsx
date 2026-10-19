@@ -361,6 +361,18 @@ describe('Assign operational identity', () => {
   })
 })
 
+describe('Breadcrumb', () => {
+  it('shows Libraries / Provision a library, the current page not a link', async () => {
+    renderAt('/provision', PLANS)
+    await form()
+    const nav = screen.getByRole('navigation', { name: 'Breadcrumb' })
+
+    expect(within(nav).getAllByRole('listitem').map((step) => step.textContent)).toEqual(['Libraries', 'Provision a library'])
+    expect(within(nav).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual(['/libraries'])
+    expect(within(nav).getByText('Provision a library')).toHaveAttribute('aria-current', 'page')
+  })
+})
+
 describe('accessibility', () => {
   it('axe finds no violation on the provisioning form', async () => {
     renderAt('/provision', PLANS)

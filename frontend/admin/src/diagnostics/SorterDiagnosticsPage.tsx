@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
-import { Link, useParams } from 'react-router'
+import { useParams } from 'react-router'
 
 import { isApiError } from '../../../src/api/client.ts'
 import { formatInstant } from '../../../src/time/productTime.ts'
 import { installationStatusLabel, onboardingLabel, pipelineStateLabel } from '../libraries/labels.ts'
 import { getSorterDiagnostics, type LegacyReport, type SorterDiagnostics, type V2Heartbeat } from './diagnosticsApi.ts'
+import { AdminBreadcrumb } from '../AdminBreadcrumb.tsx'
 import { AdminPageHeading } from '../AdminPageHeading.tsx'
 
 const LOAD_FAILED = "This sorter's diagnostics could not be loaded. Please try again."
@@ -136,13 +137,18 @@ export function SorterDiagnosticsPage() {
     queryFn: ({ signal }) => getSorterDiagnostics(orgSlug, sorterSlug, signal),
   })
   const notFound = isApiError(query.error) && query.error.status === 404
+  const title = query.data?.sorter.name ?? (notFound ? 'Sorter not found' : 'Sorter')
 
   return (
     <section aria-labelledby="sorter-heading">
-      <p>
-        <Link to={`/libraries/${encodeURIComponent(orgSlug)}`}>{query.data?.library.name ?? 'Library'}</Link>
-      </p>
-      <AdminPageHeading id="sorter-heading">{query.data?.sorter.name ?? (notFound ? 'Sorter not found' : 'Sorter')}</AdminPageHeading>
+      <AdminBreadcrumb
+        trail={[
+          { to: '/libraries', label: 'Libraries' },
+          { to: `/libraries/${encodeURIComponent(orgSlug)}`, label: query.data?.library.name ?? 'Library' },
+        ]}
+        current={title}
+      />
+      <AdminPageHeading id="sorter-heading">{title}</AdminPageHeading>
       {query.isPending && <p role="status">Loading diagnostics…</p>}
       {notFound && <p>There is no sorter with this address.</p>}
       {query.isError && !notFound && (

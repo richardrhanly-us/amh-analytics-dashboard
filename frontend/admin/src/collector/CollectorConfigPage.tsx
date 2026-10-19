@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { Link, useParams } from 'react-router'
+import { useParams } from 'react-router'
 
 import { isApiError } from '../../../src/api/client.ts'
 import { formatInstant, isValidTimeZone } from '../../../src/time/productTime.ts'
@@ -17,6 +17,7 @@ import {
   type RoutingList,
   type RoutingLists,
 } from './collectorApi.ts'
+import { AdminBreadcrumb } from '../AdminBreadcrumb.tsx'
 import { AdminPageHeading } from '../AdminPageHeading.tsx'
 
 // Saved to SortView, never "to the collector": an installed Contract v2 Collector keeps what it received at enrollment.
@@ -388,13 +389,13 @@ export function CollectorConfigPage() {
 
   return (
     <section aria-labelledby="collector-config-heading">
-      <p>
-        {notFound ? (
-          <Link to="/libraries">Libraries</Link>
-        ) : (
-          <Link to={`/libraries/${encodeURIComponent(orgSlug)}`}>{libraryName ?? 'Library'}</Link>
-        )}
-      </p>
+      <AdminBreadcrumb
+        trail={[
+          { to: '/libraries', label: 'Libraries' },
+          ...(notFound ? [] : [{ to: `/libraries/${encodeURIComponent(orgSlug)}`, label: libraryName ?? 'Library' }]),
+        ]}
+        current={notFound ? 'Library not found' : 'Collector configuration'}
+      />
       <AdminPageHeading id="collector-config-heading">{notFound ? 'Library not found' : 'Collector configuration'}</AdminPageHeading>
       {notFound ? (
         <p>There is no library with this address.</p>

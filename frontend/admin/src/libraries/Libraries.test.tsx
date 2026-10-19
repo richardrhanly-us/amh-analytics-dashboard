@@ -251,6 +251,75 @@ describe('Library overview', () => {
   })
 })
 
+/** The breadcrumb's steps as read, and the links among them. */
+function breadcrumb() {
+  const nav = screen.getByRole('navigation', { name: 'Breadcrumb' })
+  return {
+    nav,
+    steps: within(nav).getAllByRole('listitem').map((step) => step.textContent),
+    links: within(nav).queryAllByRole('link').map((link) => [link.textContent, link.getAttribute('href')]),
+  }
+}
+
+describe('Breadcrumb', () => {
+  it('gives the library overview a named navigation landmark: Libraries, then the library as the current page', async () => {
+    const fetchMock = renderAt('/libraries/nbpl', { 'GET /api/admin/libraries/nbpl': () => jsonResponse(200, NBPL_DETAIL) })
+    const heading = await screen.findByRole('heading', { level: 2, name: 'New Braunfels Public Library' })
+
+    const { nav, steps, links } = breadcrumb()
+    expect(screen.getByRole('main')).toContainElement(nav)
+    expect(nav.querySelector('ol')).not.toBeNull()
+    expect(steps).toEqual(['Libraries', 'New Braunfels Public Library'])
+    expect(links).toEqual([['Libraries', '/libraries']])
+    // The current page is marked, and is not a link to itself.
+    const current = within(nav).getByText('New Braunfels Public Library')
+    expect(current).toHaveAttribute('aria-current', 'page')
+    expect(current.closest('a')).toBeNull()
+    // It comes before the heading, and is built from the overview's own answer: no request of its own.
+    expect(nav.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(requestedUrls(fetchMock)).toEqual(['/api/admin/session', '/api/admin/libraries/nbpl'])
+  })
+
+  it('names the library generically while it loads, then by name, without moving focus again', async () => {
+    const answer = deferred<Response>()
+    renderAt('/libraries', {
+      'GET /api/admin/libraries': () => jsonResponse(200, LIST),
+      'GET /api/admin/libraries/nbpl': () => answer.promise,
+    })
+    const person = userEvent.setup()
+
+    await person.click(await screen.findByRole('link', { name: 'New Braunfels Public Library' }))
+    const loading = await screen.findByRole('heading', { level: 2, name: 'Library' })
+    await waitFor(() => expect(loading).toHaveFocus())
+    expect(breadcrumb().steps).toEqual(['Libraries', 'Library'])
+
+    answer.resolve(jsonResponse(200, NBPL_DETAIL))
+    const named = await screen.findByRole('heading', { level: 2, name: 'New Braunfels Public Library' })
+    expect(breadcrumb().steps).toEqual(['Libraries', 'New Braunfels Public Library'])
+    expect(named).toHaveFocus()
+  })
+
+  it('leads back to Libraries from a library that does not exist', async () => {
+    renderAt('/libraries/nobody', {
+      'GET /api/admin/libraries/nobody': () => jsonResponse(404, { code: 'library_not_found', message: 'Library not found.' }),
+    })
+    await screen.findByRole('heading', { level: 2, name: 'Library not found' })
+    expect(breadcrumb()).toMatchObject({ steps: ['Libraries', 'Library not found'], links: [['Libraries', '/libraries']] })
+  })
+
+  it('leads back to Libraries from a page that does not exist', async () => {
+    renderAt('/nowhere', {})
+    await screen.findByRole('heading', { level: 2, name: 'Page not found' })
+    expect(breadcrumb()).toMatchObject({ steps: ['Libraries', 'Page not found'], links: [['Libraries', '/libraries']] })
+  })
+
+  it('has none on the libraries list, which is the top of the trail', async () => {
+    renderAt('/libraries', { 'GET /api/admin/libraries': () => jsonResponse(200, LIST) })
+    await screen.findByRole('rowheader', { name: 'New Braunfels Public Library' })
+    expect(screen.queryByRole('navigation', { name: 'Breadcrumb' })).not.toBeInTheDocument()
+  })
+})
+
 describe('accessibility', () => {
   it('axe finds no violation on the libraries list', async () => {
     renderAt('/', { 'GET /api/admin/libraries': () => jsonResponse(200, LIST) })

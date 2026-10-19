@@ -222,6 +222,23 @@ describe('Sorter diagnostics', () => {
   })
 })
 
+describe('Breadcrumb', () => {
+  it('shows Libraries / the library / the sorter, from the diagnostics answer alone', async () => {
+    const fetchMock = renderAt('/libraries/nbpl/sorters/main', { [`GET ${PATH}`]: () => jsonResponse(200, V2) })
+    await screen.findByRole('heading', { level: 2, name: 'Main AMH' })
+    const nav = screen.getByRole('navigation', { name: 'Breadcrumb' })
+
+    expect(within(nav).getAllByRole('listitem').map((step) => step.textContent)).toEqual([
+      'Libraries',
+      'New Braunfels Public Library',
+      'Main AMH',
+    ])
+    expect(within(nav).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual(['/libraries', '/libraries/nbpl'])
+    expect(within(nav).getByText('Main AMH')).toHaveAttribute('aria-current', 'page')
+    expect(requestedUrls(fetchMock)).toEqual(['/api/admin/session', PATH])
+  })
+})
+
 describe('accessibility', () => {
   it("axe finds no violation on a sorter's diagnostics", async () => {
     renderAt('/libraries/nbpl/sorters/main', { [`GET ${PATH}`]: () => jsonResponse(200, V2) })

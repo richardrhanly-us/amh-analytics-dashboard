@@ -375,6 +375,27 @@ describe('Installations', () => {
 
     expect(await screen.findByRole('heading', { level: 2, name: 'Installations' })).toBeInTheDocument()
   })
+
+  it('shows Libraries / the library / Installations, and its library step leads back with focus on the overview heading', async () => {
+    renderAt('/libraries/acme/installations', {
+      [`GET ${BASE}`]: () => jsonResponse(200, LIST),
+      'GET /api/admin/libraries/acme': () =>
+        jsonResponse(200, {
+          timezone: 'America/Chicago', slug: 'acme', name: 'Acme Library', status: 'active', primary_branch: null,
+          operational_identity: 'assigned', subscription: null, sorters: [],
+        }),
+    })
+    await loaded()
+    const nav = screen.getByRole('navigation', { name: 'Breadcrumb' })
+
+    expect(within(nav).getAllByRole('listitem').map((step) => step.textContent)).toEqual(['Libraries', 'Acme Library', 'Installations'])
+    expect(within(nav).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual(['/libraries', '/libraries/acme'])
+    expect(within(nav).getByText('Installations')).toHaveAttribute('aria-current', 'page')
+
+    await userEvent.setup().click(within(nav).getByRole('link', { name: 'Acme Library' }))
+    const overview = await screen.findByRole('heading', { level: 2, name: 'Acme Library' })
+    await waitFor(() => expect(overview).toHaveFocus())
+  })
 })
 
 describe('accessibility', () => {
