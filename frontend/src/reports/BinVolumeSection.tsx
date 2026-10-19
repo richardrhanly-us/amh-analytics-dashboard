@@ -65,6 +65,7 @@ function BinHours({ bins, timeZone }: { bins: readonly BinVolumeBin[]; timeZone:
       <p className="chart-summary" id="bin-hours-summary">
         Check-ins in each bin by hour of the day, added up across the date range. Hours are in {timeZone} time.
       </p>
+      {/* eslint-disable-next-line jsx-a11y-x/no-noninteractive-tabindex -- a labelled table that scrolls sideways must take keyboard focus to be scrolled (axe: scrollable-region-focusable) */}
       <div className="table-scroll" role="group" aria-labelledby="bin-hours-heading" tabIndex={0}>
         <table className="data-table bin-hours" aria-labelledby="bin-hours-heading" aria-describedby="bin-hours-summary">
           <thead>

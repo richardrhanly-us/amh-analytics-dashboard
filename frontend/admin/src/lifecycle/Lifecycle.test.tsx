@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ALICE, jsonResponse, serveApi, type ApiRoutes, type FetchMock } from '../../../src/test/http.ts'
+import { axeViolations } from '../../../src/test/axe.ts'
 import { AdminApp } from '../AdminApp.tsx'
 
 // Every query client the admin app makes, so a test can see what it invalidates.
@@ -297,5 +298,13 @@ describe('Library lifecycle', () => {
     expect(await screen.findByRole('heading', { level: 2, name: 'Library not found' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Libraries' })).toHaveAttribute('href', '/libraries')
     expect(screen.queryByRole('button', { name: /Suspend|Reactivate|Offboard/ })).not.toBeInTheDocument()
+  })
+})
+
+describe('accessibility', () => {
+  it('axe finds no violation on the lifecycle page of an active library', async () => {
+    renderAt(library('active').route)
+    await loaded()
+    expect(await axeViolations()).toEqual([])
   })
 })

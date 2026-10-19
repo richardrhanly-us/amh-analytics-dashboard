@@ -73,7 +73,8 @@ describe('before sign-in', () => {
     renderApp('/organizations/northbridge/sorters/central')
 
     expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument()
-    expect(screen.queryByRole('link')).not.toBeInTheDocument()
+    // No link into the app; the shell's skip link is outside <main>.
+    expect(within(screen.getByRole('main')).queryByRole('link')).not.toBeInTheDocument()
     expect(requestedUrls(fetchMock)).toEqual(['/api/auth/session'])
   })
 

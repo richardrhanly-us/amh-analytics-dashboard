@@ -331,12 +331,18 @@ Run these from this `frontend/` directory.
 | --- | --- |
 | `npm ci` | Install exactly what `package-lock.json` records |
 | `npm run dev` | Start the Vite dev server (http://localhost:5173) |
-| `npm run lint` | Lint with ESLint |
+| `npm run lint` | Lint with ESLint, including the JSX accessibility rules (`eslint-plugin-jsx-a11y-x`, recommended set) |
 | `npm run build` | Type-check (`tsc -b`), then build for production |
 | `npm test` | Run the tests in watch mode (Vitest + jsdom) |
-| `npm run test:run` | Run the tests once and exit (use this in CI) |
+| `npm run test:run` | Run the tests once and exit (use this in CI), including the axe-core accessibility checks of both apps' pages |
 
 Tests stub `fetch`; none of them talks to a real backend.
+
+Accessibility is checked automatically in CI, through the existing test and lint steps: `axe-core` runs over the
+rendered pages of both apps (`src/accessibility.axe.test.tsx`, and an `accessibility` block in each admin page's
+tests, via `src/test/axe.ts`) and any violation fails the build; the JSX accessibility rules fail the lint. This is
+an automated baseline, not a WCAG conformance claim: jsdom cannot judge colour contrast, and the manual audit is
+separate.
 
 ## Build output
 

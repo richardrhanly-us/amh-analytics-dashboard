@@ -101,6 +101,7 @@ function ByKindOfWork({ report }: { report: SortViewValueReport }) {
   return (
     <>
       <h5 id="sortview-value-kinds-heading">By kind of work</h5>
+      {/* eslint-disable-next-line jsx-a11y-x/no-noninteractive-tabindex -- a labelled table that scrolls sideways must take keyboard focus to be scrolled (axe: scrollable-region-focusable) */}
       <div className="table-scroll" role="group" aria-labelledby="sortview-value-kinds-heading" tabIndex={0}>
         <table className="data-table" aria-labelledby="sortview-value-kinds-heading">
           <thead>

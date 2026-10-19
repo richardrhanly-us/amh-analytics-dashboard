@@ -42,7 +42,9 @@ describe('scope of this block', () => {
     ['a browser test runner', /playwright|cypress/],
     ['a component library', /^@radix-ui\/|^@headlessui\/|^@chakra-ui\/|^antd$|^@mantine\/|^react-aria|^@emotion\/|styled-components|^sass$|^less$|postcss/],
     ['an icon library', /icon|lucide|fontawesome|feather|phosphor/],
-    ['an accessibility test library', /axe|pa11y|lighthouse/],
+    // axe-core (axe checks in Vitest) and eslint-plugin-jsx-a11y-x (lint) are the accessibility tooling; nothing
+    // that overlaps them.
+    ['a second accessibility test library', /pa11y|lighthouse|jest-axe|vitest-axe|^@axe-core\//],
   ])('does not depend on %s', (_label, pattern) => {
     expect(installed.filter((name) => pattern.test(name))).toEqual([])
   })

@@ -173,9 +173,22 @@ export function AdminApp() {
   }, [check])
 
   const signedOut = useCallback(() => setState({ status: 'signedOut' }), [])
+  const main = useRef<HTMLElement>(null)
 
   return (
     <div className="app">
+      {/* The first Tab stop: past the header to the page. Focus is moved in code, not by following the fragment,
+          which would be a navigation to the router. */}
+      <a
+        className="skip-link"
+        href="#main-content"
+        onClick={(event) => {
+          event.preventDefault()
+          main.current?.focus()
+        }}
+      >
+        Skip to main content
+      </a>
       <header className="app-header">
         <h1>SortView Administration</h1>
         {state.status === 'admin' && (
@@ -184,7 +197,7 @@ export function AdminApp() {
           </p>
         )}
       </header>
-      <main>
+      <main id="main-content" ref={main} tabIndex={-1}>
         {state.status === 'checking' && <p role="status">Checking your administration access…</p>}
         {state.status === 'signedOut' && <SignInForm onSignedIn={check} />}
         {state.status === 'forbidden' && (

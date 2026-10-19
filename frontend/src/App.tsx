@@ -80,11 +80,23 @@ function App({ createClient = createQueryClient }: { createClient?: QueryClientF
 
   return (
     <div className="app">
+      {/* The first Tab stop: past the header to the page. Focus is moved in code rather than by following the
+          fragment, which would be a navigation to the router -- and the reset page reads its token from the fragment. */}
+      <a
+        className="skip-link"
+        href="#main-content"
+        onClick={(event) => {
+          event.preventDefault()
+          main.current?.focus()
+        }}
+      >
+        Skip to main content
+      </a>
       <header className="app-header">
         <h1>SortView</h1>
         {state.status === 'authenticated' && <UserMenu user={state.user} />}
       </header>
-      <main ref={main} tabIndex={-1}>
+      <main id="main-content" ref={main} tabIndex={-1}>
         {resettingPassword ? <ResetPasswordPage /> : <AuthView createClient={createClient} />}
       </main>
     </div>

@@ -126,7 +126,8 @@ describe('the sign-in form', () => {
 
     // A button that swaps this form for the request form -- not a link, and not the form's submit button.
     expect(screen.getByRole('button', { name: 'Forgot password?' })).toHaveAttribute('type', 'button')
-    expect(screen.queryByRole('link')).not.toBeInTheDocument()
+    // The page has none; the shell's skip link is outside <main>.
+    expect(within(screen.getByRole('main')).queryByRole('link')).not.toBeInTheDocument()
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
     expect(emailInput()).toHaveValue('')
     expect(emailInput()).not.toHaveAttribute('placeholder')

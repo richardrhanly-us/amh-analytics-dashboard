@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router'
 import { describe, expect, it } from 'vitest'
 
 import { ALICE, jsonResponse, requestedUrls, serveApi, type ApiRoutes } from '../../../src/test/http.ts'
+import { axeViolations } from '../../../src/test/axe.ts'
 import { AdminApp } from '../AdminApp.tsx'
 
 const SESSION = { 'GET /api/admin/session': () => jsonResponse(200, ALICE) }
@@ -218,5 +219,13 @@ describe('Sorter diagnostics', () => {
 
     expect(await screen.findByRole('heading', { level: 3, name: 'Collector heartbeat' })).toBeInTheDocument()
     expect(requestedUrls(fetchMock)).toContain(PATH)
+  })
+})
+
+describe('accessibility', () => {
+  it("axe finds no violation on a sorter's diagnostics", async () => {
+    renderAt('/libraries/nbpl/sorters/main', { [`GET ${PATH}`]: () => jsonResponse(200, V2) })
+    await screen.findByRole('heading', { level: 3, name: 'Collector heartbeat' })
+    expect(await axeViolations()).toEqual([])
   })
 })

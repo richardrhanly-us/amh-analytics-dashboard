@@ -14,6 +14,7 @@ import {
   serveApi,
   type FetchMock,
 } from '../../src/test/http.ts'
+import { axeViolations } from '../../src/test/axe.ts'
 import { AdminApp } from './AdminApp.tsx'
 
 const FORBIDDEN = { code: 'forbidden', message: 'You do not have access to SortView administration.' }
@@ -189,5 +190,32 @@ describe('AdminApp', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('We could not check your administration access.')
     expect(screen.queryByRole('heading', { name: 'Libraries' })).not.toBeInTheDocument()
+  })
+})
+
+describe('accessibility', () => {
+  it('axe finds no violation on the sign-in form', async () => {
+    serveApi({ [SESSION]: () => jsonResponse(401, NOT_AUTHENTICATED) })
+    renderAdmin()
+    await screen.findByRole('heading', { name: 'Sign in' })
+    expect(await axeViolations()).toEqual([])
+  })
+
+  it('has a skip link, first in the tab order, that moves focus to the main content', async () => {
+    serveApi({ [SESSION]: () => jsonResponse(200, ALICE), [LIBRARIES]: NO_LIBRARIES })
+    renderAdmin()
+    await screen.findByRole('heading', { level: 2, name: 'Libraries' })
+    const person = userEvent.setup()
+
+    await person.tab()
+    const skip = screen.getByRole('link', { name: 'Skip to main content' })
+    expect(skip).toHaveFocus()
+    expect(skip).toHaveAttribute('href', '#main-content')
+
+    await person.click(skip)
+    const main = screen.getByRole('main')
+    expect(main).toHaveFocus()
+    expect(main).toHaveAttribute('id', 'main-content')
+    expect(window.location.hash).toBe('')
   })
 })
