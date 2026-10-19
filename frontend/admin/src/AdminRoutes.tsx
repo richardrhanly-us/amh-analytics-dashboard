@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { Link, Navigate, Route, Routes, useLocation } from 'react-router'
+import { Navigate, Route, Routes, useLocation } from 'react-router'
 
 import { CollectorConfigPage } from './collector/CollectorConfigPage.tsx'
 import { SorterDiagnosticsPage } from './diagnostics/SorterDiagnosticsPage.tsx'
@@ -8,16 +8,15 @@ import { LibrariesPage } from './libraries/LibrariesPage.tsx'
 import { LibraryPage } from './libraries/LibraryPage.tsx'
 import { LifecyclePage } from './lifecycle/LifecyclePage.tsx'
 import { ProvisionPage } from './provision/ProvisionPage.tsx'
+import { AdminBreadcrumb } from './AdminBreadcrumb.tsx'
 import { AdminPageHeading } from './AdminPageHeading.tsx'
 import { AdminPageArrivalContext } from './pageArrival.ts'
 
 function NotFoundPage() {
   return (
     <section aria-labelledby="not-found-heading">
+      <AdminBreadcrumb trail={[{ to: '/libraries', label: 'Libraries' }]} current="Page not found" />
       <AdminPageHeading id="not-found-heading">Page not found</AdminPageHeading>
-      <p>
-        <Link to="/libraries">Libraries</Link>
-      </p>
     </section>
   )
 }

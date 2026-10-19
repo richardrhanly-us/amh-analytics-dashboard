@@ -15,6 +15,7 @@ import {
 } from './labels.ts'
 import { assignOperationalIdentity } from '../provision/provisionApi.ts'
 import { getLibrary, type LibraryDetail } from './librariesApi.ts'
+import { AdminBreadcrumb } from '../AdminBreadcrumb.tsx'
 import { AdminPageHeading } from '../AdminPageHeading.tsx'
 
 const LOAD_FAILED = 'This library could not be loaded. Please try again.'
@@ -219,13 +220,12 @@ export function LibraryPage() {
     queryFn: ({ signal }) => getLibrary(orgSlug, signal),
   })
   const notFound = isApiError(query.error) && query.error.status === 404
+  const title = query.data?.name ?? (notFound ? 'Library not found' : 'Library')
 
   return (
     <section aria-labelledby="library-heading">
-      <p>
-        <Link to="/libraries">Libraries</Link>
-      </p>
-      <AdminPageHeading id="library-heading">{query.data?.name ?? (notFound ? 'Library not found' : 'Library')}</AdminPageHeading>
+      <AdminBreadcrumb trail={[{ to: '/libraries', label: 'Libraries' }]} current={title} />
+      <AdminPageHeading id="library-heading">{title}</AdminPageHeading>
       {query.isPending && <p role="status">Loading library…</p>}
       {notFound && <p>There is no library with this address.</p>}
       {query.isError && !notFound && (

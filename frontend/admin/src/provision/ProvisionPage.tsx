@@ -1,9 +1,10 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { useNavigate } from 'react-router'
 
 import { isApiError } from '../../../src/api/client.ts'
 import { NAME_LIMIT, SLUG_LIMIT, SLUG_PATTERN, getPlans, provisionLibrary, slugify, type ProvisionRequest } from './provisionApi.ts'
+import { AdminBreadcrumb } from '../AdminBreadcrumb.tsx'
 import { AdminPageHeading } from '../AdminPageHeading.tsx'
 
 type Field = keyof ProvisionRequest
@@ -145,9 +146,7 @@ export function ProvisionPage() {
 
   return (
     <section aria-labelledby="provision-heading">
-      <p>
-        <Link to="/libraries">Libraries</Link>
-      </p>
+      <AdminBreadcrumb trail={[{ to: '/libraries', label: 'Libraries' }]} current="Provision a library" />
       <AdminPageHeading id="provision-heading">Provision a library</AdminPageHeading>
       <p className="notice" role="note">
         This creates the library, its one primary branch, a trial subscription on the chosen plan, and its operational

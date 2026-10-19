@@ -1,11 +1,12 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { useParams } from 'react-router'
 
 import { isApiError } from '../../../src/api/client.ts'
 import { libraryStatusLabel } from '../libraries/labels.ts'
 import { getLibrary, type LibraryDetail } from '../libraries/librariesApi.ts'
 import { offboardLibrary, reactivateLibrary, suspendLibrary, type LifecycleResult, type OffboardCounts } from './lifecycleApi.ts'
+import { AdminBreadcrumb } from '../AdminBreadcrumb.tsx'
 import { AdminPageHeading } from '../AdminPageHeading.tsx'
 
 const CANCELLED_NOTICE = 'Cancelled — permanently offboarded. This cannot be undone in SortView administration.'
@@ -217,13 +218,13 @@ export function LifecyclePage() {
 
   return (
     <section aria-labelledby="lifecycle-heading">
-      <p>
-        {notFound ? (
-          <Link to="/libraries">Libraries</Link>
-        ) : (
-          <Link to={`/libraries/${encodeURIComponent(orgSlug)}`}>{query.data?.name ?? 'Library'}</Link>
-        )}
-      </p>
+      <AdminBreadcrumb
+        trail={[
+          { to: '/libraries', label: 'Libraries' },
+          ...(notFound ? [] : [{ to: `/libraries/${encodeURIComponent(orgSlug)}`, label: query.data?.name ?? 'Library' }]),
+        ]}
+        current={notFound ? 'Library not found' : 'Library lifecycle'}
+      />
       <AdminPageHeading id="lifecycle-heading">{notFound ? 'Library not found' : 'Library lifecycle'}</AdminPageHeading>
       {notFound && <p>There is no library with this address.</p>}
       {query.isPending && <p role="status">Loading library…</p>}

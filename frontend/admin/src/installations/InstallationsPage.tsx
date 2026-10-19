@@ -16,6 +16,7 @@ import {
   type IssuedCode,
   type StatusChange,
 } from './installationsApi.ts'
+import { AdminBreadcrumb } from '../AdminBreadcrumb.tsx'
 import { AdminPageHeading } from '../AdminPageHeading.tsx'
 
 const STATUS_LABEL: Record<Installation['status'], string> = {
@@ -432,9 +433,13 @@ export function InstallationsPage() {
 
   return (
     <section aria-labelledby="installations-heading">
-      <p>
-        {notFound ? <Link to="/libraries">Libraries</Link> : <Link to={`/libraries/${encodeURIComponent(orgSlug)}`}>{data?.library.name ?? 'Library'}</Link>}
-      </p>
+      <AdminBreadcrumb
+        trail={[
+          { to: '/libraries', label: 'Libraries' },
+          ...(notFound ? [] : [{ to: `/libraries/${encodeURIComponent(orgSlug)}`, label: data?.library.name ?? 'Library' }]),
+        ]}
+        current={notFound ? 'Library not found' : 'Installations'}
+      />
       <AdminPageHeading id="installations-heading">{notFound ? 'Library not found' : 'Installations'}</AdminPageHeading>
       {notFound && <p>There is no library with this address.</p>}
       {query.isPending && <p role="status">Loading installations…</p>}
