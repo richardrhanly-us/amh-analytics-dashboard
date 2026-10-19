@@ -3,7 +3,7 @@
 The big picture, kept in one place so a single task does not swallow the plan. Read this before starting any
 non-trivial task, and check the task against it before widening scope.
 
-Last reviewed: 2026-10-17. Facts marked **(verify)** were not confirmed against production or the person who
+Last reviewed: 2026-10-19. Facts marked **(verify)** were not confirmed against production or the person who
 knows; everything else was checked in the repository on that date.
 
 ---
@@ -35,6 +35,21 @@ its own data. New Braunfels Public Library (NBPL) stays live throughout.
 
 ## 2. Priority order, and why
 
+**Current order (revised 2026-10-19, product owner decision; change log).** Workstream A is complete. Workstream B is
+**paused at Section 508 §602.3 (Electronic Support Documentation)** — an intentional pause, not a completed milestone
+(section 4, B). Planned installer changes and visual/UX changes to the customer and admin apps would make customer
+installation documentation, its accessibility verification and the VPAT out of date, so they come first:
+
+| Priority | Work | Notes |
+|---|---|---|
+| 1 | **Installer improvements** | Review and improve the customer-facing installation, configuration, upgrade and recovery experience. Scope and implementation plan **not yet defined**: the next step is discovery/planning, not an approved specification. Relation to the C milestones is to be decided in that planning. |
+| 2 | **UI redesign and polish** | Professional appearance, consistency, usability and visual presentation of the customer and admin apps. Designs and scope **not yet defined**. Accessibility stays an acceptance requirement for every changed component and workflow. |
+| 3 | **Targeted accessibility regression verification** | After 1 and 2, verify affected functionality against the 2026-10-19 baseline. Reuse existing evidence for unchanged functionality where appropriate; do not automatically restart the whole B2 audit. |
+| 4 | **Resume government readiness (B)** | Once the product changes stabilize; the resume list is in section 4, B. |
+
+The original order below (set 2026-10-14) is kept for its reasoning; its "do A first" logic is what now puts the
+installer and UI changes before the remaining B paperwork.
+
 | Order | Workstream | Why it goes here |
 |---|---|---|
 | 0 | **Land in-flight work** | Finished branches that are not merged are the main source of drift. Close them first. |
@@ -57,8 +72,12 @@ its own data. New Braunfels Public Library (NBPL) stays live throughout.
 
 ## 3. Current focus
 
-**Workstream A is complete (A5 completed 2026-10-17). Next: Workstream B, government readiness; then C, installer
-commercialization (section 2, order unchanged).**
+**Workstream A is complete (A5 completed 2026-10-17). Workstream B is paused at Section 508 §602.3 (2026-10-19)
+after the B2 accessibility baseline. Next: Priority 1, installer improvements — starting with discovery/planning, scope
+not yet defined (section 2, order revised 2026-10-19).** Then UI redesign and polish, targeted accessibility regression
+verification, and resuming B. The VPAT and support-guide drafts stay internal until B resumes and completes.
+
+Workstream A history:
 - A1 and A1b completed 2026-10-14.
 - A2 complete: items 1–7 merged (item 7: PR #210, `64c7d7b`); item 8, Super Admin Streamlit retirement, merged
   (PR #212, `88f2b5a`).
@@ -353,6 +372,46 @@ evidence for each answer. The original "government-readiness audit" (Parts 1–7
 covered Contract v2 dashboard wiring, mixed-era reads and release packaging; that round is complete. This section
 is the current gap list, rebuilt from the repository on 2026-10-14.
 
+**Status: paused 2026-10-19 at Section 508 §602.3 — Electronic Support Documentation.** Intentional, not a completed
+government-readiness milestone. Why: substantial installer changes and further visual/UX changes to the customer and
+admin apps are planned (section 2, priorities 1–2). Finishing customer installation documentation, verifying its
+accessibility and finalizing the VPAT before those changes would mean rework and documenting an outdated product.
+
+- **B2 accessibility baseline (2026-10-19, PRs #229–#233).** Frontend remediation verified in production; automated
+  axe-core and blocking JSX accessibility checks; manual keyboard, NVDA, 200% zoom, 320px reflow, text spacing,
+  contrast, navigation and form-behavior verification. Evidence: `docs/accessibility-verification-2026-10-19.md` and
+  `docs/accessibility-conformance-report.md` (WCAG 2.1 A/AA, criterion by criterion, several rows Partially
+  Supports). This is a **dated baseline, not blanket WCAG 2.1 AA or Revised Section 508 conformance.**
+- **Local drafts, untracked (not committed as of 2026-10-19), in `docs/accessibility/`:**
+  - `SortView_VPAT_508_Draft.docx` — Revised Section 508 edition of VPAT® 2.5Rev, marked "DRAFT … not yet approved
+    for procurement publication". Scope: the two production web apps only. Contains WCAG 2.0 A/AA tables (web only;
+    Electronic Docs not assessed), Chapter 3 rows all "Pending criterion-specific assessment", Chapter 4 hardware Not
+    Applicable, Chapter 5 (502/503 excluded as web-only; §504 Authoring Tools Not Applicable for the evaluated web
+    functionality — CSV export and browser print only — reassess if scope changes), Chapter 6 rows pending, and an
+    outstanding-verification register.
+  - Key VPAT findings: **3.1.1** Language of Page verified Supports (`lang="en"` in source and production, English
+    apps); **2.2.1** Timing Adjustable — fixed 14-day session expiry, no warning/extension, unsaved form edits lost on
+    expiry; final determination outstanding; **3.3.4** Error Prevention — safeguards reviewed in routing, collector
+    settings, account profile, reporting assumptions, membership, installations and lifecycle; final determination
+    outstanding.
+  - `SortView_Accessibility_and_Support_Guide.md` — "Draft — pending review before public distribution".
+- **Support arrangement so far:** primary technical/accessibility support email `sortviewsuper@gmail.com`; electronic
+  documentation supplied by email on request; requests for accessible documentation or communication accommodations
+  considered individually; **no support-response SLA**. Public `/accessibility` and `/support` pages are possible
+  future improvements, **not existing published pages**.
+- **None of this is approved, finalized, publicly released or suitable for procurement use.** Keep the drafts internal.
+
+**To resume B (priority 4, after installer and UI changes stabilize):**
+
+1. Update customer installation and support documentation to match the released product (the current customer
+   install guide is for Collector 1.0.2; C4).
+2. Complete §602.3 verification of customer-facing electronic documentation, including the DOCX/PDF deliverables.
+3. Reassess the Chapter 6 support documentation and services findings (602.2–602.4, 603).
+4. Resolve the outstanding VPAT WCAG rows and Chapter 3 classifications from actual evidence.
+5. Confirm product version, report scope and applicable standards.
+6. Verify the accessibility of the final report itself.
+7. Prepare reviewed customer/procurement-facing documentation.
+
 **Done (verified in the repository):**
 
 - Contract v2 is live at NBPL.
@@ -375,7 +434,7 @@ is the current gap list, rebuilt from the repository on 2026-10-14.
 | # | Gap | Notes | Depends on |
 |---|---|---|---|
 | B1 | Customer UI hosted on Streamlit Community Cloud | **Closed (A4, A5):** the customer UI is the React app on `app.sortviewapp.com`, and the Streamlit app is retired. | A |
-| B2 | Accessibility conformance evidence | **In progress, substantially addressed (2026-10-19):** the production React customer and admin apps now have automated axe coverage, blocking JSX accessibility linting, skip-link and route-arrival focus handling, required-field guidance, document-title fixes, and semantic admin breadcrumb navigation. Manual production verification covered keyboard access, visible focus, 200% zoom, 320px reflow, text spacing, Windows contrast mode, NVDA screen-reader behavior, headings, status/error announcements, meaningful sequence, consistent identification, sensory characteristics and navigation. Evidence is recorded in `docs/accessibility-verification-2026-10-19.md`. A formal criterion-by-criterion ACR/VPAT is still pending; do not claim blanket WCAG 2.1 AA conformance yet. | A |
+| B2 | Accessibility conformance evidence | **Baseline done; VPAT paused at §602.3 (2026-10-19)** — see status above. Draft VPAT and support guide are local and untracked. Original note: the production React customer and admin apps now have automated axe coverage, blocking JSX accessibility linting, skip-link and route-arrival focus handling, required-field guidance, document-title fixes, and semantic admin breadcrumb navigation. Manual production verification covered keyboard access, visible focus, 200% zoom, 320px reflow, text spacing, Windows contrast mode, NVDA screen-reader behavior, headings, status/error announcements, meaningful sequence, consistent identification, sensory characteristics and navigation. Evidence is recorded in `docs/accessibility-verification-2026-10-19.md`. Do not claim blanket WCAG 2.1 AA conformance yet. | A |
 | B3 | No MFA; no SSO | At minimum MFA for owners/admins; SSO (SAML/OIDC) is often asked for by city IT. | A (UI) |
 | B4 | Historical v1 patron data still stored | `acs_events.patron_id`/`raw_message` kept and re-read by v1 hold classification; needs a backfill of classification columns before nulling. v1 `/upload` still open to v1-contract branches. Contract 1 remains technically supported today; its retirement is a deliberate future decision under C5. | — |
 | B5 | No customer-facing privacy/data-handling policy | Retention, encryption-at-rest posture (Neon/DigitalOcean), patron-confidentiality statutes, subprocessor list. | — (start early) |
@@ -393,6 +452,9 @@ is the current gap list, rebuilt from the repository on 2026-10-14.
 
 **Goal:** a new library installs and enrolls the Collector from a signed download, following a current guide,
 without us on site, and lands in the React app with a working account.
+
+**2026-10-19:** installer improvements are now priority 1 (section 2). Their scope is not yet defined; discovery and
+planning come first and decide which C milestones they cover. Nothing below is re-scoped by that decision yet.
 
 **Where it stands (verified):**
 
@@ -426,6 +488,9 @@ without us on site, and lands in the React app with a working account.
 
 ## 5. Done recently (newest first)
 
+- 2026-10-19 — B2 accessibility baseline: frontend remediation, automated axe/JSX checks and manual verification
+  (PRs #229–#231); evidence and WCAG 2.1 conformance report (PRs #232, #233). A dated baseline, not a conformance
+  claim. Government readiness then paused at §602.3; draft VPAT and support guide kept local (section 4, B).
 - 2026-10-17 — A5: customer Streamlit retired. Hosted app deleted; source, tests and tooling removed (PRs #215,
   #216); Streamlit, Altair and WeasyPrint dependencies and `packages.txt` removed (PR #217); guest account
   deactivated; stale `security` JSON removed from four `organization_settings` rows
@@ -502,6 +567,7 @@ One line each, dated. Pick up only when a milestone needs it, or when it is prom
 - 2026-10-15 — Production `alembic current` cannot be read with the runtime role (`permission denied for table alembic_version`, by design). The schema is proven only functionally, plus deployed head `f7b3d2c81a46`. Read it with the migration/owner role when one is next used; do not widen the runtime role.
 - 2026-10-15 — The disposable production library "SortView Admin Smoke Test" (`sortview-admin-smoke-test`) is cancelled but not purged; purging it is an operator decision (`scripts/purge_tenant_data.py`).
 - 2026-10-15 — `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS` still lists the customer React trial's CloudFront origin. Kept deliberately through the A4 soak (2026-10-16); remove it after the soak (A5). **Superseded (A5):** removing it broke customer writes from `app.sortviewapp.com` in production, so it must stay (A5). Why production needs it is not yet explained; investigate only as its own task.
+- 2026-10-19 — The tracked `docs/accessibility-conformance-report.md` (WCAG 2.1) predates the VPAT draft: it still rates 3.1.1 Partially Supports and has older 2.2.1/3.3.4 wording. Reconcile when B resumes (priority 4).
 - 2026-10-01 — `ruleset_id`: `docs/contract-v2-design.md` §5 contradicts the deliberate code behavior; fix the doc or the code.
 
 ---
@@ -515,3 +581,7 @@ One line each, dated. Pick up only when a milestone needs it, or when it is prom
   A1b (Super Admin parity audit after D9) as a prerequisite to A2. Workstream order unchanged.
 - 2026-10-17 — A5 completed, and with it Workstream A. Next is B (government readiness), then C (installer
   commercialization); order unchanged.
+- 2026-10-19 — Order revised (product owner): B paused at Section 508 §602.3 after the B2 accessibility baseline.
+  New order: 1 installer improvements → 2 UI redesign and polish → 3 targeted accessibility regression verification →
+  4 resume B. Why: planned installer and UI changes would make the installation documentation and VPAT out of date.
+  Scope for 1 and 2 is not yet defined.
