@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router'
 
 import { isApiError } from '../../../src/api/client.ts'
 import { NAME_LIMIT, SLUG_LIMIT, SLUG_PATTERN, getPlans, provisionLibrary, slugify, type ProvisionRequest } from './provisionApi.ts'
+import { AdminPageHeading } from '../AdminPageHeading.tsx'
 
 type Field = keyof ProvisionRequest
 type Problems = Partial<Record<Field, string>>
@@ -133,8 +134,10 @@ export function ProvisionPage() {
     }
   }
 
+  // Every field of this form is required (and the form says so above them). `noValidate` keeps the checking ours.
   const aria = (field: Field) => ({
     id: field,
+    required: true,
     'aria-invalid': problems[field] !== undefined,
     'aria-describedby': problems[field] === undefined ? undefined : `${field}-problem`,
   })
@@ -145,7 +148,7 @@ export function ProvisionPage() {
       <p>
         <Link to="/libraries">Libraries</Link>
       </p>
-      <h2 id="provision-heading">Provision a library</h2>
+      <AdminPageHeading id="provision-heading">Provision a library</AdminPageHeading>
       <p className="notice" role="note">
         This creates the library, its one primary branch, a trial subscription on the chosen plan, and its operational
         identity. Collector settings, installations and enrollment codes are set up afterwards, on the library&apos;s own
@@ -156,7 +159,15 @@ export function ProvisionPage() {
           The plans could not be loaded, so a library cannot be provisioned right now. Please try again.
         </p>
       )}
-      <form onSubmit={(event) => void submit(event)} noValidate aria-labelledby="provision-heading">
+      <form
+        onSubmit={(event) => void submit(event)}
+        noValidate
+        aria-labelledby="provision-heading"
+        aria-describedby="provision-required"
+      >
+        <p className="field-help" id="provision-required">
+          All fields are required.
+        </p>
         <FormField field="name" problems={problems}>
           <input type="text" autoComplete="off" value={values.name} onChange={(event) => setName('name', event.target.value)} {...aria('name')} />
         </FormField>

@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react'
 
+const APP_TITLE = 'SortView'
+
 /**
  * The heading of a view that REPLACES another without the address changing:
  * the sign-in form giving way to "forgot password", a reset form giving way
@@ -10,6 +12,8 @@ import { useEffect, useRef } from 'react'
  *
  * `arrive` is false for a view someone simply opened the app on: nobody was
  * moved there, and focus is left alone.
+ *
+ * Like PageHeading, it also names the view in the browser tab.
  */
 export function ArrivalHeading({ id, arrive, children }: { id: string; arrive: boolean; children: string }) {
   const heading = useRef<HTMLHeadingElement>(null)
@@ -19,6 +23,13 @@ export function ArrivalHeading({ id, arrive, children }: { id: string; arrive: b
       heading.current?.focus()
     }
   }, [arrive])
+
+  useEffect(() => {
+    document.title = `${children} – ${APP_TITLE}`
+    return () => {
+      document.title = APP_TITLE
+    }
+  }, [children])
 
   return (
     <h2 id={id} ref={heading} tabIndex={-1}>

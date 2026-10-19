@@ -242,6 +242,16 @@ describe('the account page', () => {
 // =====================================================================================================================
 
 describe('changing the name', () => {
+  it('says before anything is saved that a name is required, and marks the box required', async () => {
+    serve()
+    await page()
+    const profile = within(region('Profile'))
+
+    expect(profile.getByText('Your name is required.')).toBeVisible()
+    expect(profile.getByLabelText('Full name')).toBeRequired()
+    expect(profile.getByLabelText('Full name')).not.toHaveAttribute('aria-required')
+  })
+
   it('saves the name alone, then shows what the API stored -- on the page and in the header', async () => {
     const fetchMock = serve({ 'PUT /api/account/profile': () => jsonResponse(200, { ...ACCOUNT, full_name: 'Alicia Example-Ruiz' }) })
     const user = userEvent.setup(INSTANT)

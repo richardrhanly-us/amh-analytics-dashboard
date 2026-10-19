@@ -367,4 +367,26 @@ describe('accessibility', () => {
     await form()
     expect(await axeViolations()).toEqual([])
   })
+  it('says before anything is submitted that every field is required, and marks each one required', async () => {
+    renderAt('/provision', PLANS)
+    const provision = await form()
+
+    expect(document.title).toBe('Provision a library – SortView Administration')
+    expect(within(provision).getByText('All fields are required.')).toBeVisible()
+    expect(provision).toHaveAccessibleDescription('All fields are required.')
+    for (const name of ['Library name', 'Library slug', 'Primary branch name', 'Primary branch slug', 'Plan']) {
+      expect(field(name)).toBeRequired()
+      expect(field(name)).not.toHaveAttribute('aria-required')
+    }
+  })
+
+  it('axe finds no violation on the provisioning form showing its problems', async () => {
+    renderAt('/provision', PLANS)
+    await form()
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Provision library' }))
+    expect(await screen.findByText('Choose a plan.')).toBeInTheDocument()
+    expect(field('Plan')).toHaveAttribute('aria-invalid', 'true')
+
+    expect(await axeViolations()).toEqual([])
+  })
 })

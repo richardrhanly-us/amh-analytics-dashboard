@@ -6,6 +6,7 @@ import { isApiError } from '../../src/api/client.ts'
 import { createQueryClient } from '../../src/query/queryClient.ts'
 import { getAdminSession } from './adminSession.ts'
 import { AdminRoutes } from './AdminRoutes.tsx'
+import { AdminPageHeading } from './AdminPageHeading.tsx'
 
 const CHECK_FAILED = 'We could not check your administration access. Please try again.'
 const SIGN_IN_FAILED = 'Sign-in failed. Please try again.'
@@ -56,7 +57,7 @@ function SignInForm({ onSignedIn }: { onSignedIn: () => void }) {
 
   return (
     <section aria-labelledby="sign-in-heading">
-      <h2 id="sign-in-heading">Sign in</h2>
+      <AdminPageHeading id="sign-in-heading">Sign in</AdminPageHeading>
       <form onSubmit={(event) => void handleSubmit(event)} noValidate>
         <p>
           <label htmlFor="admin-email">Email</label>
@@ -174,6 +175,24 @@ export function AdminApp() {
 
   const signedOut = useCallback(() => setState({ status: 'signedOut' }), [])
   const main = useRef<HTMLElement>(null)
+  // The last settled state: 'checking' only passes between two of them.
+  const settled = useRef<State['status']>('checking')
+
+  // Signing in, signing out and an expired session each replace everything in <main>, including whatever had focus.
+  // Focus moves to <main> so the next Tab reaches what replaced it -- as in the customer app. The first check on
+  // load is not one of these, and moves nothing.
+  useEffect(() => {
+    if (state.status === 'checking') {
+      return
+    }
+    const before = settled.current
+    settled.current = state.status
+    const signedIn = before === 'signedOut' && (state.status === 'admin' || state.status === 'forbidden')
+    const signedOutNow = (before === 'admin' || before === 'forbidden') && state.status === 'signedOut'
+    if (signedIn || signedOutNow) {
+      main.current?.focus()
+    }
+  }, [state.status])
 
   return (
     <div className="app">
@@ -202,7 +221,7 @@ export function AdminApp() {
         {state.status === 'signedOut' && <SignInForm onSignedIn={check} />}
         {state.status === 'forbidden' && (
           <section aria-labelledby="no-access-heading">
-            <h2 id="no-access-heading">No access</h2>
+            <AdminPageHeading id="no-access-heading">No access</AdminPageHeading>
             <p>{NO_ACCESS}</p>
             <SignOutButton onSignedOut={signedOut} />
           </section>
@@ -210,7 +229,7 @@ export function AdminApp() {
         {state.status === 'admin' && <SignedInAdmin onSessionExpired={signedOut} />}
         {state.status === 'error' && (
           <section aria-labelledby="check-error-heading">
-            <h2 id="check-error-heading">Something went wrong</h2>
+            <AdminPageHeading id="check-error-heading">Something went wrong</AdminPageHeading>
             <p className="error-message" role="alert">
               {CHECK_FAILED}
             </p>

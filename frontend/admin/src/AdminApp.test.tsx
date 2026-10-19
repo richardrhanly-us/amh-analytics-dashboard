@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { describe, expect, it } from 'vitest'
@@ -217,5 +217,67 @@ describe('accessibility', () => {
     expect(main).toHaveFocus()
     expect(main).toHaveAttribute('id', 'main-content')
     expect(window.location.hash).toBe('')
+  })
+  it('names the sign-in form in the browser tab, and leaves focus alone when the app opens on it', async () => {
+    serveApi({ [SESSION]: () => jsonResponse(401, NOT_AUTHENTICATED) })
+    renderAdmin()
+    await screen.findByRole('heading', { name: 'Sign in' })
+
+    expect(document.title).toBe('Sign in – SortView Administration')
+    expect(screen.getByRole('main')).not.toHaveFocus()
+  })
+
+  it('moves focus to the main content on signing in, and names the view arrived at', async () => {
+    const fetchMock = serveApi({
+      [SESSION]: inTurn(() => jsonResponse(401, NOT_AUTHENTICATED), () => jsonResponse(200, ALICE)),
+      'POST /api/auth/login': () => jsonResponse(200, ALICE),
+      [LIBRARIES]: NO_LIBRARIES,
+    })
+    renderAdmin()
+    await signIn(fetchMock)
+
+    await screen.findByRole('heading', { level: 2, name: 'Libraries' })
+    await waitFor(() => expect(screen.getByRole('main')).toHaveFocus())
+    expect(document.title).toBe('Libraries – SortView Administration')
+  })
+
+  it('moves focus to the main content when a sign-in has no access', async () => {
+    const fetchMock = serveApi({
+      [SESSION]: inTurn(() => jsonResponse(401, NOT_AUTHENTICATED), () => jsonResponse(403, FORBIDDEN)),
+      'POST /api/auth/login': () => jsonResponse(200, ALICE),
+    })
+    renderAdmin()
+    await signIn(fetchMock)
+
+    await screen.findByText('This account does not have SortView administration access.')
+    await waitFor(() => expect(screen.getByRole('main')).toHaveFocus())
+  })
+
+  it('moves focus to the main content on signing out, where the sign-in form is', async () => {
+    serveApi({
+      [SESSION]: () => jsonResponse(200, ALICE),
+      [LIBRARIES]: NO_LIBRARIES,
+      'POST /api/auth/logout': () => noContent(),
+    })
+    const person = userEvent.setup()
+    renderAdmin()
+    await person.click(await screen.findByRole('button', { name: 'Log out' }))
+
+    await screen.findByRole('heading', { name: 'Sign in' })
+    await waitFor(() => expect(screen.getByRole('main')).toHaveFocus())
+    expect(document.title).toBe('Sign in – SortView Administration')
+  })
+
+  it('axe finds no violation once signed in and focus has moved', async () => {
+    const fetchMock = serveApi({
+      [SESSION]: inTurn(() => jsonResponse(401, NOT_AUTHENTICATED), () => jsonResponse(200, ALICE)),
+      'POST /api/auth/login': () => jsonResponse(200, ALICE),
+      [LIBRARIES]: NO_LIBRARIES,
+    })
+    renderAdmin()
+    await signIn(fetchMock)
+    await screen.findByText('No libraries have been provisioned yet.')
+
+    expect(await axeViolations()).toEqual([])
   })
 })

@@ -6,6 +6,7 @@ import { isApiError } from '../../../src/api/client.ts'
 import { formatInstant } from '../../../src/time/productTime.ts'
 import { installationStatusLabel, onboardingLabel, pipelineStateLabel } from '../libraries/labels.ts'
 import { getSorterDiagnostics, type LegacyReport, type SorterDiagnostics, type V2Heartbeat } from './diagnosticsApi.ts'
+import { AdminPageHeading } from '../AdminPageHeading.tsx'
 
 const LOAD_FAILED = "This sorter's diagnostics could not be loaded. Please try again."
 const NOT_REPORTED = 'Not reported'
@@ -141,7 +142,7 @@ export function SorterDiagnosticsPage() {
       <p>
         <Link to={`/libraries/${encodeURIComponent(orgSlug)}`}>{query.data?.library.name ?? 'Library'}</Link>
       </p>
-      <h2 id="sorter-heading">{query.data?.sorter.name ?? (notFound ? 'Sorter not found' : 'Sorter')}</h2>
+      <AdminPageHeading id="sorter-heading">{query.data?.sorter.name ?? (notFound ? 'Sorter not found' : 'Sorter')}</AdminPageHeading>
       {query.isPending && <p role="status">Loading diagnostics…</p>}
       {notFound && <p>There is no sorter with this address.</p>}
       {query.isError && !notFound && (

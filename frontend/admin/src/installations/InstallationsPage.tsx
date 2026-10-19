@@ -16,6 +16,7 @@ import {
   type IssuedCode,
   type StatusChange,
 } from './installationsApi.ts'
+import { AdminPageHeading } from '../AdminPageHeading.tsx'
 
 const STATUS_LABEL: Record<Installation['status'], string> = {
   provisioning: 'Provisioning',
@@ -434,7 +435,7 @@ export function InstallationsPage() {
       <p>
         {notFound ? <Link to="/libraries">Libraries</Link> : <Link to={`/libraries/${encodeURIComponent(orgSlug)}`}>{data?.library.name ?? 'Library'}</Link>}
       </p>
-      <h2 id="installations-heading">{notFound ? 'Library not found' : 'Installations'}</h2>
+      <AdminPageHeading id="installations-heading">{notFound ? 'Library not found' : 'Installations'}</AdminPageHeading>
       {notFound && <p>There is no library with this address.</p>}
       {query.isPending && <p role="status">Loading installations…</p>}
       {query.isError && !notFound && (

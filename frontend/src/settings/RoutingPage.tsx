@@ -283,6 +283,9 @@ function RoutingForm({ stored, saving, onSave }: { stored: RoutingSettings; savi
         {rows.length === 0 ? (
           <p>No transit destinations are configured.</p>
         ) : (
+          <p className="field-help">Each destination needs a label.</p>
+        )}
+        {rows.length > 0 && (
           <ol className="routing-rows">
             {rows.map(({ row, label, enabled }, index) => {
               const number = index + 1
@@ -305,6 +308,7 @@ function RoutingForm({ stored, saving, onSave }: { stored: RoutingSettings; savi
                         }}
                         type="text"
                         autoComplete="off"
+                        required
                         value={label}
                         aria-invalid={problem !== undefined}
                         aria-describedby={problem === undefined ? undefined : `routing-destination-${row}-problem`}

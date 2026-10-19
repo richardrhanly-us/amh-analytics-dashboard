@@ -37,6 +37,7 @@ describe('admin app boundary', () => {
   it('finds the shipped admin source to check', () => {
     expect(shipped.map(([path]) => path).sort()).toEqual([
       './AdminApp.tsx',
+      './AdminPageHeading.tsx',
       './AdminRoutes.tsx',
       './adminSession.ts',
       './collector/CollectorConfigPage.tsx',
@@ -52,6 +53,7 @@ describe('admin app boundary', () => {
       './lifecycle/LifecyclePage.tsx',
       './lifecycle/lifecycleApi.ts',
       './main.tsx',
+      './pageArrival.ts',
       './provision/ProvisionPage.tsx',
       './provision/provisionApi.ts',
     ])

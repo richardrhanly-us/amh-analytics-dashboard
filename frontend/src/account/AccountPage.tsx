@@ -86,6 +86,7 @@ function ProfileForm({ account, onSaved }: { account: Account; onSaved: (account
           name="full_name"
           type="text"
           autoComplete="name"
+          required
           value={name}
           aria-invalid={problem !== undefined}
           aria-describedby={problem === undefined ? undefined : 'account-full-name-problem'}
@@ -99,6 +100,7 @@ function ProfileForm({ account, onSaved }: { account: Account; onSaved: (account
             {problem}
           </p>
         )}
+        <p className="field-help">Your name is required.</p>
       </div>
 
       {/* Not a box to type in: the email is how this person signs in and cannot be changed here. */}
