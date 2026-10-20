@@ -71,13 +71,14 @@ def test_cancellation_is_cooperative_only_and_has_no_timeout():
     assert "cancellation.Cancel()" in session and session.count("cancellation.Cancel()") == 1
 
 
-def test_the_wpf_bridge_has_no_windows_and_the_spike_is_untouched_by_it():
+def test_the_wpf_bridge_has_no_windows_and_the_window_uses_it_only_through_a_session():
     project = WPF_PROJECT.read_text(encoding="utf-8")
     assert "PresentationFramework" not in project and "<Page " not in project  # no windows or dialogs in the bridge
     assert "Testing" not in project
-    for path in SPIKE_DIR.rglob("*"):
-        if path.is_file() and path.suffix in (".cs", ".csproj", ".xaml"):
-            assert "SortView.Setup.Wpf" not in path.read_text(encoding="utf-8"), path
+    # The Phase 3C test window (the only user of the bridge) runs setup only through SetupRunSession, never a presenter
+    # or the engine host of its own.
+    window = (SPIKE_DIR / "MainWindow.xaml.cs").read_text(encoding="utf-8")
+    assert "SetupRunSession.Start(" in window and "new DispatcherPromptPresenter" not in window and "SetupEngineHost" not in window
 
 
 def test_a_late_or_refused_secure_answer_is_disposed():

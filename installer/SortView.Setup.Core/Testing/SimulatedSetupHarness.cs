@@ -61,14 +61,21 @@ namespace SortView.Setup.Core.Testing
 
         public static SetupRunResult Run(SimulationRequest request, IPromptPresenter presenter, CancellationToken cancellationToken)
         {
+            return Run(request, presenter, null, null, cancellationToken);
+        }
+
+        /// <summary>As <see cref="Run(SimulationRequest, IPromptPresenter, CancellationToken)"/>, also delivering each event
+        /// and each line of console text as it happens (on the engine's thread), for a window that shows progress live.</summary>
+        public static SetupRunResult Run(SimulationRequest request, IPromptPresenter presenter, Action<SetupEvent> onEvent,
+            Action<string> onConsoleText, CancellationToken cancellationToken)
+        {
             EnsureSimulationOnly(request);
-            Action<SetupEvent> onEvent = null;
             if (request.ThrowFromEventCallback)
             {
                 onEvent = setupEvent => throw new InvalidOperationException("simulated event callback failure");
             }
             var run = new SetupRunRequest { BundleRoot = request.BundleRoot, InstallRoot = request.InstallRoot, DataRoot = request.DataRoot };
-            return new SetupEngineHost().RunCore(run, presenter, onEvent, null, cancellationToken,
+            return new SetupEngineHost().RunCore(run, presenter, onEvent, onConsoleText, cancellationToken,
                 (runspace, scriptPath) => ApplyOverrides(runspace, scriptPath, request.WrapperOverrides));
         }
 

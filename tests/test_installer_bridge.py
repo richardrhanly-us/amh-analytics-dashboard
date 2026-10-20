@@ -85,11 +85,13 @@ def test_the_public_bridge_api_cannot_run_any_other_powershell():
     assert re.findall(r"public string (\w+) \{ get; set; \}", _read(CORE_DIR / "SetupTypes.cs")) == [
         "BundleRoot", "InstallRoot", "DataRoot"]
     assert re.findall(r"InternalsVisibleTo\(\"([^\"]+)\"\)", _read(CORE_DIR / "AssemblyInfo.cs")) == ["SortView.Setup.Core.Testing"]
-    # No shippable code names the harness assembly (the WPF spike included): only test-only projects, which live in
-    # Testing/ folders, may.
+    # No shippable code names the harness assembly: only test-only projects (in Testing/ folders) and the SIMULATION-ONLY
+    # developer test window may -- tests/test_installer_window.py proves that window can run nothing but the harness.
     installer = REPO_ROOT / "installer"
     for path in installer.rglob("*"):
-        if path.is_file() and path.suffix in (".cs", ".csproj", ".xaml") and "Testing" not in path.relative_to(installer).parts:
+        parts = path.relative_to(installer).parts
+        if (path.is_file() and path.suffix in (".cs", ".csproj", ".xaml") and "Testing" not in parts
+                and parts[0] != "SortView.Setup.Spike"):
             text = _read(path)
             assert "SortView.Setup.Core.Testing" not in text or path.name == "AssemblyInfo.cs", path
 
