@@ -1,0 +1,17 @@
+<Window x:Class="SortView.Setup.Spike.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="SortView Installer — Phase 0"
+        Width="560" Height="460"
+        WindowStartupLocation="CenterScreen">
+    <StackPanel Margin="20">
+        <TextBlock FontSize="16" TextWrapping="Wrap"
+                   Text="Phase 0B: in-process PowerShell hosting. Simulation only — no network, no scripts, no changes to this computer." />
+        <Label Content="_Dummy enrollment code (do not enter a real code):" Target="{Binding ElementName=CodeBox}" Margin="0,12,0,0" Padding="0,0,0,4" />
+        <PasswordBox x:Name="CodeBox" AutomationProperties.Name="Dummy enrollment code" />
+        <Button x:Name="StartButton" Content="_Start simulation" Margin="0,12,0,0" Padding="12,4" HorizontalAlignment="Left" Click="StartButton_Click" />
+        <ProgressBar x:Name="Progress" Height="16" Margin="0,12,0,0" Minimum="0" Maximum="3" AutomationProperties.Name="Simulation progress" />
+        <TextBlock x:Name="StatusText" Margin="0,8,0,0" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" Text="Ready." />
+        <ListBox x:Name="EventList" Height="170" Margin="0,8,0,0" AutomationProperties.Name="Structured events" />
+    </StackPanel>
+</Window>
