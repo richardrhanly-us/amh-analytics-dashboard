@@ -75,10 +75,10 @@ def test_the_wpf_bridge_has_no_windows_and_the_window_uses_it_only_through_a_ses
     project = WPF_PROJECT.read_text(encoding="utf-8")
     assert "PresentationFramework" not in project and "<Page " not in project  # no windows or dialogs in the bridge
     assert "Testing" not in project
-    # The Phase 3C test window (the only user of the bridge) runs setup only through SetupRunSession, never a presenter
-    # or the engine host of its own.
-    window = (SPIKE_DIR / "MainWindow.xaml.cs").read_text(encoding="utf-8")
-    assert "SetupRunSession.Start(" in window and "new DispatcherPromptPresenter" not in window and "SetupEngineHost" not in window
+    # The shared setup wizard (the bridge's user, hosted by the test window and the production program) runs setup only
+    # through SetupRunSession, never with a presenter or an engine host of its own.
+    wizard = (REPO_ROOT / "installer" / "SortView.Setup.Wizard" / "SetupWizardView.xaml.cs").read_text(encoding="utf-8")
+    assert "SetupRunSession.Start(" in wizard and "new DispatcherPromptPresenter" not in wizard and "SetupEngineHost" not in wizard
 
 
 def test_a_late_or_refused_secure_answer_is_disposed():

@@ -35,6 +35,8 @@ SPIKE_PROJECT = SPIKE_DIR / "SortView.Setup.Spike.csproj"
 SIMULATION_DIR = SPIKE_DIR / "Simulation"
 WINDOW_CODE = SPIKE_DIR / "MainWindow.xaml.cs"
 WORKSPACE_CODE = SIMULATION_DIR / "SimulationWorkspace.cs"
+# The shared wizard (Phase 4B.1): the questions, progress, cancellation and closing the spike hosts now live here.
+WIZARD_CODE = REPO_ROOT / "installer" / "SortView.Setup.Wizard" / "SetupWizardView.xaml.cs"
 SPIKE_SOURCES = [WINDOW_CODE, WORKSPACE_CODE, SPIKE_DIR / "MainWindow.xaml", SPIKE_DIR / "App.xaml"]
 
 DUMMY_CODE = "SIM-UIA-DUMMY-CODE-7Q2X"  # synthetic: never a real enrollment code
@@ -60,14 +62,18 @@ def test_the_windows_fakes_are_exactly_the_test_suites(asset, constant):
 
 
 def test_the_window_can_only_run_a_generated_simulation():
-    window, workspace = _code(WINDOW_CODE), _code(WORKSPACE_CODE)
-    # Its ONE way to run setup: SetupRunSession around the simulation harness, with the workspace's own request.
-    assert window.count("SetupRunSession.Start(") == 1
+    window, workspace, wizard = _code(WINDOW_CODE), _code(WORKSPACE_CODE), _code(WIZARD_CODE)
+    # Its ONE way to run setup: the shared wizard, given a runner over the simulation harness with the workspace's own
+    # request. The wizard itself starts every run through SetupRunSession and never chooses what runs.
+    assert window.count("Wizard.BeginRun(") == 1
     assert "SimulatedSetupHarness.Run(request, presenter, onEvent, onConsoleText, token)" in window
     assert "SimulationRequest request = workspace.Request;" in window
+    assert wizard.count("SetupRunSession.Start(") == 1
     for real_path in ("SetupEngineHost", "SetupRunRequest", "BundleRoot =", "FolderBrowserDialog", "CommonOpenFileDialog", "Environment.GetCommandLineArgs"):
         assert real_path not in window, real_path
-    assert window.count("new OpenFileDialog") == 1 and "private void BrowseButton_Click" in window  # source files only
+        assert real_path not in wizard, real_path
+    assert "OpenFileDialog" not in window  # the window offers no file picker of its own...
+    assert wizard.count("new OpenFileDialog") == 1 and "private void BrowseButton_Click" in wizard  # ...the wizard's is for source files only
     # The simulated machine lives under %TEMP% and talks only to a reserved .invalid host.
     assert 'Path.Combine(Path.GetTempPath(), "SortViewSetupSimulation"' in workspace
     assert f'public const string SimulationApiUrl = "{SIMULATION_API}";' in workspace
@@ -75,11 +81,13 @@ def test_the_window_can_only_run_a_generated_simulation():
 
 
 def test_the_window_never_handles_the_code_as_text_or_writes_secrets_anywhere():
-    window, workspace = _code(WINDOW_CODE), _code(WORKSPACE_CODE)
-    for forbidden in ("CodeBox.Password", "Marshal", "BSTR", "NetworkCredential", "Console.", "Debug.", "Trace.", "File.",
-                      "SetEnvironmentVariable", "Clipboard"):
-        assert forbidden not in window, forbidden
-    assert "SecureString code = CodeBox.SecurePassword;" in window and "code.MakeReadOnly();" in window and "CodeBox.Clear();" in window
+    window, workspace, wizard = _code(WINDOW_CODE), _code(WORKSPACE_CODE), _code(WIZARD_CODE)
+    for source in (window, wizard):
+        for forbidden in ("CodeBox.Password", "Marshal", "BSTR", "NetworkCredential", "Console.", "Debug.", "Trace.", "File.",
+                          "SetEnvironmentVariable", "Clipboard"):
+            assert forbidden not in source, forbidden
+    # The code goes from the wizard's PasswordBox to the run as a read-only SecureString copy; the box is cleared at once.
+    assert "SecureString code = CodeBox.SecurePassword;" in wizard and "code.MakeReadOnly();" in wizard and "CodeBox.Clear();" in wizard
     # The only environment the workspace sets: the fakes' fixed switches and the scratch record folder.
     set_names = re.findall(r'SetEnvironmentVariable\(("?[\w$]+"?)', workspace)
     assert set(set_names) <= {"name", '"SETUPTEST_FAKE_DIR"', '"SETUPTEST_INSTALL_MODE"', '"SETUPTEST_FINISH_MODE"', "SlowVariable"}
@@ -90,9 +98,9 @@ def test_the_window_never_handles_the_code_as_text_or_writes_secrets_anywhere():
 
 
 def test_the_window_never_calls_into_its_ui_thread_synchronously_and_is_labelled_simulation_only():
-    window = _code(WINDOW_CODE)
-    assert not re.search(r"Dispatcher\.Invoke\(|\.Wait\(|\.Result\b(?!\))", window.replace("task.Result", "")), "blocking call"
-    assert "Dispatcher.BeginInvoke(" in window
+    for source in (_code(WINDOW_CODE), _code(WIZARD_CODE)):
+        assert not re.search(r"Dispatcher\.Invoke\(|\.Wait\(|\.Result\b(?!\))", source.replace("task.Result", "")), "blocking call"
+    assert "Dispatcher.BeginInvoke(" in _code(WIZARD_CODE)  # the wizard posts its run results to the UI thread
     xaml = (SPIKE_DIR / "MainWindow.xaml").read_text(encoding="utf-8")
     assert "SIMULATION ONLY" in re.search(r'Title="([^"]+)"', xaml).group(1)
     assert "SIMULATION ONLY" in xaml[xaml.index('x:Name="SimulationBanner"'):][:400]
