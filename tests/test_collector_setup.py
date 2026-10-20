@@ -770,11 +770,10 @@ def test_finish_install_token_step_ignores_a_claimed_machine_token():
 # 3. ORCHESTRATION scenarios
 # =====================================================================================
 
-_SCENARIO_TEMPLATE = r"""
-$ErrorActionPreference = 'Stop'
-$FakeDir = '@@FAKE@@'
-. '@@SETUP@@'
-
+# The simulated side effects every scenario runs with: each real wrapper replaced by a recording fake (no admin
+# check, network, Task Scheduler, ACL or console prompt). Shared with tests/test_installer_bridge.py, which runs the
+# same engine through the .NET bridge. $FakeDir must be set before it.
+_WRAPPER_OVERRIDES = r"""
 function Add-Call { param($Record) Add-Content -LiteralPath "$FakeDir\calls.jsonl" -Value ($Record | ConvertTo-Json -Compress -Depth 6) }
 function Test-IsAdministrator { @@ADMIN@@ }
 function Get-LocalHostName { 'TEST-PC' }
@@ -821,7 +820,13 @@ function Invoke-SetupHttp {
     }
     return [pscustomobject]@{ StatusCode = [int]$e.status; Content = [string]$e.content; Failure = $e.failure }
 }
-@@EXTRA@@
+"""
+
+_SCENARIO_TEMPLATE = r"""
+$ErrorActionPreference = 'Stop'
+$FakeDir = '@@FAKE@@'
+. '@@SETUP@@'
+""" + _WRAPPER_OVERRIDES + r"""@@EXTRA@@
 @@EVENTS_ON@@
 $r = @(Invoke-SetupMain @@ARGS@@)
 "SETUP_EXIT_CODE=$([int]$r[-1])"

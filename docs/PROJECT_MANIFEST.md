@@ -463,6 +463,42 @@ planning come first and decide which C milestones they cover. Nothing below is r
 - Install, update, uninstall, repair and verify scripts in `collector/deploy/`; guided `setup-collector.ps1`.
 - First ingest moves a branch from `pending` to `ready`, on both contracts (PRs #183, #190).
 
+**Target machine baseline — NBPL's AMH PC** (the real machine that runs the sorter software and writes the Tech
+Logic logs the Collector reads). Build and test installer work against this, not a developer PC. Captured by the
+product owner on 2026-08-31 (screenshots and PowerShell output); re-capture before relying on it for a release.
+
+| Area | Baseline |
+|---|---|
+| Windows | Windows 10 **Enterprise LTSC 2019**, version **1809**, OS build **17763.9020** |
+| Architecture | 64-bit **(verify)**: the `OsArchitecture` field came back blank; inferred from the 64-bit Python install |
+| Hardware | Generic OEM board (manufacturer and model report "To be filled by O.E.M."); Intel Core **i5-4300U** @ 1.90 GHz, **2 cores / 4 logical processors**; **8 GB RAM** (8,492,486,656 bytes) |
+| Disk | C: 73.72 GB used, **44.99 GB free** |
+| Time zone | **Central Standard Time** (UTC−06:00, observes daylight saving), so `America/Chicago` for Contract v2 |
+| Python | **3.14.3, 64-bit**, a per-user install under the `Operator` profile; the only version the `py` launcher lists |
+| .NET Framework | **Not captured (verify).** 1809 ships with 4.7.2, and the graphical installer targets **4.8**. Check with `(Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full').Release`: 528040 or higher means 4.8 is present. |
+| Windows PowerShell | 5.1 ships with 1809 **(verify)** |
+| Logged-on account | A local account named `Operator` |
+
+**What runs there today: the legacy SortView agent, not the Collector.**
+
+- **Location:** `C:\SortViewAgent`, a Python 3.14.3 `.venv` (last created 2026-04-04) holding:
+  - `run_pipeline.py`, `uploader.py`, `config.py`, `logger_config.py`
+  - `parse_checkins.py`, `parse_rejects.py`, `parse_acs.py`
+  - `agent_config.json`, which holds the API URL
+  - `data\` and `logs\` folders
+- **Installed packages:** pandas 3.0.2, numpy 2.4.4, requests 2.33.1, SQLAlchemy 2.0.49, psycopg2-binary 2.9.11, certifi 2026.2.25, urllib3 2.6.3, tzdata 2026.1. Database drivers are installed; whether the agent uses them is **(verify)**.
+- **Scheduled Task `sortview-scheduler`:** runs `C:\SortViewAgent\.venv\Scripts\python.exe run_pipeline.py`.
+  - **Schedule:** daily at 7:00 AM, repeating every 15 minutes indefinitely.
+  - **Account:** runs as `Operator` and **only when that user is logged on**, not with highest privileges (the Collector's task runs as SYSTEM instead).
+  - **Settings:** restarts on failure every 5 minutes, up to 3 times; stopped after 1 hour; never starts a second instance.
+  - **History:** last run on 2026-08-31 succeeded (`0x0`).
+- **Tech Logic folder:** a `TLCFinalDlls` folder is pinned in Explorer, matching the Collector's standard source location (`C:\TLCFinalDlls\`).
+
+**Consequences for installer work:** the installer must run on Windows 10 1809 LTSC with modest hardware; confirm
+.NET 4.8 is present (or plan to require or ship it) before relying on the WPF installer there; and moving NBPL from
+this agent to the Collector is a migration (an existing user-context task and a separate install folder), not a
+fresh install.
+
 **Milestones:**
 
 - [ ] **C1. Code signing** for the Collector executable and scripts (needs a certificate — section 6).

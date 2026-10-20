@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Developer test window, SIMULATION ONLY: runs the real setup engine through SortView.Setup.Wpf and the Core
+     simulation harness against generated mock bundles. Never shipped. -->
 <Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <PropertyGroup>
@@ -19,11 +21,17 @@
     <Reference Include="WindowsBase" />
     <Reference Include="PresentationCore" />
     <Reference Include="PresentationFramework" />
-    <!-- Windows PowerShell 5.1 engine (compiled against the 3.0 reference assembly; loaded from the GAC at run time). -->
-    <Reference Include="System.Management.Automation">
-      <HintPath>$(MSBuildProgramFiles32)\Reference Assemblies\Microsoft\WindowsPowerShell\3.0\System.Management.Automation.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SortView.Setup.Core\SortView.Setup.Core.csproj">
+      <Name>SortView.Setup.Core</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\SortView.Setup.Core\Testing\SortView.Setup.Core.Testing.csproj">
+      <Name>SortView.Setup.Core.Testing</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\SortView.Setup.Wpf\SortView.Setup.Wpf.csproj">
+      <Name>SortView.Setup.Wpf</Name>
+    </ProjectReference>
   </ItemGroup>
   <ItemGroup>
     <ApplicationDefinition Include="App.xaml" />
@@ -31,7 +39,22 @@
     <Compile Include="MainWindow.xaml.cs">
       <DependentUpon>MainWindow.xaml</DependentUpon>
     </Compile>
-    <Compile Include="SpikeRunner.cs" />
+    <Compile Include="Simulation\SimulationWorkspace.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The test suite's fakes, kept equal to tests/test_collector_setup.py (tests/test_installer_window.py checks). -->
+    <EmbeddedResource Include="Simulation\wrapper-overrides.ps1">
+      <LogicalName>Simulation.wrapper-overrides.ps1</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Simulation\install-stub.ps1">
+      <LogicalName>Simulation.install-stub.ps1</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Simulation\token-stub.ps1">
+      <LogicalName>Simulation.token-stub.ps1</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Simulation\finish-stub.ps1">
+      <LogicalName>Simulation.finish-stub.ps1</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
