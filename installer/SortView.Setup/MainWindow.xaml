@@ -1,0 +1,17 @@
+<Window x:Class="SortView.Setup.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wizard="clr-namespace:SortView.Setup.Wizard;assembly=SortView.Setup.Wizard"
+        Title="SortView Setup"
+        Width="1000" Height="720"
+        WindowStartupLocation="CenterScreen">
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#1F4E79" Padding="12,10">
+            <TextBlock x:Name="ProductTitle" Foreground="White" FontWeight="Bold" FontSize="18" Text="SortView Setup" />
+        </Border>
+        <!-- The shared setup wizard. Installation is NOT enabled in this build: no setup runner is given to it. -->
+        <wizard:SetupWizardView x:Name="Wizard"
+                                IsInstallationEnabled="False"
+                                DisabledNotice="Installation is not yet enabled in this build. Nothing will be installed or changed on this computer." />
+    </DockPanel>
+</Window>

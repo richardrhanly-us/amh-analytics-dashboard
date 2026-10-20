@@ -32,6 +32,9 @@
     <ProjectReference Include="..\SortView.Setup.Wpf\SortView.Setup.Wpf.csproj">
       <Name>SortView.Setup.Wpf</Name>
     </ProjectReference>
+    <ProjectReference Include="..\SortView.Setup.Wizard\SortView.Setup.Wizard.csproj">
+      <Name>SortView.Setup.Wizard</Name>
+    </ProjectReference>
   </ItemGroup>
   <ItemGroup>
     <ApplicationDefinition Include="App.xaml" />
