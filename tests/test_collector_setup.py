@@ -4480,12 +4480,12 @@ def test_an_unexpected_error_after_enrollment_is_reported_once_with_only_the_con
 
 #: Scenarios run twice -- events off, then on -- to prove the console and the exit code do not change.
 _COMPATIBILITY = {
-    "legacy_success": dict(answers=["", ""]),
-    "v2_success": dict(http=v2_http(), answers=[""]),
-    "live_refusal": dict(task_state="Ready"),
-    "enrollment_unknown": dict(answers=[""], http=default_http(**{ENROLL: {"status": 0, "content": None, "failure": "no response"}})),
-    "install_failure": dict(answers=[""], env={"SETUPTEST_INSTALL_MODE": "fail"}),
-    "unexpected_error": dict(answers=[""], extra_ps="function Invoke-ApiTokenCheck { throw 'synthetic unexpected failure' }"),
+    "legacy_success": {"answers": ["", ""]},
+    "v2_success": {"http": v2_http(), "answers": [""]},
+    "live_refusal": {"task_state": "Ready"},
+    "enrollment_unknown": {"answers": [""], "http": default_http(**{ENROLL: {"status": 0, "content": None, "failure": "no response"}})},
+    "install_failure": {"answers": [""], "env": {"SETUPTEST_INSTALL_MODE": "fail"}},
+    "unexpected_error": {"answers": [""], "extra_ps": "function Invoke-ApiTokenCheck { throw 'synthetic unexpected failure' }"},
 }
 
 
