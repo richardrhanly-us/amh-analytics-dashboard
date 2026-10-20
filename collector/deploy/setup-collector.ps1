@@ -188,6 +188,14 @@
     console shows, and never hold the code, the token, a rule, the key id or
     a server response. Running .\setup.ps1 never emits one.
 
+    PROMPTS. Asked on the console unless a host registers its own handler
+    (Register-SetupPromptHandler) before Invoke-SetupMain. The handler then
+    answers the same five questions (enrollment_code, sources_confirm,
+    source_path, resume_confirm, legacy_task_enable; context schema
+    sortview.setup.prompt/1), and setup still checks every answer and makes
+    every decision. A handler answer that is missing, of the wrong kind, or
+    that fails is a cancellation -- never a default "yes".
+
     EXIT CODES: 0 = setup complete (task Disabled, or enabled by explicit
     request). 1 = a step failed or a requirement was not met. 2 = refused
     because existing state is unsafe to touch.
@@ -283,6 +291,7 @@ $script:SetupEventTypes = [ordered]@{
     run_failed_unexpected = @("exception_type", "message", "advice", "contract",
         "code_attempted", "code_consumed", "code_rejected", "token_stored", "recovery_on_disk")
     run_finished          = @("result", "exit_code", "mode", "contract", "task_state", "release_version", "installation_id")
+    input_cancelled       = @("prompt_id")
 }
 # What each field may hold: a list means exactly one of those values; otherwise a kind. Any field may also be $null.
 $script:SetupEventFieldRules = @{
@@ -296,6 +305,7 @@ $script:SetupEventFieldRules = @{
     code_used          = @("used", "not_used", "not_used_by_this_request", "unknown")
     result             = @("completed", "stopped", "failed")
     task_state         = @("Enabled", "Disabled")
+    prompt_id          = @("enrollment_code", "sources_confirm", "source_path", "resume_confirm", "legacy_task_enable")
     step_label         = "text"
     problem            = "text"
     unchanged          = "text"
@@ -437,6 +447,139 @@ function Write-SetupEnrollmentResult {
         requested_contract = $RequestedContract; enrollment_outcome = $Outcome; refusal_code = $RefusalCode
         code_used = $used; contract = $Contract
     }
+}
+
+# === host prompts (optional: only when a host registers a handler) ===========================
+# A host that runs this script in-process may answer setup's five questions itself: it calls
+# Register-SetupPromptHandler with an object that has a RequestInput(promptId, context) method. Setup still decides
+# everything -- when to ask, what an answer means, whether a path is acceptable, what happens next; the handler only
+# answers. Its answer is checked against the prompt's type and turned into exactly what the console question would
+# have read ("y", "n", a path, the code). Anything else -- $null, a wrong type, an unexpected value, a handler that
+# throws -- is a CANCELLATION: never $null, which the console path reads as "use the default". With no handler
+# registered nothing here is used: Read-SetupAnswer and Read-EnrollmentCodeSecure ask on the console exactly as before.
+
+$script:SetupPromptSchema = "sortview.setup.prompt/1"
+$script:SetupPromptHandler = $null
+# The one value that means "the host's question was cancelled". Never a string, never a SecureString, never $null.
+$script:SetupInputCancelled = [pscustomobject]@{ SortViewSetupInputCancelled = $true }
+# Each prompt and, closed, the context fields it sends to the handler. Nothing secret is on any list.
+$script:SetupPromptContextKeys = [ordered]@{
+    enrollment_code    = @()
+    sources_confirm    = @("checkins", "rejects", "acs")
+    source_path        = @("source", "attempt", "max_attempts", "problem", "rejected_path")
+    resume_confirm     = @("mode", "contract", "release_version", "installation_id")
+    legacy_task_enable = @()
+}
+# The only kind of answer each prompt takes.
+$script:SetupPromptKinds = @{
+    enrollment_code    = "secure_string"
+    sources_confirm    = "yes_no"
+    source_path        = "file_path"
+    resume_confirm     = "yes_no"
+    legacy_task_enable = "yes_no"
+}
+$script:SetupPromptMaxPathLength = 1024
+
+function Register-SetupPromptHandler {
+    # For a host only (see above). Nothing in this script calls it.
+    param($Handler)
+    if ($null -eq $Handler -or $null -eq $Handler.PSObject.Methods["RequestInput"]) {
+        throw "A setup prompt handler must have a RequestInput(promptId, context) method."
+    }
+    $script:SetupPromptHandler = $Handler
+}
+
+function New-SetupPromptContext {
+    # PURE. What one prompt tells the handler: the schema and exactly that prompt's fields ($null when not given).
+    # $null for an unknown prompt or a field that is not on its list.
+    param([string]$Id, [hashtable]$Fields)
+    if (-not $script:SetupPromptContextKeys.Contains($Id)) { return $null }
+    if ($null -eq $Fields) { $Fields = @{} }
+    $allowed = @($script:SetupPromptContextKeys[$Id])
+    foreach ($name in $Fields.Keys) {
+        if ($allowed -cnotcontains $name) { return $null }
+    }
+    $context = @{ schema = $script:SetupPromptSchema }
+    foreach ($name in $allowed) { $context[$name] = $Fields[$name] }
+    return $context
+}
+
+function ConvertFrom-SetupPromptResponse {
+    # PURE. A handler's answer as the console question would have read it: "yes"/"no" (exactly) become "y"/"n", a
+    # path is passed on as given (setup then checks it, as it checks a typed one), the code only as a non-empty
+    # SecureString. Anything else is the cancellation marker.
+    param([string]$Id, $Response)
+    switch ($script:SetupPromptKinds[$Id]) {
+        "yes_no" {
+            if ($Response -is [string] -and $Response -ceq "yes") { return "y" }
+            if ($Response -is [string] -and $Response -ceq "no") { return "n" }
+        }
+        "file_path" {
+            if ($Response -is [string] -and -not [string]::IsNullOrWhiteSpace($Response) -and $Response.Length -le $script:SetupPromptMaxPathLength) {
+                return [string]$Response
+            }
+        }
+        "secure_string" {
+            if ($Response -is [System.Security.SecureString] -and $Response.Length -gt 0) { return $Response }
+        }
+    }
+    return $script:SetupInputCancelled
+}
+
+function Invoke-SetupPromptHandler {
+    # Asks the registered handler one question and waits for it (no timeout: a person is answering). Never throws: a
+    # handler that throws, or a context that cannot be built, is a cancellation.
+    param([string]$Id, [hashtable]$Fields)
+    $response = $null
+    try {
+        $context = New-SetupPromptContext -Id $Id -Fields $Fields
+        if ($null -eq $context) { return $script:SetupInputCancelled }
+        $response = $script:SetupPromptHandler.RequestInput($Id, $context)
+        return (ConvertFrom-SetupPromptResponse -Id $Id -Response $response)
+    } catch {
+        return $script:SetupInputCancelled
+    } finally {
+        $response = $null
+    }
+}
+
+function Request-SetupAnswer {
+    # One visible question. No handler: exactly the console question, through Read-SetupAnswer. With a handler: its
+    # checked answer, or the cancellation marker.
+    param([string]$Id, [string]$Prompt, [hashtable]$Context)
+    if ($null -eq $script:SetupPromptHandler) { return (Read-SetupAnswer -Prompt $Prompt) }
+    return (Invoke-SetupPromptHandler -Id $Id -Fields $Context)
+}
+
+function Request-SetupEnrollmentCode {
+    # The hidden code. No handler: exactly the console prompt, through Read-EnrollmentCodeSecure. With a handler: a
+    # non-empty SecureString, or the cancellation marker.
+    if ($null -eq $script:SetupPromptHandler) { return (Read-EnrollmentCodeSecure) }
+    return (Invoke-SetupPromptHandler -Id "enrollment_code" -Fields @{})
+}
+
+function Test-SetupInputCancelled {
+    # PURE. Whether an answer is the cancellation marker. An empty answer, $null, a path or a code never is.
+    param($Answer)
+    if ($null -eq $Answer -or $Answer -is [string] -or $Answer -is [System.Security.SecureString]) { return $false }
+    return ($null -ne $Answer.PSObject.Properties["SortViewSetupInputCancelled"])
+}
+
+function Stop-SetupSourcesCancelled {
+    # Choosing the source files was cancelled: before the enrollment code was ever requested.
+    param([string]$Id)
+    Stop-SetupInputCancelled -Id $Id -Step "step 3 (source files)" -Problem "Choosing the Tech Logic source files was cancelled." `
+        -Unchanged "nothing was installed and the enrollment code was not requested" `
+        -Fix "Run SortView setup again when you are ready to choose the source files."
+}
+
+function Stop-SetupInputCancelled {
+    # A host's question was cancelled: reported as such (an input_cancelled event with the prompt id only, and words
+    # that name no console switch), then the run stops like any other stop -- the same state-based advice about the
+    # enrollment code, the token and the saved enrollment, and the defensive cleanup.
+    param([string]$Id, [string]$Step, [string]$Problem, [string]$Unchanged, [string]$Fix)
+    Write-SetupEvent -Type "input_cancelled" -Fields @{ prompt_id = $Id }
+    Stop-Setup -Step $Step -Problem $Problem -Unchanged $Unchanged -Fix $Fix -ExitCode 1
 }
 
 # === side-effect wrappers ====================================================
@@ -1451,7 +1594,9 @@ function Get-SourceSelection {
     if (-not $anyExplicit -and $allStandardPresent) {
         Write-Host "Found the standard Tech Logic files:"
         foreach ($name in $script:SourceNames) { Write-Host "    $name : $($chosen[$name])" }
-        $answer = Read-SetupAnswer -Prompt "Use these files? [Y/n] (Enter = yes)"
+        $answer = Request-SetupAnswer -Id "sources_confirm" -Prompt "Use these files? [Y/n] (Enter = yes)" `
+            -Context @{ checkins = $chosen["checkins"]; rejects = $chosen["rejects"]; acs = $chosen["acs"] }
+        if (Test-SetupInputCancelled $answer) { Stop-SetupSourcesCancelled -Id "sources_confirm" }
         if ($null -ne $answer -and @("n", "no") -contains $answer.Trim().ToLowerInvariant()) { $useAsIs = $false }
     }
 
@@ -1471,7 +1616,14 @@ function Get-SourceSelection {
             }
             $attempts++
             $answer = $null
-            if ($attempts -le 3) { $answer = Read-SetupAnswer -Prompt "Full path to the $name file (Enter alone to stop)" }
+            if ($attempts -le 3) {
+                # (For a host's handler: why it is being asked again -- the same judgement as the lines printed above.)
+                $problem = $null
+                if (-not [string]::IsNullOrWhiteSpace($path)) { $problem = $(if (Test-AbsoluteSourcePath -Path $path) { "not_found" } else { "not_absolute" }) }
+                $answer = Request-SetupAnswer -Id "source_path" -Prompt "Full path to the $name file (Enter alone to stop)" `
+                    -Context @{ source = $name; attempt = $attempts; max_attempts = 3; problem = $problem; rejected_path = $(if ($null -ne $problem) { $path } else { $null }) }
+                if (Test-SetupInputCancelled $answer) { Stop-SetupSourcesCancelled -Id "source_path" }
+            }
             if ([string]::IsNullOrWhiteSpace($answer)) {
                 Stop-Setup -Step "step 3 (source files)" -Problem "The $name source file was not found and none was provided: '$path'." `
                     -Unchanged "nothing was installed and the enrollment code was not requested" `
@@ -1706,7 +1858,14 @@ function Invoke-SetupMain {
             Write-Host "  Found an unfinished setup: installation $($record.InstallationId), enrolled with release $($record.ReleaseVersion)." -ForegroundColor Yellow
             $detectedMode = $(if ($mode -eq "ResumeFinish") { "resume_finish" } else { "resume_install" })
             Write-SetupEvent -Type "mode_detected" -Fields @{ mode = $detectedMode; contract = $script:State.Contract }
-            $answer = Read-SetupAnswer -Prompt "Resume it using the saved enrollment (no new code needed)? [Y/n] (Enter = resume)"
+            $answer = Request-SetupAnswer -Id "resume_confirm" -Prompt "Resume it using the saved enrollment (no new code needed)? [Y/n] (Enter = resume)" `
+                -Context @{ mode = $detectedMode; contract = $record.Contract; release_version = $record.ReleaseVersion; installation_id = $record.InstallationId }
+            if (Test-SetupInputCancelled $answer) {
+                # Not an answer, so not a decline: nothing is resumed, and nothing is given up either.
+                Stop-SetupInputCancelled -Id "resume_confirm" -Step "step 2 (machine)" -Problem "The question whether to resume the unfinished setup was cancelled, so setup did not continue." `
+                    -Unchanged "everything on this computer, including the saved enrollment and the token" `
+                    -Fix $(if ($record.Contract -eq 2) { "Run SortView setup again and choose to resume when you are ready. A Contract v2 enrollment cannot be started over with a new enrollment code (it would be refused): if this computer will not be the Collector after all, contact SortView support." } else { "Run SortView setup again and choose to resume when you are ready -- no new enrollment code is needed." })
+            }
             if ($null -ne $answer -and @("n", "no") -contains $answer.Trim().ToLowerInvariant()) {
                 Stop-Setup -Step "step 2 (machine)" -Problem "Resuming the unfinished setup was declined." `
                     -Unchanged "everything on this computer, including the saved record and the token" `
@@ -1789,7 +1948,11 @@ function Invoke-SetupMain {
             Write-Host "=== Step 5: enrolling this computer ===" -ForegroundColor Cyan
             Enter-SetupStage -Id "enrollment"
             $code = $EnrollmentCode
-            if ($null -eq $code) { $code = Read-EnrollmentCodeSecure }
+            if ($null -eq $code) { $code = Request-SetupEnrollmentCode }
+            if (Test-SetupInputCancelled $code) {
+                Stop-SetupInputCancelled -Id "enrollment_code" -Step "step 5 (enrollment)" -Problem "Entering the enrollment code was cancelled." `
+                    -Unchanged "nothing was installed and no enrollment request was made" -Fix "Run SortView setup again when you have the enrollment code."
+            }
             if ($null -eq $code -or $code.Length -eq 0) {
                 Stop-Setup -Step "step 5 (enrollment)" -Problem "No enrollment code was entered." `
                     -Unchanged "nothing was installed" -Fix "Run setup.ps1 from an interactive PowerShell window and enter the code when asked." -ExitCode 1
@@ -2101,7 +2264,13 @@ function Invoke-SetupMain {
         }
         if (-not $enableNow) {
             Write-Host "Nothing will upload until the task is enabled. Enabling starts the recurring 15-minute runs."
-            $answer = Read-SetupAnswer -Prompt "Enable the scheduled task now? [y/N] (Enter = leave it disabled)"
+            $answer = Request-SetupAnswer -Id "legacy_task_enable" -Prompt "Enable the scheduled task now? [y/N] (Enter = leave it disabled)"
+            if (Test-SetupInputCancelled $answer) {
+                # Setup itself has completed; a cancelled question is never a yes, so the task stays Disabled.
+                Write-SetupEvent -Type "input_cancelled" -Fields @{ prompt_id = "legacy_task_enable" }
+                Write-Host "  The question whether to enable the Scheduled Task was cancelled."
+                $answer = $null
+            }
             $enableNow = ($null -ne $answer -and @("y", "yes") -contains $answer.Trim().ToLowerInvariant())
         }
         if ($enableNow) {
