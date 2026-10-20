@@ -296,7 +296,7 @@ def test_setup_checks_elevation_before_anything_else_in_the_run():
 
 def test_the_enrollment_code_is_requested_only_after_every_local_check_and_the_connection_test():
     run = SETUP_BODY[SETUP_BODY.index("function Invoke-SetupMain"):]
-    code_prompt = run.index("Read-EnrollmentCodeSecure")
+    code_prompt = run.index("Request-SetupEnrollmentCode")  # the console prompt (Read-EnrollmentCodeSecure) or a host's
     for earlier in ("VerifyBundleOnly", "Get-RuntimeVersion", "Get-BundleDefaults", "Get-ExistingInstallProblem",
                     "Get-SourceSelection", "Test-ApiReachable"):
         assert run.index(earlier) < code_prompt, earlier
@@ -828,6 +828,52 @@ $r = @(Invoke-SetupMain @@ARGS@@)
 @@EVENTS_DUMP@@
 """
 
+# Only for scenarios that ask for it: a host's prompt handler. Each RequestInput call is logged (the prompt id and the
+# context it was given -- never an answer) and answered with the next scripted response from handler.json:
+#   {"kind": "string", "value": ...}   a plain string (for yes/no or a path; for the code, a WRONG type)
+#   {"kind": "secure", "value": ...}   a SecureString
+#   {"kind": "null"} / {"kind": "throw"} / {"kind": "object"} / {"kind": "int"}
+# An exhausted script answers $null.
+_HANDLER_SCRIPT = r"""
+$promptHandler = [pscustomobject]@{}
+$promptHandler | Add-Member -MemberType ScriptMethod -Name RequestInput -Value {
+    param($id, $context)
+    $copy = @{}; foreach ($key in $context.Keys) { $copy[[string]$key] = $context[$key] }
+    Add-Call @{ tool = 'handler'; id = $id; context = $copy; context_is_dictionary = ($context -is [System.Collections.IDictionary]) }
+    # (Windows PowerShell's ConvertFrom-Json emits a JSON array as ONE object: ForEach-Object enumerates it.)
+    $script = @(Get-Content -LiteralPath "$FakeDir\handler.json" -Raw | ConvertFrom-Json | ForEach-Object { $_ })
+    if ($script.Count -eq 0) { return $null }
+    $next = $script[0]
+    ConvertTo-Json -InputObject @($script | Select-Object -Skip 1) -Depth 4 | Set-Content -LiteralPath "$FakeDir\handler.json" -Encoding UTF8
+    switch ($next.kind) {
+        'string' { return [string]$next.value }
+        'secure' { return (ConvertTo-SecureString ([string]$next.value) -AsPlainText -Force) }
+        'throw'  { throw 'the host failed' }
+        'object' { return [pscustomobject]@{ answer = 'yes' } }
+        'int'    { return 1 }
+    }
+    return $null
+}
+Register-SetupPromptHandler -Handler $promptHandler
+"""
+
+
+def yes() -> dict:
+    return {"kind": "string", "value": "yes"}
+
+
+def no() -> dict:
+    return {"kind": "string", "value": "no"}
+
+
+def path_answer(value) -> dict:
+    return {"kind": "string", "value": str(value)}
+
+
+def code_answer(value: str = SENTINEL_CODE) -> dict:
+    return {"kind": "secure", "value": value}
+
+
 # Only for scenarios that ask for it: the host's side of the optional event channel. The tagged records (and how many
 # console records came alongside) go to files, never to stdout, so the console a test compares is untouched.
 _EVENTS_DUMP = r"""
@@ -1059,7 +1105,7 @@ class Result:
             tool = call["tool"]
             if tool == "http":
                 names.append(f"http:{call['method'].upper()}")
-            elif tool not in ("prompt", "protect-recovery"):
+            elif tool not in ("prompt", "protect-recovery", "handler"):
                 names.append(tool)
         return names
 
@@ -1068,6 +1114,10 @@ class Result:
 
     def prompts(self) -> list[str]:
         return [c["text"] for c in self.calls if c["tool"] == "prompt"]
+
+    def handler_requests(self) -> list[tuple[str, dict]]:
+        """What a registered host handler was asked: (prompt id, context), in order."""
+        return [(c["id"], c["context"]) for c in self.calls if c["tool"] == "handler"]
 
     @property
     def recovery_path(self) -> Path:
@@ -1095,15 +1145,18 @@ class Result:
 def run_scenario(bundle: Bundle, *, args: str = "", admin: bool = True, http: dict | None = None, answers: list | None = None,
                  extra_ps: str = "", env: dict | None = None, runtime_version: str | None = None,
                  machine_token: str | None = None, task_state: str | None = None,
-                 events: bool = False, capture_events: bool = False) -> Result:
+                 events: bool = False, capture_events: bool = False, handler: list | None = None) -> Result:
     """`events` turns the optional event channel on (Enable-SetupEvents) and captures it; `capture_events` alone
     captures the Information stream WITHOUT turning events on -- a host listening to a run that never enabled them."""
     (bundle.fake / "http.json").write_text(json.dumps(http if http is not None else default_http()), encoding="utf-8")
     for counter in bundle.fake.glob("http_count_*.txt"):  # each run starts a scripted SEQUENCE of answers from its first
         counter.unlink()
-    for stale in ("events.jsonl", "pshost_count.txt"):  # each run reports only its own events
+    for stale in ("events.jsonl", "pshost_count.txt", "handler.json"):  # each run reports only its own events
         (bundle.fake / stale).unlink(missing_ok=True)
     capture = events or capture_events
+    if handler is not None:  # `handler` = the scripted answers of a registered host handler (see _HANDLER_SCRIPT)
+        (bundle.fake / "handler.json").write_text(json.dumps(handler), encoding="utf-8")
+        extra_ps = extra_ps + "\n" + _HANDLER_SCRIPT
     if answers:
         (bundle.fake / "answers.txt").write_text(
             "\n".join("<ENTER>" if a == "" else a for a in answers) + "\n", encoding="utf-8"
@@ -2110,7 +2163,7 @@ def test_the_bundle_is_verified_before_anything_in_it_is_read_and_before_any_net
         "Get-ExistingInstallProblem",
         "Get-SourceSelection",
         "Test-ApiReachable",            # the first network request
-        "Read-EnrollmentCodeSecure",    # the code is requested last
+        "Request-SetupEnrollmentCode",  # the code is requested last (console or host prompt)
         "Invoke-Enrollment -ApiUrl",
     ]
     positions = [run.index(marker) for marker in order]
@@ -4041,7 +4094,7 @@ def test_the_v2_record_detector_reads_only_and_never_throws(tmp_path):
 
 EVENT_SCHEMA = "sortview.setup.event/1"
 EVENT_TAG = "SortView.Setup.Event"
-ROUTINE_EVENT_TYPES = {"stage_started", "stage_completed", "stage_skipped", "mode_detected", "enrollment_result"}
+ROUTINE_EVENT_TYPES = {"stage_started", "stage_completed", "stage_skipped", "mode_detected", "enrollment_result", "input_cancelled"}
 #: Every Stop-Setup step label and the stable stage it is reported against.
 STOP_STAGE_FOR_LABEL = {
     "step 0 (checks)": "elevation",
@@ -4541,3 +4594,522 @@ def test_a_preference_that_displays_information_still_shows_no_event_on_the_cons
 
     assert result.exit_code == 0 and result.events
     assert "schema" not in result.output and EVENT_SCHEMA not in result.output and "stage_started" not in result.output
+
+
+# =====================================================================================
+# 8. HOST PROMPTS: an optional handler answers setup's questions; setup still decides
+# =====================================================================================
+
+PROMPT_SCHEMA = "sortview.setup.prompt/1"
+PROMPT_CONTEXT_KEYS = {
+    "enrollment_code": set(),
+    "sources_confirm": {"checkins", "rejects", "acs"},
+    "source_path": {"source", "attempt", "max_attempts", "problem", "rejected_path"},
+    "resume_confirm": {"mode", "contract", "release_version", "installation_id"},
+    "legacy_task_enable": set(),
+}
+CONSOLE_PROMPTS = {
+    "sources_confirm": "Use these files? [Y/n] (Enter = yes)",
+    "source_path": "Full path to the {name} file (Enter alone to stop)",
+    "resume_confirm": "Resume it using the saved enrollment (no new code needed)? [Y/n] (Enter = resume)",
+    "legacy_task_enable": "Enable the scheduled task now? [y/N] (Enter = leave it disabled)",
+}
+_CONSOLE_WRAPPERS = {
+    "Read-SetupAnswer": (
+        "function Read-SetupAnswer {\n"
+        "    # A line of ordinary (visible, non-secret) input, or $null when there is no\n"
+        "    # way to ask -- a non-interactive host. Callers treat $null as \"no answer\".\n"
+        "    param([string]$Prompt)\n"
+        "    try {\n"
+        "        return (Read-Host $Prompt)\n"
+        "    } catch {\n"
+        "        return $null\n"
+        "    }\n"
+        "}"
+    ),
+    "Read-EnrollmentCodeSecure": (
+        "function Read-EnrollmentCodeSecure {\n"
+        "    # The code is typed hidden and never echoed. $null when no prompt is possible.\n"
+        "    try {\n"
+        "        return (Read-Host -AsSecureString -Prompt \"Enter the enrollment code from your SortView administrator (input hidden)\")\n"
+        "    } catch {\n"
+        "        return $null\n"
+        "    }\n"
+        "}"
+    ),
+}
+
+
+def _stripped_code_lines(text: str = SETUP_BODY) -> list[str]:
+    return [line.strip() for line in _code_lines(text)]
+
+
+def test_the_console_wrappers_are_unchanged_and_are_used_only_when_no_handler_is_registered():
+    for name, text in _CONSOLE_WRAPPERS.items():
+        assert _ps_function(name) == text, name
+    # Each is CALLED from exactly one place: the no-handler branch of its host-aware request.
+    assert sorted(line for line in _stripped_code_lines() if "Read-SetupAnswer" in line) == [
+        "function Read-SetupAnswer {",
+        "if ($null -eq $script:SetupPromptHandler) { return (Read-SetupAnswer -Prompt $Prompt) }",
+    ]
+    assert sorted(line for line in _stripped_code_lines() if "Read-EnrollmentCodeSecure" in line) == [
+        "function Read-EnrollmentCodeSecure {",
+        "if ($null -eq $script:SetupPromptHandler) { return (Read-EnrollmentCodeSecure) }",
+    ]
+    assert "Read-SetupAnswer -Prompt $Prompt" in _ps_function("Request-SetupAnswer")
+    assert "Read-EnrollmentCodeSecure" in _ps_function("Request-SetupEnrollmentCode")
+
+
+def test_every_question_is_asked_through_the_host_aware_requests_and_checked_for_cancellation():
+    for prompt_id, console_text in CONSOLE_PROMPTS.items():
+        call = f'Request-SetupAnswer -Id "{prompt_id}" -Prompt "{console_text.format(name="$name")}"'
+        assert SETUP_BODY.count(call) == 1, prompt_id  # the console words are exactly the ones asked before
+        after = SETUP_BODY[SETUP_BODY.index(call):]
+        assert after.index("Test-SetupInputCancelled $answer") < 600, prompt_id  # checked before anything reads it
+    run = SETUP_BODY[SETUP_BODY.index("function Invoke-SetupMain"):]
+    assert run.count("Request-SetupEnrollmentCode") == 1
+    code = run[run.index("Request-SetupEnrollmentCode"):]
+    assert code.index("Test-SetupInputCancelled $code") < code.index("$script:State.CodeAttempted = $true") < code.index("Invoke-Enrollment")
+
+
+def test_a_handler_is_registered_only_by_a_host_and_none_is_by_default():
+    assert "$script:SetupPromptHandler = $null" in SETUP_BODY
+    assigned = [line for line in _stripped_code_lines() if line.startswith("$script:SetupPromptHandler = ")]
+    assert assigned == ["$script:SetupPromptHandler = $null", "$script:SetupPromptHandler = $Handler"]
+    assert "$script:SetupPromptHandler = $Handler" in _ps_function("Register-SetupPromptHandler")
+    assert [line for line in _stripped_code_lines() if "Register-SetupPromptHandler" in line] == ["function Register-SetupPromptHandler {"]
+
+
+def test_no_answer_is_ever_printed_written_or_put_into_an_event():
+    printing = re.compile(r"(Write-(Host|Output|Verbose|Debug|Warning|Information|Error)|Write-SetupEvent|Add-Content|Set-Content|Out-File)\b[^\n]*")
+    for match in printing.finditer(SETUP_BODY):
+        for answer in ("$answer", "$response", "$Response", "$code", "$Answer"):
+            assert answer not in match.group(0), (answer, match.group(0))
+    handler = _ps_function("Invoke-SetupPromptHandler")
+    assert "finally {\n        $response = $null" in handler  # the raw answer is dropped as soon as it is checked
+
+
+def test_prompt_contexts_are_closed_lists_that_name_nothing_secret():
+    block = SETUP_BODY[SETUP_BODY.index("$script:SetupPromptContextKeys"):SETUP_BODY.index("$script:SetupPromptKinds")]
+    parsed = {name: set(re.findall(r'"(\w+)"', body)) for name, body in re.findall(r"^    (\w+)\s+= @\(([^)]*)\)", block, re.MULTILINE)}
+    assert parsed == PROMPT_CONTEXT_KEYS
+    for keys in parsed.values():
+        for key in keys:
+            assert not re.search(r"code|token|secret|key|rule|password|hostname", key), key
+    assert f'$script:SetupPromptSchema = "{PROMPT_SCHEMA}"' in SETUP_BODY
+    kinds = dict(re.findall(r'^    (\w+)\s+= "(\w+)"', SETUP_BODY[SETUP_BODY.index("$script:SetupPromptKinds"):], re.MULTILINE)[:5])
+    assert kinds == {"enrollment_code": "secure_string", "sources_confirm": "yes_no", "source_path": "file_path",
+                     "resume_confirm": "yes_no", "legacy_task_enable": "yes_no"}
+
+
+def test_input_cancelled_is_an_additive_event_holding_only_the_prompt_id():
+    assert '    input_cancelled       = @("prompt_id")' in SETUP_BODY
+    rule = re.search(r'^    prompt_id\s+= @\(([^)]*)\)', SETUP_BODY, re.MULTILINE)
+    assert rule and set(re.findall(r'"(\w+)"', rule.group(1))) == set(PROMPT_CONTEXT_KEYS)
+    emitted = [line for line in _stripped_code_lines() if 'Write-SetupEvent -Type "input_cancelled"' in line]
+    assert emitted == ['Write-SetupEvent -Type "input_cancelled" -Fields @{ prompt_id = $Id }',
+                       'Write-SetupEvent -Type "input_cancelled" -Fields @{ prompt_id = "legacy_task_enable" }']
+
+
+def test_cancellation_messages_name_no_console_switch():
+    cancelled = "".join(_ps_function(name) for name in ("Stop-SetupSourcesCancelled", "Stop-SetupInputCancelled"))
+    run = SETUP_BODY[SETUP_BODY.index("function Invoke-SetupMain"):]
+    for prompt_id in ("resume_confirm", "enrollment_code"):
+        start = run.index(f'Stop-SetupInputCancelled -Id "{prompt_id}"')
+        cancelled += run[start:run.index("\n            }", start)]
+    for console_only in ("-CheckinsPath", "-RejectsPath", "-AcsPath", "PowerShell", "setup.ps1", "-ApiUrl"):
+        assert console_only not in cancelled, console_only
+    assert "-ExitCode 1" in _ps_function("Stop-SetupInputCancelled")
+
+
+# --- pure: answers, contexts, registration ---------------------------------------------------------------------
+
+_SECURE = "(ConvertTo-SecureString 'abc' -AsPlainText -Force)"
+_RESPONSES = [
+    ("sources_confirm", "'yes'", "VALUE:y"), ("sources_confirm", "'no'", "VALUE:n"),
+    ("sources_confirm", "'YES'", "CANCELLED"), ("sources_confirm", "'Yes'", "CANCELLED"), ("sources_confirm", "'y'", "CANCELLED"),
+    ("sources_confirm", "'n'", "CANCELLED"), ("sources_confirm", "''", "CANCELLED"), ("sources_confirm", "' yes'", "CANCELLED"),
+    ("sources_confirm", "$null", "CANCELLED"), ("sources_confirm", "$true", "CANCELLED"), ("sources_confirm", "1", "CANCELLED"),
+    ("sources_confirm", "([pscustomobject]@{ answer = 'yes' })", "CANCELLED"), ("sources_confirm", "@('yes')", "CANCELLED"),
+    ("sources_confirm", _SECURE, "CANCELLED"),
+    ("resume_confirm", "'yes'", "VALUE:y"), ("resume_confirm", "'no'", "VALUE:n"), ("resume_confirm", "$null", "CANCELLED"),
+    ("legacy_task_enable", "'yes'", "VALUE:y"), ("legacy_task_enable", "'no'", "VALUE:n"), ("legacy_task_enable", "'maybe'", "CANCELLED"),
+    ("source_path", r"'C:\TL\Checkins.txt'", r"VALUE:C:\TL\Checkins.txt"),
+    ("source_path", "'relative.txt'", "VALUE:relative.txt"),  # passed on: setup itself judges it (and asks again)
+    ("source_path", "''", "CANCELLED"), ("source_path", "'   '", "CANCELLED"), ("source_path", "('x' * 1025)", "CANCELLED"),
+    ("source_path", "$null", "CANCELLED"), ("source_path", "5", "CANCELLED"),
+    ("enrollment_code", _SECURE, "SECURE:3"), ("enrollment_code", "(New-Object System.Security.SecureString)", "CANCELLED"),
+    ("enrollment_code", "'SV-PLAIN-TEXT-CODE'", "CANCELLED"), ("enrollment_code", "$null", "CANCELLED"),
+    ("enrollment_code", f"@({_SECURE})", "CANCELLED"),
+    ("not_a_prompt", "'yes'", "CANCELLED"),
+]
+
+
+@needs_windows_powershell
+def test_handler_answers_become_exactly_what_the_console_would_have_read_or_a_cancellation():
+    script = f". {ps_quote(SETUP_SOURCE)}\n" + "\n".join(
+        f"$r = ConvertFrom-SetupPromptResponse -Id '{prompt_id}' -Response {expr}\n"
+        "if (Test-SetupInputCancelled $r) { 'CANCELLED' } elseif ($r -is [securestring]) { 'SECURE:' + $r.Length } else { 'VALUE:' + $r }"
+        for prompt_id, expr, _ in _RESPONSES
+    )
+    result = _run_ps(script)
+
+    assert result.stdout.splitlines() == [expected for *_, expected in _RESPONSES], result.stderr
+
+
+@needs_windows_powershell
+def test_the_cancellation_marker_is_never_mistaken_for_an_answer():
+    result = _dot_source_and_run(
+        "(Test-SetupInputCancelled $null), (Test-SetupInputCancelled ''), (Test-SetupInputCancelled 'y'), "
+        "(Test-SetupInputCancelled (New-Object System.Security.SecureString)), (Test-SetupInputCancelled ([pscustomobject]@{ a = 1 })), "
+        "(Test-SetupInputCancelled $script:SetupInputCancelled) -join ','"
+    )
+
+    assert result.stdout.strip() == "False,False,False,False,False,True"
+
+
+@needs_windows_powershell
+def test_each_prompt_context_carries_the_schema_and_exactly_its_own_fields():
+    script = f". {ps_quote(SETUP_SOURCE)}\n" + "\n".join(
+        f"$c = New-SetupPromptContext -Id '{prompt_id}' -Fields @{{}}; ((@($c.Keys) | Sort-Object) -join ',') + '|' + $c['schema']"
+        for prompt_id in PROMPT_CONTEXT_KEYS
+    ) + (
+        "\n$bad = New-SetupPromptContext -Id 'sources_confirm' -Fields @{ checkins = 'x'; token = 'y' }; 'UNKNOWN_FIELD=' + ($null -eq $bad)"
+        "\n$bad = New-SetupPromptContext -Id 'no_such_prompt' -Fields @{}; 'UNKNOWN_PROMPT=' + ($null -eq $bad)"
+    )
+    lines = _run_ps(script).stdout.splitlines()
+
+    for line, (prompt_id, keys) in zip(lines, PROMPT_CONTEXT_KEYS.items(), strict=False):
+        assert line == ",".join(sorted(keys | {"schema"})) + "|" + PROMPT_SCHEMA, prompt_id
+    assert lines[-2:] == ["UNKNOWN_FIELD=True", "UNKNOWN_PROMPT=True"]
+
+
+@needs_windows_powershell
+def test_only_an_object_with_a_request_input_method_can_be_registered():
+    result = _dot_source_and_run(
+        "foreach ($candidate in @($null, [pscustomobject]@{ Answer = 1 }, 'RequestInput')) {\n"
+        "  try { Register-SetupPromptHandler -Handler $candidate; 'ACCEPTED' } catch { 'REFUSED' } }\n"
+        "'STILL_NONE=' + ($null -eq $script:SetupPromptHandler)\n"
+        "function Read-SetupAnswer { param($Prompt) 'console:' + $Prompt }\n"
+        "Request-SetupAnswer -Id 'sources_confirm' -Prompt 'q'"
+    )
+
+    assert result.stdout.split() == ["REFUSED", "REFUSED", "REFUSED", "STILL_NONE=True", "console:q"]
+
+
+# --- scenarios: a handler driving the real flow ---------------------------------------------------------------
+
+def _context(**fields) -> dict:
+    return {"schema": PROMPT_SCHEMA, **fields}
+
+
+def _sources_context(bundle: Bundle) -> dict:
+    return _context(checkins=str(bundle.source_dir / "Checkins.txt"), rejects=str(bundle.source_dir / "Rejects.txt"),
+                    acs=str(bundle.source_dir / "ACS Log.txt"))
+
+
+def assert_no_console_prompt(result: Result) -> None:
+    assert result.prompts() == [] and result.calls_to("read-code") == []
+    assert all(c["context_is_dictionary"] for c in result.calls_to("handler"))
+
+
+def assert_nothing_sensitive_reached_the_host_or_the_events(result: Result) -> None:
+    exposed = json.dumps(result.handler_requests()) + json.dumps(result.events)
+    for value in (SENTINEL_CODE, SENTINEL_TOKEN, KEY_ID, TIMEZONE, *RULE_CANARIES, "agent_token", "enrollment_code\":"):
+        assert value not in exposed, value
+
+
+@needs_windows_powershell
+def test_a_handler_drives_a_fresh_legacy_setup_including_the_fallback_and_never_touches_the_console(tmp_path):
+    bundle = make_bundle(tmp_path)
+
+    result = run_scenario(bundle, handler=[yes(), code_answer(), no()], events=True)
+
+    assert result.exit_code == 0, result.output
+    assert result.handler_requests() == [("sources_confirm", _sources_context(bundle)), ("enrollment_code", _context()),
+                                         ("legacy_task_enable", _context())]
+    assert_no_console_prompt(result)
+    assert result.tools() == ["install-verify", "runtime-version", "http:GET", "http:POST", "http:POST", "set-api-token", "install",
+                              "finish-install"]
+    first, second = enroll_posts(result)
+    assert first["body"]["enrollment_code"] == SENTINEL_CODE and first["body"]["contract_version"] == 2  # the host's code was used
+    assert "contract_version" not in second["body"]  # ...and the legacy fallback still happened exactly once
+    assert result.task == {"State": "Disabled"} and result.calls_to("enable-task") == []
+    assert not any(e["type"] == "input_cancelled" for e in result.events) and "was cancelled" not in result.output
+    assert_event_invariants(result)
+    assert_no_secret_anywhere_visible(result)
+    assert_nothing_sensitive_reached_the_host_or_the_events(result)
+
+
+@needs_windows_powershell
+def test_an_explicit_yes_from_the_handler_enables_a_legacy_task_only_after_success(tmp_path):
+    result = run_scenario(make_bundle(tmp_path), handler=[yes(), code_answer(), yes()])
+
+    assert result.exit_code == 0, result.output
+    assert result.tools()[-1] == "enable-task" and result.task == {"State": "Ready"}
+
+
+@needs_windows_powershell
+def test_a_handler_drives_a_fresh_v2_setup_which_never_asks_about_the_task(tmp_path):
+    result = run_scenario(make_bundle(tmp_path), http=v2_http(), handler=[yes(), code_answer()], events=True)
+
+    assert result.exit_code == 0, result.output
+    assert [prompt_id for prompt_id, _ in result.handler_requests()] == ["sources_confirm", "enrollment_code"]
+    assert result.tools() == [tool for tool in V2_HAPPY_TOOLS if tool != "read-code"]  # the host answered, not the console
+    assert result.task == {"State": "Ready"}
+    assert_no_console_prompt(result)
+    assert_nothing_sensitive_reached_the_host_or_the_events(result)
+    assert_nothing_sensitive_was_printed(result)
+
+
+@needs_windows_powershell
+def test_a_declined_source_offer_asks_for_each_path_and_setup_still_judges_every_answer(tmp_path):
+    bundle = make_bundle(tmp_path)
+    missing = tmp_path / "nowhere" / "Checkins.txt"
+    handler = [no(), path_answer(missing), path_answer("relative.txt"), path_answer(bundle.source_dir / "Checkins.txt"),
+               path_answer(bundle.source_dir / "Rejects.txt"), path_answer(bundle.source_dir / "ACS Log.txt"), code_answer(), no()]
+
+    result = run_scenario(bundle, handler=handler)
+
+    assert result.exit_code == 0, result.output
+    paths = [context for prompt_id, context in result.handler_requests() if prompt_id == "source_path"]
+    assert paths == [
+        _context(source="checkins", attempt=1, max_attempts=3, problem=None, rejected_path=None),
+        _context(source="checkins", attempt=2, max_attempts=3, problem="not_found", rejected_path=str(missing)),
+        _context(source="checkins", attempt=3, max_attempts=3, problem="not_absolute", rejected_path="relative.txt"),
+        _context(source="rejects", attempt=1, max_attempts=3, problem=None, rejected_path=None),
+        _context(source="acs", attempt=1, max_attempts=3, problem=None, rejected_path=None),
+    ]
+    assert result.calls_to("install")[0]["params"]["CheckinsPath"] == str(bundle.source_dir / "Checkins.txt")
+
+
+@needs_windows_powershell
+def test_a_handler_that_runs_out_of_path_attempts_stops_exactly_as_the_console_does_not_as_a_cancellation(tmp_path):
+    bundle = make_bundle(tmp_path)
+    bad = path_answer(tmp_path / "nowhere.txt")
+
+    result = run_scenario(bundle, handler=[no(), bad, bad, bad], events=True)
+
+    assert result.exit_code == 1
+    assert [prompt_id for prompt_id, _ in result.handler_requests()] == ["sources_confirm", "source_path", "source_path", "source_path"]
+    assert "The checkins source file was not found and none was provided" in result.output
+    assert result.calls_to("http") == [] and result.calls_to("install") == []
+    assert not any(e["type"] == "input_cancelled" for e in result.events)
+    assert_event_invariants(result)
+
+
+@needs_windows_powershell
+def test_a_handler_resumes_an_interrupted_legacy_install_without_an_enrollment_request(tmp_path):
+    bundle = make_bundle(tmp_path)
+    before = len(run_scenario(bundle, answers=[""], env={"SETUPTEST_INSTALL_MODE": "fail"}).calls)
+
+    result = run_scenario(bundle, handler=[yes(), yes(), no()], events=True)
+
+    assert result.exit_code == 0, result.output
+    assert [c["tool"] for c in new_calls(result, before) if c["tool"] != "handler"] == [
+        "install-verify", "runtime-version", "http", "install", "finish-install"]
+    assert result.handler_requests() == [
+        ("resume_confirm", _context(mode="resume_install", contract=1, release_version=RELEASE_VERSION, installation_id=41)),
+        ("sources_confirm", _sources_context(bundle)), ("legacy_task_enable", _context()),
+    ]
+    assert [c for c in new_calls(result, before) if c["tool"] == "http" and c["method"] == "Post"] == []
+    assert [c for c in new_calls(result, before) if c["tool"] in ("prompt", "read-code")] == []
+    assert_event_invariants(result)
+
+
+@needs_windows_powershell
+def test_a_handler_resumes_an_interrupted_v2_install_at_verification(tmp_path):
+    bundle, first = _interrupt_v2(tmp_path, env={"SETUPTEST_FINISH_MODE": "fail_bootstrap"})
+    before = len(first.calls)
+
+    result = run_scenario(bundle, http=_ALREADY_ENROLLED, handler=[yes()], events=True)
+
+    assert result.exit_code == 0, result.output
+    assert result.handler_requests() == [
+        ("resume_confirm", _context(mode="resume_finish", contract=2, release_version=RELEASE_VERSION, installation_id=41)),
+    ]
+    assert result.task == {"State": "Ready"}
+    assert [c["tool"] for c in new_calls(result, before) if c["tool"] not in ("handler", "protect-recovery")] == [
+        "install-verify", "runtime-version", "http", "finish-install", "enable-task"]  # no install, no enrollment request
+    assert_nothing_sensitive_reached_the_host_or_the_events(result)
+
+
+@needs_windows_powershell
+def test_an_explicit_no_to_resume_is_the_existing_decline_not_a_cancellation(tmp_path):
+    bundle = make_bundle(tmp_path)
+    run_scenario(bundle, answers=[""], env={"SETUPTEST_INSTALL_MODE": "fail"})
+
+    result = run_scenario(bundle, handler=[no()], events=True)
+
+    assert result.exit_code == 2
+    assert "Resuming the unfinished setup was declined." in result.output and "was cancelled" not in result.output
+    assert not any(e["type"] == "input_cancelled" for e in result.events)
+    assert result.recovery is not None and result.machine_token == SENTINEL_TOKEN
+
+
+# --- cancellation: every way a host can fail to answer, at every question ---------------------------------------
+
+#: Every non-answer: an explicit null, a handler that throws, an object instead of a string, and a wrong value.
+_NON_ANSWERS = {
+    "null": {"kind": "null"},
+    "throws": {"kind": "throw"},
+    "wrong_type": {"kind": "object"},
+    "wrong_value": {"kind": "string", "value": "YES"},
+}
+#: A plain-text code is the wrong TYPE for the code prompt, never accepted.
+_CODE_NON_ANSWERS = {**_NON_ANSWERS, "wrong_value": {"kind": "string", "value": SENTINEL_CODE}}
+
+
+def _single_input_cancelled(result: Result, prompt_id: str) -> None:
+    cancelled = [e for e in result.events if e["type"] == "input_cancelled"]
+    assert len(cancelled) == 1
+    assert set(cancelled[0]) == {"schema", "seq", "type", "stage", "prompt_id"} and cancelled[0]["prompt_id"] == prompt_id
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("non_answer", list(_NON_ANSWERS))
+@pytest.mark.parametrize("prompt_id", ["sources_confirm", "source_path"])
+def test_a_cancelled_source_question_stops_before_any_network_request_or_code(tmp_path, prompt_id, non_answer):
+    handler = [_NON_ANSWERS[non_answer]] if prompt_id == "sources_confirm" else [no(), _NON_ANSWERS[non_answer]]
+
+    result = run_scenario(make_bundle(tmp_path), handler=handler, events=True)
+
+    assert result.exit_code == 1
+    assert "SETUP STOPPED at step 3 (source files)" in result.output and "Choosing the Tech Logic source files was cancelled." in result.output
+    assert "The enrollment code was NOT used." in result.output
+    assert result.tools() == ["install-verify", "runtime-version"]  # no connection, no code, no install
+    assert result.task is None and result.machine_token is None
+    _single_input_cancelled(result, prompt_id)
+    assert _stop(result)["stage"] == "sources" and not _stop(result)["code_attempted"]
+    assert_event_invariants(result)
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("non_answer", list(_CODE_NON_ANSWERS))
+def test_a_cancelled_code_entry_stops_before_any_enrollment_request(tmp_path, non_answer):
+    result = run_scenario(make_bundle(tmp_path), handler=[yes(), _CODE_NON_ANSWERS[non_answer]], events=True)
+
+    assert result.exit_code == 1
+    assert "Entering the enrollment code was cancelled." in result.output and "The enrollment code was NOT used." in result.output
+    assert result.tools() == ["install-verify", "runtime-version", "http:GET"]  # the connection check only: NO enrollment POST
+    assert result.machine_token is None and not (result.bundle.data_root / "setup").exists()  # (the empty setup folder is gone)
+    _single_input_cancelled(result, "enrollment_code")
+    stop = _stop(result)
+    assert (stop["stage"], stop["code_attempted"], stop["code_consumed"]) == ("enrollment", False, False)
+    assert_event_invariants(result)
+    assert_nothing_sensitive_reached_the_host_or_the_events(result)
+    assert_no_secret_anywhere_visible(result)
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("non_answer", list(_NON_ANSWERS))
+@pytest.mark.parametrize("contract", [1, 2])
+def test_a_cancelled_resume_question_continues_nothing_gives_up_nothing_and_is_not_a_decline(tmp_path, contract, non_answer):
+    if contract == 1:
+        bundle = make_bundle(tmp_path)
+        first = run_scenario(bundle, answers=[""], env={"SETUPTEST_INSTALL_MODE": "fail"})
+        http = None
+    else:
+        bundle, first = _interrupt_v2(tmp_path, env={"SETUPTEST_INSTALL_MODE": "fail"})
+        http = _ALREADY_ENROLLED
+    before = len(first.calls)
+    record_before = bundle.data_root.joinpath("setup", "enrollment-recovery.json").read_bytes()
+
+    result = run_scenario(bundle, http=http, handler=[_NON_ANSWERS[non_answer]], events=True)
+
+    assert result.exit_code == 1  # a decline is 2: the two are told apart
+    assert "The question whether to resume the unfinished setup was cancelled" in result.output
+    assert "was declined" not in result.output and "choose to resume" in result.output
+    # The existing recovery advice: the code is used, the token is stored, and the saved enrollment resumes later.
+    assert "HAS BEEN USED" in result.output and "IS stored on this machine" in result.output
+    if contract == 2:
+        assert "Do NOT ask for another enrollment code" in result.output
+    assert result.recovery_path.read_bytes() == record_before and result.machine_token == SENTINEL_TOKEN
+    later = [c["tool"] for c in new_calls(result, before) if c["tool"] not in ("handler", "protect-recovery")]
+    assert later == ["install-verify", "runtime-version"]  # stopped at the question: no connection, enrollment or install
+    _single_input_cancelled(result, "resume_confirm")
+    assert (_stop(result)["stage"], _stop(result)["exit_code"]) == ("machine", 1)
+    assert_event_invariants(result)
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("non_answer", list(_NON_ANSWERS))
+def test_a_cancelled_enable_question_completes_setup_with_the_task_disabled_and_says_so(tmp_path, non_answer):
+    result = run_scenario(make_bundle(tmp_path), handler=[yes(), code_answer(), _NON_ANSWERS[non_answer]], events=True)
+
+    assert result.exit_code == 0, result.output
+    assert result.task == {"State": "Disabled"} and result.calls_to("enable-task") == []  # never an implicit yes
+    assert "The question whether to enable the Scheduled Task was cancelled." in result.output
+    assert "The Scheduled Task was left DISABLED." in result.output
+    _single_input_cancelled(result, "legacy_task_enable")
+    assert "stage_completed:task_enable:left_disabled" in stages(result)
+    assert (result.events[-1]["result"], result.events[-1]["task_state"]) == ("completed", "Disabled")
+    assert_event_invariants(result)
+
+
+@needs_windows_powershell
+def test_an_explicit_no_to_the_enable_question_is_told_apart_from_a_cancellation(tmp_path):
+    result = run_scenario(make_bundle(tmp_path), handler=[yes(), code_answer(), no()], events=True)
+
+    assert result.exit_code == 0 and result.task == {"State": "Disabled"}
+    assert "was cancelled" not in result.output and not any(e["type"] == "input_cancelled" for e in result.events)
+
+
+@needs_windows_powershell
+def test_without_a_handler_the_console_asks_the_same_questions_in_the_same_words(tmp_path):
+    bundle = make_bundle(tmp_path)
+    answers = ["n", str(bundle.source_dir / "Checkins.txt"), str(bundle.source_dir / "Rejects.txt"),
+               str(bundle.source_dir / "ACS Log.txt"), ""]
+
+    result = run_scenario(bundle, answers=answers, events=True)
+
+    assert result.exit_code == 0, result.output
+    assert result.prompts() == [CONSOLE_PROMPTS["sources_confirm"]] + [
+        CONSOLE_PROMPTS["source_path"].format(name=name) for name in ("checkins", "rejects", "acs")
+    ] + [CONSOLE_PROMPTS["legacy_task_enable"]]
+    assert result.calls_to("read-code") != [] and result.handler_requests() == []
+    assert "was cancelled" not in result.output and not any(e["type"] == "input_cancelled" for e in result.events)
+
+
+@needs_windows_powershell
+def test_with_events_off_a_cancellation_still_stops_identically_and_emits_nothing(tmp_path):
+    off_tmp, on_tmp = tmp_path / "off", tmp_path / "on"
+    off = run_scenario(make_bundle(off_tmp), handler=[yes(), {"kind": "throw"}], capture_events=True)
+    on = run_scenario(make_bundle(on_tmp), handler=[yes(), {"kind": "throw"}], events=True)
+
+    assert off.exit_code == on.exit_code == 1
+    assert off.events == [] and on.events
+    assert _normalized(off, off_tmp) == _normalized(on, on_tmp)
+    assert off.tools() == on.tools()
+
+
+_TYPED_HOST = r'''
+Add-Type -TypeDefinition @"
+using System.Collections;
+using System.Security;
+public class ScriptedSetupHost {
+    public object RequestInput(string promptId, IDictionary context) {
+        if ((string)context["schema"] != "sortview.setup.prompt/1") { return null; }
+        if (promptId == "enrollment_code") {
+            var code = new SecureString();
+            foreach (char c in "@@CODE@@") { code.AppendChar(c); }
+            code.MakeReadOnly();
+            return code;
+        }
+        return "yes";
+    }
+}
+"@
+Register-SetupPromptHandler -Handler (New-Object ScriptedSetupHost)
+'''
+
+
+@needs_windows_powershell
+def test_a_compiled_dotnet_host_answers_through_idictionary_and_a_secure_string(tmp_path):
+    # The contract a WPF host implements: object RequestInput(string promptId, IDictionary context).
+    result = run_scenario(make_bundle(tmp_path), http=v2_http(), extra_ps=_TYPED_HOST.replace("@@CODE@@", SENTINEL_CODE))
+
+    assert result.exit_code == 0, result.output
+    (post,) = enroll_posts(result)
+    assert post["body"]["enrollment_code"] == SENTINEL_CODE  # the SecureString crossed from .NET intact
+    assert result.task == {"State": "Ready"} and result.prompts() == [] and result.calls_to("read-code") == []
