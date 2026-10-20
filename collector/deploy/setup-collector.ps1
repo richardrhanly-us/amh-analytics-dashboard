@@ -180,6 +180,14 @@
     canonical place they are recorded); -ApiUrl and -CheckinsPath/-RejectsPath/
     -AcsPath override them for development, tests and nonstandard installs.
 
+    EVENTS. Off unless a host turns them on. A program that runs this script
+    in-process (a graphical installer) may dot-source it, call
+    Enable-SetupEvents, then Invoke-SetupMain, and read records tagged
+    SortView.Setup.Event (schema sortview.setup.event/1) from the
+    Information stream. They describe the same stages, stops and outcome the
+    console shows, and never hold the code, the token, a rule, the key id or
+    a server response. Running .\setup.ps1 never emits one.
+
     EXIT CODES: 0 = setup complete (task Disabled, or enabled by explicit
     request). 1 = a step failed or a requirement was not met. 2 = refused
     because existing state is unsafe to touch.
@@ -247,6 +255,189 @@ $script:RecoveryKeysV2 = $script:RecoveryKeys + @("contract_version", "contract_
 # install.ps1 binds these as [Nullable[int]] (Int32); a larger value could not be passed.
 $script:MaxInstallerId = [int]::MaxValue
 $script:State = $null
+
+# === structured events (optional: OFF unless a host turns them on) ===========================
+# A host that runs this script IN-PROCESS -- a graphical installer -- dot-sources it, calls Enable-SetupEvents, and
+# then reads records tagged SortView.Setup.Event from the Information stream instead of the console text. Until then
+# no event is ever emitted, so an ordinary run's console output (redirected or not) and its exit code are exactly
+# what they were. An event holds fixed identifiers, typed values, and text the console already shows; every field is
+# on a closed allow-list and anything else -- an object, a SecureString, an unknown field -- drops the whole event.
+# Emitting never throws and never decides anything: setup does the same whether or not anyone is listening.
+
+$script:SetupEventSchema = "sortview.setup.event/1"
+$script:SetupEventTag = "SortView.Setup.Event"
+$script:SetupEventsEnabled = $false
+$script:SetupEventSequence = 0
+$script:SetupStage = $null
+$script:SetupStageIds = @("elevation", "bundle_verification", "bundle", "machine", "sources", "connection", "setup_folder",
+    "enrollment", "enrollment_save", "token_store", "install", "rules_install", "verification", "record_cleanup", "task_enable")
+# Each event type and, in order, the only fields it may carry.
+$script:SetupEventTypes = [ordered]@{
+    stage_started         = @()
+    stage_completed       = @("outcome")
+    stage_skipped         = @("reason")
+    mode_detected         = @("mode", "contract")
+    enrollment_result     = @("requested_contract", "enrollment_outcome", "refusal_code", "code_used", "contract")
+    run_stopped           = @("step_label", "problem", "unchanged", "fix", "advice", "exit_code", "contract",
+        "code_attempted", "code_consumed", "code_rejected", "token_stored", "recovery_on_disk")
+    run_failed_unexpected = @("exception_type", "message", "advice", "contract",
+        "code_attempted", "code_consumed", "code_rejected", "token_stored", "recovery_on_disk")
+    run_finished          = @("result", "exit_code", "mode", "contract", "task_state", "release_version", "installation_id")
+}
+# What each field may hold: a list means exactly one of those values; otherwise a kind. Any field may also be $null.
+$script:SetupEventFieldRules = @{
+    outcome            = @("ok", "already_done", "enabled", "left_disabled", "warning")
+    reason             = @("resume", "already_installed", "not_applicable")
+    mode               = @("fresh", "resume_install", "resume_finish")
+    contract           = @(1, 2)
+    requested_contract = @(1, 2)
+    enrollment_outcome = @("Enrolled", "Refused", "Rejected", "RateLimited", "Unreachable", "Redirected", "BadResponse", "ServerError")
+    refusal_code       = @($script:EnrollmentRefusalCodes)
+    code_used          = @("used", "not_used", "not_used_by_this_request", "unknown")
+    result             = @("completed", "stopped", "failed")
+    task_state         = @("Enabled", "Disabled")
+    step_label         = "text"
+    problem            = "text"
+    unchanged          = "text"
+    fix                = "text"
+    message            = "text"
+    advice             = "lines"
+    exception_type     = "type_name"
+    release_version    = "version"
+    exit_code          = "int"
+    installation_id    = "id"
+    code_attempted     = "bool"
+    code_consumed      = "bool"
+    code_rejected      = "bool"
+    token_stored       = "bool"
+    recovery_on_disk   = "bool"
+}
+$script:SetupEventMaxText = 4000
+$script:SetupEventMaxLines = 20
+
+function Enable-SetupEvents {
+    # For a host only (see above). Nothing in this script calls it.
+    $script:SetupEventsEnabled = $true
+}
+
+function Test-SetupEventValue {
+    # PURE. Whether $Value is allowed by $Rule (an entry of $script:SetupEventFieldRules). $null always is.
+    param($Rule, $Value)
+    if ($null -eq $Value) { return $true }
+    if ($Rule -is [array]) {
+        foreach ($choice in $Rule) {
+            if ($Value.GetType() -eq $choice.GetType() -and $Value -ceq $choice) { return $true }
+        }
+        return $false
+    }
+    switch ($Rule) {
+        "text" { return ($Value -is [string] -and $Value.Length -le $script:SetupEventMaxText) }
+        "lines" {
+            if ($Value -isnot [array] -or $Value.Count -gt $script:SetupEventMaxLines) { return $false }
+            foreach ($line in $Value) {
+                if ($line -isnot [string] -or $line.Length -gt $script:SetupEventMaxText) { return $false }
+            }
+            return $true
+        }
+        "int" { return ($Value -is [int]) }
+        "id" { return ($Value -is [int] -and $Value -ge 1) }
+        "bool" { return ($Value -is [bool]) }
+        "version" { return ($Value -is [string] -and $Value.Length -le 64 -and $Value -cmatch '^[0-9A-Za-z][0-9A-Za-z.+\-]*$') }
+        "type_name" { return ($Value -is [string] -and $Value.Length -le 256 -and $Value -cmatch '^[A-Za-z0-9_.`+]+$') }
+    }
+    return $false
+}
+
+function ConvertTo-SetupEventRecord {
+    # PURE. The record for one event, or $null when anything about it is not allowed: an unknown type, stage or field,
+    # or a value of the wrong kind. Every field of the type is present, in a fixed order ($null when not given), so a
+    # reader sees exactly one shape per type.
+    param([string]$Type, $Fields, [int]$Sequence, $Stage)
+    if (-not $script:SetupEventTypes.Contains($Type)) { return $null }
+    if ($null -ne $Stage -and ($Stage -isnot [string] -or $script:SetupStageIds -cnotcontains $Stage)) { return $null }
+    if ($null -eq $Fields) { $Fields = @{} }
+    if ($Fields -isnot [hashtable]) { return $null }
+    $allowed = @($script:SetupEventTypes[$Type])
+    foreach ($name in $Fields.Keys) {
+        if ($name -isnot [string] -or $allowed -cnotcontains $name) { return $null }
+    }
+    $record = [ordered]@{ schema = $script:SetupEventSchema; seq = $Sequence; type = $Type; stage = $Stage }
+    foreach ($name in $allowed) {
+        $value = $Fields[$name]
+        if (-not (Test-SetupEventValue -Rule $script:SetupEventFieldRules[$name] -Value $value)) { return $null }
+        $record[$name] = $value
+    }
+    return [pscustomobject]$record
+}
+
+function Write-SetupEvent {
+    # The ONE place an event leaves setup, and only after Enable-SetupEvents: a record tagged SortView.Setup.Event on
+    # the Information stream, never displayed (-InformationAction SilentlyContinue, whatever the preference). A record
+    # that is not allowed is dropped; its sequence number is still used, so a gap shows that something was dropped.
+    # Never throws.
+    param([string]$Type, $Fields)
+    if (-not $script:SetupEventsEnabled) { return }
+    try {
+        $script:SetupEventSequence++
+        $record = ConvertTo-SetupEventRecord -Type $Type -Fields $Fields -Sequence $script:SetupEventSequence -Stage $script:SetupStage
+        if ($null -ne $record) {
+            Write-Information -MessageData $record -Tags $script:SetupEventTag -InformationAction SilentlyContinue
+        }
+    } catch {
+        $null = $_
+    }
+}
+
+function Enter-SetupStage {
+    # A stage is starting. Also names the stage any stop is reported against (Stop-Setup), events or not.
+    param([string]$Id)
+    $script:SetupStage = $Id
+    Write-SetupEvent -Type "stage_started"
+}
+
+function Complete-SetupStage {
+    param([string]$Outcome = "ok")
+    Write-SetupEvent -Type "stage_completed" -Fields @{ outcome = $Outcome }
+}
+
+function Skip-SetupStage {
+    # A stage that did not run in this invocation, and why -- never reported as completed.
+    param([string]$Id, [string]$Reason)
+    $script:SetupStage = $Id
+    Write-SetupEvent -Type "stage_skipped" -Fields @{ reason = $Reason }
+}
+
+function Get-SetupEventRunState {
+    # The facts every stop already states in words (Get-EnrollmentStateLines), as values. The contract only once it is
+    # actually known: after the server answered, or from a saved enrollment. Never throws.
+    try {
+        $state = $script:State
+        return @{
+            contract         = $(if ($state.CodeConsumed) { [int]$state.Contract } else { $null })
+            code_attempted   = [bool]$state.CodeAttempted
+            code_consumed    = [bool]$state.CodeConsumed
+            code_rejected    = [bool]$state.CodeRejected
+            token_stored     = [bool]$state.TokenStored
+            recovery_on_disk = [bool]$state.RecoveryOnDisk
+        }
+    } catch {
+        return @{}
+    }
+}
+
+function Write-SetupEnrollmentResult {
+    # One enrollment request's result as fixed values: never the code, the request, the response or the token.
+    # code_used follows exactly the classification the stop advice uses (see the enrollment step).
+    param([int]$RequestedContract, [string]$Outcome, $RefusalCode, $Contract)
+    $used = "unknown"
+    if ($Outcome -eq "Enrolled") { $used = "used" }
+    elseif (@("Refused", "RateLimited", "Redirected") -contains $Outcome) { $used = "not_used" }
+    elseif ($Outcome -eq "Rejected") { $used = "not_used_by_this_request" }
+    Write-SetupEvent -Type "enrollment_result" -Fields @{
+        requested_contract = $RequestedContract; enrollment_outcome = $Outcome; refusal_code = $RefusalCode
+        code_used = $used; contract = $Contract
+    }
+}
 
 # === side-effect wrappers ====================================================
 # Everything that touches the machine, the network or the console goes through
@@ -1115,6 +1306,22 @@ function Stop-Setup {
     Write-Host "  Left unchanged:   $Unchanged"
     foreach ($line in (Get-EnrollmentStateLines)) { Write-Host "  $line" }
     Write-Host "  What to do:       $Fix"
+    if ($script:SetupEventsEnabled) {
+        # Exactly what was just printed, as values -- for a host, against the stage that was running. Building it can
+        # never replace the stop below with a different error.
+        try {
+            $fields = Get-SetupEventRunState
+            $fields["step_label"] = $Step
+            $fields["problem"] = $Problem
+            $fields["unchanged"] = $Unchanged
+            $fields["fix"] = $Fix
+            $fields["advice"] = @(Get-EnrollmentStateLines)
+            $fields["exit_code"] = $ExitCode
+            Write-SetupEvent -Type "run_stopped" -Fields $fields
+        } catch {
+            $null = $_
+        }
+    }
     $stop = New-Object System.Exception "setup stopped at $Step"
     $stop.Data["SortViewSetupExitCode"] = $ExitCode
     throw $stop
@@ -1309,14 +1516,21 @@ function Invoke-SetupMain {
     }
     $exitCode = 1
     $enrollment = $null
+    # Only for the optional events (see "structured events"): numbering starts again with every run.
+    $script:SetupEventSequence = 0
+    $script:SetupStage = $null
+    $runResult = "failed"
+    $detectedMode = $null
     try {
         $bundleRoot = $PSScriptRoot
 
         # === STEP 0: elevation, before anything else ================================
+        Enter-SetupStage -Id "elevation"
         if (-not (Test-IsAdministrator)) {
             Stop-Setup -Step "step 0 (checks)" -Problem "This script must be run from an elevated (Administrator) PowerShell session." `
                 -Unchanged "nothing was touched" -Fix "Open PowerShell with 'Run as administrator', go to this folder, and run .\setup.ps1 again." -ExitCode 1
         }
+        Complete-SetupStage
 
         Write-Host "=== SortView Collector: guided setup ===" -ForegroundColor Cyan
         Write-Host "You will need the one-time enrollment code from your SortView administrator."
@@ -1324,6 +1538,7 @@ function Invoke-SetupMain {
 
         # === STEP 1: the bundle -- verified FIRST, before anything in it is trusted ===
         Write-Host "=== Step 1: verifying this release bundle ===" -ForegroundColor Cyan
+        Enter-SetupStage -Id "bundle_verification"
         $runtimeExe = Join-Path $bundleRoot "runtime\SortViewCollector.exe"
         $installScript = Join-Path $bundleRoot "install.ps1"
         $toolsDir = Join-Path $bundleRoot "tools"
@@ -1343,6 +1558,8 @@ function Invoke-SetupMain {
                 -Unchanged $noNetworkNoCode -Fix "Do not use this bundle. Re-download or re-copy the complete release bundle, then run setup.ps1 again." -ExitCode 1
         }
         Write-Host "  OK: every file in the bundle matches MANIFEST.json." -ForegroundColor Green
+        Complete-SetupStage
+        Enter-SetupStage -Id "bundle"
 
         if ((Test-Path -LiteralPath (Join-Path $bundleRoot "collector")) -or -not (Test-Path -LiteralPath $runtimeExe -PathType Leaf)) {
             Stop-Setup -Step "step 1 (bundle)" -Problem "This is not a frozen SortView Collector release bundle (setup.ps1 supports frozen bundles only)." `
@@ -1391,10 +1608,12 @@ function Invoke-SetupMain {
             $resolvedApiUrl = $ApiUrl.Trim().TrimEnd('/')
         }
         Write-Host "  OK: frozen bundle, release version $runtimeVersion." -ForegroundColor Green
+        Complete-SetupStage
 
         # === STEP 2: this machine (read-only) ==========================================
         Write-Host ""
         Write-Host "=== Step 2: checking this machine ===" -ForegroundColor Cyan
+        Enter-SetupStage -Id "machine"
         $existing = $null
         try {
             $existing = Get-ExistingInstallProblem -InstallRoot $InstallRoot -DataRoot $DataRoot
@@ -1485,6 +1704,8 @@ function Invoke-SetupMain {
                 }
             }
             Write-Host "  Found an unfinished setup: installation $($record.InstallationId), enrolled with release $($record.ReleaseVersion)." -ForegroundColor Yellow
+            $detectedMode = $(if ($mode -eq "ResumeFinish") { "resume_finish" } else { "resume_install" })
+            Write-SetupEvent -Type "mode_detected" -Fields @{ mode = $detectedMode; contract = $script:State.Contract }
             $answer = Read-SetupAnswer -Prompt "Resume it using the saved enrollment (no new code needed)? [Y/n] (Enter = resume)"
             if ($null -ne $answer -and @("n", "no") -contains $answer.Trim().ToLowerInvariant()) {
                 Stop-Setup -Step "step 2 (machine)" -Problem "Resuming the unfinished setup was declined." `
@@ -1495,6 +1716,7 @@ function Invoke-SetupMain {
             $branchId = $record.BranchId
             $installationId = $record.InstallationId
             Write-Host "  OK: resuming ($(if ($mode -eq 'ResumeFinish') { 'the install is already in place -- only verification remains' } else { 'installing with the saved enrollment' })); no enrollment request will be made." -ForegroundColor Green
+            Complete-SetupStage
         } else {
             if ($null -ne $existing) {
                 foreach ($item in $existing.Found) { Write-Host "  Found: $item" -ForegroundColor Yellow }
@@ -1515,6 +1737,9 @@ function Invoke-SetupMain {
                     -Fix "If this machine ran a Collector before, contact SortView support before installing again. If the earlier install is truly finished with, tools\uninstall.ps1 -PurgeData removes its data root (this cannot be undone); then run setup.ps1 again." -ExitCode 2
             }
             Write-Host "  OK: no existing Collector install, token, secret, cursor or rules on this computer." -ForegroundColor Green
+            $detectedMode = "fresh"
+            Write-SetupEvent -Type "mode_detected" -Fields @{ mode = $detectedMode; contract = $null }
+            Complete-SetupStage
         }
 
         # === STEP 3: source files ======================================================
@@ -1523,14 +1748,18 @@ function Invoke-SetupMain {
         $sources = $null
         if ($mode -eq "ResumeFinish") {
             Write-Host "  Skipped: the installed config already records them (the verification steps below check the files)." -ForegroundColor Green
+            Skip-SetupStage -Id "sources" -Reason "already_installed"
         } else {
+            Enter-SetupStage -Id "sources"
             $sources = Get-SourceSelection -Defaults $defaults -Checkins $CheckinsPath -Rejects $RejectsPath -Acs $AcsPath
             Write-Host "  OK: all three source files exist." -ForegroundColor Green
+            Complete-SetupStage
         }
 
         # === STEP 4: the API is reachable over HTTPS ====================================
         Write-Host ""
         Write-Host "=== Step 4: connecting to SortView ===" -ForegroundColor Cyan
+        Enter-SetupStage -Id "connection"
         $reach = Test-ApiReachable -ApiUrl $resolvedApiUrl
         if (-not $reach.Ok) {
             Stop-Setup -Step "step 4 (connection)" -Problem "Could not reach $resolvedApiUrl over HTTPS ($($reach.Detail)). This is usually a network, proxy, firewall or certificate problem on this computer." `
@@ -1538,10 +1767,12 @@ function Invoke-SetupMain {
                 -Fix "Check this computer's internet access to that address (and any proxy/TLS-inspection policy) with your IT staff, then run setup.ps1 again$(if ($mode -eq 'Fresh') { ' with the same code' })." -ExitCode 1
         }
         Write-Host "  OK: reached the SortView API." -ForegroundColor Green
+        Complete-SetupStage
 
         if ($mode -eq "Fresh") {
             # The last check before the code: the folder a resume depends on can be created, restricted and
             # written. After the code is used, saving the enrollment there is the one step that must not fail.
+            Enter-SetupStage -Id "setup_folder"
             try {
                 Initialize-SetupStaging -DataRoot $DataRoot | Out-Null
                 $script:State.StagingPrepared = $true
@@ -1551,10 +1782,12 @@ function Invoke-SetupMain {
                     -Fix "Make sure '$DataRoot' can be created and written by Administrators on this computer, then run setup.ps1 again." -ExitCode 1
             }
             Write-Host "  OK: the setup folder is ready (Administrators and SYSTEM only)." -ForegroundColor Green
+            Complete-SetupStage
 
             # === STEP 5: redeem the enrollment code ====================================
             Write-Host ""
             Write-Host "=== Step 5: enrolling this computer ===" -ForegroundColor Cyan
+            Enter-SetupStage -Id "enrollment"
             $code = $EnrollmentCode
             if ($null -eq $code) { $code = Read-EnrollmentCodeSecure }
             if ($null -eq $code -or $code.Length -eq 0) {
@@ -1566,9 +1799,11 @@ function Invoke-SetupMain {
             # answers `contract_not_permitted` WITHOUT being used; then -- and only then, and only once -- the
             # legacy request is sent with the same code. No other refusal, error or status is retried.
             $enrollment = Invoke-Enrollment -ApiUrl $resolvedApiUrl -Code $code -HostName (Get-LocalHostName) -Version $runtimeVersion -ContractVersion 2
+            Write-SetupEnrollmentResult -RequestedContract 2 -Outcome $enrollment.Outcome -RefusalCode $enrollment.RefusalCode -Contract $enrollment.Contract
             if ($enrollment.Outcome -eq "Refused" -and $enrollment.RefusalCode -eq "contract_not_permitted") {
                 Write-Host "  This enrollment code is for the legacy contract (the first request did not use it); enrolling on that contract."
                 $enrollment = Invoke-Enrollment -ApiUrl $resolvedApiUrl -Code $code -HostName (Get-LocalHostName) -Version $runtimeVersion -ContractVersion 1
+                Write-SetupEnrollmentResult -RequestedContract 1 -Outcome $enrollment.Outcome -RefusalCode $enrollment.RefusalCode -Contract $enrollment.Contract
             }
             $code = $null
             if ($enrollment.Outcome -eq "Refused") {
@@ -1615,6 +1850,7 @@ function Invoke-SetupMain {
             $branchId = $enrollment.BranchId
             $installationId = $enrollment.InstallationId
             Write-Host "  OK: this computer is enrolled (installation $installationId$(if ($enrollment.Contract -eq 2) { ', Contract v2' })). " -ForegroundColor Green
+            Complete-SetupStage
           if ($enrollment.Contract -eq 2) {
             # === STEP 6 (Contract v2): save what a resume needs FIRST, then store the token ============
             # A Contract v2 enrollment has already created this branch's one v2 identity on the server, and
@@ -1623,6 +1859,7 @@ function Invoke-SetupMain {
             # BEFORE anything else is attempted. From then on a local failure is resumed, never re-enrolled.
             Write-Host ""
             Write-Host "=== Step 6: saving the enrollment and the classification rules ===" -ForegroundColor Cyan
+            Enter-SetupStage -Id "enrollment_save"
             $keyId = $enrollment.KeyId
             $timezone = $enrollment.Timezone
             $recoveryFailure = $null
@@ -1654,9 +1891,11 @@ function Invoke-SetupMain {
             }
             $script:State.RecoveryOnDisk = $true
             Write-Host "  OK: the enrollment details and the classification rules are saved and verified (Administrators/SYSTEM only; never shown)." -ForegroundColor Green
+            Complete-SetupStage
 
             Write-Host ""
             Write-Host "=== Step 6b: storing the API token ===" -ForegroundColor Cyan
+            Enter-SetupStage -Id "token_store"
             $toolExit = Invoke-SetupTool -Path $setTokenScript -Parameters @{
                 Token = $enrollment.Token; ExePath = $runtimeExe; CustomerId = $customerId; BranchId = $branchId; DataRoot = $DataRoot
             }
@@ -1675,10 +1914,12 @@ function Invoke-SetupMain {
             }
             $script:State.TokenStored = $true
             Write-Host "  OK: token stored in api_token.dpapi (DPAPI, Administrators + SYSTEM only; value never shown)." -ForegroundColor Green
+            Complete-SetupStage
           } else {
             # === STEP 6: store the token, immediately; then save what a resume needs ====
             Write-Host ""
             Write-Host "=== Step 6: storing the API token ===" -ForegroundColor Cyan
+            Enter-SetupStage -Id "token_store"
             # Stored with the BUNDLE's runtime (nothing is installed yet), for exactly the customer/branch and
             # data root install.ps1 will then write -- so the file is where the installed config will look.
             $toolExit = Invoke-SetupTool -Path $setTokenScript -Parameters @{
@@ -1696,6 +1937,8 @@ function Invoke-SetupMain {
             }
             $script:State.TokenStored = $true
             Write-Host "  OK: token stored in api_token.dpapi (DPAPI, Administrators + SYSTEM only; value never shown)." -ForegroundColor Green
+            Complete-SetupStage
+            Enter-SetupStage -Id "enrollment_save"
 
             # The IDs exist only in memory until now, and the code just used can never be used again. So
             # the non-secret details (never the code or the token) are saved, read back and checked
@@ -1732,10 +1975,15 @@ function Invoke-SetupMain {
             }
             $script:State.RecoveryOnDisk = $true
             Write-Host "  OK: the non-secret enrollment details were saved and verified (Administrators/SYSTEM only), so an interrupted setup can resume without a new code." -ForegroundColor Green
+            Complete-SetupStage
           }
         } else {
             Write-Host ""
             Write-Host "=== Steps 5-6: not needed -- resuming with the saved enrollment and the token already stored on this computer ===" -ForegroundColor Cyan
+            # None of these ran in this invocation: they were done by the run that saved the enrollment.
+            $resumedStages = @("setup_folder", "enrollment", "token_store", "enrollment_save")
+            if ($script:State.Contract -eq 2) { $resumedStages = @("setup_folder", "enrollment", "enrollment_save", "token_store") }
+            foreach ($resumedStage in $resumedStages) { Skip-SetupStage -Id $resumedStage -Reason "resume" }
         }
 
         # === STEP 7: install ===========================================================
@@ -1744,7 +1992,9 @@ function Invoke-SetupMain {
         $script:State.InstallStarted = $true
         if ($mode -eq "ResumeFinish") {
             Write-Host "  Skipped: the matching install is already in place." -ForegroundColor Green
+            Skip-SetupStage -Id "install" -Reason "already_installed"
         } else {
+            Enter-SetupStage -Id "install"
             $installParameters = @{
                 InstallRoot = $InstallRoot; DataRoot = $DataRoot
                 CustomerId = $customerId; BranchId = $branchId; InstallationId = $installationId
@@ -1765,12 +2015,14 @@ function Invoke-SetupMain {
                     -Unchanged "the Scheduled Task was not created" `
                     -Fix "Fix what the message above names, then run setup.ps1 again: it resumes with the saved enrollment (no new enrollment code is needed). If install.ps1 left a partial install behind, run tools\uninstall.ps1 first -- the saved enrollment and the stored token are kept." -ExitCode $toolExit
             }
+            Complete-SetupStage
         }
 
         # === STEP 7b (Contract v2): the site's classification rules ======================
         if ($script:State.Contract -eq 2) {
             Write-Host ""
             Write-Host "=== Step 7b: installing the classification rules ===" -ForegroundColor Cyan
+            Enter-SetupStage -Id "rules_install"
             $expectedRulesSha256 = $(if ($mode -eq "Fresh") { $rulesSha256 } else { $record.RulesSha256 })
             $rulesOutcome = $null
             try {
@@ -1781,11 +2033,15 @@ function Invoke-SetupMain {
                     -Fix "Run setup.ps1 again -- it resumes with the saved enrollment. If this repeats, contact SortView support. Do NOT ask for another enrollment code." -ExitCode 2
             }
             Write-Host "  OK: the classification rules from SortView are $(if ($rulesOutcome -eq 'Installed') { 'installed' } else { 'already installed' }) (Administrators/SYSTEM only; never shown)." -ForegroundColor Green
+            Complete-SetupStage -Outcome $(if ($rulesOutcome -eq "Installed") { "ok" } else { "already_done" })
+        } else {
+            Skip-SetupStage -Id "rules_install" -Reason "not_applicable"
         }
 
         # === STEP 8: preflights, bootstrap, task registration (DISABLED) ================
         Write-Host ""
         Write-Host "=== Step 8: verifying and registering (preflight, bootstrap, Scheduled Task) ===" -ForegroundColor Cyan
+        Enter-SetupStage -Id "verification"
         $toolExit = Invoke-SetupTool -Path $finishScript -Parameters @{
             InstallRoot = $InstallRoot; ConfigPath = $configPath; UseExistingMachineToken = $true
         }
@@ -1805,14 +2061,19 @@ function Invoke-SetupMain {
             Stop-Setup -Step "step 8 (verification)" -Problem "The Scheduled Task is '$([string]$task.State)', not Disabled, after setup." `
                 -Unchanged "setup will now disable it" -Fix "Inspect the task in Task Scheduler; it must be Disabled until you choose to enable it." -ExitCode 2
         }
+        Complete-SetupStage
 
         # Setup has completed: the saved enrollment has done its job.
+        Enter-SetupStage -Id "record_cleanup"
+        $cleanupOutcome = "ok"
         try {
             Remove-SetupRecovery -DataRoot $DataRoot
             $script:State.RecoveryOnDisk = $false
         } catch {
             Write-Host "  Note: the saved (non-secret) enrollment record could not be removed: $($_.Exception.Message)" -ForegroundColor Yellow
+            $cleanupOutcome = "warning"
         }
+        Complete-SetupStage -Outcome $cleanupOutcome
 
         # === STEP 9: optional, explicit enable =========================================
         Write-Host ""
@@ -1832,6 +2093,7 @@ function Invoke-SetupMain {
         # A Contract v2 install is enabled here, as the LAST action and only because every step above succeeded:
         # both preflights passed, the cursor is seeded at the end of each file, and the task was just verified
         # Disabled. A legacy install keeps its explicit question (Enter = leave it disabled).
+        Enter-SetupStage -Id "task_enable"
         $isV2Install = ($script:State.Contract -eq 2)
         $enableNow = ([bool]$EnableTask -or $isV2Install)
         if ($isV2Install) {
@@ -1856,25 +2118,43 @@ function Invoke-SetupMain {
                 Stop-Setup -Step "step 9 (enable)" -Problem "Enabling the Scheduled Task failed: $($_.Exception.Message)" `
                     -Unchanged "everything else is complete; the task stays Disabled" -Fix "Enable it yourself when ready:  Enable-ScheduledTask -TaskName '$($script:TaskName)'" -ExitCode 1
             }
+            Complete-SetupStage -Outcome "enabled"
         } else {
             Write-Host "The Scheduled Task was left DISABLED. When you are ready:"
             Write-Host "    Enable-ScheduledTask -TaskName '$($script:TaskName)'"
             Write-Host "Optional immediate run after enabling (otherwise it runs at its next 15-minute trigger):"
             Write-Host "    Start-ScheduledTask -TaskName '$($script:TaskName)'"
             Write-Host "This script did not start a Collector run."
+            Complete-SetupStage -Outcome "left_disabled"
         }
         $exitCode = 0
+        $runResult = "completed"
     } catch {
         $stopCode = $null
         if ($_.Exception.Data.Contains("SortViewSetupExitCode")) { $stopCode = [int]$_.Exception.Data["SortViewSetupExitCode"] }
         if ($null -ne $stopCode) {
             $exitCode = $stopCode
+            $runResult = "stopped"
         } else {
             # An unexpected error: the type and message only, never any variable's contents.
             Write-Host ""
             Write-Host "SETUP STOPPED: unexpected error: $($_.Exception.GetType().Name): $($_.Exception.Message)" -ForegroundColor Red
             foreach ($line in (Get-EnrollmentStateLines)) { Write-Host "  $line" }
             $exitCode = 1
+            if ($script:SetupEventsEnabled) {
+                # The same type name and message just printed -- never the exception object or anything it holds.
+                $failure = $_
+                try {
+                    $fields = Get-SetupEventRunState
+                    $fields["exception_type"] = [string]$failure.Exception.GetType().Name
+                    $fields["message"] = [string]$failure.Exception.Message
+                    $fields["advice"] = @(Get-EnrollmentStateLines)
+                    Write-SetupEvent -Type "run_failed_unexpected" -Fields $fields
+                } catch {
+                    $null = $_
+                }
+                $failure = $null
+            }
         }
     } finally {
         # Best-effort scrubbing of secret material held by this run.
@@ -1906,6 +2186,19 @@ function Invoke-SetupMain {
             }
         }
         [GC]::Collect()
+    }
+    if ($script:SetupEventsEnabled) {
+        # The one final event of every run, after the cleanup above: the exit code this function is about to return.
+        try {
+            $finalState = Get-SetupEventRunState
+            Write-SetupEvent -Type "run_finished" -Fields @{
+                result = $runResult; exit_code = [int]$exitCode; mode = $detectedMode; contract = $finalState["contract"]
+                task_state = $(if ($runResult -ne "completed") { $null } elseif ($script:State.TaskEnabledOnPurpose) { "Enabled" } else { "Disabled" })
+                release_version = $runtimeVersion; installation_id = $installationId
+            }
+        } catch {
+            $null = $_
+        }
     }
     return $exitCode
 }

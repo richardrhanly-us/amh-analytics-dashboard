@@ -822,9 +822,21 @@ function Invoke-SetupHttp {
     return [pscustomobject]@{ StatusCode = [int]$e.status; Content = [string]$e.content; Failure = $e.failure }
 }
 @@EXTRA@@
-
+@@EVENTS_ON@@
 $r = @(Invoke-SetupMain @@ARGS@@)
 "SETUP_EXIT_CODE=$([int]$r[-1])"
+@@EVENTS_DUMP@@
+"""
+
+# Only for scenarios that ask for it: the host's side of the optional event channel. The tagged records (and how many
+# console records came alongside) go to files, never to stdout, so the console a test compares is untouched.
+_EVENTS_DUMP = r"""
+foreach ($rec in @($setupInfo)) {
+    if ($rec.Tags -contains 'SortView.Setup.Event') {
+        Add-Content -LiteralPath "$FakeDir\events.jsonl" -Value ($rec.MessageData | ConvertTo-Json -Compress -Depth 4) -Encoding UTF8
+    }
+}
+Set-Content -LiteralPath "$FakeDir\pshost_count.txt" -Value @($setupInfo | Where-Object { $_.Tags -contains 'PSHOST' }).Count -Encoding UTF8
 """
 
 _STUB_HEADER = "$rec = @{ tool = '%s'; params = @{} }\n" \
@@ -1037,6 +1049,8 @@ class Result:
     task: dict | None = None
     machine_token: str | None = None
     bundle: Bundle | None = None
+    events: list[dict] = field(default_factory=list)
+    pshost_records: int = 0
 
     def tools(self) -> list[str]:
         """Ordered names of the calls that matter (prompts excluded)."""
@@ -1080,10 +1094,16 @@ class Result:
 
 def run_scenario(bundle: Bundle, *, args: str = "", admin: bool = True, http: dict | None = None, answers: list | None = None,
                  extra_ps: str = "", env: dict | None = None, runtime_version: str | None = None,
-                 machine_token: str | None = None, task_state: str | None = None) -> Result:
+                 machine_token: str | None = None, task_state: str | None = None,
+                 events: bool = False, capture_events: bool = False) -> Result:
+    """`events` turns the optional event channel on (Enable-SetupEvents) and captures it; `capture_events` alone
+    captures the Information stream WITHOUT turning events on -- a host listening to a run that never enabled them."""
     (bundle.fake / "http.json").write_text(json.dumps(http if http is not None else default_http()), encoding="utf-8")
     for counter in bundle.fake.glob("http_count_*.txt"):  # each run starts a scripted SEQUENCE of answers from its first
         counter.unlink()
+    for stale in ("events.jsonl", "pshost_count.txt"):  # each run reports only its own events
+        (bundle.fake / stale).unlink(missing_ok=True)
+    capture = events or capture_events
     if answers:
         (bundle.fake / "answers.txt").write_text(
             "\n".join("<ENTER>" if a == "" else a for a in answers) + "\n", encoding="utf-8"
@@ -1102,7 +1122,9 @@ def run_scenario(bundle: Bundle, *, args: str = "", admin: bool = True, http: di
         .replace("@@RUNTIME_VERSION@@", runtime_version or bundle.version)
         .replace("@@CODE@@", SENTINEL_CODE)
         .replace("@@EXTRA@@", extra_ps)
-        .replace("@@ARGS@@", f"{common_args} {args}")
+        .replace("@@EVENTS_ON@@", "Enable-SetupEvents" if events else "")
+        .replace("@@ARGS@@", f"{common_args} {args}" + (" -InformationVariable setupInfo" if capture else ""))
+        .replace("@@EVENTS_DUMP@@", _EVENTS_DUMP if capture else "")
     )
     script_path = bundle.fake / "scenario.ps1"
     script_path.write_text(script, encoding="utf-8")
@@ -1117,6 +1139,8 @@ def run_scenario(bundle: Bundle, *, args: str = "", admin: bool = True, http: di
     calls = [json.loads(line) for line in calls_file.read_text(encoding="utf-8").splitlines() if line.strip()] if calls_file.exists() else []
     task_file = bundle.fake / "task.json"
     token_file = bundle.fake / "machine_token.txt"
+    events_file = bundle.fake / "events.jsonl"
+    pshost_file = bundle.fake / "pshost_count.txt"
     return Result(
         exit_code=int(match.group(1)) if match else None,
         output=output,
@@ -1124,6 +1148,9 @@ def run_scenario(bundle: Bundle, *, args: str = "", admin: bool = True, http: di
         task=json.loads(task_file.read_text(encoding="utf-8")) if task_file.exists() else None,
         machine_token=token_file.read_text(encoding="utf-8") if token_file.exists() else None,
         bundle=bundle,
+        events=[json.loads(line) for line in events_file.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+        if events_file.exists() else [],
+        pshost_records=int(pshost_file.read_text(encoding="utf-8-sig").strip()) if pshost_file.exists() else 0,
     )
 
 
@@ -4006,3 +4033,511 @@ def test_the_v2_record_detector_reads_only_and_never_throws(tmp_path):
 
     assert results == {"legacy_record": "False", "v2_by_text": "True", "v2_by_field": "True", "v2_by_staged_rules": "True",
                        "no_record_at_all": "False"}
+
+
+# =====================================================================================
+# 7. STRUCTURED EVENTS: an optional, off-by-default channel for an in-process host
+# =====================================================================================
+
+EVENT_SCHEMA = "sortview.setup.event/1"
+EVENT_TAG = "SortView.Setup.Event"
+ROUTINE_EVENT_TYPES = {"stage_started", "stage_completed", "stage_skipped", "mode_detected", "enrollment_result"}
+#: Every Stop-Setup step label and the stable stage it is reported against.
+STOP_STAGE_FOR_LABEL = {
+    "step 0 (checks)": "elevation",
+    "step 1 (bundle verification)": "bundle_verification",
+    "step 1 (bundle)": "bundle",
+    "step 2 (machine)": "machine",
+    "step 3 (source files)": "sources",
+    "step 4 (connection)": "connection",
+    "step 4 (setup folder)": "setup_folder",
+    "step 5 (enrollment)": "enrollment",
+    "step 6 (saving the enrollment)": "enrollment_save",
+    "step 6 (saving the enrollment details)": "enrollment_save",
+    "step 6b (API token)": "token_store",
+    "step 6 (API token)": "token_store",
+    "step 7 (install)": "install",
+    "step 7b (classification rules)": "rules_install",
+    "step 8 (verification)": "verification",
+    "step 9 (enable)": "task_enable",
+}
+
+
+def _event_calls(text: str = SETUP_BODY) -> list[str]:
+    """Every statement that hands values to the event channel (definitions excluded), with its continuation lines."""
+    calls = []
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if re.search(r"\b(Write-SetupEvent|Write-SetupEnrollmentResult|Enter-SetupStage|Complete-SetupStage|Skip-SetupStage)\b", line) \
+                and not line.lstrip().startswith(("function ", "#")):
+            statement = [line]
+            j = i + 1
+            while line.rstrip().endswith(("{", ";", "`")) and j < len(lines) and not lines[j].strip().startswith("}"):
+                statement.append(lines[j])
+                j += 1
+            calls.append("\n".join(statement))
+    return calls
+
+
+def test_events_leave_setup_in_one_place_tagged_and_never_displayed():
+    assert SETUP_BODY.count("Write-Information") == 1
+    writer = _ps_function("Write-SetupEvent")
+    assert "Write-Information -MessageData $record -Tags $script:SetupEventTag -InformationAction SilentlyContinue" in writer
+    assert f'$script:SetupEventTag = "{EVENT_TAG}"' in SETUP_BODY and f'$script:SetupEventSchema = "{EVENT_SCHEMA}"' in SETUP_BODY
+    # Gated first, and every effect inside one try whose catch swallows: an event can never stop or alter setup.
+    assert writer.index("if (-not $script:SetupEventsEnabled) { return }") < writer.index("try {") < writer.index("Write-Information")
+    assert "} catch {\n        $null = $_\n    }" in writer
+    assert "throw" not in "\n".join(_code_lines(writer))
+
+
+def test_events_are_off_until_a_host_enables_them_and_setup_never_does():
+    assert "$script:SetupEventsEnabled = $false" in SETUP_BODY
+    assert SETUP_BODY.count("$script:SetupEventsEnabled = $true") == 1
+    assert "$script:SetupEventsEnabled = $true" in _ps_function("Enable-SetupEvents")
+    calls = [line for line in _code_lines(SETUP_BODY) if "Enable-SetupEvents" in line]
+    assert calls == ["function Enable-SetupEvents {"]  # defined, never called by setup itself
+
+
+def test_no_event_carries_a_secret_a_response_a_rule_or_an_object():
+    forbidden = re.compile(
+        r"\$plainCode|\$body\b|\$http\b|\$code\b|\$Code\b|\$EnrollmentCode|\$secureToken|\$Rules\b|\$recoveryJson|\$keyId|\$KeyId|"
+        r"\$timezone|\$Timezone|\.KeyId|\.Timezone|\.Token\b|\.Rules\b|\$parsed|\$response|\$doc\b|\$readBack|\$rulesSha256|"
+        r"\$record\.|\$sources|\$defaults|\$_\b(?!\.Exception\.(GetType\(\)\.Name|Message))|\$enrollment(?!\.(Outcome|RefusalCode|Contract)\b)"
+    )
+    calls = _event_calls()
+    assert len(calls) > 30
+    for call in calls:
+        assert not forbidden.search(call), call
+
+
+def test_routine_events_never_carry_an_installation_id_or_free_text():
+    lists = {name: re.findall(r'"(\w+)"', body) for name, body in re.findall(
+        r"^    (\w+)\s+= @\(([^)]*(?:\)[^)\n]*)*)\)", SETUP_BODY[SETUP_BODY.index("$script:SetupEventTypes"):SETUP_BODY.index("$script:SetupEventFieldRules")],
+        re.MULTILINE)}
+    assert set(lists) == ROUTINE_EVENT_TYPES | {"run_stopped", "run_failed_unexpected", "run_finished"}
+    for event_type in ROUTINE_EVENT_TYPES:
+        assert "installation_id" not in lists[event_type]
+        assert not {"problem", "fix", "message", "advice", "step_label", "unchanged"} & set(lists[event_type])
+    assert "installation_id" in lists["run_finished"]
+
+
+def test_every_stop_reports_its_stage_and_its_text_through_one_event():
+    stop = _ps_function("Stop-Setup")
+    assert stop.index('Write-SetupEvent -Type "run_stopped"') < stop.index("throw $stop")
+    labels = set(re.findall(r'Stop-Setup -Step "([^"]+)"', SETUP_BODY))
+    assert labels == set(STOP_STAGE_FOR_LABEL)  # a new stop label must be given a stage here
+
+
+# --- pure: the allow-list ---------------------------------------------------------------------------------------
+
+def _record(event_type: str, fields: str = "@{}", stage: str = "$null") -> str:
+    return (f"$r = ConvertTo-SetupEventRecord -Type '{event_type}' -Fields {fields} -Sequence 7 -Stage {stage}\n"
+            "if ($null -eq $r) { 'REJECTED' } else { $r | ConvertTo-Json -Compress -Depth 4 }")
+
+
+@needs_windows_powershell
+def test_a_valid_record_has_one_fixed_shape_with_every_field_present():
+    result = _dot_source_and_run(_record("run_stopped", "@{ exit_code = 2; problem = 'p'; advice = @('a', 'b'); code_consumed = $true }", "'machine'"))
+
+    record = json.loads(result.stdout)
+    assert list(record) == ["schema", "seq", "type", "stage", "step_label", "problem", "unchanged", "fix", "advice", "exit_code",
+                            "contract", "code_attempted", "code_consumed", "code_rejected", "token_stored", "recovery_on_disk"]
+    assert record["schema"] == EVENT_SCHEMA and record["seq"] == 7 and record["stage"] == "machine"
+    assert (record["exit_code"], record["problem"], record["advice"], record["code_consumed"]) == (2, "p", ["a", "b"], True)
+    assert record["fix"] is None and record["contract"] is None
+
+
+_REJECTED_RECORDS = {
+    "unknown_type": ("no_such_event", "@{}", "$null"),
+    "unknown_stage": ("stage_started", "@{}", "'not_a_stage'"),
+    "unknown_field": ("stage_completed", "@{ outcome = 'ok'; extra = 'x' }", "'install'"),
+    "field_of_another_type": ("stage_completed", "@{ installation_id = 41 }", "'install'"),
+    "wrong_case_field": ("stage_completed", "@{ Outcome = 'ok' }", "'install'"),
+    "value_not_in_list": ("stage_completed", "@{ outcome = 'great' }", "'install'"),
+    "secure_string": ("run_stopped", "@{ problem = (ConvertTo-SecureString 'x' -AsPlainText -Force) }", "'machine'"),
+    "object": ("run_stopped", "@{ problem = [pscustomobject]@{ a = 1 } }", "'machine'"),
+    "hashtable": ("run_stopped", "@{ advice = @{ a = 1 } }", "'machine'"),
+    "too_long": ("run_stopped", "@{ problem = ('x' * 4001) }", "'machine'"),
+    "string_for_int": ("run_stopped", "@{ exit_code = '1' }", "'machine'"),
+    "int_for_bool": ("run_stopped", "@{ code_consumed = 1 }", "'machine'"),
+    "bool_for_contract": ("mode_detected", "@{ contract = $true }", "'machine'"),
+    "zero_installation_id": ("run_finished", "@{ installation_id = 0 }", "'task_enable'"),
+    "object_in_lines": ("run_stopped", "@{ advice = @('a', [pscustomobject]@{ b = 1 }) }", "'machine'"),
+    "not_a_hashtable": ("stage_completed", "'outcome=ok'", "'install'"),
+}
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("case", list(_REJECTED_RECORDS))
+def test_anything_off_the_allow_list_drops_the_whole_event(case):
+    event_type, fields, stage = _REJECTED_RECORDS[case]
+
+    assert _dot_source_and_run(_record(event_type, fields, stage)).stdout.strip() == "REJECTED"
+
+
+@needs_windows_powershell
+def test_the_writer_emits_nothing_when_off_one_tagged_record_when_on_and_never_throws():
+    script = (
+        f". {ps_quote(SETUP_SOURCE)}\n"
+        "function Invoke-Probe { [CmdletBinding()] param()\n"
+        "  Write-SetupEvent -Type 'stage_started'\n"
+        "  Enable-SetupEvents\n"
+        "  $script:SetupStage = 'install'\n"
+        "  Write-SetupEvent -Type 'stage_completed' -Fields @{ outcome = 'ok' }\n"
+        "  Write-SetupEvent -Type 'stage_completed' -Fields @{ outcome = (ConvertTo-SecureString 'x' -AsPlainText -Force) }\n"
+        "  Write-SetupEvent -Type 'stage_completed' -Fields 'not a hashtable'\n"
+        "  function Write-Information { throw 'delivery failed' }\n"
+        "  Write-SetupEvent -Type 'stage_completed' -Fields @{ outcome = 'ok' }\n"
+        "  'STILL_RUNNING'\n"
+        "}\n"
+        "$out = Invoke-Probe -InformationVariable info\n"
+        "$out\n"
+        "$events = @($info | Where-Object { $_.Tags -contains 'SortView.Setup.Event' })\n"
+        "'EVENTS=' + $events.Count\n"
+        "$events | ForEach-Object { $_.MessageData | ConvertTo-Json -Compress }"
+    )
+    result = _run_ps(script)
+    lines = result.stdout.strip().splitlines()
+
+    assert lines[0] == "STILL_RUNNING", result.stdout + result.stderr  # a failing delivery did not stop anything
+    assert lines[1] == "EVENTS=1"  # nothing while off; the two invalid records dropped; the failed delivery lost
+    assert json.loads(lines[2]) == {"schema": EVENT_SCHEMA, "seq": 1, "type": "stage_completed", "stage": "install", "outcome": "ok"}
+    assert result.stdout.count("seq") == 1
+
+
+@needs_windows_powershell
+def test_an_in_process_host_receives_events_apart_from_the_console_text():
+    # The WPF model: a hosted runspace with no console. Write-Host arrives as PSHOST records; events keep their own tag.
+    script = (
+        "$ps = [powershell]::Create()\n"
+        f"[void]$ps.AddScript(\". '{SETUP_SOURCE}'; Enable-SetupEvents; Write-Host 'console text'; Enter-SetupStage -Id 'elevation'\")\n"
+        "[void]$ps.Invoke()\n"
+        "foreach ($r in $ps.Streams.Information) { ($r.Tags -join ',') + '|' + $(if ($r.MessageData -is [System.Management.Automation.HostInformationMessage]) { 'HOST:' + $r.MessageData.Message } else { 'EVENT:' + $r.MessageData.type + ':' + $r.MessageData.stage }) }\n"
+        "$ps.Dispose()"
+    )
+
+    assert _run_ps(script).stdout.split("\n")[:2] == ["PSHOST|HOST:console text", f"{EVENT_TAG}|EVENT:stage_started:elevation"]
+
+
+# --- scenarios -----------------------------------------------------------------------------------------------
+
+def stages(result: Result) -> list[str]:
+    """The run as `type:stage[:detail]`, for comparing whole sequences."""
+    out = []
+    for event in result.events:
+        detail = (event.get("outcome") or event.get("reason") or event.get("enrollment_outcome") or event.get("result")
+                  or event.get("mode"))
+        out.append(":".join(str(part) for part in (event["type"], event["stage"], detail) if part is not None))
+    return out
+
+
+def assert_event_invariants(result: Result) -> None:
+    """Every event-enabled run: increasing, gap-free sequence numbers, the schema on every record, nothing else but
+    events under the tag, and exactly one final event -- the last one -- whose exit code is the run's."""
+    assert result.events, result.output
+    assert [e["seq"] for e in result.events] == list(range(1, len(result.events) + 1))  # none dropped
+    assert all(e["schema"] == EVENT_SCHEMA for e in result.events)
+    finals = [e for e in result.events if e["type"] == "run_finished"]
+    assert len(finals) == 1 and result.events[-1] is finals[0]
+    assert finals[0]["exit_code"] == result.exit_code
+    assert result.pshost_records > 0  # the console text is still there, under its own tag
+    for event in result.events:
+        if event["type"] in ROUTINE_EVENT_TYPES:
+            assert "installation_id" not in event and "41" not in json.dumps(event)
+    stops = [e for e in result.events if e["type"] == "run_stopped"]
+    for stop in stops:
+        assert STOP_STAGE_FOR_LABEL[stop["step_label"]] == stop["stage"]
+        assert stop["exit_code"] == result.exit_code
+        assert f"SETUP STOPPED at {stop['step_label']}" in result.output and stop["problem"] in result.output
+        assert stop["fix"] in result.output and all(line in result.output for line in stop["advice"])
+
+
+def assert_no_sensitive_value_in_events(result: Result) -> None:
+    serialized = json.dumps(result.events)
+    for value in (SENTINEL_CODE, SENTINEL_TOKEN, KEY_ID, TIMEZONE, *RULE_CANARIES, "agent_token", "enrollment_code",
+                  "classification_rules", "TEST-PC"):
+        assert value not in serialized, value
+
+
+LEGACY_FRESH_EVENTS = [
+    "stage_started:elevation", "stage_completed:elevation:ok",
+    "stage_started:bundle_verification", "stage_completed:bundle_verification:ok",
+    "stage_started:bundle", "stage_completed:bundle:ok",
+    "stage_started:machine", "mode_detected:machine:fresh", "stage_completed:machine:ok",
+    "stage_started:sources", "stage_completed:sources:ok",
+    "stage_started:connection", "stage_completed:connection:ok",
+    "stage_started:setup_folder", "stage_completed:setup_folder:ok",
+    "stage_started:enrollment", "enrollment_result:enrollment:Refused", "enrollment_result:enrollment:Enrolled",
+    "stage_completed:enrollment:ok",
+    "stage_started:token_store", "stage_completed:token_store:ok",            # legacy: the token first...
+    "stage_started:enrollment_save", "stage_completed:enrollment_save:ok",    # ...then the record
+    "stage_started:install", "stage_completed:install:ok",
+    "stage_skipped:rules_install:not_applicable",
+    "stage_started:verification", "stage_completed:verification:ok",
+    "stage_started:record_cleanup", "stage_completed:record_cleanup:ok",
+    "stage_started:task_enable", "stage_completed:task_enable:left_disabled",
+    "run_finished:task_enable:completed",
+]
+
+
+@needs_windows_powershell
+def test_a_fresh_legacy_setup_reports_every_stage_in_order_including_the_fallback(tmp_path):
+    result = run_scenario(make_bundle(tmp_path), answers=["", ""], events=True)
+
+    assert result.exit_code == 0, result.output
+    assert stages(result) == LEGACY_FRESH_EVENTS
+    first, second = [e for e in result.events if e["type"] == "enrollment_result"]
+    assert (first["requested_contract"], first["refusal_code"], first["code_used"], first["contract"]) == (2, "contract_not_permitted", "not_used", None)
+    assert (second["requested_contract"], second["refusal_code"], second["code_used"], second["contract"]) == (1, None, "used", 1)
+    final = result.events[-1]
+    assert final == {"schema": EVENT_SCHEMA, "seq": len(result.events), "type": "run_finished", "stage": "task_enable",
+                     "result": "completed", "exit_code": 0, "mode": "fresh", "contract": 1, "task_state": "Disabled",
+                     "release_version": RELEASE_VERSION, "installation_id": 41}
+    assert_event_invariants(result)
+    assert_no_sensitive_value_in_events(result)
+
+
+@needs_windows_powershell
+def test_a_fresh_v2_setup_saves_before_storing_the_token_installs_the_rules_and_reports_the_task_enabled(tmp_path):
+    result = run_scenario(make_bundle(tmp_path), http=v2_http(), answers=[""], events=True)
+
+    assert result.exit_code == 0, result.output
+    expected = (LEGACY_FRESH_EVENTS[:16]
+                + ["enrollment_result:enrollment:Enrolled", "stage_completed:enrollment:ok",
+                   "stage_started:enrollment_save", "stage_completed:enrollment_save:ok",   # v2: the record and rules first...
+                   "stage_started:token_store", "stage_completed:token_store:ok",           # ...then the token
+                   "stage_started:install", "stage_completed:install:ok",
+                   "stage_started:rules_install", "stage_completed:rules_install:ok",
+                   "stage_started:verification", "stage_completed:verification:ok",
+                   "stage_started:record_cleanup", "stage_completed:record_cleanup:ok",
+                   "stage_started:task_enable", "stage_completed:task_enable:enabled",
+                   "run_finished:task_enable:completed"])
+    assert stages(result) == expected
+    (enrolled,) = [e for e in result.events if e["type"] == "enrollment_result"]
+    assert (enrolled["requested_contract"], enrolled["code_used"], enrolled["contract"]) == (2, "used", 2)
+    assert (result.events[-1]["contract"], result.events[-1]["task_state"]) == (2, "Enabled")
+    assert_event_invariants(result)
+    assert_no_sensitive_value_in_events(result)
+
+
+@needs_windows_powershell
+def test_resume_install_reports_the_saved_enrollment_and_skips_what_did_not_run(tmp_path):
+    bundle = make_bundle(tmp_path)
+    run_scenario(bundle, answers=[""], env={"SETUPTEST_INSTALL_MODE": "fail"})
+
+    result = run_scenario(bundle, answers=["", "", ""], events=True)
+
+    assert result.exit_code == 0, result.output
+    assert stages(result)[6:] == [
+        "stage_started:machine", "mode_detected:machine:resume_install", "stage_completed:machine:ok",
+        "stage_started:sources", "stage_completed:sources:ok",
+        "stage_started:connection", "stage_completed:connection:ok",
+        "stage_skipped:setup_folder:resume", "stage_skipped:enrollment:resume",
+        "stage_skipped:token_store:resume", "stage_skipped:enrollment_save:resume",
+        "stage_started:install", "stage_completed:install:ok",
+        "stage_skipped:rules_install:not_applicable",
+        "stage_started:verification", "stage_completed:verification:ok",
+        "stage_started:record_cleanup", "stage_completed:record_cleanup:ok",
+        "stage_started:task_enable", "stage_completed:task_enable:left_disabled",
+        "run_finished:task_enable:completed",
+    ]
+    assert [e["contract"] for e in result.events if e["type"] == "mode_detected"] == [1]
+    assert (result.events[-1]["mode"], result.events[-1]["installation_id"]) == ("resume_install", 41)
+    assert_event_invariants(result)
+
+
+@needs_windows_powershell
+def test_resume_finish_reports_the_install_and_sources_as_skipped_not_completed(tmp_path):
+    bundle, _first = _interrupt_v2(tmp_path, env={"SETUPTEST_FINISH_MODE": "fail_bootstrap"})
+
+    result = run_scenario(bundle, http=_ALREADY_ENROLLED, answers=[""], events=True)
+
+    assert result.exit_code == 0, result.output
+    assert stages(result)[6:] == [
+        "stage_started:machine", "mode_detected:machine:resume_finish", "stage_completed:machine:ok",
+        "stage_skipped:sources:already_installed",
+        "stage_started:connection", "stage_completed:connection:ok",
+        "stage_skipped:setup_folder:resume", "stage_skipped:enrollment:resume",
+        "stage_skipped:enrollment_save:resume", "stage_skipped:token_store:resume",
+        "stage_skipped:install:already_installed",
+        "stage_started:rules_install", "stage_completed:rules_install:already_done",
+        "stage_started:verification", "stage_completed:verification:ok",
+        "stage_started:record_cleanup", "stage_completed:record_cleanup:ok",
+        "stage_started:task_enable", "stage_completed:task_enable:enabled",
+        "run_finished:task_enable:completed",
+    ]
+    assert [e["contract"] for e in result.events if e["type"] == "mode_detected"] == [2]
+    assert not any(e["type"] == "enrollment_result" for e in result.events)
+    assert_event_invariants(result)
+    assert_no_sensitive_value_in_events(result)
+
+
+def _stop(result: Result) -> dict:
+    (stop,) = [e for e in result.events if e["type"] in ("run_stopped", "run_failed_unexpected")]
+    return stop
+
+
+@needs_windows_powershell
+def test_a_live_install_refusal_reports_the_machine_stage_and_an_unused_code(tmp_path):
+    result = run_scenario(make_bundle(tmp_path), task_state="Ready", events=True)
+
+    assert result.exit_code == 2
+    stop = _stop(result)
+    assert (stop["type"], stop["stage"], stop["exit_code"]) == ("run_stopped", "machine", 2)
+    assert (stop["code_attempted"], stop["code_consumed"], stop["contract"]) == (False, False, None)
+    assert "The enrollment code was NOT used." in stop["advice"]
+    assert not any(e["type"] == "mode_detected" for e in result.events)
+    assert result.events[-1]["result"] == "stopped" and result.events[-1]["mode"] is None
+    assert_event_invariants(result)
+
+
+@needs_windows_powershell
+def test_leftover_collector_data_is_an_unsafe_state_refusal_at_the_machine_stage(tmp_path):
+    bundle = make_bundle(tmp_path)
+    (bundle.data_root / "secrets").mkdir(parents=True)
+    (bundle.data_root / "secrets" / "v2_key.dpapi").write_bytes(b"x")
+
+    result = run_scenario(bundle, events=True)
+
+    assert result.exit_code == 2
+    assert (_stop(result)["stage"], _stop(result)["exit_code"]) == ("machine", 2)
+    assert_event_invariants(result)
+
+
+@needs_windows_powershell
+def test_a_saved_v2_enrollment_without_its_token_reports_a_used_code_and_the_known_contract(tmp_path):
+    bundle, _first = _interrupt_v2(tmp_path, env={"SETUPTEST_INSTALL_MODE": "fail"})
+    (bundle.fake / "machine_token.txt").unlink()
+
+    result = run_scenario(bundle, http=_ALREADY_ENROLLED, events=True)
+
+    assert result.exit_code == 2
+    stop = _stop(result)
+    assert (stop["stage"], stop["code_consumed"], stop["token_stored"], stop["recovery_on_disk"], stop["contract"]) == (
+        "machine", True, False, True, 2)
+    assert_event_invariants(result)
+
+
+@needs_windows_powershell
+def test_no_response_from_enrollment_is_an_unknown_outcome_not_an_unused_code(tmp_path):
+    http = default_http(**{ENROLL: {"status": 0, "content": None, "failure": "no response (WebException)"}})
+
+    result = run_scenario(make_bundle(tmp_path), answers=[""], http=http, events=True)
+
+    assert result.exit_code == 1
+    (enrollment,) = [e for e in result.events if e["type"] == "enrollment_result"]
+    assert (enrollment["enrollment_outcome"], enrollment["code_used"], enrollment["contract"]) == ("Unreachable", "unknown", None)
+    stop = _stop(result)
+    assert (stop["stage"], stop["code_attempted"], stop["code_consumed"]) == ("enrollment", True, False)
+    assert_event_invariants(result)
+    assert_no_sensitive_value_in_events(result)
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize(("status", "outcome", "code_used"), [(400, "Rejected", "not_used_by_this_request"), (429, "RateLimited", "not_used"),
+                                                              (503, "ServerError", "unknown")])
+def test_each_enrollment_failure_is_classified_as_the_stop_advice_classifies_it(tmp_path, status, outcome, code_used):
+    http = default_http(**{ENROLL: {"status": status, "content": "{}", "failure": f"HTTP {status}"}})
+
+    result = run_scenario(make_bundle(tmp_path), answers=[""], http=http, events=True)
+
+    (enrollment,) = [e for e in result.events if e["type"] == "enrollment_result"]
+    assert (enrollment["enrollment_outcome"], enrollment["code_used"]) == (outcome, code_used)
+    assert _stop(result)["stage"] == "enrollment"
+    assert_event_invariants(result)
+
+
+@needs_windows_powershell
+def test_an_installer_failure_reports_the_install_stage_and_the_passed_through_exit_code(tmp_path):
+    result = run_scenario(make_bundle(tmp_path), answers=[""], env={"SETUPTEST_INSTALL_MODE": "fail"}, events=True)
+
+    assert result.exit_code == 3
+    stop = _stop(result)
+    assert (stop["stage"], stop["exit_code"], stop["contract"]) == ("install", 3, 1)
+    assert (stop["code_consumed"], stop["token_stored"], stop["recovery_on_disk"]) == (True, True, True)
+    assert result.events[-1]["installation_id"] == 41 and result.events[-1]["task_state"] is None
+    assert_event_invariants(result)
+    assert_no_sensitive_value_in_events(result)
+
+
+@needs_windows_powershell
+def test_an_unexpected_error_after_enrollment_is_reported_once_with_only_the_console_message(tmp_path):
+    # Thrown while the token is in flight -- the point where a careless event would be most dangerous.
+    extra = "function Invoke-ApiTokenCheck { throw 'synthetic unexpected failure' }"
+
+    result = run_scenario(make_bundle(tmp_path), answers=[""], extra_ps=extra, events=True)
+
+    assert result.exit_code == 1
+    failure = _stop(result)
+    assert (failure["type"], failure["stage"]) == ("run_failed_unexpected", "token_store")
+    assert (failure["exception_type"], failure["message"]) == ("RuntimeException", "synthetic unexpected failure")
+    assert f"unexpected error: {failure['exception_type']}: {failure['message']}" in result.output
+    assert (failure["code_consumed"], failure["token_stored"], failure["contract"]) == (True, False, 1)
+    assert result.events[-1]["result"] == "failed"
+    assert_event_invariants(result)
+    assert_no_sensitive_value_in_events(result)
+
+
+#: Scenarios run twice -- events off, then on -- to prove the console and the exit code do not change.
+_COMPATIBILITY = {
+    "legacy_success": {"answers": ["", ""]},
+    "v2_success": {"http": v2_http(), "answers": [""]},
+    "live_refusal": {"task_state": "Ready"},
+    "enrollment_unknown": {"answers": [""], "http": default_http(**{ENROLL: {"status": 0, "content": None, "failure": "no response"}})},
+    "install_failure": {"answers": [""], "env": {"SETUPTEST_INSTALL_MODE": "fail"}},
+    "unexpected_error": {"answers": [""], "extra_ps": "function Invoke-ApiTokenCheck { throw 'synthetic unexpected failure' }"},
+}
+
+
+def _normalized(result: Result, tmp: Path) -> str:
+    return result.output.replace(str(tmp), "<TMP>")
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("case", list(_COMPATIBILITY))
+def test_enabling_events_changes_neither_the_console_nor_the_exit_code_nor_what_setup_does(tmp_path, case):
+    off_tmp, on_tmp = tmp_path / "off", tmp_path / "on"
+    off = run_scenario(make_bundle(off_tmp), **_COMPATIBILITY[case])
+    on = run_scenario(make_bundle(on_tmp), events=True, **_COMPATIBILITY[case])
+
+    assert on.exit_code == off.exit_code and off.exit_code is not None
+    assert _normalized(on, on_tmp) == _normalized(off, off_tmp)
+    assert on.tools() == off.tools() and on.task == off.task
+    assert off.events == [] and on.events
+    assert_event_invariants(on)
+    assert_no_sensitive_value_in_events(on)
+
+
+@needs_windows_powershell
+def test_with_events_off_a_capturing_host_receives_nothing(tmp_path):
+    result = run_scenario(make_bundle(tmp_path), answers=["", ""], capture_events=True)
+
+    assert result.exit_code == 0 and result.events == [] and result.pshost_records > 0
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("case", ["legacy_success", "install_failure"])
+def test_a_failing_event_delivery_never_changes_the_result(tmp_path, case):
+    off_tmp, broken_tmp = tmp_path / "off", tmp_path / "broken"
+    scenario = dict(_COMPATIBILITY[case])
+    off = run_scenario(make_bundle(off_tmp), **scenario)
+    scenario["extra_ps"] = "function Write-Information { throw 'event delivery failed' }"
+    broken = run_scenario(make_bundle(broken_tmp), events=True, **scenario)
+
+    assert broken.exit_code == off.exit_code
+    assert _normalized(broken, broken_tmp) == _normalized(off, off_tmp)
+    assert broken.tools() == off.tools() and broken.task == off.task
+
+    def saved(result: Result) -> dict | None:  # the resume record, less the moment it was written
+        return None if result.recovery is None else {k: v for k, v in result.recovery.items() if k != "created_utc"}
+
+    assert saved(broken) == saved(off)
+    assert broken.events == []
+
+
+@needs_windows_powershell
+def test_a_preference_that_displays_information_still_shows_no_event_on_the_console(tmp_path):
+    result = run_scenario(make_bundle(tmp_path), answers=["", ""], extra_ps="$InformationPreference = 'Continue'", events=True)
+
+    assert result.exit_code == 0 and result.events
+    assert "schema" not in result.output and EVENT_SCHEMA not in result.output and "stage_started" not in result.output
