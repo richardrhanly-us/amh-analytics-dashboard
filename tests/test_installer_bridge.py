@@ -96,12 +96,29 @@ def test_the_public_bridge_api_cannot_run_any_other_powershell():
             assert "SortView.Setup.Core.Testing" not in text or path.name == "AssemblyInfo.cs", path
 
 
+# Every way .NET Framework offers to turn a SecureString (the enrollment code) into readable characters: the Marshal
+# SecureString-to-memory copies and the readers that make a string of such memory. Ordinary interop (Marshal.SizeOf,
+# GetLastWin32Error, MarshalAs) cannot reveal a code and is allowed.
+SECRET_TO_TEXT = ("SecureStringToBSTR", "SecureStringToGlobalAllocUnicode", "SecureStringToGlobalAllocAnsi",
+                  "SecureStringToCoTaskMemUnicode", "SecureStringToCoTaskMemAnsi", "PtrToStringBSTR", "PtrToStringUni",
+                  "PtrToStringAuto", "PtrToStringAnsi", "Marshal.Copy", "Marshal.ReadInt16", "Marshal.ReadByte",
+                  "NetworkCredential")
+# The only Core files that may handle an enrollment code at all.
+SECURE_STRING_FILES = {"PromptBridge.cs", "SetupTypes.cs"}
+
+
 def test_the_core_never_turns_a_code_into_text_logs_or_writes_anything():
     for source in CORE_SOURCES:
         code = "\n".join(line for line in _read(source).splitlines() if not line.strip().startswith(("//", "///")))
-        for forbidden in ("Marshal", "SecureStringToBSTR", "NetworkCredential", "Console.", "Debug.", "Trace.", "EventLog",
+        for forbidden in (*SECRET_TO_TEXT, "Console.", "Debug.", "Trace.", "EventLog",
                           "File.Write", "File.Append", "File.Create", "SetEnvironmentVariable", "Process.Start", ".Stop("):
             assert forbidden not in code, (source.name, forbidden)
+        if source.name not in SECURE_STRING_FILES:
+            assert "SecureString" not in code, source.name
+    # The bundle verifier and stager in particular never see a code.
+    for name in ("BundleVerifier.cs", "BundleStager.cs"):
+        assert "SecureString" not in _read(CORE_DIR / name), name
+    assert all((CORE_DIR / name).exists() for name in SECURE_STRING_FILES)
     bridge = _read(CORE_DIR / "PromptBridge.cs")
     assert "issuedSecrets.Add(secret)" in bridge and "secret.Dispose()" in bridge  # codes are disposed when the run ends
 

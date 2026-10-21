@@ -123,7 +123,7 @@ namespace SortView.Setup.Core
         internal const int MaxVersionLength = 64;
         internal const int MaxReportedProblems = 500;
 
-        private static readonly Regex Sha256Pattern = new Regex("^[0-9a-fA-F]{64}$", RegexOptions.CultureInvariant);
+        internal static readonly Regex Sha256Pattern = new Regex("^[0-9a-fA-F]{64}$", RegexOptions.CultureInvariant);
         private static readonly Regex VersionPattern = new Regex(@"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+.][0-9A-Za-z][0-9A-Za-z.+-]*)?$", RegexOptions.CultureInvariant);
         private static readonly HashSet<string> ReservedNames = new HashSet<string>(
             new[] { "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$" }
@@ -424,7 +424,7 @@ namespace SortView.Setup.Core
 
         // ---- reading -------------------------------------------------------------------------------------------------
 
-        private static byte[] ReadAll(FileInfo file, string relative, Report report)
+        internal static byte[] ReadAll(FileInfo file, string relative, Report report)
         {
             try
             {
@@ -482,7 +482,7 @@ namespace SortView.Setup.Core
             return null;
         }
 
-        private static string Sha256Hex(byte[] bytes)
+        internal static string Sha256Hex(byte[] bytes)
         {
             using (SHA256 sha = SHA256.Create())
             {
@@ -502,14 +502,14 @@ namespace SortView.Setup.Core
 
         // ---- the manifest --------------------------------------------------------------------------------------------
 
-        private sealed class Manifest
+        internal sealed class Manifest
         {
             public string Product;
             public string Version;
             public List<ManifestFile> Files;
         }
 
-        private sealed class ManifestFile
+        internal sealed class ManifestFile
         {
             public string Path;
             public string Sha256;
@@ -517,7 +517,7 @@ namespace SortView.Setup.Core
         }
 
         /// <summary>Parses the (already hash-matched) manifest, accepting exactly build_release.py's schema.</summary>
-        private static Manifest Parse(byte[] bytes, Report report)
+        internal static Manifest Parse(byte[] bytes, Report report)
         {
             object root;
             try
@@ -593,7 +593,7 @@ namespace SortView.Setup.Core
             return value >= 0;
         }
 
-        private static bool IsValidVersion(string version) =>
+        internal static bool IsValidVersion(string version) =>
             version != null && version.Length <= MaxVersionLength && VersionPattern.IsMatch(version);
 
         /// <summary>A listed path is a plain relative file path: "/" separated, no empty, "." or ".." segment, no
@@ -635,7 +635,7 @@ namespace SortView.Setup.Core
             return text.Length > MaxPathLength ? text.Substring(0, MaxPathLength) + "..." : text;
         }
 
-        private sealed class Report
+        internal sealed class Report
         {
             private readonly List<BundleProblem> problems = new List<BundleProblem>();
             private bool truncated;
