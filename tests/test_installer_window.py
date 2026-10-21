@@ -150,7 +150,7 @@ public static class ConsoleWindowProbe {
 $AE = [System.Windows.Automation.AutomationElement]
 $TS = [System.Windows.Automation.TreeScope]
 $steps = @(Get-Content -LiteralPath $StepsPath -Raw | ConvertFrom-Json | ForEach-Object { $_ })
-$out = [ordered]@{ error = $null; snapshots = @(); prompts_seen = @(); prompt_history = @(); max_children = 0; max_console_windows = 0
+$out = [ordered]@{ error = $null; error_stack = $null; snapshots = @(); prompts_seen = @(); prompt_history = @(); max_children = 0; max_console_windows = 0
                    latencies = @(); exited = $false; workspace = $null; command_line = $null; second_clicks = @() }
 $proc = Start-Process -FilePath $ExePath -PassThru
 $window = $null
@@ -223,6 +223,20 @@ function Wait-Until([scriptblock]$condition, [int]$seconds, [string]$what) {
 }
 try {
     if ($null -eq $window) { throw "the window did not appear" }
+    # The window can be in the UI Automation tree before its controls are -- and an element found that early (class
+    # 'HwndWrapper[...]', before WPF's automation peers exist) never gains them. So wait (at most 30 s), finding the
+    # window again each time, until it shows its simulated machine: no step then looks for a control that is not there.
+    $ready = [Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        $window = $AE::RootElement.FindFirst($TS::Children, (New-Object System.Windows.Automation.PropertyCondition($AE::ProcessIdProperty, $proc.Id)))
+        $path = if ($null -ne $window) { Find 'WorkspacePath' } else { $null }
+        if ($null -ne $path -and -not [string]::IsNullOrEmpty($path.Current.Name)) { break }
+        if ($ready.Elapsed.TotalSeconds -gt 30) {
+            throw "the window's controls were not ready within 30 s (window class " + $(if ($null -eq $window) { "none" } else { "'" + $window.Current.ClassName + "'" }) +
+                ", WorkspacePath " + $(if ($null -eq $path) { "not found" } else { "empty" }) + ")"
+        }
+        Start-Sleep -Milliseconds 100
+    }
     $out.command_line = (Get-CimInstance Win32_Process -Filter "ProcessId = $($proc.Id)").CommandLine
     $out.workspace = ((Find 'WorkspacePath').Current.Name -replace '^Simulated machine: ', '')
     foreach ($step in $steps) {
@@ -267,7 +281,8 @@ try {
         }
     }
 } catch {
-    $out.error = $_.Exception.Message
+    $out.error = $_.Exception.Message + " (driver line " + $_.InvocationInfo.ScriptLineNumber + ": " + $_.InvocationInfo.Line.Trim() + ")"
+    $out.error_stack = $_.ScriptStackTrace
 } finally {
     if (-not $proc.HasExited) {
         try { $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close() } catch { }
@@ -288,7 +303,7 @@ def drive(window_exe: Path, scratch: Path, steps: list[dict]) -> dict:
                                capture_output=True, text=True, timeout=600, check=False)
     assert out_path.exists(), completed.stdout + completed.stderr
     result = json.loads(out_path.read_text(encoding="utf-8-sig"))
-    assert result["error"] is None, (result["error"], result["snapshots"][-1:] if result["snapshots"] else None)
+    assert result["error"] is None, (result["error"], result["error_stack"], result["snapshots"][-1:] if result["snapshots"] else None)
     return result
 
 
