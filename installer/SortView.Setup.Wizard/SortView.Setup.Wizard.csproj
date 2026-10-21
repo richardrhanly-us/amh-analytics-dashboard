@@ -36,6 +36,15 @@
     <Compile Include="SetupWizardView.xaml.cs">
       <DependentUpon>SetupWizardView.xaml</DependentUpon>
     </Compile>
+    <Page Include="WelcomePage.xaml" />
+    <Compile Include="WelcomePage.xaml.cs">
+      <DependentUpon>WelcomePage.xaml</DependentUpon>
+    </Compile>
+    <Page Include="PrerequisitesPage.xaml" />
+    <Compile Include="PrerequisitesPage.xaml.cs">
+      <DependentUpon>PrerequisitesPage.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="PrerequisiteChecks.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

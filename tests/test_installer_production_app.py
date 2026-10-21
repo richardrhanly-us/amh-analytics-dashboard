@@ -164,7 +164,8 @@ def test_windows_refuses_to_start_the_program_without_elevation(production_build
 
 
 # Loads the production window IN-PROCESS on a test UI thread (no new process, so no elevation is involved), shows it
-# off-screen, inspects the wizard, tries to start setup both ways -- the Start button and BeginRun -- and closes it.
+# off-screen, goes to the Setup page, inspects the wizard, tries to start setup both ways -- the Start button and
+# BeginRun -- and closes it.
 # Around that it records the machine state setup would change, to show nothing did.
 _PROBE = r"""
 param([string]$ExePath, [string]$OutPath)
@@ -186,6 +187,25 @@ public static class ProductionProbe {
         Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() => frame.Continue = false));
         Dispatcher.PushFrame(frame);
     }
+    static void Click(FrameworkElement button) { button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent)); Pump(); }
+    // Gets to the Setup page the way a user does: Next past Welcome, the checks (on facts that pass, injected because a test
+    // session is not elevated -- MachineFacts.Read is never called here), then Next.
+    static void GoToSetupPage(Window window) {
+        var checks = (FrameworkElement)window.FindName("PrerequisitesView");
+        var factsType = checks.GetType().Assembly.GetType("SortView.Setup.Wizard.MachineFacts", true);
+        var facts = Activator.CreateInstance(factsType);
+        var values = new Dictionary<string, object> {
+            { "WindowsBuild", 19045 }, { "WindowsInstallationType", "Client" }, { "Is64BitOperatingSystem", true },
+            { "DotNetRelease", 533325 }, { "PowerShellVersion", "5.1.19041.1" }, { "IsAdministrator", true },
+            { "SystemDriveFreeBytes", 100L << 30 }, { "LegacyTasksRead", true }, { "MachinePolicyRead", true }, { "UserPolicyRead", true } };
+        foreach (var pair in values) factsType.GetProperty(pair.Key).SetValue(facts, pair.Value);
+        factsType.GetProperty("LegacyTasks").SetValue(facts, Array.CreateInstance(factsType.Assembly.GetType("SortView.Setup.Wizard.LegacyTaskFact", true), 0));
+        var read = System.Linq.Expressions.Expression.Lambda(typeof(Func<>).MakeGenericType(factsType), System.Linq.Expressions.Expression.Constant(facts, factsType)).Compile();
+        checks.GetType().GetProperty("ReadFacts").SetValue(checks, read);
+        Click((FrameworkElement)window.FindName("NextButton"));
+        for (int i = 0; i < 1000 && !(bool)checks.GetType().GetProperty("CanContinue").GetValue(checks); i++) { Thread.Sleep(10); Pump(); }
+        Click((FrameworkElement)window.FindName("NextButton"));
+    }
     public static Dictionary<string, object> Run(string exePath) {
         var r = new Dictionary<string, object>();
         var thread = new Thread(() => {
@@ -193,6 +213,8 @@ public static class ProductionProbe {
                 var window = (Window)Activator.CreateInstance(Assembly.LoadFrom(exePath).GetType("SortView.Setup.MainWindow", true));
                 window.WindowStartupLocation = WindowStartupLocation.Manual; window.Left = -32000; window.Top = -32000; window.ShowActivated = false;
                 window.Show(); Pump();
+                GoToSetupPage(window);
+                r["page"] = window.GetType().GetProperty("CurrentPage").GetValue(window).ToString();
                 var wizard = (FrameworkElement)window.FindName("Wizard");
                 var type = wizard.GetType();
                 Func<string, FrameworkElement> find = name => (FrameworkElement)wizard.FindName(name);
@@ -246,7 +268,8 @@ def test_production_startup_shows_the_notice_and_cannot_start_setup_or_change_an
     report = json.loads(out.read_text(encoding="utf-8-sig"))
     assert "error" not in report, report.get("error")
 
-    # The shared wizard is there, with installation disabled and the notice shown.
+    # Past Welcome and Prerequisites, the shared wizard is there, with installation disabled and the notice shown.
+    assert report["page"] == "Setup"
     assert report["wizard_type"] == "SortView.Setup.Wizard.SetupWizardView"
     assert report["installation_enabled"] is False
     assert report["notice"] == DISABLED_NOTICE and report["notice_visible"] is True
