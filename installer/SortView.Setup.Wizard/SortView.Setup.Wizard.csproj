@@ -49,6 +49,7 @@
       <DependentUpon>ReadyPage.xaml</DependentUpon>
     </Compile>
     <Compile Include="PrerequisiteChecks.cs" />
+    <Compile Include="SetupProgress.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

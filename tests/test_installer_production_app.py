@@ -238,6 +238,11 @@ public static class ProductionProbe {
                 r["start_enabled"] = find("StartButton").IsEnabled;
                 r["cancel_enabled"] = find("CancelButton").IsEnabled;
                 r["prompt_visible"] = find("PromptPanel").IsVisible;
+                var progressSteps = new List<string>();
+                foreach (var item in ((ItemsControl)find("ProgressSteps")).Items) progressSteps.Add((string)item.GetType().GetProperty("AccessibleName").GetValue(item));
+                r["progress_steps"] = progressSteps;
+                r["busy_visible"] = find("BusyIndicator").IsVisible;
+                r["details_expanded"] = ((Expander)find("DetailsExpander")).IsExpanded;
                 int requested = 0;
                 type.GetEvent("StartRequested").AddEventHandler(wizard, new EventHandler((s, e) => requested++));
                 find("StartButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent)); Pump();  // even a forced click
@@ -286,6 +291,10 @@ def test_production_startup_shows_the_notice_and_cannot_start_setup_or_change_an
     assert report["automation_ids"] == ["StartButton", "CancelButton", "StatusText", "CancelNote", "PromptPanel", "EventList", "DiagnosticList"]
     # Nothing can be started: Start is disabled, a forced click asks nothing of a host, and BeginRun refuses.
     assert (report["start_enabled"], report["cancel_enabled"], report["prompt_visible"]) == (False, False, False)
+    # The progress view is idle: seven steps pending, nothing busy, and the diagnostic details closed for a customer.
+    assert len(report["progress_steps"]) == 7 and all(step.endswith(", Pending") for step in report["progress_steps"])
+    assert report["progress_steps"][0] == "Step 1 of 7: Check the computer and installation package, Pending"
+    assert report["busy_visible"] is False and report["details_expanded"] is False
     assert report["start_requested"] == 0 and report["running_after_click"] is False
     assert report["begin_run"] == "InvalidOperationException" and report["running_after_begin_run"] is False
     assert report["closed"] is True

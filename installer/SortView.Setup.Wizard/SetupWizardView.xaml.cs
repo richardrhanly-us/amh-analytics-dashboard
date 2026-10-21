@@ -7,6 +7,7 @@ using System.Security;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Media;
 using Microsoft.Win32;
@@ -26,6 +27,9 @@ namespace SortView.Setup.Wizard
     /// The host window's closing is handled here: while setup runs it is deferred until the engine has returned.
     /// Nothing typed here is ever shown, logged or written; the enrollment code goes from the PasswordBox to the engine as
     /// a SecureString owned and disposed by the run.
+    ///
+    /// Progress is shown as seven customer steps (<see cref="SetupProgress"/>), worked out only from the engine's events
+    /// as they arrive; the engine's own events and console text stay available under "Show details".
     /// </summary>
     public partial class SetupWizardView : UserControl, IPromptView
     {
@@ -40,12 +44,17 @@ namespace SortView.Setup.Wizard
         // The run's final events (non-secret), for the outcome view.
         private SetupEvent stopEvent;
         private SetupEvent finishEvent;
+        private readonly SetupProgress progress = new SetupProgress();
+        // The status said while the enrollment step runs. It is retired once progress moves past that step.
+        private const string EnrollingStatus = "Enrolling this computer with SortView… This cannot be interrupted.";
+        private bool enrollingStatusShown;
 
         public SetupWizardView()
         {
             InitializeComponent();
             EventList.ItemsSource = events;
             DiagnosticList.ItemsSource = consoleText;
+            ProgressSteps.ItemsSource = progress.Steps;
             Loaded += OnLoaded;
             UpdateControls();
         }
@@ -73,6 +82,14 @@ namespace SortView.Setup.Wizard
                 disabledNotice = value ?? "";
                 UpdateControls();
             }
+        }
+
+        /// <summary>Whether "Show details" (the engine's events and console text) starts open. Closed unless a host
+        /// opens it.</summary>
+        public bool DetailsExpanded
+        {
+            get => DetailsExpander.IsExpanded;
+            set => DetailsExpander.IsExpanded = value;
         }
 
         public object StartButtonText
@@ -141,6 +158,8 @@ namespace SortView.Setup.Wizard
             stopEvent = null;
             finishEvent = null;
             closeWhenFinished = false;
+            enrollingStatusShown = false;
+            ShowProgress(progress.Reset());
             session = SetupRunSession.Start(runner, Dispatcher, this, OnSetupEvent, text => consoleText.Add(text));
             SetupRunSession started = session;
             session.Completion.ContinueWith(task => Dispatcher.BeginInvoke(new Action(() => OnFinished(started, task))),
@@ -223,6 +242,7 @@ namespace SortView.Setup.Wizard
                 return;
             }
             ClearPrompt();
+            ShowProgress(progress.Finish(task.IsFaulted));
             if (task.IsFaulted)
             {
                 Exception error = task.Exception.GetBaseException();
@@ -249,10 +269,63 @@ namespace SortView.Setup.Wizard
             InstallationNotice.Visibility = installationEnabled ? Visibility.Collapsed : Visibility.Visible;
             bool enrollmentBegun = running && session.EnrollmentMayHaveBegun;
             CancelButton.IsEnabled = running && !enrollmentBegun;
+            UpdateBusy();
             CancelNote.Text = enrollmentBegun
                 ? "Setup can no longer be cancelled safely: the enrollment may already have been sent. It will run to the end on its own; closing the window waits for it."
                 : running ? "Cancelling stops setup safely at its next question; a step already running always finishes." : "";
             RunStateChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        // Busy only while the engine is working, not while one of its questions waits for an answer; never a percentage.
+        private void UpdateBusy()
+        {
+            bool busy = IsRunning && current == null;
+            BusyIndicator.IsIndeterminate = busy;
+            BusyIndicator.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        // ---- progress -----------------------------------------------------------------------------------------
+
+        /// <summary>Shows the steps' new states. The step text (a live region) changes, and is announced, only when a
+        /// customer step changed -- never for every engine event.</summary>
+        private void ShowProgress(IReadOnlyList<ProgressStep> changed)
+        {
+            string notice = progress.ResumeNotice;
+            if (ResumeText.Text != (notice ?? ""))
+            {
+                ResumeText.Text = notice ?? "";
+                ResumeBanner.Visibility = notice == null ? Visibility.Collapsed : Visibility.Visible;
+                Announce(ResumeText);
+            }
+            if (changed.Count > 0)
+            {
+                string activity = progress.CurrentActivity;
+                CurrentStepText.Text = activity ?? "";
+                CurrentStepText.Visibility = activity == null ? Visibility.Collapsed : Visibility.Visible;
+                if (activity != null)
+                {
+                    Announce(CurrentStepText);
+                }
+                // Once the run is past the enrollment step, its "Enrolling…" status is no longer true. It gives way only
+                // if nothing newer (a question, a cancel or close message, the end of the run) has replaced it already.
+                if (enrollingStatusShown && progress.Ending == SetupEnding.None && progress.Steps[3].State != ProgressStepState.Working)
+                {
+                    enrollingStatusShown = false;
+                    if (StatusText.Text == EnrollingStatus)
+                    {
+                        StatusText.Text = "Running setup…";
+                    }
+                }
+            }
+            UpdateBusy();
+        }
+
+        private static void Announce(UIElement element)
+        {
+            if (AutomationPeer.ListenerExists(AutomationEvents.LiveRegionChanged))
+            {
+                UIElementAutomationPeer.CreatePeerForElement(element)?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+            }
         }
 
         // ---- events and console text -------------------------------------------------------------------------
@@ -273,6 +346,7 @@ namespace SortView.Setup.Wizard
             {
                 events.Add(line);
             }
+            ShowProgress(progress.Apply(setupEvent));
             SetupEventReceived?.Invoke(setupEvent);
             EventList.ScrollIntoView(events[events.Count - 1]);
             UpdateControls();
@@ -415,6 +489,7 @@ namespace SortView.Setup.Wizard
             UpdatePromptButtons();
             PromptPanel.Visibility = Visibility.Visible;
             StatusText.Text = "Waiting for your answer.";
+            ShowProgress(progress.SetWaiting(true));
         }
 
         public void DismissPrompt(PromptRequest request)
@@ -499,8 +574,12 @@ namespace SortView.Setup.Wizard
             code.MakeReadOnly();
             CodeBox.Clear();
             EnrollButton.IsEnabled = false;
-            Answer(code);
-            StatusText.Text = "Enrolling this computer with SortView… This cannot be interrupted.";
+            if (Answer(code))
+            {
+                // Only for a code actually handed over: a refused answer keeps its own message.
+                StatusText.Text = EnrollingStatus;
+                enrollingStatusShown = true;
+            }
         }
 
         private void UpdatePromptButtons()
@@ -512,17 +591,20 @@ namespace SortView.Setup.Wizard
             }
         }
 
-        private void Answer(object answer)
+        /// <summary>Hands <paramref name="answer"/> to the waiting question. False when the question had already been
+        /// settled and the answer was not used.</summary>
+        private bool Answer(object answer)
         {
             PromptRequest request = current;
             ClearPrompt();
             if (request == null || !request.TrySubmit(answer))
             {
                 StatusText.Text = "That question had already been settled; the answer was not used.";
-                return;
+                return false;
             }
             StatusText.Text = "Running setup…";
             UpdateControls();
+            return true;
         }
 
         private void ClearPrompt()
@@ -533,6 +615,7 @@ namespace SortView.Setup.Wizard
             PromptId.Text = "none";
             PromptPanel.Visibility = Visibility.Collapsed;
             UpdatePromptButtons();
+            ShowProgress(progress.SetWaiting(false));
         }
 
         private static string SourceLabel(string source)
@@ -605,12 +688,17 @@ namespace SortView.Setup.Wizard
                 string id = Field(finishEvent, "installation_id");
                 OutcomeSummary.Text = (Field(finishEvent, "task_state") == "Enabled"
                         ? "The Collector is installed and its Scheduled Task is enabled: it runs every 15 minutes."
-                        : "The Collector is installed. Its Scheduled Task was left disabled, so nothing is uploaded until it is enabled (the setup log says how).")
+                        : "The Collector is installed. The Collector's Scheduled Task was left disabled. Contact your SortView administrator before enabling it.")
                     + (id == null ? "" : " Installation " + id + (Field(finishEvent, "release_version") == null ? "" : ", release " + Field(finishEvent, "release_version")) + ".");
             }
             else if (stopEvent != null && stopEvent.Type == "run_stopped")
             {
-                OutcomeTitle.Text = "Setup stopped before it finished";
+                // A stop the engine planned for, told apart by what its events say (a cancelled question, or a saved
+                // enrollment kept on disk). Its own words follow, unchanged.
+                SetupEnding ending = progress.Ending;
+                OutcomeTitle.Text = ending == SetupEnding.Cancelled ? "Setup was cancelled"
+                    : ending == SetupEnding.Interrupted ? "Setup stopped before it finished. The saved enrollment was kept."
+                    : "Setup stopped before it finished";
                 OutcomeSummary.Text = "Setup stopped at " + Field(stopEvent, "step_label") + ".";
                 OutcomeProblem.Text = "What went wrong: " + Field(stopEvent, "problem");
                 OutcomeUnchanged.Text = "Left unchanged: " + Field(stopEvent, "unchanged");
@@ -626,14 +714,18 @@ namespace SortView.Setup.Wizard
             else
             {
                 OutcomeTitle.Text = "Setup did not finish";
-                OutcomeSummary.Text = "Exit code " + (task.Result.ExitCode?.ToString() ?? "(none)") + ": " + Describe(task.Result.ExitCode) + ". See the details below.";
+                OutcomeSummary.Text = "Exit code " + (task.Result.ExitCode?.ToString() ?? "(none)") + ": " + Describe(task.Result.ExitCode) + ".";
             }
-            OutcomePanel.BorderBrush = completed ? Brushes.SeaGreen : Brushes.Firebrick;
+            // Green for complete, amber for a planned stop, red for an error -- the title always says which in words.
+            bool plannedStop = !task.IsFaulted && stopEvent != null && stopEvent.Type == "run_stopped";
+            OutcomePanel.BorderBrush = completed ? Brushes.SeaGreen
+                : plannedStop ? new SolidColorBrush(Color.FromRgb(0x8A, 0x4B, 0x00)) : Brushes.Firebrick;
             foreach (TextBlock text in new[] { OutcomeSummary, OutcomeProblem, OutcomeUnchanged, OutcomeAdvice, OutcomeFix })
             {
                 text.Visibility = string.IsNullOrEmpty(text.Text) ? Visibility.Collapsed : Visibility.Visible;
             }
             OutcomePanel.Visibility = Visibility.Visible;
+            Announce(OutcomeTitle);
         }
 
         private void ClearOutcome()
