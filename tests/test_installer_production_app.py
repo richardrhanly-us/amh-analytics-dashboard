@@ -21,6 +21,7 @@ import json
 import re
 import subprocess
 import sys
+import warnings
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -170,11 +171,18 @@ def test_windows_refuses_to_start_the_program_without_elevation(production_build
 _PROBE = r"""
 param([string]$ExePath, [string]$OutPath)
 $ErrorActionPreference = 'Stop'
+# Whether a path exists: 'present', 'absent', or 'access_denied' when this session may not look -- e.g. an installed
+# Collector's secrets folder, from a session without administrator rights. Only existence is asked: nothing is opened,
+# read or changed. Any other error still fails the probe.
+function Get-PathState([string]$Path) {
+    try { if (Test-Path -LiteralPath $Path -ErrorAction Stop) { 'present' } else { 'absent' } }
+    catch [System.UnauthorizedAccessException] { 'access_denied' }
+}
 function Get-MachineState {
     [ordered]@{
-        install_root = (Test-Path 'C:\SortView\Collector'); data_root = (Test-Path 'C:\ProgramData\SortViewCollector')
+        install_root = (Get-PathState 'C:\SortView\Collector'); data_root = (Get-PathState 'C:\ProgramData\SortViewCollector')
         task = ($null -ne (Get-ScheduledTask -TaskName 'SortView Collector' -ErrorAction SilentlyContinue))
-        token = (Test-Path 'C:\ProgramData\SortViewCollector\secrets\api_token.dpapi')
+        token = (Get-PathState 'C:\ProgramData\SortViewCollector\secrets\api_token.dpapi')
     }
 }
 Add-Type -ReferencedAssemblies PresentationFramework, PresentationCore, WindowsBase, System.Xaml -TypeDefinition @"
@@ -284,3 +292,10 @@ def test_production_startup_shows_the_notice_and_cannot_start_setup_or_change_an
     # And nothing changed: no child process, no install or data root, task or token appeared.
     assert report["children"] == 0
     assert report["after"] == report["before"]
+    # A path this session may not look at stays 'access_denied' before and after: that shows only that access is still
+    # denied, NOT that what is behind it is unchanged. The guarantee there is the one above -- no way to start setup.
+    paths = ("install_root", "data_root", "token")
+    assert {report[when][name] for when in ("before", "after") for name in paths} <= {"present", "absent", "access_denied"}
+    unverified = [name for name in paths if report["before"][name] == "access_denied"]
+    if unverified:
+        warnings.warn(f"not verified without administrator rights (access denied): {', '.join(unverified)}", stacklevel=1)
