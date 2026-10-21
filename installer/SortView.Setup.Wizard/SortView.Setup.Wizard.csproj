@@ -44,6 +44,10 @@
     <Compile Include="PrerequisitesPage.xaml.cs">
       <DependentUpon>PrerequisitesPage.xaml</DependentUpon>
     </Compile>
+    <Page Include="ReadyPage.xaml" />
+    <Compile Include="ReadyPage.xaml.cs">
+      <DependentUpon>ReadyPage.xaml</DependentUpon>
+    </Compile>
     <Compile Include="PrerequisiteChecks.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />

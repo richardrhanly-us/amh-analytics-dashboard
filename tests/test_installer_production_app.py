@@ -189,7 +189,7 @@ public static class ProductionProbe {
     }
     static void Click(FrameworkElement button) { button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent)); Pump(); }
     // Gets to the Setup page the way a user does: Next past Welcome, the checks (on facts that pass, injected because a test
-    // session is not elevated -- MachineFacts.Read is never called here), then Next.
+    // session is not elevated -- MachineFacts.Read is never called here), then Next past Ready.
     static void GoToSetupPage(Window window) {
         var checks = (FrameworkElement)window.FindName("PrerequisitesView");
         var factsType = checks.GetType().Assembly.GetType("SortView.Setup.Wizard.MachineFacts", true);
@@ -204,6 +204,7 @@ public static class ProductionProbe {
         checks.GetType().GetProperty("ReadFacts").SetValue(checks, read);
         Click((FrameworkElement)window.FindName("NextButton"));
         for (int i = 0; i < 1000 && !(bool)checks.GetType().GetProperty("CanContinue").GetValue(checks); i++) { Thread.Sleep(10); Pump(); }
+        Click((FrameworkElement)window.FindName("NextButton"));
         Click((FrameworkElement)window.FindName("NextButton"));
     }
     public static Dictionary<string, object> Run(string exePath) {
@@ -268,7 +269,7 @@ def test_production_startup_shows_the_notice_and_cannot_start_setup_or_change_an
     report = json.loads(out.read_text(encoding="utf-8-sig"))
     assert "error" not in report, report.get("error")
 
-    # Past Welcome and Prerequisites, the shared wizard is there, with installation disabled and the notice shown.
+    # Past Welcome, Prerequisites and Ready, the shared wizard is there, with installation disabled and the notice shown.
     assert report["page"] == "Setup"
     assert report["wizard_type"] == "SortView.Setup.Wizard.SetupWizardView"
     assert report["installation_enabled"] is False

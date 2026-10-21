@@ -3,10 +3,10 @@ using System.Windows;
 namespace SortView.Setup
 {
     /// <summary>
-    /// The production setup window: Welcome, then Prerequisites (read-only checks), then the shared wizard with
-    /// installation disabled. There is no setup runner, so nothing can be installed, enrolled or changed. Enabling
-    /// installation means giving the wizard a runner over the real engine (SetupEngineHost) and a verified bundle -- a
-    /// later, separate milestone.
+    /// The production setup window: Welcome, then Prerequisites (read-only checks), then Ready (what setup will do), then
+    /// the shared wizard with installation disabled. There is no setup runner, so nothing can be installed, enrolled or
+    /// changed. Enabling installation means giving the wizard a runner over the real engine (SetupEngineHost) and a
+    /// verified bundle -- a later, separate milestone.
     /// </summary>
     public partial class MainWindow : Window
     {
@@ -14,6 +14,7 @@ namespace SortView.Setup
         {
             Welcome,
             Prerequisites,
+            Ready,
             Setup,
         }
 
@@ -33,6 +34,7 @@ namespace SortView.Setup
             CurrentPage = page;
             WelcomeView.Visibility = page == WizardPage.Welcome ? Visibility.Visible : Visibility.Collapsed;
             PrerequisitesView.Visibility = page == WizardPage.Prerequisites ? Visibility.Visible : Visibility.Collapsed;
+            ReadyView.Visibility = page == WizardPage.Ready ? Visibility.Visible : Visibility.Collapsed;
             Wizard.Visibility = page == WizardPage.Setup ? Visibility.Visible : Visibility.Collapsed;
             if (page == WizardPage.Prerequisites && !prerequisitesChecked)
             {
@@ -45,7 +47,7 @@ namespace SortView.Setup
         private void UpdateButtons()
         {
             BackButton.IsEnabled = CurrentPage != WizardPage.Welcome;
-            NextButton.IsEnabled = CurrentPage == WizardPage.Welcome ||
+            NextButton.IsEnabled = CurrentPage == WizardPage.Welcome || CurrentPage == WizardPage.Ready ||
                                    (CurrentPage == WizardPage.Prerequisites && PrerequisitesView.CanContinue);
         }
 
@@ -64,6 +66,10 @@ namespace SortView.Setup
                 ShowPage(WizardPage.Prerequisites);
             }
             else if (CurrentPage == WizardPage.Prerequisites && PrerequisitesView.CanContinue)
+            {
+                ShowPage(WizardPage.Ready);
+            }
+            else if (CurrentPage == WizardPage.Ready)
             {
                 ShowPage(WizardPage.Setup);
             }

@@ -17,6 +17,7 @@
         <Grid>
             <wizard:WelcomePage x:Name="WelcomeView" />
             <wizard:PrerequisitesPage x:Name="PrerequisitesView" Visibility="Collapsed" />
+            <wizard:ReadyPage x:Name="ReadyView" Visibility="Collapsed" />
             <wizard:SetupWizardView x:Name="Wizard" Visibility="Collapsed" IsInstallationEnabled="False"
                 DisabledNotice="Installation is not yet enabled in this build. Nothing will be installed or changed on this computer." />
         </Grid>

@@ -28,7 +28,9 @@ INSTALLER = REPO_ROOT / "installer"
 WIZARD_DIR = INSTALLER / "SortView.Setup.Wizard"
 CHECKS_CODE = WIZARD_DIR / "PrerequisiteChecks.cs"
 PAGE_SOURCES = [WIZARD_DIR / name for name in ("WelcomePage.xaml", "WelcomePage.xaml.cs", "PrerequisitesPage.xaml",
-                                               "PrerequisitesPage.xaml.cs", "PrerequisiteChecks.cs")]
+                                               "PrerequisitesPage.xaml.cs", "PrerequisiteChecks.cs", "ReadyPage.xaml",
+                                               "ReadyPage.xaml.cs")]
+READY_PAGE = WIZARD_DIR / "ReadyPage.xaml"
 SETUP_PROJECT = INSTALLER / "SortView.Setup" / "SortView.Setup.csproj"
 
 RESULT_IDS = ["windows_version", "architecture", "dotnet", "powershell", "administrator", "disk_space", "legacy_tasks",
@@ -400,7 +402,7 @@ public static class NavigationProbe {
                 Func<Dictionary<string, object>> snap = () => {
                     var s = new Dictionary<string, object>();
                     s["page"] = window.GetType().GetProperty("CurrentPage").GetValue(window).ToString();
-                    foreach (var name in new[] { "WelcomeView", "PrerequisitesView", "Wizard" }) s[name] = find(name).IsVisible;
+                    foreach (var name in new[] { "WelcomeView", "PrerequisitesView", "ReadyView", "Wizard" }) s[name] = find(name).IsVisible;
                     foreach (var name in new[] { "BackButton", "NextButton", "ExitButton" }) s[name] = find(name).IsEnabled;
                     s["checking"] = prop("IsChecking"); s["can_continue"] = prop("CanContinue");
                     s["check_again"] = ((FrameworkElement)checks.FindName("CheckAgainButton")).IsEnabled;
@@ -431,11 +433,15 @@ public static class NavigationProbe {
                 click("NextButton"); record("prerequisites_again"); // no automatic re-read
                 setFacts(true, 2L << 30); source("Now");             // 2 GB free: a warning only
                 click("CheckAgainButton"); wait(); record("passed_again");
+                click("NextButton"); record("ready");
+                r["ready_notice_visible"] = ((FrameworkElement)find("ReadyView").FindName("DevelopmentNotice")).IsVisible;
                 click("NextButton"); record("setup");
                 var wizard = find("Wizard");
                 r["start_enabled"] = ((FrameworkElement)wizard.FindName("StartButton")).IsEnabled;
                 r["installation_enabled"] = wizard.GetType().GetProperty("IsInstallationEnabled").GetValue(wizard);
+                click("BackButton"); record("back_to_ready");
                 click("BackButton"); record("back_to_prerequisites");
+                click("NextButton"); record("ready_again");          // no re-read going forward again
                 click("ExitButton");
                 r["closed"] = !window.IsVisible;
                 r["steps"] = steps;
@@ -472,11 +478,20 @@ def _buttons(step: dict) -> tuple:
     return step["BackButton"], step["NextButton"], step["ExitButton"]
 
 
+PAGE_VIEWS = {"Welcome": "WelcomeView", "Prerequisites": "PrerequisitesView", "Ready": "ReadyView", "Setup": "Wizard"}
+
+
+@needs_bridge
+def test_exactly_one_page_is_visible_at_every_step(navigation):
+    for step in navigation["steps"]:
+        assert {view for view in PAGE_VIEWS.values() if step[view]} == {PAGE_VIEWS[step["page"]]}, step["step"]
+
+
 @needs_bridge
 def test_welcome_comes_first_with_next_and_exit(navigation):
     welcome = navigation["by_step"]["welcome"]
     assert welcome["page"] == "Welcome"
-    assert (welcome["WelcomeView"], welcome["PrerequisitesView"], welcome["Wizard"]) == (True, False, False)
+    assert (welcome["WelcomeView"], welcome["PrerequisitesView"], welcome["ReadyView"], welcome["Wizard"]) == (True, False, False, False)
     assert _buttons(welcome) == (False, True, True)
     assert welcome["results"] is None and welcome["reads"] == 0  # nothing is read before Prerequisites
 
@@ -529,8 +544,52 @@ def test_back_and_next_move_between_pages_without_re_reading(navigation):
 @needs_bridge
 def test_the_setup_page_still_cannot_install(navigation):
     setup = navigation["by_step"]["setup"]
-    assert setup["page"] == "Setup" and (setup["WelcomeView"], setup["PrerequisitesView"], setup["Wizard"]) == (False, False, True)
+    assert setup["page"] == "Setup" and (setup["WelcomeView"], setup["PrerequisitesView"], setup["ReadyView"], setup["Wizard"]) == (False, False, False, True)
     assert _buttons(setup) == (True, False, True)  # no Next past Setup
     assert navigation["installation_enabled"] is False and navigation["start_enabled"] is False
-    assert navigation["by_step"]["back_to_prerequisites"]["page"] == "Prerequisites"
     assert navigation["closed"] is True and navigation["children"] == 0
+
+
+@needs_bridge
+def test_ready_comes_between_prerequisites_and_setup_without_re_reading(navigation):
+    steps = navigation["by_step"]
+    reads = steps["passed_again"]["reads"]
+    ready = steps["ready"]
+    assert ready["page"] == "Ready" and _buttons(ready) == (True, True, True)
+    assert navigation["ready_notice_visible"] is True
+    assert steps["back_to_ready"]["page"] == "Ready" and _buttons(steps["back_to_ready"]) == (True, True, True)
+    assert steps["back_to_prerequisites"]["page"] == "Prerequisites"
+    assert steps["back_to_prerequisites"]["results"] == steps["passed_again"]["results"]  # results kept
+    assert steps["ready_again"]["page"] == "Ready"
+    for name in ("ready", "setup", "back_to_ready", "back_to_prerequisites", "ready_again"):
+        assert steps[name]["reads"] == reads, name  # no page after Prerequisites re-reads this computer
+
+
+#: What the Ready page must say: what setup will do, in the order it does it, and that this build installs nothing.
+READY_STATEMENTS = [
+    "Ready to install",
+    "You're almost ready to install SortView Collector.",
+    "When setup runs, it will:",
+    "1. Install SortView Collector on this computer.",
+    "2. Identify the Tech Logic sorter files the Collector reads, and ask you to confirm them or select them yourself.",
+    "3. Ask for the one-time enrollment code from your SortView administrator, only if this computer needs to be enrolled.",
+    "4. Offer to resume an earlier setup that was interrupted, using its saved enrollment. No new enrollment code is needed.",
+    "5. Verify the installation before the Collector's Scheduled Task is enabled.",
+    "Setup requires administrator rights on this computer.",
+    ("You can cancel setup at any of its questions until the enrollment code is sent. Once enrollment may have begun, setup "
+     "cannot be interrupted and finishes on its own."),
+    ("Development build: installation is not enabled in this version. Select Next to see the setup screen. Nothing will be "
+     "installed, enrolled or changed on this computer."),
+]
+
+
+def test_the_ready_page_says_what_setup_will_do_and_claims_nothing_was_checked():
+    texts = re.findall(r'Text="([^"]*)"', _without_comments(READY_PAGE.read_text(encoding="utf-8")))
+    texts = [text.replace("&apos;", "'") for text in texts]
+    assert texts == READY_STATEMENTS
+    # Nothing about this computer has been verified yet, so the page states no result: no file, package, connection,
+    # enrollment or installation is described as found, verified or done.
+    shown = " ".join(texts).lower()
+    for claim in ("found", "detected", "verified", "has been", "have been", "is installed", "is enrolled", "connected",
+                  "passed", "c:\\"):
+        assert claim not in shown, claim
