@@ -308,7 +308,10 @@ function Test-ReleaseManifest {
     BEFORE any install/update mutation. Checks, all collected into one
     report rather than stopping at the first problem:
       - every manifest-listed path is safe (no ".." traversal segment, not
-        rooted/absolute) and not a duplicate of another listed path;
+        rooted/absolute, no wildcard) and not a duplicate of another listed path;
+      - nothing in the bundle, the bundle folder included, is a reparse point
+        (junction, symbolic link), checked BEFORE any file is read -- and
+        hidden and system files count like every other file;
       - every manifest-listed file exists and its SHA-256 matches;
       - the bundle contains NO file absent from the manifest (enumerated
         recursively, MANIFEST.json itself excluded from that comparison --
@@ -334,38 +337,69 @@ function Test-ReleaseManifest {
     param([Parameter(Mandatory)][string]$BundleRoot)
 
     $manifestPath = Join-Path $BundleRoot "MANIFEST.json"
-    if (-not (Test-Path $manifestPath -PathType Leaf)) {
-        throw "This release bundle has no MANIFEST.json -- refusing to install/update from an unverifiable bundle."
+    # --- the bundle tree itself, BEFORE anything in it is read (MANIFEST.json included):
+    # every item, hidden and system ones included (-Force), and NO reparse point (junction,
+    # symbolic link, ...) anywhere, the bundle folder itself included. A link could put
+    # content from outside the bundle into it, and Windows PowerShell 5.1's Get-ChildItem
+    # does not descend into a junction, so what it holds would never be listed -- yet
+    # the runtime copy would install it. Walked folder by folder here, never through a reparse
+    # point (not -Recurse, which Windows PowerShell 5.1 may follow).
+    $bundleFiles = @()
+    $problems = @()
+    $pending = New-Object 'System.Collections.Generic.Stack[object]'
+    $pending.Push((Get-Item -LiteralPath $BundleRoot -Force))
+    while ($pending.Count -gt 0) {
+        $item = $pending.Pop()
+        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            $problems += "REPARSE POINT (a junction or link, never followed): $($item.FullName)"
+            continue
+        }
+        if ($item.PSIsContainer) {
+            foreach ($child in @(Get-ChildItem -LiteralPath $item.FullName -Force)) { $pending.Push($child) }
+        } else {
+            $bundleFiles += $item
+        }
     }
 
-    $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
-    $problems = @()
-
-    # --- manifest paths themselves: no traversal/rooted paths, no duplicates ---
     $manifestKeys = @{}
-    foreach ($entry in $manifest.files) {
-        $relPath = $entry.path
-        if ($relPath -match '(^|[\\/])\.\.([\\/]|$)' -or $relPath -match '^[\\/]' -or $relPath -match '^[A-Za-z]:') {
-            $problems += "UNSAFE MANIFEST PATH: $relPath (traversal or rooted/absolute path)"
-            continue
+    $manifest = $null
+    if ($problems.Count -eq 0) {
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+            throw "This release bundle has no MANIFEST.json -- refusing to install/update from an unverifiable bundle."
         }
-        $key = ($relPath -replace '/', '\').ToLowerInvariant()
-        if ($manifestKeys.ContainsKey($key)) {
-            $problems += "DUPLICATE MANIFEST PATH: $relPath"
-            continue
+
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+
+        # --- manifest paths themselves: no traversal/rooted paths, no wildcards, no duplicates ---
+        foreach ($entry in $manifest.files) {
+            $relPath = $entry.path
+            if ($relPath -match '(^|[\\/])\.\.([\\/]|$)' -or $relPath -match '^[\\/]' -or $relPath -match '^[A-Za-z]:') {
+                $problems += "UNSAFE MANIFEST PATH: $relPath (traversal or rooted/absolute path)"
+                continue
+            }
+            if ($relPath -match '[*?]') {
+                $problems += "UNSAFE MANIFEST PATH: $relPath (a wildcard, never a file name)"
+                continue
+            }
+            $key = ($relPath -replace '/', '\').ToLowerInvariant()
+            if ($manifestKeys.ContainsKey($key)) {
+                $problems += "DUPLICATE MANIFEST PATH: $relPath"
+                continue
+            }
+            $manifestKeys[$key] = $entry
         }
-        $manifestKeys[$key] = $entry
     }
 
     # A manifest with unsafe or duplicate paths is malformed on its own
-    # terms -- stop here rather than also trying to resolve/hash a path
-    # that might not even be safely containable under $BundleRoot.
+    # terms, and a bundle holding a reparse point is never read through --
+    # stop here rather than also trying to resolve/hash a path that might
+    # not even be safely containable under $BundleRoot.
     if ($problems.Count -eq 0) {
         # --- every safe, unique manifest entry: exists, hash matches ---
         foreach ($key in $manifestKeys.Keys) {
             $entry = $manifestKeys[$key]
             $filePath = Join-Path $BundleRoot $key
-            if (-not (Test-Path $filePath -PathType Leaf)) {
+            if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
                 $problems += "MISSING: $($entry.path)"
                 continue
             }
@@ -375,9 +409,8 @@ function Test-ReleaseManifest {
             }
         }
 
-        # --- no file present that the manifest doesn't know about ---
-        $actualFiles = Get-ChildItem -Path $BundleRoot -Recurse -File
-        foreach ($f in $actualFiles) {
+        # --- no file present that the manifest doesn't know about (hidden and system files included) ---
+        foreach ($f in $bundleFiles) {
             $relative = $f.FullName.Substring($BundleRoot.Length).TrimStart('\')
             if ($relative -eq "MANIFEST.json") { continue }
             $key = $relative.ToLowerInvariant()

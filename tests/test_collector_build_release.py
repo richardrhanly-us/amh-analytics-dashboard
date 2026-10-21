@@ -1164,7 +1164,11 @@ def test_manifest_function_rejects_unlisted_extra_files():
     for script in ("install-release.ps1", "update-release.ps1"):
         body = _manifest_function_body(script)
         assert "UNEXPECTED FILE" in body
-        assert "Get-ChildItem -Path $BundleRoot -Recurse -File" in body
+        # Every item, hidden and system ones included, walked folder by folder and never through a reparse point
+        # (M2-E1: -Recurse -File without -Force missed hidden files and junction contents -- see
+        # tests/test_collector_manifest_hardening.py for the executed proof).
+        assert "Get-ChildItem -LiteralPath $item.FullName -Force" in body
+        assert "REPARSE POINT" in body
 
 
 def test_manifest_function_excludes_manifest_json_itself_from_extra_file_check():
