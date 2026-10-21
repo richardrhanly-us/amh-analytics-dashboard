@@ -14,6 +14,8 @@
   <ItemGroup>
     <Reference Include="System" />
     <Reference Include="System.Core" />
+    <!-- JSON parsing for BundleVerifier (JavaScriptSerializer): part of .NET Framework 4.8, so nothing extra ships. -->
+    <Reference Include="System.Web.Extensions" />
     <!-- Windows PowerShell 5.1 engine (compiled against the 3.0 reference assembly; loaded from the GAC at run time). -->
     <Reference Include="System.Management.Automation">
       <HintPath>$(MSBuildProgramFiles32)\Reference Assemblies\Microsoft\WindowsPowerShell\3.0\System.Management.Automation.dll</HintPath>
@@ -25,6 +27,7 @@
     <Compile Include="SetupTypes.cs" />
     <Compile Include="PromptBridge.cs" />
     <Compile Include="SetupEngineHost.cs" />
+    <Compile Include="BundleVerifier.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
