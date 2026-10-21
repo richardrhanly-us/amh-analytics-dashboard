@@ -840,12 +840,33 @@ def test_shadow_mode_diagnostics_clearly_report_mode_and_backlog(tmp_path):
         assert _wait_until(
             lambda: spool.list_pending_batches(cfg.spool_root, "checkins") != [], timeout=5.0
         )
-        assert _wait_until(lambda: (cfg.diagnostics_dir / "diagnostics.json").exists(), timeout=3.0)
+        # diagnostics.json is a periodic housekeeping snapshot that already exists from
+        # startup. Wait (stat only) until TWO new snapshots have landed since the batch was
+        # seen: the first may come from a cycle that listed the spool before the batch, the
+        # second cannot. Then stop the runtime and read it once. (Polling it with reads is not safe on
+        # Windows: a file held open cannot be replaced, and a failed os.replace crashes
+        # housekeeping, which stops the whole run.)
+        diagnostics_path = cfg.diagnostics_dir / "diagnostics.json"
+        assert _wait_until(diagnostics_path.exists, timeout=3.0)
+        snapshots = {"last": diagnostics_path.stat().st_mtime_ns, "new": 0}
 
-        # Wait until a diagnostics cycle runs AFTER the batch exists, so
-        # the snapshot is guaranteed to reflect it.
-        time.sleep(0.3)
-        doc = json.loads((cfg.diagnostics_dir / "diagnostics.json").read_text(encoding="utf-8"))
+        def _two_new_snapshots() -> bool:
+            try:
+                mtime_ns = diagnostics_path.stat().st_mtime_ns
+            except OSError:
+                return False
+            if mtime_ns != snapshots["last"]:
+                snapshots["last"], snapshots["new"] = mtime_ns, snapshots["new"] + 1
+            return snapshots["new"] >= 2
+
+        assert _wait_until(_two_new_snapshots, timeout=5.0), (
+            f"housekeeping wrote only {snapshots['new']} new diagnostics snapshot(s) in 5 s after the batch appeared"
+        )
+        # Stop the runtime before reading, so no housekeeping write can collide with the read.
+        # A clean stop writes no new snapshot: the file is the last one written while running.
+        runner.stop(timeout=5.0)
+        assert all(not t.is_alive() for t in runner._threads)
+        doc = json.loads(diagnostics_path.read_text(encoding="utf-8"))
 
         assert doc["upload_enabled"] is False
         assert doc["heartbeat_enabled"] is False
