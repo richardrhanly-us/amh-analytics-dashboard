@@ -1,0 +1,607 @@
+"""Tests for protected bundle staging, M2b-1: installer/SortView.Setup.Core/BundleStager.cs.
+
+The stager verifies a source bundle with BundleVerifier, copies exactly the files its manifest lists into a NEW run folder
+created with protected permissions (native CreateDirectoryW), checks size and SHA-256 while copying, verifies the staged
+copy again on its own, and removes its own run folder -- and nothing else -- on failure, cancellation or Dispose.
+
+  1. STATIC checks (run everywhere): the production entry point always uses StagingPolicy.Production; the stager runs
+     nothing, never copies by wildcard, never deletes recursively, and verifies source and copy by the same rules.
+  2. BEHAVIOR (Windows only): generated fixture bundles and staging roots in pytest's temporary folders, under a TEST policy
+     that also trusts the current user (so no elevation is needed). Nothing is ever created under Program Files, and the
+     production policy is only read, never staged with.
+"""
+
+from __future__ import annotations
+
+import ctypes
+import getpass
+import hashlib
+import json
+import os
+import re
+import subprocess
+from pathlib import Path
+
+import pytest
+from test_installer_bridge import _MSBUILD, _POWERSHELL, needs_bridge
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+CORE_DIR = REPO_ROOT / "installer" / "SortView.Setup.Core"
+CORE_PROJECT = CORE_DIR / "SortView.Setup.Core.csproj"
+STAGER_CODE = CORE_DIR / "BundleStager.cs"
+
+PRODUCT, VERSION = "SortView Collector", "1.2.3"
+FILES = {
+    "setup.ps1": b"# fixture, not a script",
+    "install.ps1": b"# fixture, not a script",
+    "collector_config.example.json": b'{"api_url": "https://fixture.invalid"}',
+    "tools/set-api-token.ps1": b"# fixture",
+    "runtime/SortViewCollector.exe": b"fixture: not a program",
+    "runtime/_internal/library.dll": b"fixture: not a library",
+    "runtime/_internal/numpy/core/module.pyd": b"fixture: not an extension",
+    "runtime/_internal/data[1].txt": b"a name with brackets",
+    "runtime/_internal/zz-last.dll": b"the last file copied",
+}
+SYSTEM, ADMINISTRATORS = "S-1-5-18", "S-1-5-32-544"
+# NT AUTHORITY\LOCAL SERVICE: never in this user's token, elevated or not, so never an owner it may assign.
+LOCAL_SERVICE = "S-1-5-19"
+WINDOWS_POWERSHELL_32 = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "SysWOW64" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+TRUSTED_INSTALLER = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+
+
+# =====================================================================================================================
+# 1. STATIC checks
+# =====================================================================================================================
+
+def _code() -> str:
+    text = STAGER_CODE.read_text(encoding="utf-8")
+    return "\n".join(line for line in text.splitlines() if not line.strip().startswith("//"))
+
+
+def test_the_installer_entry_point_always_uses_the_production_policy():
+    code = re.sub(r"\s+", " ", _code())
+    assert ("public static StagedBundle Stage(string sourceRoot, string expectedManifestSha256, string expectedVersion, "
+            "CancellationToken cancellationToken, IProgress<StagingProgress> progress = null) => "
+            "Stage(sourceRoot, expectedManifestSha256, expectedVersion, StagingPolicy.Production, cancellationToken, progress);") in code
+    production = code[code.index("public static StagingPolicy Production =>"):code.index("public string StagingRoot")]
+    assert 'Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "SortView", "SetupStaging")' in production
+    assert "new[] { SystemSid, AdministratorsSid, TrustedInstallerSid }, new[] { SystemSid, AdministratorsSid }, AdministratorsSid" in production
+    assert TRUSTED_INSTALLER in code
+
+
+def test_the_stager_runs_nothing_and_never_copies_or_deletes_by_wildcard_or_recursion():
+    code = _code()
+    for forbidden in ("System.Diagnostics", "Process", "System.Management.Automation", "PowerShell", "System.Net", "Http", "Socket",
+                      "Assembly.Load", "File.Copy", "CopyTo(", "Directory.Move", "File.Move", "MoveTo(", "SearchOption.AllDirectories",
+                      '"*"', "Directory.Delete(path, true)", "Directory.Delete(runFolder, true)", ", true);\n"):
+        assert forbidden not in code, forbidden
+    assert re.findall(r"Directory\.Delete\([^)]*\)", code) == ["Directory.Delete(runFolder, false)", "Directory.Delete(path, false)",
+                                                                "Directory.Delete(path, false)"]
+    # The only native call: create-new with a security descriptor.
+    assert code.count("[DllImport(") == 1 and 'EntryPoint = "CreateDirectoryW"' in code
+    # New files only (CreateNew), never overwriting.
+    assert code.count("FileMode.CreateNew") == 2 and "FileMode.Create," not in code and "FileMode.OpenOrCreate" not in code
+
+
+def test_source_and_staged_copy_are_verified_by_the_same_strict_rules():
+    code = _code()
+    assert "sourceVerification = BundleVerifier.Verify(sourceRoot, expectedHash, expectedVersion);" in code
+    assert "stagedVerification = BundleVerifier.Verify(bundlePath, expectedHash, expectedVersion);" in code
+    order = [code.index(s) for s in ("CheckChain(root, policy, problems)", "sourceVerification = BundleVerifier.Verify",
+                                     "CreateProtected(runFolder", "ReadSourceManifest(source", "CopyListedFile(source",
+                                     "CheckCreated(runFolder, policy, problems);\n                if",
+                                     "stagedVerification = BundleVerifier.Verify")]
+    assert order == sorted(order)
+
+
+# =====================================================================================================================
+# 2. BEHAVIOR
+# =====================================================================================================================
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _manifest(files: dict[str, bytes], extra: list[dict] | None = None, version: str = VERSION) -> bytes:
+    entries = [{"path": p, "sha256": _sha256(d), "size_bytes": len(d)} for p, d in files.items()] + (extra or [])
+    return (json.dumps({"product": PRODUCT, "version": version, "built_at": "2026-01-01T00:00:00Z",
+                        "files": sorted(entries, key=lambda e: e["path"])}, indent=2) + "\n").encode()
+
+
+def _bundle(root: Path, files: dict[str, bytes] | None = None, manifest: bytes | None = None) -> str:
+    files = FILES if files is None else files
+    root.mkdir(parents=True)
+    for path, data in files.items():
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_bytes(data)
+    data = _manifest(files) if manifest is None else manifest
+    (root / "MANIFEST.json").write_bytes(data)
+    return _sha256(data)
+
+
+def _attributes(path: Path, add: int) -> None:
+    current = ctypes.windll.kernel32.GetFileAttributesW(str(path))
+    assert ctypes.windll.kernel32.SetFileAttributesW(str(path), current | add), path
+
+
+def _junction(link: Path, target: Path) -> None:
+    completed = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def _is_reparse(path: Path) -> bool:
+    return bool(os.lstat(path).st_file_attributes & 0x400)
+
+
+def _icacls(path: Path, *args: str) -> None:
+    completed = subprocess.run(["icacls", str(path), *args], capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+_PROBE = r"""
+param([string]$CorePath, [string]$CasesPath, [string]$OutPath)
+$ErrorActionPreference = 'Stop'
+Add-Type -Path $CorePath
+Add-Type -ReferencedAssemblies @($CorePath, 'System.Web.Extensions', 'System.Core') -TypeDefinition @"
+using System; using System.Collections; using System.Collections.Generic; using System.IO; using System.Linq;
+using System.Security.AccessControl; using System.Security.Cryptography; using System.Security.Principal; using System.Threading;
+using System.Web.Script.Serialization; using SortView.Setup.Core;
+
+// TEST HOOKS, reached only through the stager's public progress callback (called synchronously on the staging thread).
+public sealed class Hook : IProgress<StagingProgress> {
+    readonly IDictionary<string, object> spec; readonly string source; readonly CancellationTokenSource cancel;
+    public readonly List<string> Seen = new List<string>();
+    public Hook(IDictionary<string, object> spec, string source, CancellationTokenSource cancel) { this.spec = spec; this.source = source; this.cancel = cancel; }
+    public void Report(StagingProgress p) {
+        Seen.Add(p.Step + ":" + p.Path);
+        if (spec == null || p.Step != StagingStep.FileCopied || p.Done != 1) return;
+        string kind = (string)spec["kind"];
+        string target = Path.Combine(source, ((string)spec["file"]).Replace('/', '\\'));
+        if (kind == "modify") File.WriteAllBytes(target, Convert.FromBase64String((string)spec["data"]));
+        else if (kind == "delete") File.Delete(target);
+        else if (kind == "deny_read") {
+            var security = File.GetAccessControl(target);
+            security.AddAccessRule(new FileSystemAccessRule(WindowsIdentity.GetCurrent().User, FileSystemRights.ReadData, AccessControlType.Deny));
+            File.SetAccessControl(target, security);
+        }
+        else if (kind == "cancel") cancel.Cancel();
+    }
+}
+
+public static class StagingProbe {
+    static string Sha(string path) { using (var s = SHA256.Create()) using (var f = File.OpenRead(path)) return string.Concat(s.ComputeHash(f).Select(b => b.ToString("x2"))); }
+
+    static StagingPolicy Policy(IDictionary<string, object> c) {
+        Func<string, IEnumerable<SecurityIdentifier>> sids = key => ((IEnumerable)c[key]).Cast<string>().Select(s => s == "ME" ? WindowsIdentity.GetCurrent().User : new SecurityIdentifier(s));
+        object owner = c.ContainsKey("owner") ? c["owner"] : null;
+        return new StagingPolicy((string)c["root"], sids("trusted"), sids("access"), owner == null ? null : new SecurityIdentifier((string)owner));
+    }
+
+    static Dictionary<string, object> Describe(StagedBundle staged, string root) {
+        var r = new Dictionary<string, object>();
+        r["staged"] = staged.IsStaged; r["version"] = staged.Version; r["file_count"] = staged.FileCount;
+        r["problems"] = staged.Problems.Select(p => p.Code.ToString()).ToList();
+        r["problem_paths"] = staged.Problems.Select(p => p.Path).ToList();
+        r["source_problems"] = staged.SourceVerification == null ? null : staged.SourceVerification.Problems.Select(p => p.Code.ToString()).ToList();
+        r["source_verified"] = staged.SourceVerification != null && staged.SourceVerification.IsVerified;
+        r["staged_verified"] = staged.StagedVerification != null && staged.StagedVerification.IsVerified;
+        r["cleanup_problems"] = staged.CleanupProblems.Select(p => p.ToString()).ToList();
+        r["bundle_path"] = staged.BundlePath;
+        if (staged.IsStaged) {
+            var files = new Dictionary<string, object>();
+            foreach (var f in new DirectoryInfo(staged.BundlePath).EnumerateFiles("*", SearchOption.AllDirectories))
+                files[f.FullName.Substring(staged.BundlePath.Length + 1).Replace('\\', '/')] = Sha(f.FullName);
+            r["staged_files"] = files;
+            string run = Path.GetDirectoryName(staged.BundlePath);
+            var security = new DirectoryInfo(run).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
+            r["run_owner"] = security.GetOwner(typeof(SecurityIdentifier)).Value;
+            r["run_protected"] = security.AreAccessRulesProtected;
+            r["run_rules"] = security.GetAccessRules(true, true, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>()
+                .Select(x => x.IdentityReference.Value + "|" + x.AccessControlType + "|" + x.FileSystemRights + "|" + x.IsInherited + "|" + x.InheritanceFlags).ToList();
+            r["run_folder"] = run;
+        }
+        return r;
+    }
+
+    static List<string> RunFolders(string root) {
+        return Directory.Exists(root) ? Directory.GetDirectories(root).Select(Path.GetFileName).ToList() : new List<string>();
+    }
+
+    public static Dictionary<string, object> Run(string casesJson) {
+        var cases = (IDictionary<string, object>)new JavaScriptSerializer().DeserializeObject(casesJson);
+        var outcome = new Dictionary<string, object>();
+        foreach (var pair in cases) {
+            var c = (IDictionary<string, object>)pair.Value;
+            var r = new Dictionary<string, object>();
+            try {
+                if (c.ContainsKey("concurrent")) {
+                    var results = new StagedBundle[2];
+                    var errors = new string[2];
+                    var sources = ((IEnumerable)c["sources"]).Cast<string>().ToList();
+                    var threads = Enumerable.Range(0, 2).Select(i => new Thread(() => {
+                        // An exception escaping a thread would end the whole process: recorded instead.
+                        try { results[i] = BundleStager.Stage(sources[i], (string)c["hash"], null, Policy(c), CancellationToken.None); }
+                        catch (Exception e) { errors[i] = e.ToString(); }
+                    })).ToList();
+                    threads.ForEach(t => t.Start()); threads.ForEach(t => t.Join());
+                    if (errors.Any(e => e != null)) throw new InvalidOperationException(string.Join(" | ", errors.Where(e => e != null)));
+                    r["results"] = results.Select(x => Describe(x, (string)c["root"])).ToList();
+                    foreach (var x in results) x.Dispose();
+                    r["cleanup_after_dispose"] = results.SelectMany(x => x.CleanupProblems.Select(p => p.ToString())).ToList();
+                } else {
+                    var cancel = new CancellationTokenSource();
+                    var hook = new Hook(c.ContainsKey("hook") ? (IDictionary<string, object>)c["hook"] : null, (string)c["source"], cancel);
+                    Guid? runId = c.ContainsKey("run_id") ? (Guid?)new Guid((string)c["run_id"]) : null;
+                    var staged = BundleStager.Stage((string)c["source"], (string)c["hash"], (string)c["version"], Policy(c), cancel.Token, hook, runId);
+                    r = Describe(staged, (string)c["root"]);
+                    r["progress"] = hook.Seen;
+                    if (staged.IsStaged && c.ContainsKey("plant_junction")) {
+                        // A link inside the staged tree before cleanup: removed as a link, its target never entered.
+                        var psi = new System.Diagnostics.ProcessStartInfo("cmd", "/c mklink /J \"" + Path.Combine(staged.BundlePath, "runtime\\linked") + "\" \"" + (string)c["plant_junction"] + "\"");
+                        psi.UseShellExecute = false; psi.CreateNoWindow = true;
+                        using (var p = System.Diagnostics.Process.Start(psi)) p.WaitForExit();
+                    }
+                    string run = staged.IsStaged ? Path.GetDirectoryName(staged.BundlePath) : null;
+                    staged.Dispose();
+                    staged.Dispose(); // twice: harmless
+                    r["disposed"] = staged.IsDisposed;
+                    r["path_after_dispose"] = staged.BundlePath;
+                    r["run_folder_gone"] = run == null || !Directory.Exists(run);
+                    r["cleanup_after_dispose"] = staged.CleanupProblems.Select(p => p.ToString()).ToList();
+                }
+                r["root_entries_after"] = RunFolders((string)c["root"]);
+            } catch (Exception e) { r["error"] = e.ToString(); }
+            outcome[pair.Key] = r;
+        }
+        var production = StagingPolicy.Production;
+        outcome["_process_bits"] = IntPtr.Size * 8;
+        outcome["_production"] = new Dictionary<string, object> {
+            { "root", production.StagingRoot }, { "program_files", Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles) },
+            { "trusted", production.TrustedPrincipals.Select(s => s.Value).ToList() }, { "access", production.AccessPrincipals.Select(s => s.Value).ToList() },
+            { "owner", production.Owner.Value } };
+        return outcome;
+    }
+}
+"@
+$result = [StagingProbe]::Run((Get-Content -LiteralPath $CasesPath -Raw))
+ConvertTo-Json -InputObject $result -Depth 8 | Set-Content -LiteralPath $OutPath -Encoding UTF8
+"""
+
+
+@pytest.fixture(scope="module")
+def core_dll() -> Path:
+    completed = subprocess.run([_MSBUILD, str(CORE_PROJECT), "/p:Configuration=Release", "/nologo", "/v:minimal"],
+                               capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    return CORE_DIR / "bin" / "Release" / "SortView.Setup.Core.dll"
+
+
+def _policy(root: Path, **overrides) -> dict:
+    policy = {"root": str(root), "trusted": [SYSTEM, ADMINISTRATORS, TRUSTED_INSTALLER, "ME"], "access": [SYSTEM, ADMINISTRATORS, "ME"],
+              "owner": None}
+    policy.update(overrides)
+    return policy
+
+
+def _build(base: Path) -> tuple[dict, dict]:
+    cases: dict[str, dict] = {}
+    notes: dict = {"denied": [], "sources": {}, "outside": None, "preexisting": None, "roots": []}
+
+    def case(name: str, *, files=None, manifest=None, version=None, root=None, **extra) -> Path:
+        source = base / "sources" / name
+        sha = _bundle(source, files, manifest)
+        root = root or base / "roots" / name
+        if not extra.pop("root_prepared", False):
+            root.mkdir(parents=True, exist_ok=True)
+        cases[name] = {"source": str(source), "hash": sha, "version": version, **_policy(root), **extra}
+        notes["sources"][name] = source
+        notes["roots"].append(root)
+        return source
+
+    case("valid")
+    case("valid_with_version", version=VERSION)
+    case("version_mismatch", version="9.9.9")
+    case("invalid_version", version="1.2; x")
+    case("wrong_hash")
+    cases["wrong_hash"]["hash"] = _sha256(b"another manifest")
+    case("invalid_hash")
+    cases["invalid_hash"]["hash"] = "not-a-hash"
+
+    source = case("modified_before")
+    (source / "runtime/_internal/library.dll").write_bytes(b"FIXTURE: NOT A LIBRARY")
+    source = case("missing_before")
+    (source / "runtime/_internal/library.dll").unlink()
+    source = case("unlisted_file")
+    (source / "notes.txt").write_bytes(b"unlisted")
+    source = case("unlisted_hidden_file")
+    (source / "runtime/_internal/planted.dll").write_bytes(b"planted")
+    _attributes(source / "runtime/_internal/planted.dll", 0x2)
+    source = case("unlisted_folder")
+    (source / "runtime/empty").mkdir()
+
+    files = dict(FILES)
+    hidden = base / "sources" / "listed_hidden_and_system"
+    _bundle(hidden, files)
+    _attributes(hidden / "runtime/_internal/library.dll", 0x2)
+    _attributes(hidden / "runtime/SortViewCollector.exe", 0x4)
+    root = base / "roots" / "listed_hidden_and_system"
+    root.mkdir(parents=True)
+    cases["listed_hidden_and_system"] = {"source": str(hidden), "hash": _sha256(_manifest(files)), "version": None, **_policy(root)}
+    notes["sources"]["listed_hidden_and_system"] = hidden
+
+    outside = base / "outside"
+    outside.mkdir()
+    (outside / "from-outside.dll").write_bytes(b"outside")
+    notes["outside"] = outside
+    source = case("source_junction")
+    _junction(source / "runtime/_internal/linked", outside)
+    case("unsafe_manifest_path", manifest=_manifest(FILES, extra=[{"path": "../escape.dll", "sha256": "0" * 64, "size_bytes": 0}]))
+
+    # Changes after the source verified, made through the progress callback once the FIRST file is copied (files are
+    # copied in manifest order, so "runtime/_internal/zz-last.dll" is still to come).
+    case("changed_during_copy", hook={"kind": "modify", "file": "runtime/_internal/zz-last.dll",
+                                       "data": "VEhFIExBU1QgRklMRSBDT1BJRUQ="})  # same size, different bytes
+    case("grew_during_copy", hook={"kind": "modify", "file": "runtime/_internal/zz-last.dll",
+                                    "data": "dGhlIGxhc3QgZmlsZSBjb3BpZWQgYW5kIG1vcmUgYW5kIG1vcmU="})
+    case("deleted_during_copy", hook={"kind": "delete", "file": "runtime/_internal/zz-last.dll"})
+    source = case("unreadable_during_copy", hook={"kind": "deny_read", "file": "runtime/_internal/zz-last.dll"})
+    notes["denied"].append(source / "runtime/_internal/zz-last.dll")
+    case("cancelled", hook={"kind": "cancel", "file": "setup.ps1"})
+
+    # The destination.
+    root = base / "roots" / "root_missing" / "SortView" / "SetupStaging"
+    case("root_missing_is_created", root=root, root_prepared=True)
+    root = base / "roots" / "writable_root"
+    case("writable_root", root=root)
+    notes["writable_root"] = root
+    # C:\ is owned by TrustedInstaller: a policy that does not trust it refuses there, on ownership.
+    case("untrusted_owner")
+    cases["untrusted_owner"]["trusted"] = [SYSTEM, ADMINISTRATORS, "ME"]
+    # Not trusting the current user: the first folder it may write to (its profile) is refused, on permissions.
+    case("profile_writable_by_untrusted_user")
+    cases["profile_writable_by_untrusted_user"]["trusted"] = [SYSTEM, ADMINISTRATORS, TRUSTED_INSTALLER]
+    cases["profile_writable_by_untrusted_user"]["access"] = [SYSTEM, ADMINISTRATORS]
+    real = base / "roots" / "real-target"
+    real.mkdir(parents=True)
+    _junction(base / "roots" / "junction_root", real)
+    case("junction_root", root=base / "roots" / "junction_root", root_prepared=True)
+    (base / "roots" / "parent-target").mkdir(parents=True)
+    _junction(base / "roots" / "junction_parent", base / "roots" / "parent-target")
+    case("junction_parent", root=base / "roots" / "junction_parent" / "stage", root_prepared=True)
+    (base / "roots" / "a-file").write_bytes(b"not a folder")
+    case("root_is_a_file", root=base / "roots" / "a-file", root_prepared=True)
+    case("access_not_trusted")
+    cases["access_not_trusted"]["access"] = [SYSTEM, ADMINISTRATORS, "ME", "S-1-1-0"]
+
+    preexisting_id = "0123456789abcdef0123456789abcdef"
+    root = base / "roots" / "collision"
+    case("collision", root=root, run_id="01234567-89ab-cdef-0123-456789abcdef")
+    (root / preexisting_id).mkdir()
+    (root / preexisting_id / "someone-elses.txt").write_bytes(b"not ours")
+    notes["preexisting"] = root / preexisting_id
+
+    case("cleanup_with_junction", plant_junction=str(outside))
+    # A run-folder owner Windows will not let this process assign: CreateDirectoryW fails (ERROR_INVALID_OWNER), so the
+    # folder is never created -- not created with some other owner or permissions.
+    case("unassignable_owner")
+    cases["unassignable_owner"]["trusted"] = [SYSTEM, ADMINISTRATORS, TRUSTED_INSTALLER, "ME", LOCAL_SERVICE]
+    cases["unassignable_owner"]["owner"] = LOCAL_SERVICE
+    root = base / "roots" / "concurrent"
+    root.mkdir(parents=True)
+    sources = [base / "sources" / f"concurrent_{i}" for i in (1, 2)]
+    sha = ""
+    for s in sources:
+        sha = _bundle(s)
+    cases["concurrent"] = {"concurrent": True, "sources": [str(s) for s in sources], "hash": sha, **_policy(root)}
+    return cases, notes
+
+
+def _run_probe(base: Path, cases: dict, core_dll: Path, powershell: str) -> dict:
+    (base / "cases.json").write_text(json.dumps(cases), encoding="utf-8")
+    (base / "probe.ps1").write_text(_PROBE, encoding="utf-8")
+    completed = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+                                str(base / "probe.ps1"), "-CorePath", str(core_dll), "-CasesPath", str(base / "cases.json"),
+                                "-OutPath", str(base / "out.json")], capture_output=True, text=True, timeout=600, check=False)
+    assert (base / "out.json").exists(), completed.stdout + completed.stderr
+    return json.loads((base / "out.json").read_text(encoding="utf-8-sig"))
+
+
+def _remove_links(base: Path) -> None:
+    for dirpath, dirnames, _ in os.walk(base, topdown=True, followlinks=False):  # junctions removed as links only
+        for name in list(dirnames):
+            if _is_reparse(Path(dirpath) / name):
+                os.rmdir(Path(dirpath) / name)
+                dirnames.remove(name)
+
+
+@pytest.fixture(scope="module")
+def results(tmp_path_factory, core_dll) -> dict:
+    base = tmp_path_factory.mktemp("staging")
+    cases, notes = _build(base)
+    user = getpass.getuser()
+    _icacls(notes["writable_root"], "/grant", "*S-1-1-0:(OI)(CI)(W)")  # Everyone may write: a fixture folder only
+    try:
+        out = _run_probe(base, cases, core_dll, _POWERSHELL)
+    finally:
+        for path in notes["denied"]:
+            if path.exists():
+                _icacls(path, "/remove:d", user)
+        _icacls(notes["writable_root"], "/remove:g", "*S-1-1-0")
+    out["_notes"] = notes
+    out["_leftovers"] = sorted(str(p) for root in notes["roots"] if root.is_dir() and not _is_reparse(root)
+                               for p in root.iterdir() if p.name != notes["preexisting"].name)
+    _remove_links(base)
+    return out
+
+
+# The native call in a 32-bit process (SysWOW64 Windows PowerShell): SECURITY_ATTRIBUTES is 12 bytes there, not 24.
+CASES_32 = ("valid", "listed_hidden_and_system", "collision", "unassignable_owner", "cleanup_with_junction", "concurrent")
+
+
+@pytest.fixture(scope="module")
+def results32(tmp_path_factory, core_dll) -> dict:
+    if not WINDOWS_POWERSHELL_32.exists():
+        pytest.skip("no 32-bit Windows PowerShell on this machine")
+    base = tmp_path_factory.mktemp("staging32")
+    cases, notes = _build(base)
+    try:
+        out = _run_probe(base, {name: cases[name] for name in CASES_32}, core_dll, str(WINDOWS_POWERSHELL_32))
+    finally:
+        _remove_links(base)
+    out["_notes"] = notes
+    return out
+
+
+def _r(results: dict, name: str) -> dict:
+    result = results[name]
+    assert "error" not in result, result.get("error")
+    return result
+
+
+@needs_bridge
+@pytest.mark.parametrize("name", ["valid", "valid_with_version", "listed_hidden_and_system", "root_missing_is_created"])
+def test_a_verified_bundle_is_staged_exactly_and_removed_on_dispose(results, name):
+    r = _r(results, name)
+    assert r["staged"] is True and r["problems"] == [] and r["source_verified"] and r["staged_verified"], r
+    assert r["version"] == VERSION and r["file_count"] == len(FILES)
+    # Exactly the listed files plus the manifest, byte for byte the originals.
+    source = results["_notes"]["sources"][name]
+    expected = {p: _sha256(d) for p, d in FILES.items()} | {"MANIFEST.json": _sha256((source / "MANIFEST.json").read_bytes())}
+    assert r["staged_files"] == expected
+    # The run folder: protected, owned by the creator (this test policy names no owner), full control for exactly the
+    # access principals, nothing inherited.
+    assert r["run_protected"] is True
+    me = r["run_owner"]
+    assert sorted(rule.split("|")[0] for rule in r["run_rules"]) == sorted([SYSTEM, ADMINISTRATORS, me])
+    assert all(rule.endswith("|Allow|FullControl|False|ContainerInherit, ObjectInherit") for rule in r["run_rules"]), r["run_rules"]
+    # Dispose removed it, and only it.
+    assert r["disposed"] is True and r["path_after_dispose"] is None and r["run_folder_gone"] is True
+    assert r["cleanup_after_dispose"] == [] and r["root_entries_after"] == []
+    assert r["progress"][0] == "SourceVerified:" and r["progress"][-1] == "StagedVerified:"
+
+
+EXPECTED = {
+    "version_mismatch": (["SourceNotVerified"], ["VersionMismatch"]),
+    "invalid_version": (["RequestInvalid"], None),
+    "wrong_hash": (["SourceNotVerified"], ["ManifestHashMismatch"]),
+    "invalid_hash": (["RequestInvalid"], None),
+    "modified_before": (["SourceNotVerified"], ["HashMismatch"]),
+    "missing_before": (["SourceNotVerified"], ["FileMissing"]),
+    "unlisted_file": (["SourceNotVerified"], ["UnexpectedFile"]),
+    "unlisted_hidden_file": (["SourceNotVerified"], ["UnexpectedFile"]),
+    "unlisted_folder": (["SourceNotVerified"], ["UnexpectedDirectory"]),
+    "source_junction": (["SourceNotVerified"], ["ReparsePoint"]),
+    "unsafe_manifest_path": (["SourceNotVerified"], ["UnsafePath"]),
+    "changed_during_copy": (["SourceChanged"], []),
+    "grew_during_copy": (["SourceChanged"], []),
+    "deleted_during_copy": (["SourceChanged"], []),
+    "unreadable_during_copy": (["AccessDenied"], []),
+    "cancelled": (["Cancelled"], []),
+    "writable_root": (["WritableByUntrusted"], None),
+    "untrusted_owner": (["UntrustedOwner"], None),
+    "profile_writable_by_untrusted_user": (["WritableByUntrusted"], None),
+    "junction_root": (["ReparsePoint"], None),
+    "junction_parent": (["ReparsePoint"], None),
+    "root_is_a_file": (["NotADirectory"], None),
+    "access_not_trusted": (["RequestInvalid"], None),
+    "collision": (["RunFolderExists"], []),
+    "unassignable_owner": (["CreateFailed"], []),
+}
+
+
+@needs_bridge
+@pytest.mark.parametrize("name", sorted(EXPECTED))
+def test_every_unsafe_or_failed_staging_is_refused_and_leaves_nothing(results, name):
+    r = _r(results, name)
+    problems, source_problems = EXPECTED[name]
+    assert r["staged"] is False and r["bundle_path"] is None, r
+    assert r["problems"] == problems, r
+    if source_problems is None:
+        assert r["source_problems"] is None, r  # stopped before the source was even read
+    else:
+        assert r["source_problems"] == source_problems, r
+    assert r["cleanup_problems"] == [] and r["cleanup_after_dispose"] == [], r
+    # Nothing left in the staging root (the collision's pre-existing folder is not ours and is never touched).
+    assert r["root_entries_after"] == ([] if name != "collision" else ["0123456789abcdef0123456789abcdef"]), r
+
+
+@needs_bridge
+def test_a_folder_that_already_exists_is_never_reused_or_touched(results):
+    preexisting = results["_notes"]["preexisting"]
+    assert (preexisting / "someone-elses.txt").read_bytes() == b"not ours"
+    assert sorted(p.name for p in preexisting.iterdir()) == ["someone-elses.txt"]
+
+
+@needs_bridge
+def test_the_problem_names_where_the_chain_is_unsafe(results):
+    assert results["writable_root"]["problem_paths"] == [results["writable_root"]["problem_paths"][0]]
+    assert results["writable_root"]["problem_paths"][0].endswith("writable_root")
+    assert results["junction_root"]["problem_paths"][0].endswith("junction_root")
+    assert results["junction_parent"]["problem_paths"][0].endswith("junction_parent")
+    assert results["untrusted_owner"]["problem_paths"] == ["C:\\"]
+    profile = str(Path(os.environ["USERPROFILE"]))
+    assert results["profile_writable_by_untrusted_user"]["problem_paths"][0].lower() == profile.lower()
+
+
+@needs_bridge
+def test_cleanup_removes_a_link_without_entering_it(results):
+    r = _r(results, "cleanup_with_junction")
+    assert r["staged"] is True and r["run_folder_gone"] is True and r["cleanup_after_dispose"] == [], r
+    outside = results["_notes"]["outside"]
+    assert (outside / "from-outside.dll").read_bytes() == b"outside"  # the link's target survived
+
+
+@needs_bridge
+def test_concurrent_stagings_are_independent(results):
+    r = _r(results, "concurrent")
+    first, second = r["results"]
+    assert first["staged"] and second["staged"], r
+    assert first["run_folder"] != second["run_folder"]
+    assert first["staged_files"] == second["staged_files"]
+    assert r["cleanup_after_dispose"] == [] and r["root_entries_after"] == []
+
+
+@needs_bridge
+def test_no_staging_leaves_anything_behind(results):
+    # Every staging root holds nothing but what the tests put there themselves (the root_missing case's created
+    # SortView\SetupStaging chain is the staging root itself, and is empty).
+    assert results["_leftovers"] == [], results["_leftovers"]
+
+
+@needs_bridge
+def test_the_production_policy_is_program_files_and_administrators_only(results):
+    production = results["_production"]
+    assert production["root"] == str(Path(production["program_files"]) / "SortView" / "SetupStaging")
+    assert production["trusted"] == [SYSTEM, ADMINISTRATORS, TRUSTED_INSTALLER]
+    assert production["access"] == [SYSTEM, ADMINISTRATORS]
+    assert production["owner"] == ADMINISTRATORS
+
+
+@needs_bridge
+def test_an_owner_that_cannot_be_assigned_fails_closed_and_creates_nothing(results):
+    r = _r(results, "unassignable_owner")
+    assert r["source_verified"] is True  # it got as far as creating the run folder
+    assert r["problems"] == ["CreateFailed"] and r["problem_paths"][0].endswith("(error 1307)"), r  # ERROR_INVALID_OWNER
+    assert r["root_entries_after"] == [] and r["cleanup_problems"] == [], r
+
+
+@needs_bridge
+def test_the_native_staging_call_works_in_a_32_bit_process(results32):
+    assert results32["_process_bits"] == 32
+    valid = _r(results32, "valid")
+    assert valid["staged"] is True and valid["run_protected"] is True and valid["run_folder_gone"] is True, valid
+    assert sorted(rule.split("|")[0] for rule in valid["run_rules"]) == sorted([SYSTEM, ADMINISTRATORS, valid["run_owner"]])
+    assert _r(results32, "listed_hidden_and_system")["staged"] is True
+    assert _r(results32, "collision")["problems"] == ["RunFolderExists"]
+    unassignable = _r(results32, "unassignable_owner")
+    assert unassignable["problems"] == ["CreateFailed"] and unassignable["problem_paths"][0].endswith("(error 1307)")
+    assert unassignable["root_entries_after"] == []
+    assert _r(results32, "cleanup_with_junction")["run_folder_gone"] is True
+    assert (results32["_notes"]["outside"] / "from-outside.dll").read_bytes() == b"outside"
+    concurrent = _r(results32, "concurrent")
+    assert all(x["staged"] for x in concurrent["results"]) and concurrent["root_entries_after"] == []
+
+
+@needs_bridge
+def test_the_main_run_is_a_64_bit_process(results):
+    assert results["_process_bits"] == 64

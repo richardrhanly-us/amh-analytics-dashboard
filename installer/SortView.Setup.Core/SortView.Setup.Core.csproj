@@ -28,6 +28,7 @@
     <Compile Include="PromptBridge.cs" />
     <Compile Include="SetupEngineHost.cs" />
     <Compile Include="BundleVerifier.cs" />
+    <Compile Include="BundleStager.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
