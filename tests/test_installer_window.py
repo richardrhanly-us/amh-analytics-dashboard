@@ -74,6 +74,9 @@ def test_the_window_can_only_run_a_generated_simulation():
         assert real_path not in wizard, real_path
     assert "OpenFileDialog" not in window  # the window offers no file picker of its own...
     assert wizard.count("new OpenFileDialog") == 1 and "private void BrowseButton_Click" in wizard  # ...the wizard's is for source files only
+    # A picked file is only put in the path box; the customer sends it ("Use this file"). Nothing is submitted for them.
+    browse = wizard[wizard.index("private void BrowseButton_Click"):wizard.index("private void CodeBox_PasswordChanged")]
+    assert "Answer(" not in browse and "PathBox.Text = dialog.FileName;" in browse
     # The simulated machine lives under %TEMP% and talks only to a reserved .invalid host.
     assert 'Path.Combine(Path.GetTempPath(), "SortViewSetupSimulation"' in workspace
     assert f'public const string SimulationApiUrl = "{SIMULATION_API}";' in workspace
@@ -148,7 +151,7 @@ $AE = [System.Windows.Automation.AutomationElement]
 $TS = [System.Windows.Automation.TreeScope]
 $steps = @(Get-Content -LiteralPath $StepsPath -Raw | ConvertFrom-Json | ForEach-Object { $_ })
 $out = [ordered]@{ error = $null; snapshots = @(); prompts_seen = @(); prompt_history = @(); max_children = 0; max_console_windows = 0
-                   latencies = @(); exited = $false; workspace = $null; command_line = $null }
+                   latencies = @(); exited = $false; workspace = $null; command_line = $null; second_clicks = @() }
 $proc = Start-Process -FilePath $ExePath -PassThru
 $window = $null
 for ($i = 0; $i -lt 300 -and $null -eq $window; $i++) {
@@ -186,6 +189,12 @@ function Selected([string]$id) {
 function Names($element) {
     @($element.FindAll($TS::Children, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name })
 }
+function PanelText([string]$id) {
+    $panel = Find $id
+    if ($null -eq $panel) { return $null }
+    (@($panel.FindAll($TS::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name }) -join "`n")
+}
+function Enabled([string]$id) { $e = Find $id; if ($null -eq $e) { $null } else { $e.Current.IsEnabled } }
 function Snapshot([string]$label) {
     $cancel = Find 'CancelButton'
     [ordered]@{
@@ -194,7 +203,10 @@ function Snapshot([string]$label) {
         cancel_enabled = $cancel.Current.IsEnabled
         cancel_note = (Find 'CancelNote').Current.Name
         prompt = (Find 'PromptId').Current.Name
-        details = $(if ($null -ne (Find 'PromptDetails')) { (Find 'PromptDetails').Current.Name } else { $null })
+        details = PanelText 'PromptPanel'
+        outcome = PanelText 'OutcomePanel'
+        use_path_enabled = Enabled 'UsePathButton'
+        enroll_enabled = Enabled 'EnrollButton'
         fault = $(if (Selected 'FaultInstall') { 'install' } elseif (Selected 'FaultVerification') { 'verification' } elseif (Selected 'FaultNone') { 'none' } else { '?' })
         events = Names (Find 'EventList')
         console = Names (Find 'DiagnosticList')
@@ -222,6 +234,20 @@ try {
                 if (($toggle.Current.ToggleState -eq 'On') -ne [bool]$step.on) { $toggle.Toggle() }
             }
             'click' { (Find $step.id).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
+            'click_again' {
+                # A second press, straight after the first: records whether it could be pressed at all.
+                $again = Find $step.id
+                $pressed = $false
+                if ($null -ne $again -and $again.Current.IsEnabled -and -not $again.Current.IsOffscreen) {
+                    try { $again.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); $pressed = $true } catch { }
+                }
+                $out.second_clicks += $pressed
+            }
+            'copy' {
+                $to = ([string]$step.to).Replace('{workspace}', $out.workspace)
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $to) | Out-Null
+                Copy-Item -LiteralPath ([string]$step.from).Replace('{workspace}', $out.workspace) -Destination $to
+            }
             'text' { (Find $step.id).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value) }
             'wait_prompt' {
                 Wait-Until { (Find 'PromptId').Current.Name -eq $step.prompt } 90 "the question $($step.prompt)"
@@ -327,10 +353,13 @@ def test_a_legacy_setup_through_the_window_answers_every_question_on_screen(tmp_
         {"op": "snapshot", "label": "start"},
         {"op": "click", "id": "StartButton"},
         {"op": "wait_prompt", "prompt": "sources_confirm"}, {"op": "snapshot", "label": "sources"},
-        {"op": "click", "id": "PromptPrimary"},
-        *_answer_code(),
+        {"op": "click", "id": "UseStandardFilesButton"},
+        {"op": "wait_prompt", "prompt": "enrollment_code"}, {"op": "snapshot", "label": "code_empty"},
+        {"op": "text", "id": "CodeBox", "value": DUMMY_CODE}, {"op": "snapshot", "label": "code_typed"},
+        {"op": "click", "id": "EnrollButton"}, {"op": "click_again", "id": "EnrollButton"},
+        {"op": "snapshot", "label": "code_sent"},
         {"op": "wait_prompt", "prompt": "legacy_task_enable"}, {"op": "snapshot", "label": "enable"},
-        {"op": "click", "id": "PromptSecondary"},
+        {"op": "click", "id": "LeaveTaskDisabledButton"},
         {"op": "wait_status", "contains": "Finished"}, {"op": "snapshot", "label": "done"},
         {"op": "close"}, {"op": "wait_exit"},
     ]
@@ -339,7 +368,15 @@ def test_a_legacy_setup_through_the_window_answers_every_question_on_screen(tmp_
 
     assert "SIMULATION ONLY" in snapshot(result, "start")["all_text"]
     assert result["prompts_seen"] == ["sources_confirm", "enrollment_code", "legacy_task_enable"]
-    assert "TechLogic" in snapshot(result, "sources")["details"]
+    # The standard files, each named for its source.
+    sources = snapshot(result, "sources")["details"]
+    for label, name in (("Checkins", "Checkins.txt"), ("Rejects", "Rejects.txt"), ("ACS", "ACS Log.txt")):
+        assert label in sources and f"TechLogic\\{name}" in sources
+    # Enroll is offered only once a code is typed, and pressing it again straight away is impossible: one submission.
+    assert snapshot(result, "code_empty")["enroll_enabled"] is False
+    assert snapshot(result, "code_typed")["enroll_enabled"] is True and "works only once" in snapshot(result, "code_typed")["details"]
+    assert result["second_clicks"] == [False]
+    assert snapshot(result, "code_sent")["prompt"] in ("none", None)
     enable = snapshot(result, "enable")
     assert enable["cancel_enabled"] is False and "no longer be cancelled safely" in enable["cancel_note"]
     done = snapshot(result, "done")
@@ -350,25 +387,43 @@ def test_a_legacy_setup_through_the_window_answers_every_question_on_screen(tmp_
     # The console text is kept apart from the structured events.
     assert any("COMPLETE" in line for line in done["console"])
     assert not any("=== Step" in line for line in done["events"])
+    assert "SortView setup is complete" in done["outcome"] and "left disabled" in done["outcome"]
     assert workspace_tools(result) == LEGACY_TOOLS
     assert result["exited"] is True
     assert_window_invariants(result)
 
 
+def _stop_text(shot: dict) -> str:
+    """The engine's "What to do" text from a run's events (as the event list shows it)."""
+    return next(line.strip() for line in shot["events"] if line.strip().startswith("What to do: "))
+
+
+def _config_sources(result: dict) -> dict:
+    config = json.loads((Path(result["workspace"]) / "data" / "config" / "collector_config.json").read_text(encoding="utf-8-sig"))
+    return {source["name"]: source["path"] for source in config["sources"]}
+
+
 @needs_bridge
-def test_a_v2_setup_with_files_chosen_by_hand_through_the_window(tmp_path, window_exe):
+def test_a_v2_setup_with_files_of_any_name_in_separate_folders_chosen_by_hand(tmp_path, window_exe):
     hidden = "{workspace}\\TechLogic\\"
+    checkins = "{workspace}\\Export A\\daily check-ins.log"
+    rejects = "{workspace}\\Export B\\Sorter rejects (2026).txt"
+    acs = hidden + "ACS Log.txt.hidden"
     steps = [
         {"op": "select", "id": "ScenarioV2"}, {"op": "toggle", "id": "StandardFilesPresent", "on": False},
         {"op": "click", "id": "StartButton"},
-        {"op": "wait_prompt", "prompt": "source_path"},
+        {"op": "wait_prompt", "prompt": "source_path"}, {"op": "snapshot", "label": "first"},
+        {"op": "copy", "from": hidden + "Checkins.txt.hidden", "to": checkins},
+        {"op": "copy", "from": hidden + "Rejects.txt.hidden", "to": rejects},
         {"op": "text", "id": "PathBox", "value": "{workspace}\\nowhere\\Checkins.txt"}, {"op": "click", "id": "UsePathButton"},
         {"op": "sleep", "ms": 800}, {"op": "wait_prompt", "prompt": "source_path"}, {"op": "snapshot", "label": "refused"},
-        {"op": "text", "id": "PathBox", "value": hidden + "Checkins.txt.hidden"}, {"op": "click", "id": "UsePathButton"},
-        {"op": "sleep", "ms": 800}, {"op": "wait_prompt", "prompt": "source_path"},
-        {"op": "text", "id": "PathBox", "value": hidden + "Rejects.txt.hidden"}, {"op": "click", "id": "UsePathButton"},
-        {"op": "sleep", "ms": 800}, {"op": "wait_prompt", "prompt": "source_path"},
-        {"op": "text", "id": "PathBox", "value": hidden + "ACS Log.txt.hidden"}, {"op": "click", "id": "UsePathButton"},
+        # A network path is warned about, never refused by the window -- and nothing is sent until "Use this file".
+        {"op": "text", "id": "PathBox", "value": "\\\\library-files\\techlogic\\Checkins.txt"}, {"op": "snapshot", "label": "network"},
+        {"op": "text", "id": "PathBox", "value": checkins}, {"op": "click", "id": "UsePathButton"},
+        {"op": "sleep", "ms": 800}, {"op": "wait_prompt", "prompt": "source_path"}, {"op": "snapshot", "label": "rejects"},
+        {"op": "text", "id": "PathBox", "value": rejects}, {"op": "click", "id": "UsePathButton"},
+        {"op": "sleep", "ms": 800}, {"op": "wait_prompt", "prompt": "source_path"}, {"op": "snapshot", "label": "acs"},
+        {"op": "text", "id": "PathBox", "value": acs}, {"op": "click", "id": "UsePathButton"},
         *_answer_code(),
         {"op": "wait_status", "contains": "Finished"}, {"op": "snapshot", "label": "done"},
         {"op": "close"}, {"op": "wait_exit"},
@@ -376,11 +431,80 @@ def test_a_v2_setup_with_files_chosen_by_hand_through_the_window(tmp_path, windo
 
     result = drive(window_exe, tmp_path, steps)
 
-    assert "refused (file not found)" in snapshot(result, "refused")["details"]  # the engine judged the path, and said why
+    first = snapshot(result, "first")
+    assert "Choose the Tech Logic Checkins file" in first["details"] and "Attempt 1 of 3." in first["details"]
+    # The standard file is missing, so the engine's first question already says so; the path is offered for correction.
+    assert "Setup could not find a file at:" in first["details"] and "TechLogic\\Checkins.txt" in first["details"]
+    # The engine judged the path, and the window says why -- and offers the refused path for correction.
+    refused = snapshot(result, "refused")
+    assert "Setup could not find a file at:" in refused["details"] and "nowhere\\Checkins.txt" in refused["details"]
+    assert "Attempt 2 of 3." in refused["details"]
+    network = snapshot(result, "network")
+    assert "network location" in network["details"] and network["use_path_enabled"] is True
+    assert "Choose the Tech Logic Rejects file" in snapshot(result, "rejects")["details"]
+    assert "Choose the Tech Logic ACS file" in snapshot(result, "acs")["details"]
     done = snapshot(result, "done")
-    assert "exit code 0" in done["status"]
+    assert "exit code 0" in done["status"] and "SortView setup is complete" in done["outcome"]
     assert any("FINISHED: completed, exit 0" in line and "contract 2" in line and "task Enabled" in line for line in done["events"])
     assert "legacy_task_enable" not in result["prompts_seen"]
+    # Exactly the files chosen -- any names, any folders -- are what the installed Collector reads.
+    workspace = result["workspace"]
+    assert _config_sources(result) == {name: path.replace("{workspace}", workspace)
+                                       for name, path in (("checkins", checkins), ("rejects", rejects), ("acs", acs))}
+    assert_window_invariants(result)
+
+
+@needs_bridge
+def test_a_missing_source_file_is_asked_for_three_times_then_setup_stops_before_the_code(tmp_path, window_exe):
+    missing = "{workspace}\\nowhere\\Checkins.txt"
+    steps = [
+        {"op": "toggle", "id": "StandardFilesPresent", "on": False},
+        {"op": "click", "id": "StartButton"},
+        {"op": "wait_prompt", "prompt": "source_path"},
+        {"op": "text", "id": "PathBox", "value": missing}, {"op": "click", "id": "UsePathButton"},
+        {"op": "sleep", "ms": 800}, {"op": "wait_prompt", "prompt": "source_path"},
+        {"op": "text", "id": "PathBox", "value": "relative\\Checkins.txt"}, {"op": "click", "id": "UsePathButton"},
+        {"op": "sleep", "ms": 800}, {"op": "wait_prompt", "prompt": "source_path"}, {"op": "snapshot", "label": "last"},
+        {"op": "text", "id": "PathBox", "value": missing}, {"op": "click", "id": "UsePathButton"},
+        {"op": "wait_status", "contains": "Finished"}, {"op": "snapshot", "label": "done"},
+        {"op": "close"}, {"op": "wait_exit"},
+    ]
+
+    result = drive(window_exe, tmp_path, steps)
+
+    last = snapshot(result, "last")
+    assert "Attempt 3 of 3. If this file is not accepted either, setup stops." in last["details"]
+    assert "That is not a full path" in last["details"]
+    done = snapshot(result, "done")
+    assert "exit code 1" in done["status"]
+    assert "Setup stopped before it finished" in done["outcome"] and "The checkins source file was not found" in done["outcome"]
+    assert _stop_text(done) in done["outcome"]
+    assert "enrollment_code" not in result["prompt_history"]
+    assert "http:POST" not in workspace_tools(result)  # no enrollment request
+    assert_window_invariants(result)
+
+
+@needs_bridge
+def test_declining_to_resume_stops_with_the_engines_advice_and_no_new_code(tmp_path, window_exe):
+    steps = [
+        {"op": "select", "id": "FaultInstall"},
+        {"op": "click", "id": "StartButton"},
+        {"op": "wait_prompt", "prompt": "sources_confirm"}, {"op": "click", "id": "UseStandardFilesButton"},
+        *_answer_code(),
+        {"op": "wait_status", "contains": "Finished"},
+        {"op": "click", "id": "StartButton"},
+        {"op": "wait_prompt", "prompt": "resume_confirm"}, {"op": "click", "id": "DontResumeButton"},
+        {"op": "wait_status", "contains": "Finished"}, {"op": "snapshot", "label": "declined"},
+        {"op": "close"}, {"op": "wait_exit"},
+    ]
+
+    result = drive(window_exe, tmp_path, steps)
+
+    declined = snapshot(result, "declined")
+    assert "exit code 2" in declined["status"]
+    assert "Resuming the unfinished setup was declined." in declined["outcome"] and _stop_text(declined) in declined["outcome"]
+    assert result["prompt_history"] == ["sources_confirm", "enrollment_code", "resume_confirm"]  # the code was asked for once
+    assert workspace_tools(result).count("http:POST") == 2  # the first run's only (the v2 refusal, then the legacy request)
     assert_window_invariants(result)
 
 
@@ -398,14 +522,14 @@ def test_an_interrupted_setup_resumes_on_the_next_start_with_no_option_changed(t
         {"op": "click", "id": "StartButton"},
         {"op": "wait_status", "contains": "applies to this run only"}, {"op": "snapshot", "label": "first_run"},
         {"op": "wait_prompt", "prompt": "sources_confirm"},
-        {"op": "click", "id": "PromptPrimary"},
+        {"op": "click", "id": "UseStandardFilesButton"},
         *_answer_code(),
         {"op": "wait_status", "contains": "Finished"}, {"op": "snapshot", "label": "interrupted"},
         {"op": "click", "id": "StartButton"},  # no option touched
         {"op": "wait_prompt", "prompt": "resume_confirm"}, {"op": "snapshot", "label": "resume"},
-        {"op": "click", "id": "PromptPrimary"},
-        {"op": "wait_prompt", "prompt": "sources_confirm"}, {"op": "click", "id": "PromptPrimary"},
-        *([] if v2 else [{"op": "wait_prompt", "prompt": "legacy_task_enable"}, {"op": "click", "id": "PromptPrimary"}]),
+        {"op": "click", "id": "ResumeButton"},
+        {"op": "wait_prompt", "prompt": "sources_confirm"}, {"op": "click", "id": "UseStandardFilesButton"},
+        *([] if v2 else [{"op": "wait_prompt", "prompt": "legacy_task_enable"}, {"op": "click", "id": "EnableTaskButton"}]),
         {"op": "wait_status", "contains": "Finished"}, {"op": "snapshot", "label": "done"},
         {"op": "close"}, {"op": "wait_exit"},
     ]
@@ -421,8 +545,12 @@ def test_an_interrupted_setup_resumes_on_the_next_start_with_no_option_changed(t
     interrupted = snapshot(result, "interrupted")
     assert "exit code 3" in interrupted["status"] and interrupted["fault"] == "none"
     assert any("run setup.ps1 again to RESUME" in line for line in interrupted["events"])
+    assert "Setup stopped before it finished" in interrupted["outcome"]
+    assert _stop_text(interrupted) in interrupted["outcome"]  # the engine's own advice, word for word
     # The second run, started with nothing changed, recognises the saved installation and resumes it.
-    assert "Installation 41" in snapshot(result, "resume")["details"]
+    resume = snapshot(result, "resume")["details"]
+    assert "Installation 41" in resume and "No new enrollment code is needed" in resume
+    assert f"Contract v{2 if v2 else 1}" in resume
     done = snapshot(result, "done")
     assert "exit code 0" in done["status"]
     assert any("Mode: resume_install" in line for line in done["events"])
@@ -446,7 +574,7 @@ def test_an_interrupted_setup_resumes_on_the_next_start_with_no_option_changed(t
 def test_cancel_before_enrollment_stops_safely_without_sending_the_code(tmp_path, window_exe):
     steps = [
         {"op": "click", "id": "StartButton"},
-        {"op": "wait_prompt", "prompt": "sources_confirm"}, {"op": "click", "id": "PromptPrimary"},
+        {"op": "wait_prompt", "prompt": "sources_confirm"}, {"op": "click", "id": "UseStandardFilesButton"},
         {"op": "wait_prompt", "prompt": "enrollment_code"}, {"op": "snapshot", "label": "code"},
         {"op": "click", "id": "CancelButton"},
         {"op": "wait_status", "contains": "Finished"}, {"op": "snapshot", "label": "done"},
@@ -460,6 +588,7 @@ def test_cancel_before_enrollment_stops_safely_without_sending_the_code(tmp_path
     assert "exit code 1" in done["status"]
     assert any("Question cancelled: enrollment_code" in line for line in done["events"])
     assert any("The enrollment code was NOT used." in line for line in done["events"])
+    assert "Entering the enrollment code was cancelled." in done["outcome"] and _stop_text(done) in done["outcome"]
     assert workspace_tools(result) == ["install-verify", "runtime-version", "http:GET"]  # no enrollment request
     assert_window_invariants(result)
 
@@ -469,7 +598,7 @@ def test_after_the_code_is_submitted_close_waits_and_setup_runs_to_the_end(tmp_p
     steps = [
         {"op": "toggle", "id": "SlowSteps", "on": True},
         {"op": "click", "id": "StartButton"},
-        {"op": "wait_prompt", "prompt": "sources_confirm"}, {"op": "click", "id": "PromptPrimary"},
+        {"op": "wait_prompt", "prompt": "sources_confirm"}, {"op": "click", "id": "UseStandardFilesButton"},
         *_answer_code(),
         {"op": "wait_disabled", "id": "CancelButton"}, {"op": "snapshot", "label": "after_code"},
         {"op": "close"}, {"op": "sleep", "ms": 300}, {"op": "snapshot", "label": "closing"},

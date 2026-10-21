@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Media;
 using Microsoft.Win32;
 using SortView.Setup.Core;
 using SortView.Setup.Wpf;
@@ -36,6 +37,9 @@ namespace SortView.Setup.Wizard
         private PromptRequest current;
         private bool closeWhenFinished;
         private Window hostWindow;
+        // The run's final events (non-secret), for the outcome view.
+        private SetupEvent stopEvent;
+        private SetupEvent finishEvent;
 
         public SetupWizardView()
         {
@@ -133,6 +137,9 @@ namespace SortView.Setup.Wizard
             }
             ClearOutput();
             ClearPrompt();
+            ClearOutcome();
+            stopEvent = null;
+            finishEvent = null;
             closeWhenFinished = false;
             session = SetupRunSession.Start(runner, Dispatcher, this, OnSetupEvent, text => consoleText.Add(text));
             SetupRunSession started = session;
@@ -226,6 +233,7 @@ namespace SortView.Setup.Wizard
                 SetupRunResult result = task.Result;
                 StatusText.Text = "Finished: exit code " + (result.ExitCode?.ToString() ?? "(none)") + " — " + Describe(result.ExitCode) + ".";
             }
+            ShowOutcome(task);
             UpdateControls();
             if (closeWhenFinished)
             {
@@ -251,6 +259,16 @@ namespace SortView.Setup.Wizard
 
         private void OnSetupEvent(SetupEvent setupEvent)
         {
+            switch (setupEvent.Type)
+            {
+                case "run_stopped":
+                case "run_failed_unexpected":
+                    stopEvent = setupEvent;
+                    break;
+                case "run_finished":
+                    finishEvent = setupEvent;
+                    break;
+            }
             foreach (string line in Format(setupEvent))
             {
                 events.Add(line);
@@ -330,61 +348,71 @@ namespace SortView.Setup.Wizard
         }
 
         // ---- prompts (IPromptView: called on this control's thread) ---------------------------------------------
+        // Each question has its own view. The views only collect an answer: the engine decides when it asks, whether a
+        // path is acceptable (it says why when it asks again), what an answer means and what happens next.
 
         public void ShowPrompt(PromptRequest request)
         {
             current = request;
             IReadOnlyDictionary<string, object> context = request.Prompt.Context;
             PromptId.Text = request.Prompt.PromptId;
-            PromptDetails.Text = "";
             PathBox.Text = "";
             CodeBox.Clear();
-            ChoiceRow.Visibility = Visibility.Visible;
-            PathRow.Visibility = Visibility.Collapsed;
-            CodeRow.Visibility = Visibility.Collapsed;
-            PromptCancel.Content = "Cancel";
+            ShowView(null);
+            PromptCancel.Content = "_Cancel setup";
             switch (request.Prompt.PromptId)
             {
                 case "sources_confirm":
-                    PromptTitle.Text = "Use the Tech Logic files found on this machine?";
-                    PromptDetails.Text = "checkins: " + Context(context, "checkins") + "\nrejects: " + Context(context, "rejects") + "\nacs: " + Context(context, "acs");
-                    PromptPrimary.Content = "Use these files";
-                    PromptSecondary.Content = "Choose other files";
+                    PromptTitle.Text = "Use these Tech Logic files?";
+                    StandardCheckinsPath.Text = Context(context, "checkins");
+                    StandardRejectsPath.Text = Context(context, "rejects");
+                    StandardAcsPath.Text = Context(context, "acs");
+                    SourcesNetworkWarning.Text = NetworkWarning(Context(context, "checkins"), Context(context, "rejects"), Context(context, "acs"));
+                    ShowView(SourcesConfirmView);
                     break;
                 case "source_path":
-                    PromptTitle.Text = "Select the " + Context(context, "source") + " file";
+                    string source = SourceLabel(Context(context, "source"));
                     string problem = Context(context, "problem");
-                    PromptDetails.Text = "Attempt " + Context(context, "attempt") + " of " + Context(context, "max_attempts") +
-                        (problem == null ? "" : "\nThe previous path was refused (" + (problem == "not_found" ? "file not found" : "not an absolute path") + "): " + Context(context, "rejected_path"));
-                    ChoiceRow.Visibility = Visibility.Collapsed;
-                    PathRow.Visibility = Visibility.Visible;
-                    UsePathButton.IsEnabled = false;
+                    string rejected = Context(context, "rejected_path");
+                    PromptTitle.Text = "Choose the Tech Logic " + source + " file";
+                    SourceDescription.Text = "Select the " + source + " file the Collector should read. It can have any name and be in any folder.";
+                    SourceAttempt.Text = "Attempt " + Context(context, "attempt") + " of " + Context(context, "max_attempts") +
+                        (Context(context, "attempt") != null && Context(context, "attempt") == Context(context, "max_attempts")
+                            ? ". If this file is not accepted either, setup stops."
+                            : ".");
+                    SourceProblem.Text = problem == "not_found" ? "Setup could not find a file at: " + rejected
+                        : problem == "not_absolute" ? "That is not a full path (like C:\\folder\\file.txt): " + rejected
+                        : problem != null ? "The previous path was not accepted (" + problem + "): " + rejected
+                        : "";
+                    PathBox.Text = rejected ?? ""; // to correct; nothing is sent until "Use this file"
+                    ShowView(SourcePathView);
                     break;
                 case "resume_confirm":
-                    PromptTitle.Text = "Resume the unfinished setup?";
-                    PromptDetails.Text = "Installation " + Context(context, "installation_id") + ", release " + Context(context, "release_version") +
-                        ", " + Context(context, "mode") + ", contract " + Context(context, "contract") + ". No new enrollment code is needed.";
-                    PromptPrimary.Content = "Resume";
-                    PromptSecondary.Content = "Don't resume";
+                    PromptTitle.Text = "Resume the unfinished SortView setup?";
+                    ResumeExplanation.Text = (Context(context, "mode") == "resume_finish"
+                            ? "An earlier setup on this computer installed the Collector but did not finish. Setup can complete the remaining steps"
+                            : "An earlier setup on this computer enrolled but did not finish installing. Setup can finish installing")
+                        + " with the saved enrollment. No new enrollment code is needed. If you do not resume, setup stops and leaves everything as it is.";
+                    ResumeDetails.Text = "Installation " + Context(context, "installation_id") + " · release " + Context(context, "release_version") +
+                        (Context(context, "contract") == null ? "" : " · Contract v" + Context(context, "contract"));
+                    ShowView(ResumeView);
                     break;
                 case "enrollment_code":
                     PromptTitle.Text = EnrollmentCodeTitle;
-                    PromptDetails.Text = EnrollmentCodeDetails;
-                    ChoiceRow.Visibility = Visibility.Collapsed;
-                    CodeRow.Visibility = Visibility.Visible;
+                    EnrollmentExplanation.Text = EnrollmentCodeDetails;
+                    PromptCancel.Content = "_Cancel setup (the code is not sent)";
+                    ShowView(EnrollmentView);
                     break;
                 case "legacy_task_enable":
                     PromptTitle.Text = "Setup is complete. Enable the Scheduled Task now?";
-                    PromptDetails.Text = "Enabling starts the recurring 15-minute runs. Leaving it disabled, or cancelling, keeps it disabled.";
-                    PromptPrimary.Content = "Enable";
-                    PromptSecondary.Content = "Leave disabled";
-                    PromptCancel.Content = "Cancel (the task stays disabled)";
+                    PromptCancel.Content = "_Cancel (the task stays disabled)";
+                    ShowView(TaskEnableView);
                     break;
                 default:
                     PromptTitle.Text = "An unknown question: " + request.Prompt.PromptId;
-                    ChoiceRow.Visibility = Visibility.Collapsed;
                     break;
             }
+            UpdatePromptButtons();
             PromptPanel.Visibility = Visibility.Visible;
             StatusText.Text = "Waiting for your answer.";
         }
@@ -397,9 +425,25 @@ namespace SortView.Setup.Wizard
             }
         }
 
-        private void PromptPrimary_Click(object sender, RoutedEventArgs e) => Answer(PromptAnswers.Yes);
+        private void ShowView(FrameworkElement view)
+        {
+            foreach (FrameworkElement each in new FrameworkElement[] { SourcesConfirmView, SourcePathView, ResumeView, EnrollmentView, TaskEnableView })
+            {
+                each.Visibility = ReferenceEquals(each, view) ? Visibility.Visible : Visibility.Collapsed;
+            }
+        }
 
-        private void PromptSecondary_Click(object sender, RoutedEventArgs e) => Answer(PromptAnswers.No);
+        private void UseStandardFilesButton_Click(object sender, RoutedEventArgs e) => Answer(PromptAnswers.Yes);
+
+        private void ChooseOtherFilesButton_Click(object sender, RoutedEventArgs e) => Answer(PromptAnswers.No);
+
+        private void ResumeButton_Click(object sender, RoutedEventArgs e) => Answer(PromptAnswers.Yes);
+
+        private void DontResumeButton_Click(object sender, RoutedEventArgs e) => Answer(PromptAnswers.No);
+
+        private void EnableTaskButton_Click(object sender, RoutedEventArgs e) => Answer(PromptAnswers.Yes);
+
+        private void LeaveTaskDisabledButton_Click(object sender, RoutedEventArgs e) => Answer(PromptAnswers.No);
 
         private void PromptCancel_Click(object sender, RoutedEventArgs e)
         {
@@ -407,8 +451,11 @@ namespace SortView.Setup.Wizard
             ClearPrompt();
         }
 
-        private void PathBox_TextChanged(object sender, TextChangedEventArgs e) =>
-            UsePathButton.IsEnabled = !string.IsNullOrWhiteSpace(PathBox.Text);
+        private void PathBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            PathNetworkWarning.Text = NetworkWarning(PathBox.Text);
+            UpdatePromptButtons();
+        }
 
         private void UsePathButton_Click(object sender, RoutedEventArgs e)
         {
@@ -429,22 +476,40 @@ namespace SortView.Setup.Wizard
             };
             if (dialog.ShowDialog(Window.GetWindow(this)) == true && current != null && !current.IsCompleted)
             {
-                Answer(dialog.FileName);
+                PathBox.Text = dialog.FileName; // shown for confirmation: "Use this file" sends it
             }
         }
 
+        private void CodeBox_PasswordChanged(object sender, RoutedEventArgs e) => UpdatePromptButtons();
+
         private void EnrollButton_Click(object sender, RoutedEventArgs e)
         {
-            if (current == null || CodeBox.SecurePassword.Length == 0)
+            if (current == null || current.Prompt.PromptId != "enrollment_code")
             {
                 return;
             }
-            // A copy, read-only, handed straight to the run (which disposes it); the box is cleared at once.
+            // A copy, read-only, handed straight to the run (which disposes it); the box is cleared at once, and the
+            // button stays disabled until another code question is asked (a run asks for the code at most once).
             SecureString code = CodeBox.SecurePassword;
+            if (code.Length == 0)
+            {
+                code.Dispose();
+                return;
+            }
             code.MakeReadOnly();
             CodeBox.Clear();
+            EnrollButton.IsEnabled = false;
             Answer(code);
-            UpdateControls();
+            StatusText.Text = "Enrolling this computer with SortView… This cannot be interrupted.";
+        }
+
+        private void UpdatePromptButtons()
+        {
+            UsePathButton.IsEnabled = current != null && !string.IsNullOrWhiteSpace(PathBox.Text);
+            using (SecureString typed = CodeBox.SecurePassword)
+            {
+                EnrollButton.IsEnabled = current != null && current.Prompt.PromptId == "enrollment_code" && typed.Length > 0;
+            }
         }
 
         private void Answer(object answer)
@@ -467,9 +532,117 @@ namespace SortView.Setup.Wizard
             PathBox.Text = "";
             PromptId.Text = "none";
             PromptPanel.Visibility = Visibility.Collapsed;
+            UpdatePromptButtons();
+        }
+
+        private static string SourceLabel(string source)
+        {
+            switch (source)
+            {
+                case "checkins": return "Checkins";
+                case "rejects": return "Rejects";
+                case "acs": return "ACS";
+                default: return source ?? "source";
+            }
+        }
+
+        /// <summary>A warning, never a refusal, when a path is a network share or a mapped drive: the Collector runs as
+        /// SYSTEM, which usually cannot see a user's mapped drives. Setup's own checks decide.</summary>
+        private static string NetworkWarning(params string[] paths)
+        {
+            foreach (string path in paths)
+            {
+                if (IsNetworkLocation(path))
+                {
+                    return "Note: " + path.Trim() + " is on a network location. The Collector runs as the Windows SYSTEM account, " +
+                        "which often cannot reach mapped drives or network shares. Setup checks this before it finishes; " +
+                        "files on this computer's own drive are more reliable.";
+                }
+            }
+            return "";
+        }
+
+        private static bool IsNetworkLocation(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return false;
+            }
+            path = path.Trim();
+            if (path.StartsWith(@"\\", StringComparison.Ordinal) || path.StartsWith("//", StringComparison.Ordinal))
+            {
+                return true;
+            }
+            try
+            {
+                return path.Length >= 2 && path[1] == ':' && new DriveInfo(path.Substring(0, 1)).DriveType == DriveType.Network;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
         }
 
         private static string Context(IReadOnlyDictionary<string, object> context, string key) =>
             context.TryGetValue(key, out object value) && value != null ? Convert.ToString(value) : null;
+
+        // ---- outcome ------------------------------------------------------------------------------------------
+        // How the run ended, from its final events. A stop is shown in the engine's exact words (what went wrong, what
+        // was left unchanged, its advice about the code and the saved enrollment, and what to do). No retry is offered.
+
+        private void ShowOutcome(Task<SetupRunResult> task)
+        {
+            ClearOutcome();
+            bool completed = !task.IsFaulted && finishEvent != null && Field(finishEvent, "result") == "completed" && task.Result.ExitCode == 0;
+            if (task.IsFaulted)
+            {
+                OutcomeTitle.Text = "Setup could not run";
+                OutcomeSummary.Text = task.Exception.GetBaseException().Message;
+            }
+            else if (completed)
+            {
+                OutcomeTitle.Text = "SortView setup is complete";
+                string id = Field(finishEvent, "installation_id");
+                OutcomeSummary.Text = (Field(finishEvent, "task_state") == "Enabled"
+                        ? "The Collector is installed and its Scheduled Task is enabled: it runs every 15 minutes."
+                        : "The Collector is installed. Its Scheduled Task was left disabled, so nothing is uploaded until it is enabled (the setup log says how).")
+                    + (id == null ? "" : " Installation " + id + (Field(finishEvent, "release_version") == null ? "" : ", release " + Field(finishEvent, "release_version")) + ".");
+            }
+            else if (stopEvent != null && stopEvent.Type == "run_stopped")
+            {
+                OutcomeTitle.Text = "Setup stopped before it finished";
+                OutcomeSummary.Text = "Setup stopped at " + Field(stopEvent, "step_label") + ".";
+                OutcomeProblem.Text = "What went wrong: " + Field(stopEvent, "problem");
+                OutcomeUnchanged.Text = "Left unchanged: " + Field(stopEvent, "unchanged");
+                OutcomeAdvice.Text = string.Join("\n", Lines(stopEvent, "advice"));
+                OutcomeFix.Text = "What to do: " + Field(stopEvent, "fix");
+            }
+            else if (stopEvent != null)
+            {
+                OutcomeTitle.Text = "Setup stopped because of an unexpected error";
+                OutcomeProblem.Text = "What went wrong: " + Field(stopEvent, "exception_type") + ": " + Field(stopEvent, "message");
+                OutcomeAdvice.Text = string.Join("\n", Lines(stopEvent, "advice"));
+            }
+            else
+            {
+                OutcomeTitle.Text = "Setup did not finish";
+                OutcomeSummary.Text = "Exit code " + (task.Result.ExitCode?.ToString() ?? "(none)") + ": " + Describe(task.Result.ExitCode) + ". See the details below.";
+            }
+            OutcomePanel.BorderBrush = completed ? Brushes.SeaGreen : Brushes.Firebrick;
+            foreach (TextBlock text in new[] { OutcomeSummary, OutcomeProblem, OutcomeUnchanged, OutcomeAdvice, OutcomeFix })
+            {
+                text.Visibility = string.IsNullOrEmpty(text.Text) ? Visibility.Collapsed : Visibility.Visible;
+            }
+            OutcomePanel.Visibility = Visibility.Visible;
+        }
+
+        private void ClearOutcome()
+        {
+            foreach (TextBlock text in new[] { OutcomeTitle, OutcomeSummary, OutcomeProblem, OutcomeUnchanged, OutcomeAdvice, OutcomeFix })
+            {
+                text.Text = "";
+            }
+            OutcomePanel.Visibility = Visibility.Collapsed;
+        }
     }
 }
