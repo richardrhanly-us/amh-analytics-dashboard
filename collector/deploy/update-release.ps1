@@ -134,27 +134,53 @@ function Test-ReleaseManifest {
     param([Parameter(Mandatory)][string]$BundleRoot)
 
     $manifestPath = Join-Path $BundleRoot "MANIFEST.json"
-    if (-not (Test-Path $manifestPath -PathType Leaf)) {
-        throw "This release bundle has no MANIFEST.json -- refusing to install/update from an unverifiable bundle."
+    # --- the bundle tree itself, BEFORE anything in it is read (MANIFEST.json included):
+    # every item (-Force: hidden and system ones too) and NO reparse point anywhere -- see
+    # install.ps1's identical copy.
+    $bundleFiles = @()
+    $problems = @()
+    $pending = New-Object 'System.Collections.Generic.Stack[object]'
+    $pending.Push((Get-Item -LiteralPath $BundleRoot -Force))
+    while ($pending.Count -gt 0) {
+        $item = $pending.Pop()
+        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            $problems += "REPARSE POINT (a junction or link, never followed): $($item.FullName)"
+            continue
+        }
+        if ($item.PSIsContainer) {
+            foreach ($child in @(Get-ChildItem -LiteralPath $item.FullName -Force)) { $pending.Push($child) }
+        } else {
+            $bundleFiles += $item
+        }
     }
 
-    $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
-    $problems = @()
-
-    # --- manifest paths themselves: no traversal/rooted paths, no duplicates ---
     $manifestKeys = @{}
-    foreach ($entry in $manifest.files) {
-        $relPath = $entry.path
-        if ($relPath -match '(^|[\\/])\.\.([\\/]|$)' -or $relPath -match '^[\\/]' -or $relPath -match '^[A-Za-z]:') {
-            $problems += "UNSAFE MANIFEST PATH: $relPath (traversal or rooted/absolute path)"
-            continue
+    $manifest = $null
+    if ($problems.Count -eq 0) {
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+            throw "This release bundle has no MANIFEST.json -- refusing to install/update from an unverifiable bundle."
         }
-        $key = ($relPath -replace '/', '\').ToLowerInvariant()
-        if ($manifestKeys.ContainsKey($key)) {
-            $problems += "DUPLICATE MANIFEST PATH: $relPath"
-            continue
+
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+
+        # --- manifest paths themselves: no traversal/rooted paths, no wildcards, no duplicates ---
+        foreach ($entry in $manifest.files) {
+            $relPath = $entry.path
+            if ($relPath -match '(^|[\\/])\.\.([\\/]|$)' -or $relPath -match '^[\\/]' -or $relPath -match '^[A-Za-z]:') {
+                $problems += "UNSAFE MANIFEST PATH: $relPath (traversal or rooted/absolute path)"
+                continue
+            }
+            if ($relPath -match '[*?]') {
+                $problems += "UNSAFE MANIFEST PATH: $relPath (a wildcard, never a file name)"
+                continue
+            }
+            $key = ($relPath -replace '/', '\').ToLowerInvariant()
+            if ($manifestKeys.ContainsKey($key)) {
+                $problems += "DUPLICATE MANIFEST PATH: $relPath"
+                continue
+            }
+            $manifestKeys[$key] = $entry
         }
-        $manifestKeys[$key] = $entry
     }
 
     if ($problems.Count -eq 0) {
@@ -162,7 +188,7 @@ function Test-ReleaseManifest {
         foreach ($key in $manifestKeys.Keys) {
             $entry = $manifestKeys[$key]
             $filePath = Join-Path $BundleRoot $key
-            if (-not (Test-Path $filePath -PathType Leaf)) {
+            if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
                 $problems += "MISSING: $($entry.path)"
                 continue
             }
@@ -172,9 +198,8 @@ function Test-ReleaseManifest {
             }
         }
 
-        # --- no file present that the manifest doesn't know about ---
-        $actualFiles = Get-ChildItem -Path $BundleRoot -Recurse -File
-        foreach ($f in $actualFiles) {
+        # --- no file present that the manifest doesn't know about (hidden and system files included) ---
+        foreach ($f in $bundleFiles) {
             $relative = $f.FullName.Substring($BundleRoot.Length).TrimStart('\')
             if ($relative -eq "MANIFEST.json") { continue }
             $key = $relative.ToLowerInvariant()

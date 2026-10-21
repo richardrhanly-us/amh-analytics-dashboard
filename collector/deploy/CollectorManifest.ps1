@@ -236,9 +236,11 @@ function New-InstalledManifest {
 
 function Test-InstalledManifest {
     <#
-    Read-only. Reads -InstallRoot/MANIFEST.installed.json, recomputes the
-    SHA-256 of every recorded file and compares, then scans each recorded
-    "zone" for a file that exists on disk but is not in the recorded list.
+    Read-only. Reads -InstallRoot/MANIFEST.installed.json, refuses a reparse
+    point (junction, symbolic link) at -InstallRoot or in any recorded "zone"
+    before reading anything else, recomputes the SHA-256 of every recorded
+    file and compares, then scans each zone for a file -- hidden and system
+    ones included -- that exists on disk but is not in the recorded list.
     Prints PASS or the itemized problem list, then throws if there was
     any problem (same convention as Test-ReleaseManifest). Never modifies
     -InstallRoot.
@@ -252,13 +254,24 @@ function Test-InstalledManifest {
     #>
     param([Parameter(Mandatory)][string]$InstallRoot)
 
+    # Never read through a reparse point: not the install folder itself, nor the record below (the zones are walked
+    # further down, once the record says which they are).
+    if (Test-Path -LiteralPath $InstallRoot) {
+        if ((Get-Item -LiteralPath $InstallRoot -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            throw "REPARSE POINT: '$InstallRoot' is a junction or link -- never read through. Nothing was checked."
+        }
+    }
     $installedManifestPath = Join-Path $InstallRoot "MANIFEST.installed.json"
-    if (-not (Test-Path $installedManifestPath -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath $installedManifestPath -PathType Leaf)) {
         throw "MANIFEST MISSING: no MANIFEST.installed.json at '$InstallRoot' -- this install predates release-integrity persistence, or -InstallRoot is wrong. Nothing was checked."
     }
 
+    if ((Get-Item -LiteralPath $installedManifestPath -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        throw "REPARSE POINT: '$installedManifestPath' is a link -- never read through. Nothing was checked."
+    }
+
     try {
-        $installedManifest = Get-Content $installedManifestPath -Raw | ConvertFrom-Json
+        $installedManifest = Get-Content -LiteralPath $installedManifestPath -Raw | ConvertFrom-Json
     } catch {
         throw "MALFORMED MANIFEST: '$installedManifestPath' is not valid JSON ($($_.Exception.Message)). Nothing was checked."
     }
@@ -270,7 +283,42 @@ function Test-InstalledManifest {
     $problems = @()
     $recordedKeys = New-Object 'System.Collections.Generic.Dictionary[string,bool]' ($Script:CollectorManifestComparer)
 
-    foreach ($entry in $installedManifest.files) {
+    # The release-managed zones, BEFORE any recorded file is opened: every item, hidden and system ones included
+    # (-Force), and NO reparse point (junction, symbolic link, ...) in a zone or at -InstallRoot itself. A link could put
+    # content from elsewhere into the install, and Windows PowerShell 5.1's Get-ChildItem does not descend into a
+    # junction, so what it holds would never be listed. Walked folder by folder, never through a reparse point (not
+    # -Recurse, which Windows PowerShell 5.1 may follow); a non-recursive zone is read one level deep, as before.
+    $zoneFiles = @()
+    $pending = New-Object 'System.Collections.Generic.Stack[object]'
+    $pending.Push([pscustomobject]@{ Item = (Get-Item -LiteralPath $InstallRoot -Force); Descend = $false })
+    foreach ($zone in $installedManifest.zones) {
+        $zoneRoot = if ([string]::IsNullOrEmpty($zone.root)) { $InstallRoot } else { Join-Path $InstallRoot $zone.root }
+        if (-not (Test-Path -LiteralPath $zoneRoot)) { continue }
+        foreach ($child in @(Get-ChildItem -LiteralPath $zoneRoot -Force)) {
+            $pending.Push([pscustomobject]@{ Item = $child; Descend = [bool]$zone.recurse })
+        }
+        if (-not [string]::IsNullOrEmpty($zone.root)) {
+            $pending.Push([pscustomobject]@{ Item = (Get-Item -LiteralPath $zoneRoot -Force); Descend = $false })
+        }
+    }
+    while ($pending.Count -gt 0) {
+        $next = $pending.Pop()
+        if ($next.Item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            $problems += "REPARSE POINT (a junction or link, never followed): $($next.Item.FullName)"
+            continue
+        }
+        if (-not $next.Item.PSIsContainer) {
+            $zoneFiles += $next.Item
+        } elseif ($next.Descend) {
+            foreach ($child in @(Get-ChildItem -LiteralPath $next.Item.FullName -Force)) {
+                $pending.Push([pscustomobject]@{ Item = $child; Descend = $true })
+            }
+        }
+    }
+    # A zone holding a reparse point is never read through: nothing below runs.
+    $readable = ($problems.Count -eq 0)
+
+    foreach ($entry in $(if ($readable) { $installedManifest.files } else { @() })) {
         if (-not (Test-CollectorManifestPathSafe $entry.installed_path)) {
             $problems += "UNSAFE MANIFEST PATH: $($entry.installed_path) (traversal or rooted/absolute path) -- skipped, not checked against disk"
             continue
@@ -281,7 +329,7 @@ function Test-InstalledManifest {
         # Join-Path with a forward-slash-separated ChildPath produces a working path on both platforms: Win32/.NET
         # file APIs accept "/" interchangeably with "\", and it is already native on Linux. No extra conversion needed.
         $filePath = Join-Path $InstallRoot $entry.installed_path
-        if (-not (Test-Path $filePath -PathType Leaf)) {
+        if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
             $problems += "MISSING: $($entry.installed_path) (bundle path: $($entry.bundle_path))"
             continue
         }
@@ -291,14 +339,7 @@ function Test-InstalledManifest {
         }
     }
 
-    foreach ($zone in $installedManifest.zones) {
-        $zoneRoot = if ([string]::IsNullOrEmpty($zone.root)) { $InstallRoot } else { Join-Path $InstallRoot $zone.root }
-        if (-not (Test-Path -LiteralPath $zoneRoot)) { continue }
-        $zoneFiles = if ($zone.recurse) {
-            Get-ChildItem -LiteralPath $zoneRoot -Recurse -File
-        } else {
-            Get-ChildItem -LiteralPath $zoneRoot -File
-        }
+    if ($readable) {
         foreach ($f in $zoneFiles) {
             $relative = Get-CollectorRelativePath -Root $InstallRoot -FullPath $f.FullName
             # Exact-name check, not canonicalized/case-folded: we control the exact casing of both files
