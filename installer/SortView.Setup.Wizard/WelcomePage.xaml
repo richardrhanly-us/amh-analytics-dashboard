@@ -1,0 +1,15 @@
+<UserControl x:Class="SortView.Setup.Wizard.WelcomePage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel Margin="24,20" MaxWidth="720" HorizontalAlignment="Left">
+        <TextBlock x:Name="WelcomeTitle" FontSize="22" FontWeight="SemiBold" Text="Welcome to SortView Setup" />
+        <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" FontSize="14"
+                   Text="SortView Setup installs the SortView Collector on this computer. The Collector reads your Tech Logic sorter's files and sends sorting activity to your library's SortView dashboard." />
+        <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" FontSize="14"
+                   Text="First, setup checks that this computer is ready. You will need administrator rights and the one-time enrollment code from SortView." />
+        <Border Margin="0,20,0,0" Padding="10" BorderBrush="#8A4B00" BorderThickness="1" Background="#FFF8EC">
+            <TextBlock x:Name="DevelopmentNotice" TextWrapping="Wrap" Foreground="#8A4B00" FontWeight="SemiBold"
+                       Text="Development build: this version can check your computer but cannot install anything. Nothing on this computer will be changed." />
+        </Border>
+    </StackPanel>
+</UserControl>
