@@ -1,0 +1,31 @@
+<UserControl x:Class="SortView.Setup.Wizard.ReadyPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- What setup will do, before it starts. Fixed text only: it states no fact about this computer, because none has
+         been verified yet: the setup engine finds the files, decides on resume or enrollment, and verifies. -->
+    <StackPanel Margin="24,20" MaxWidth="720" HorizontalAlignment="Left">
+        <TextBlock x:Name="ReadyTitle" FontSize="22" FontWeight="SemiBold" Text="Ready to install" />
+        <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" FontSize="14" Text="You're almost ready to install SortView Collector." />
+        <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" FontSize="14" Text="When setup runs, it will:" />
+        <StackPanel x:Name="ReadySteps" Margin="12,6,0,0" AutomationProperties.Name="What setup will do">
+            <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="14"
+                       Text="1. Install SortView Collector on this computer." />
+            <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="14"
+                       Text="2. Identify the Tech Logic sorter files the Collector reads, and ask you to confirm them or select them yourself." />
+            <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="14"
+                       Text="3. Ask for the one-time enrollment code from your SortView administrator, only if this computer needs to be enrolled." />
+            <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="14"
+                       Text="4. Offer to resume an earlier setup that was interrupted, using its saved enrollment. No new enrollment code is needed." />
+            <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="14"
+                       Text="5. Verify the installation before the Collector's Scheduled Task is enabled." />
+        </StackPanel>
+        <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" FontSize="14"
+                   Text="Setup requires administrator rights on this computer." />
+        <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" FontSize="14"
+                   Text="You can cancel setup at any of its questions until the enrollment code is sent. Once enrollment may have begun, setup cannot be interrupted and finishes on its own." />
+        <Border Margin="0,20,0,0" Padding="10" BorderBrush="#8A4B00" BorderThickness="1" Background="#FFF8EC">
+            <TextBlock x:Name="DevelopmentNotice" TextWrapping="Wrap" Foreground="#8A4B00" FontWeight="SemiBold"
+                       Text="Development build: installation is not enabled in this version. Select Next to see the setup screen. Nothing will be installed, enrolled or changed on this computer." />
+        </Border>
+    </StackPanel>
+</UserControl>
