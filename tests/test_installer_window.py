@@ -83,6 +83,17 @@ def test_the_window_can_only_run_a_generated_simulation():
     assert 'File.Copy(Path.Combine(deploy, "setup-collector.ps1"), Path.Combine(BundleRoot, "setup.ps1"));' in workspace  # the REAL engine
 
 
+def test_the_enrolling_status_is_shown_only_for_a_code_actually_handed_over():
+    # Answer reports whether the question took the answer; only then does the window say it is enrolling (a question
+    # already settled keeps its own "the answer was not used" message). Too brief to catch on screen in the simulation.
+    wizard = _code(WIZARD_CODE)
+    enroll = wizard[wizard.index("private void EnrollButton_Click"):wizard.index("private void UpdatePromptButtons")]
+    assert re.search(r"if \(Answer\(code\)\)\s*\{\s*StatusText\.Text = EnrollingStatus;\s*enrollingStatusShown = true;", enroll)
+    assert enroll.count("EnrollingStatus") == 1
+    answer = wizard[wizard.index("private bool Answer(object answer)"):]
+    assert answer.index("return false;") < answer.index("return true;")
+
+
 def test_the_window_never_handles_the_code_as_text_or_writes_secrets_anywhere():
     window, workspace, wizard = _code(WINDOW_CODE), _code(WORKSPACE_CODE), _code(WIZARD_CODE)
     for source in (window, wizard):
@@ -122,7 +133,7 @@ def window_exe() -> Path:
     return SPIKE_DIR / "bin" / "Release" / "SortView.Setup.Spike.exe"
 
 
-# Steps: select/toggle/click/text (by AutomationId), wait_prompt, wait_status, wait_disabled, snapshot, close, wait_exit,
+# Steps: select/toggle/click/text (by AutomationId), wait_prompt, wait_status, wait_text, wait_disabled, snapshot, close, wait_exit,
 # sleep. "{workspace}" in a value is the simulated machine the window shows. While waiting, the driver measures how fast
 # the UI thread answers, and counts the window's child processes and visible console windows.
 _UIA_DRIVER = r"""
@@ -210,6 +221,11 @@ function Snapshot([string]$label) {
         fault = $(if (Selected 'FaultInstall') { 'install' } elseif (Selected 'FaultVerification') { 'verification' } elseif (Selected 'FaultNone') { 'none' } else { '?' })
         events = Names (Find 'EventList')
         console = Names (Find 'DiagnosticList')
+        steps = @((Find 'ProgressPanel').FindAll($TS::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
+                  ForEach-Object { $_.Current.Name } | Where-Object { $_ -like 'Step *' })
+        busy = ($null -ne (Find 'BusyIndicator'))
+        current_step = $(if ($null -ne (Find 'CurrentStepText')) { (Find 'CurrentStepText').Current.Name } else { $null })
+        resume_notice = $(if ($null -ne (Find 'ResumeText')) { (Find 'ResumeText').Current.Name } else { $null })
         all_text = (@($window.FindAll($TS::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name }) -join "`n")
     }
 }
@@ -269,6 +285,9 @@ try {
                 $out.prompts_seen += $step.prompt
             }
             'wait_status' { Wait-Until { (Find 'StatusText').Current.Name -like "*$($step.contains)*" } 90 "status '$($step.contains)'" }
+            'wait_text' {
+                Wait-Until { $e = Find $step.id; $null -ne $e -and $e.Current.Name -like "*$($step.contains)*" } 90 "$($step.id) '$($step.contains)'"
+            }
             'wait_disabled' { Wait-Until { -not (Find $step.id).Current.IsEnabled } 30 "$($step.id) disabled" }
             'snapshot' { $out.snapshots += Snapshot $step.label }
             'close' { $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close() }
@@ -357,6 +376,16 @@ def assert_window_invariants(result: dict) -> None:
             assert call["url"].startswith(SIMULATION_API + "/"), call["url"]
 
 
+ENROLLING_STATUS = "Enrolling this computer with SortView… This cannot be interrupted."
+TITLES = ["Check the computer and installation package", "Find Tech Logic files", "Connect to SortView", "Enroll this computer",
+          "Install SortView Collector", "Verify installation", "Configure the Scheduled Task"]
+
+
+def progress(*states: str) -> list[str]:
+    """The step list as a screen reader reads it, one line per step."""
+    return [f"Step {n} of 7: {title}, {state}" for n, (title, state) in enumerate(zip(TITLES, states, strict=True), start=1)]
+
+
 def _answer_code() -> list[dict]:
     return [{"op": "wait_prompt", "prompt": "enrollment_code"}, {"op": "text", "id": "CodeBox", "value": DUMMY_CODE},
             {"op": "click", "id": "EnrollButton"}]
@@ -383,6 +412,12 @@ def test_a_legacy_setup_through_the_window_answers_every_question_on_screen(tmp_
 
     assert "SIMULATION ONLY" in snapshot(result, "start")["all_text"]
     assert result["prompts_seen"] == ["sources_confirm", "enrollment_code", "legacy_task_enable"]
+    # Progress, from the engine's events: all pending before Start; a question makes its step wait, and nothing spins.
+    start = snapshot(result, "start")
+    assert start["steps"] == progress(*["Pending"] * 7) and start["busy"] is False and start["current_step"] is None
+    asked = snapshot(result, "sources")
+    assert asked["steps"] == progress("Done", "Waiting for your answer", *["Pending"] * 5) and asked["busy"] is False
+    assert asked["current_step"] == "Step 2 of 7: Find Tech Logic files. Waiting for your answer."
     # The standard files, each named for its source.
     sources = snapshot(result, "sources")["details"]
     for label, name in (("Checkins", "Checkins.txt"), ("Rejects", "Rejects.txt"), ("ACS", "ACS Log.txt")):
@@ -403,6 +438,9 @@ def test_a_legacy_setup_through_the_window_answers_every_question_on_screen(tmp_
     assert any("COMPLETE" in line for line in done["console"])
     assert not any("=== Step" in line for line in done["events"])
     assert "SortView setup is complete" in done["outcome"] and "left disabled" in done["outcome"]
+    # Left disabled on purpose: said so, with who to ask -- not a pointer to a log that closes with the window.
+    assert "Contact your SortView administrator before enabling it." in done["outcome"] and "setup log says" not in done["outcome"]
+    assert done["steps"] == progress(*["Done"] * 6, "Left disabled") and done["busy"] is False and done["current_step"] is None
     assert workspace_tools(result) == LEGACY_TOOLS
     assert result["exited"] is True
     assert_window_invariants(result)
@@ -462,6 +500,7 @@ def test_a_v2_setup_with_files_of_any_name_in_separate_folders_chosen_by_hand(tm
     assert "exit code 0" in done["status"] and "SortView setup is complete" in done["outcome"]
     assert any("FINISHED: completed, exit 0" in line and "contract 2" in line and "task Enabled" in line for line in done["events"])
     assert "legacy_task_enable" not in result["prompts_seen"]
+    assert done["steps"] == progress(*["Done"] * 7)  # Contract v2: the rules ran and the task was enabled
     # Exactly the files chosen -- any names, any folders -- are what the installed Collector reads.
     workspace = result["workspace"]
     assert _config_sources(result) == {name: path.replace("{workspace}", workspace)
@@ -518,6 +557,8 @@ def test_declining_to_resume_stops_with_the_engines_advice_and_no_new_code(tmp_p
     declined = snapshot(result, "declined")
     assert "exit code 2" in declined["status"]
     assert "Resuming the unfinished setup was declined." in declined["outcome"] and _stop_text(declined) in declined["outcome"]
+    assert declined["steps"] == progress("Stopped here", *["Not reached"] * 6)
+    assert declined["resume_notice"] == "An unfinished earlier setup was found on this computer."  # never "Resuming"
     assert result["prompt_history"] == ["sources_confirm", "enrollment_code", "resume_confirm"]  # the code was asked for once
     assert workspace_tools(result).count("http:POST") == 2  # the first run's only (the v2 refusal, then the legacy request)
     assert_window_invariants(result)
@@ -560,16 +601,21 @@ def test_an_interrupted_setup_resumes_on_the_next_start_with_no_option_changed(t
     interrupted = snapshot(result, "interrupted")
     assert "exit code 3" in interrupted["status"] and interrupted["fault"] == "none"
     assert any("run setup.ps1 again to RESUME" in line for line in interrupted["events"])
-    assert "Setup stopped before it finished" in interrupted["outcome"]
+    assert "Setup stopped before it finished. The saved enrollment was kept." in interrupted["outcome"]
+    assert interrupted["steps"] == progress(*["Done"] * 4, "Stopped here", "Not reached", "Not reached")
     assert _stop_text(interrupted) in interrupted["outcome"]  # the engine's own advice, word for word
     # The second run, started with nothing changed, recognises the saved installation and resumes it.
     resume = snapshot(result, "resume")["details"]
     assert "Installation 41" in resume and "No new enrollment code is needed" in resume
     assert f"Contract v{2 if v2 else 1}" in resume
+    assert snapshot(result, "resume")["resume_notice"] == "An unfinished earlier setup was found on this computer."
     done = snapshot(result, "done")
     assert "exit code 0" in done["status"]
     assert any("Mode: resume_install" in line for line in done["events"])
     assert any("enrollment skipped (resume)" in line for line in done["events"])
+    # The resumed run says so, and shows the enrollment as done by the earlier run.
+    assert done["resume_notice"] == "Resuming an earlier setup. No new enrollment code is needed."
+    assert done["steps"] == progress("Done", "Done", "Done", "Done earlier", "Done", "Done", "Done")
     # The code was asked for once, in the first run only; the resume asked nothing else about enrollment.
     expected = ["sources_confirm", "enrollment_code", "resume_confirm", "sources_confirm"] + ([] if v2 else ["legacy_task_enable"])
     assert result["prompt_history"] == expected
@@ -604,6 +650,8 @@ def test_cancel_before_enrollment_stops_safely_without_sending_the_code(tmp_path
     assert any("Question cancelled: enrollment_code" in line for line in done["events"])
     assert any("The enrollment code was NOT used." in line for line in done["events"])
     assert "Entering the enrollment code was cancelled." in done["outcome"] and _stop_text(done) in done["outcome"]
+    assert "Setup was cancelled" in done["outcome"]
+    assert done["steps"] == progress("Done", "Done", "Done", "Stopped here", "Not reached", "Not reached", "Not reached")
     assert workspace_tools(result) == ["install-verify", "runtime-version", "http:GET"]  # no enrollment request
     assert_window_invariants(result)
 
@@ -616,6 +664,8 @@ def test_after_the_code_is_submitted_close_waits_and_setup_runs_to_the_end(tmp_p
         {"op": "wait_prompt", "prompt": "sources_confirm"}, {"op": "click", "id": "UseStandardFilesButton"},
         *_answer_code(),
         {"op": "wait_disabled", "id": "CancelButton"}, {"op": "snapshot", "label": "after_code"},
+        # Past enrollment (verification is slowed): the enrollment status must have given way.
+        {"op": "wait_text", "id": "CurrentStepText", "contains": "Step 6 of 7"}, {"op": "snapshot", "label": "verifying"},
         {"op": "close"}, {"op": "sleep", "ms": 300}, {"op": "snapshot", "label": "closing"},
         {"op": "wait_exit"},
     ]
@@ -624,6 +674,15 @@ def test_after_the_code_is_submitted_close_waits_and_setup_runs_to_the_end(tmp_p
 
     after = snapshot(result, "after_code")
     assert after["cancel_enabled"] is False and "no longer be cancelled safely" in after["cancel_note"]
+    # Working (slow steps keep a step running), no question on screen: the busy indicator shows, with the step in words.
+    assert after["busy"] is True and after["current_step"].startswith("Step ") and "Waiting" not in after["current_step"]
+    # Enrollment itself takes milliseconds here, so this snapshot may come just before or just after it gives way.
+    assert after["status"] in (ENROLLING_STATUS, "Running setup…")
+    # Once verification runs, the status no longer says it is enrolling; the cancel note still says why Cancel is off.
+    verifying = snapshot(result, "verifying")
+    assert verifying["current_step"] == "Step 6 of 7: Verify installation. Verifying the installation…"
+    assert verifying["status"] == "Running setup…" and "Enrolling" not in verifying["status"]
+    assert verifying["cancel_enabled"] is False and "no longer be cancelled safely" in verifying["cancel_note"]
     assert "cannot be interrupted" in snapshot(result, "closing")["status"]
     assert result["exited"] is True
     # Nothing was interrupted: enrollment, token, install and verification all ran; the last question was cancelled,
