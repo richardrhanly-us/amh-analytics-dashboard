@@ -11,27 +11,99 @@
             <TextBlock x:Name="StatusText" Margin="0,8,0,0" FontWeight="SemiBold" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" Text="Ready." />
             <TextBlock x:Name="CancelNote" Margin="0,4,0,0" Foreground="#8A4B00" TextWrapping="Wrap" Text="" />
 
-            <Border x:Name="PromptPanel" Margin="0,8,0,0" Padding="10" BorderBrush="#1F4E79" BorderThickness="2" Visibility="Collapsed">
+            <!-- One question at a time, asked by the setup engine. Each kind of question has its own view; the engine
+                 decides when it is asked, whether an answer is acceptable and what it means. -->
+            <GroupBox x:Name="PromptPanel" Header="Setup needs your answer" Margin="0,8,0,0" Padding="8" BorderBrush="#1F4E79" BorderThickness="2" Visibility="Collapsed">
                 <StackPanel>
-                    <TextBlock x:Name="PromptId" Foreground="#555" Text="none" />
-                    <TextBlock x:Name="PromptTitle" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
-                    <TextBlock x:Name="PromptDetails" Margin="0,4,0,0" TextWrapping="Wrap" />
-                    <WrapPanel x:Name="ChoiceRow" Margin="0,8,0,0">
-                        <Button x:Name="PromptPrimary" Padding="12,4" Margin="0,0,8,0" Click="PromptPrimary_Click" />
-                        <Button x:Name="PromptSecondary" Padding="12,4" Margin="0,0,8,0" Click="PromptSecondary_Click" />
-                    </WrapPanel>
-                    <DockPanel x:Name="PathRow" Margin="0,8,0,0" LastChildFill="True">
-                        <Button x:Name="UsePathButton" DockPanel.Dock="Right" Content="_Use this path" Padding="10,2" Margin="8,0,0,0" Click="UsePathButton_Click" />
-                        <Button x:Name="BrowseButton" DockPanel.Dock="Right" Content="_Browse…" Padding="10,2" Margin="8,0,0,0" Click="BrowseButton_Click" />
-                        <TextBox x:Name="PathBox" AutomationProperties.Name="Source file path" TextChanged="PathBox_TextChanged" />
-                    </DockPanel>
-                    <DockPanel x:Name="CodeRow" Margin="0,8,0,0" LastChildFill="True">
-                        <Button x:Name="EnrollButton" DockPanel.Dock="Right" Content="_Enroll" Padding="10,2" Margin="8,0,0,0" Click="EnrollButton_Click" />
-                        <PasswordBox x:Name="CodeBox" AutomationProperties.Name="Enrollment code" />
-                    </DockPanel>
-                    <Button x:Name="PromptCancel" HorizontalAlignment="Left" Padding="12,4" Margin="0,8,0,0" Click="PromptCancel_Click" />
+                    <TextBlock x:Name="PromptId" Foreground="#888" FontSize="10" Text="none" />
+                    <TextBlock x:Name="PromptTitle" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
+
+                    <!-- sources_confirm -->
+                    <StackPanel x:Name="SourcesConfirmView" Margin="0,8,0,0">
+                        <TextBlock TextWrapping="Wrap" Text="Setup found the three Tech Logic files the Collector reads:" />
+                        <Grid Margin="0,6,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition />
+                                <RowDefinition />
+                                <RowDefinition />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" FontWeight="SemiBold" Margin="0,0,12,2" Text="Checkins" />
+                            <TextBlock Grid.Row="0" Grid.Column="1" x:Name="StandardCheckinsPath" TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="1" FontWeight="SemiBold" Margin="0,0,12,2" Text="Rejects" />
+                            <TextBlock Grid.Row="1" Grid.Column="1" x:Name="StandardRejectsPath" TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="2" FontWeight="SemiBold" Margin="0,0,12,2" Text="ACS" />
+                            <TextBlock Grid.Row="2" Grid.Column="1" x:Name="StandardAcsPath" TextWrapping="Wrap" />
+                        </Grid>
+                        <TextBlock x:Name="SourcesNetworkWarning" Margin="0,6,0,0" Foreground="#8A4B00" TextWrapping="Wrap" />
+                        <WrapPanel Margin="0,10,0,0">
+                            <Button x:Name="UseStandardFilesButton" Content="_Use these files" Padding="12,4" Margin="0,0,8,0" Click="UseStandardFilesButton_Click" />
+                            <Button x:Name="ChooseOtherFilesButton" Content="C_hoose other files" Padding="12,4" Margin="0,0,8,0" Click="ChooseOtherFilesButton_Click" />
+                        </WrapPanel>
+                    </StackPanel>
+
+                    <!-- source_path -->
+                    <StackPanel x:Name="SourcePathView" Margin="0,8,0,0">
+                        <TextBlock x:Name="SourceDescription" TextWrapping="Wrap" />
+                        <TextBlock x:Name="SourceAttempt" Margin="0,4,0,0" Foreground="#555" />
+                        <TextBlock x:Name="SourceProblem" Margin="0,4,0,0" Foreground="#B00020" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <DockPanel Margin="0,8,0,0" LastChildFill="True">
+                            <Button x:Name="BrowseButton" DockPanel.Dock="Right" Content="_Browse…" Padding="10,2" Margin="8,0,0,0" Click="BrowseButton_Click" />
+                            <TextBox x:Name="PathBox" AutomationProperties.Name="Source file path" TextChanged="PathBox_TextChanged" />
+                        </DockPanel>
+                        <TextBlock x:Name="PathNetworkWarning" Margin="0,6,0,0" Foreground="#8A4B00" TextWrapping="Wrap" />
+                        <Button x:Name="UsePathButton" HorizontalAlignment="Left" Content="_Use this file" Padding="12,4" Margin="0,10,0,0" Click="UsePathButton_Click" />
+                    </StackPanel>
+
+                    <!-- resume_confirm -->
+                    <StackPanel x:Name="ResumeView" Margin="0,8,0,0">
+                        <TextBlock x:Name="ResumeExplanation" TextWrapping="Wrap" />
+                        <TextBlock x:Name="ResumeDetails" Margin="0,6,0,0" Foreground="#555" TextWrapping="Wrap" />
+                        <WrapPanel Margin="0,10,0,0">
+                            <Button x:Name="ResumeButton" Content="_Resume setup" Padding="12,4" Margin="0,0,8,0" Click="ResumeButton_Click" />
+                            <Button x:Name="DontResumeButton" Content="_Do not resume" Padding="12,4" Margin="0,0,8,0" Click="DontResumeButton_Click" />
+                        </WrapPanel>
+                    </StackPanel>
+
+                    <!-- enrollment_code -->
+                    <StackPanel x:Name="EnrollmentView" Margin="0,8,0,0">
+                        <TextBlock x:Name="EnrollmentExplanation" TextWrapping="Wrap" />
+                        <TextBlock Margin="0,4,0,0" TextWrapping="Wrap"
+                                   Text="The code works only once. Setup sends it a single time; if enrollment does not succeed, setup stops and tells you whether the same code can be used again." />
+                        <DockPanel Margin="0,8,0,0" LastChildFill="True">
+                            <Button x:Name="EnrollButton" DockPanel.Dock="Right" Content="_Enroll" Padding="12,2" Margin="8,0,0,0" Click="EnrollButton_Click" IsEnabled="False" />
+                            <PasswordBox x:Name="CodeBox" AutomationProperties.Name="Enrollment code" PasswordChanged="CodeBox_PasswordChanged" />
+                        </DockPanel>
+                    </StackPanel>
+
+                    <!-- legacy_task_enable -->
+                    <StackPanel x:Name="TaskEnableView" Margin="0,8,0,0">
+                        <TextBlock TextWrapping="Wrap"
+                                   Text="Enabling starts the recurring 15-minute runs. Leaving it disabled, or cancelling, keeps it disabled." />
+                        <WrapPanel Margin="0,10,0,0">
+                            <Button x:Name="EnableTaskButton" Content="E_nable" Padding="12,4" Margin="0,0,8,0" Click="EnableTaskButton_Click" />
+                            <Button x:Name="LeaveTaskDisabledButton" Content="_Leave disabled" Padding="12,4" Margin="0,0,8,0" Click="LeaveTaskDisabledButton_Click" />
+                        </WrapPanel>
+                    </StackPanel>
+
+                    <Button x:Name="PromptCancel" HorizontalAlignment="Left" Padding="12,4" Margin="0,10,0,0" Click="PromptCancel_Click" />
                 </StackPanel>
-            </Border>
+            </GroupBox>
+
+            <!-- How the run ended, in the engine's own words. -->
+            <GroupBox x:Name="OutcomePanel" Header="Result" Margin="0,8,0,0" Padding="8" BorderThickness="2" Visibility="Collapsed">
+                <StackPanel>
+                    <TextBlock x:Name="OutcomeTitle" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    <TextBlock x:Name="OutcomeSummary" Margin="0,4,0,0" TextWrapping="Wrap" />
+                    <TextBlock x:Name="OutcomeProblem" Margin="0,6,0,0" TextWrapping="Wrap" />
+                    <TextBlock x:Name="OutcomeUnchanged" Margin="0,4,0,0" TextWrapping="Wrap" />
+                    <TextBlock x:Name="OutcomeAdvice" Margin="0,4,0,0" TextWrapping="Wrap" />
+                    <TextBlock x:Name="OutcomeFix" Margin="0,6,0,0" FontWeight="SemiBold" TextWrapping="Wrap" />
+                </StackPanel>
+            </GroupBox>
         </StackPanel>
 
         <Grid Margin="12">
@@ -40,11 +112,11 @@
                 <ColumnDefinition Width="2*" />
             </Grid.ColumnDefinitions>
             <DockPanel Grid.Column="0" Margin="0,0,6,0">
-                <TextBlock DockPanel.Dock="Top" FontWeight="SemiBold" Text="Setup events (structured)" />
+                <TextBlock DockPanel.Dock="Top" FontWeight="SemiBold" Text="Details: setup events" />
                 <ListBox x:Name="EventList" AutomationProperties.Name="Setup events" VirtualizingPanel.IsVirtualizing="False" />
             </DockPanel>
             <DockPanel Grid.Column="1" Margin="6,0,0,0">
-                <TextBlock DockPanel.Dock="Top" FontWeight="SemiBold" Text="Console text (diagnostics, kept in memory only)" />
+                <TextBlock DockPanel.Dock="Top" FontWeight="SemiBold" Text="Details: setup log (kept in memory only)" />
                 <ListBox x:Name="DiagnosticList" AutomationProperties.Name="Console text" VirtualizingPanel.IsVirtualizing="False" />
             </DockPanel>
         </Grid>
