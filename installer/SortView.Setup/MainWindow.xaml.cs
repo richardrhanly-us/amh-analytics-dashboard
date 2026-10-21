@@ -7,6 +7,9 @@ namespace SortView.Setup
     /// the shared wizard with installation disabled. There is no setup runner, so nothing can be installed, enrolled or
     /// changed. Enabling installation means giving the wizard a runner over the real engine (SetupEngineHost) and a
     /// verified bundle -- a later, separate milestone.
+    ///
+    /// While the wizard runs setup, Back and Next are off (and refuse even a forced click); Exit stays on, and the
+    /// wizard keeps the window open until the engine has returned.
     /// </summary>
     public partial class MainWindow : Window
     {
@@ -24,6 +27,7 @@ namespace SortView.Setup
         {
             InitializeComponent();
             PrerequisitesView.StateChanged += (s, e) => UpdateButtons();
+            Wizard.RunStateChanged += (s, e) => UpdateButtons();
             ShowPage(WizardPage.Welcome);
         }
 
@@ -46,14 +50,15 @@ namespace SortView.Setup
 
         private void UpdateButtons()
         {
-            BackButton.IsEnabled = CurrentPage != WizardPage.Welcome;
-            NextButton.IsEnabled = CurrentPage == WizardPage.Welcome || CurrentPage == WizardPage.Ready ||
-                                   (CurrentPage == WizardPage.Prerequisites && PrerequisitesView.CanContinue);
+            bool running = Wizard.IsRunning;
+            BackButton.IsEnabled = !running && CurrentPage != WizardPage.Welcome;
+            NextButton.IsEnabled = !running && (CurrentPage == WizardPage.Welcome || CurrentPage == WizardPage.Ready ||
+                                   (CurrentPage == WizardPage.Prerequisites && PrerequisitesView.CanContinue));
         }
 
         private void BackButton_Click(object sender, RoutedEventArgs e)
         {
-            if (CurrentPage != WizardPage.Welcome)
+            if (!Wizard.IsRunning && CurrentPage != WizardPage.Welcome)
             {
                 ShowPage(CurrentPage - 1);
             }
@@ -61,6 +66,10 @@ namespace SortView.Setup
 
         private void NextButton_Click(object sender, RoutedEventArgs e)
         {
+            if (Wizard.IsRunning)
+            {
+                return;
+            }
             if (CurrentPage == WizardPage.Welcome)
             {
                 ShowPage(WizardPage.Prerequisites);
