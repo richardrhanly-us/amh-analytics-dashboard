@@ -48,6 +48,10 @@
     <Compile Include="ReadyPage.xaml.cs">
       <DependentUpon>ReadyPage.xaml</DependentUpon>
     </Compile>
+    <Page Include="PreparePage.xaml" />
+    <Compile Include="PreparePage.xaml.cs">
+      <DependentUpon>PreparePage.xaml</DependentUpon>
+    </Compile>
     <Compile Include="PrerequisiteChecks.cs" />
     <Compile Include="SetupProgress.cs" />
   </ItemGroup>

@@ -45,6 +45,7 @@
     <Compile Include="SingleInstanceLock.cs" />
     <Compile Include="TrustedBundlePin.cs" />
     <Compile Include="BundlePreparation.cs" />
+    <Compile Include="PreparationStep.cs" />
     <Page Include="MainWindow.xaml" />
     <Compile Include="MainWindow.xaml.cs">
       <DependentUpon>MainWindow.xaml</DependentUpon>

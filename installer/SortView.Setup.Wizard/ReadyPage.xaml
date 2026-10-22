@@ -25,7 +25,7 @@
                    Text="You can cancel setup at any of its questions until the enrollment code is sent. Once enrollment may have begun, setup cannot be interrupted and finishes on its own." />
         <Border Margin="0,20,0,0" Padding="10" BorderBrush="#8A4B00" BorderThickness="1" Background="#FFF8EC">
             <TextBlock x:Name="DevelopmentNotice" TextWrapping="Wrap" Foreground="#8A4B00" FontWeight="SemiBold"
-                       Text="Development build: installation is not enabled in this version. Select Next to see the setup screen. Nothing will be installed, enrolled or changed on this computer." />
+                       Text="Development build: installation is not enabled in this version. Select Next to check the installation package and copy it to a protected folder; that copy is removed when you go back or close setup. Nothing will be installed or enrolled." />
         </Border>
     </StackPanel>
 </UserControl>

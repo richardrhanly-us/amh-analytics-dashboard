@@ -463,23 +463,126 @@ planning come first and decide which C milestones they cover. Nothing below is r
 - Install, update, uninstall, repair and verify scripts in `collector/deploy/`; guided `setup-collector.ps1`.
 - First ingest moves a branch from `pending` to `ready`, on both contracts (PRs #183, #190).
 
-**Target machine baseline — NBPL's AMH PC** (the real machine that runs the sorter software and writes the Tech
-Logic logs the Collector reads). Build and test installer work against this, not a developer PC. Captured by the
-product owner on 2026-08-31 (screenshots and PowerShell output); re-capture before relying on it for a release.
+**Target machine baseline — NBPL's AMH PC, `NEWBRAUNFELSSOR`** (the real Tech Logic sorter computer at New Braunfels
+Public Library, where the SortView Collector runs). Build and test installer work against this, not a developer PC.
 
-| Area | Baseline |
+**Compatibility constraint (product owner, 2026-10-22):** SortView's production installer must support the existing
+NEWBRAUNFELSSOR environment, including Windows 10 build 17763 and .NET Framework 4.7.2, without requiring a .NET
+Framework or operating system upgrade. This machine's configuration is the deployment compatibility baseline: do not
+propose upgrading Windows, .NET Framework, PowerShell or other system components to satisfy installer requirements.
+
+**Known development compatibility gap (not a production-machine defect):** every installer project
+(`installer/*/*.csproj`) targets .NET Framework **v4.8**, and the Prerequisites check requires release **528040**
+(`PrerequisiteChecks.MinimumDotNetRelease`). NEWBRAUNFELSSOR has **4.7.2 (461814)**, so the installer as built today
+would fail its own check there (and a 4.8-targeted program may not start). The installer must be brought down to what
+this machine has; deciding how is its own task.
+
+The separate .NET 4.7.2 compatibility assessment addresses this gap. Framework targets are not changed until then.
+
+**Verified on the machine, 2026-10-22** (read-only PowerShell run by the product owner on NEWBRAUNFELSSOR). These are
+existing conditions: nothing here is an instruction to change the production machine.
+
+*Operating system and storage*
+
+| Property | Verified value |
 |---|---|
-| Windows | Windows 10 **Enterprise LTSC 2019**, version **1809**, OS build **17763.9020** |
-| Architecture | 64-bit **(verify)**: the `OsArchitecture` field came back blank; inferred from the 64-bit Python install |
-| Hardware | Generic OEM board (manufacturer and model report "To be filled by O.E.M."); Intel Core **i5-4300U** @ 1.90 GHz, **2 cores / 4 logical processors**; **8 GB RAM** (8,492,486,656 bytes) |
-| Disk | C: 73.72 GB used, **44.99 GB free** |
-| Time zone | **Central Standard Time** (UTC−06:00, observes daylight saving), so `America/Chicago` for Contract v2 |
-| Python | **3.14.3, 64-bit**, a per-user install under the `Operator` profile; the only version the `py` launcher lists |
-| .NET Framework | **Not captured (verify).** 1809 ships with 4.7.2, and the graphical installer targets **4.8**. Check with `(Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full').Release`: 528040 or higher means 4.8 is present. |
-| Windows PowerShell | 5.1 ships with 1809 **(verify)** |
-| Logged-on account | A local account named `Operator` |
+| Computer | `NEWBRAUNFELSSOR` |
+| Windows | Windows 10 **Enterprise LTSC**, version 10.0.17763, build **17763**, **64-bit** |
+| Last boot | 2026-10-19 08:16:12 |
+| .NET Framework | **4.7.2**, registry `Release` = **461814** |
+| Windows PowerShell | **5.1.17763.9020** |
+| Time zone | Central Standard Time (US & Canada), so `America/Chicago` for Contract v2 |
+| C: | NTFS; 127,462,797,312 bytes total (~118.7 GiB), 52,745,728,000 bytes free (~49.1 GiB) |
 
-**What runs there today: the legacy SortView agent, not the Collector.**
+*Accounts and policy*
+
+- Account `NEWBRAUNFELSSOR\Operator`, a member of local Administrators; the elevated PowerShell session ran at High
+  Mandatory Level.
+- Local Administrators: `Administrator`, `LogMeInRemoteUser`, `Operator`.
+- Execution policy `Undefined` in all five scopes; no MachinePolicy or UserPolicy restriction observed.
+- WinHTTP: direct access, no proxy.
+- The effective AppLocker query returned no rule collections. That is not proof that no application restrictions
+  exist.
+
+*Tech Logic logs: `C:\TLCFinalDlls`*
+
+- Files: `ACS Log.txt`, `Checkins.txt`, `Rejects.txt` (the Collector's three sources), plus `Errors.txt`,
+  `RoutineMaintenance.txt`, `Statistics.txt`. On 2026-10-22, `ACS Log.txt` and `Checkins.txt` had recent changes;
+  `Rejects.txt` was last modified 2026-10-21. Do not assume these names or this layout at other libraries.
+- Owner `NEWBRAUNFELSSOR\Operator`. Directory ACL: Users Full Control; Administrators Full Control; SYSTEM Full
+  Control; Users ReadAndExecute, Synchronize; Authenticated Users Modify, Synchronize, plus one further entry.
+- The Collector runs as SYSTEM, which has Full Control on the directory.
+
+*Existing Collector installation*
+
+- `C:\SortView\Collector` holds `SortViewCollector.exe`, `_internal\`, `logs\`, `MANIFEST.json` and
+  `MANIFEST.installed.json`. Both manifests are present; their purpose, structure and origin are not established.
+- `C:\SortViewAgent` does not exist. Version-labelled staging folders for 1.0.10 through 1.0.13
+  (`C:\SortView-1.0.1x-Staging`) and SortView Collector ZIP archives sit at the root of C:.
+- Nothing shows that the new WPF installer has ever been deployed to this computer; do not assume it has.
+
+Scheduled Task:
+
+| Property | Verified value |
+|---|---|
+| Name and path | `SortView Collector`, `\` |
+| State when inspected | Ready |
+| Runs as | SYSTEM |
+| Action | `C:\SortView\Collector\SortViewCollector.exe`, working directory `C:\SortView\Collector` |
+| Trigger | Time trigger from 2026-09-18 08:42:40, repeating every 15 minutes (`PT15M`), no repetition duration |
+| Settings | MultipleInstances IgnoreNew; execution time limit 1 hour; restart 3 times at 5-minute intervals; StartWhenAvailable True; DisallowStartIfOnBatteries False; StopIfGoingOnBatteries False |
+| Last run | 2026-10-22 09:27:27, result `0`; next run 09:42:42; missed runs 0 |
+
+A last result of 0 shows the task ran. It does not show that uploads to the API succeeded.
+
+*SortView folder ownership and permissions*
+
+| Folder | Verified |
+|---|---|
+| `C:\SortView` | Owner `NEWBRAUNFELSSOR\Operator`. Administrators Full Control; SYSTEM Full Control; Users ReadAndExecute; Authenticated Users Modify, plus one further entry |
+| `C:\ProgramData\SortViewCollector` | Owner `BUILTIN\Administrators`. SYSTEM Full Control; Administrators Full Control |
+| `C:\Program Files\SortView` | Does not exist |
+
+**Security consideration for installer planning (not a change request for this machine):** Authenticated Users
+can modify `C:\SortView`, the parent of the folder holding the program a SYSTEM task runs. Future installer and upgrade
+design must account for this existing condition. The ACL of `C:\SortView\Collector` itself was not captured (see B12).
+
+*Network*
+
+- `sortview-app-2p336.ondigitalocean.app`: DNS resolves (IPv4 and IPv6); TCP 443 connects; source 10.12.100.155 on
+  interface "Library Connection"; WinHTTP direct, no proxy. This shows DNS and TCP only, not authenticated API
+  operation.
+
+*Microsoft Defender* (no changes made)
+
+- AMRunningMode Normal; real-time protection on; signatures updated 2026-10-21 18:33:44.
+- Controlled Folder Access 0 (disabled); no process exclusions.
+- Path exclusions: `C:\Program Files (x86)\stunnel`, `C:\Program Files\TLCSoftwareLibrary\`, `C:\TLCFinalDlls\`,
+  `C:\VoiceMessages\`. Neither `C:\SortView` nor `C:\ProgramData\SortViewCollector` is excluded.
+
+**Still unverified** (no further machine profiling is planned for now; nothing here may be assumed):
+
+- The installed Collector's exact version (believed 1.0.10 earlier; not established).
+- The Collector configuration file's path and structure (the scripts' default is
+  `C:\ProgramData\SortViewCollector\config\collector_config.json`).
+- Whether the existing Collector uses any direct database connection.
+- Permissions on the individual Tech Logic log files, and on `C:\SortView\Collector`.
+- Python runtime dependencies, if any (the 2026-08-31 per-user Python 3.14.3 was not re-checked).
+- Successful authenticated API communication.
+- The full code-integrity policy state.
+- Hardware (CPU, RAM; 2026-08-31 values below), and other deployment-specific prerequisites this baseline did not
+  establish.
+- Whether the onsite ACL repair has been run (B12), and the PII behavior of the deployed Collector (B, verify).
+
+**Superseded capture, 2026-08-31** (screenshots and PowerShell output). Kept as history only. Its hardware and Python
+rows were not re-checked, and the legacy agent described next is **contradicted**: `C:\SortViewAgent` no longer exists.
+
+| Area | 2026-08-31 capture |
+|---|---|
+| Hardware | Generic OEM board (manufacturer and model report "To be filled by O.E.M."); Intel Core **i5-4300U** @ 1.90 GHz, **2 cores / 4 logical processors**; **8 GB RAM** (8,492,486,656 bytes) |
+| Python | **3.14.3, 64-bit**, a per-user install under the `Operator` profile; the only version the `py` launcher lists |
+
+**What ran there on 2026-08-31: the legacy SortView agent (no longer present as of 2026-10-22).**
 
 - **Location:** `C:\SortViewAgent`, a Python 3.14.3 `.venv` (last created 2026-04-04) holding:
   - `run_pipeline.py`, `uploader.py`, `config.py`, `logger_config.py`
@@ -494,10 +597,12 @@ product owner on 2026-08-31 (screenshots and PowerShell output); re-capture befo
   - **History:** last run on 2026-08-31 succeeded (`0x0`).
 - **Tech Logic folder:** a `TLCFinalDlls` folder is pinned in Explorer, matching the Collector's standard source location (`C:\TLCFinalDlls\`).
 
-**Consequences for installer work:** the installer must run on Windows 10 1809 LTSC with modest hardware; confirm
-.NET 4.8 is present (or plan to require or ship it) before relying on the WPF installer there; and moving NBPL from
-this agent to the Collector is a migration (an existing user-context task and a separate install folder), not a
-fresh install.
+**Consequences for installer work (future requirements):** the installer must accommodate, with no upgrade of any of
+them: Windows 10 Enterprise LTSC build 17763, 64-bit; .NET Framework 4.7.2; Windows PowerShell 5.1; the existing
+Collector deployment at `C:\SortView\Collector` and its SYSTEM `SortView Collector` task; the local Tech Logic log
+directory; and the existing Windows security and permissions environment (Defender real-time protection with no
+SortView exclusions, the broad write access on `C:\SortView`). At NBPL, installing is an upgrade of that existing
+deployment, not a fresh install. What remains unverified above must not be assumed from the installer's design.
 
 **Milestones:**
 
@@ -523,6 +628,12 @@ fresh install.
 ---
 
 ## 5. Done recently (newest first)
+
+- 2026-10-22 — NBPL AMH machine (`NEWBRAUNFELSSOR`) baseline verified from the product owner's read-only checks:
+  Windows 10 Enterprise LTSC build 17763, 64-bit, .NET Framework 4.7.2 (461814), PowerShell 5.1.17763.9020; Collector
+  at `C:\SortView\Collector` run by the SYSTEM task `SortView Collector` every 15 minutes; Tech Logic logs in
+  `C:\TLCFinalDlls`; `C:\SortViewAgent` is gone. Compatibility constraint recorded: no OS or .NET upgrade may be
+  required (section 4, C).
 
 - 2026-10-19 — B2 accessibility baseline: frontend remediation, automated axe/JSX checks and manual verification
   (PRs #229–#231); evidence and WCAG 2.1 conformance report (PRs #232, #233). A dated baseline, not a conformance
