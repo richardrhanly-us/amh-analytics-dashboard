@@ -4,6 +4,8 @@
      not enabled: there is no setup runner, and nothing is installed or changed. -->
 <Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <!-- The trusted bundle pin (see the file): checked and embedded by the SortViewBundlePin target below. -->
+  <Import Project="..\bundle-pin.props" />
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
@@ -41,6 +43,8 @@
       <DependentUpon>App.xaml</DependentUpon>
     </Compile>
     <Compile Include="SingleInstanceLock.cs" />
+    <Compile Include="TrustedBundlePin.cs" />
+    <Compile Include="BundlePreparation.cs" />
     <Page Include="MainWindow.xaml" />
     <Compile Include="MainWindow.xaml.cs">
       <DependentUpon>MainWindow.xaml</DependentUpon>
@@ -48,4 +52,41 @@
     <None Include="app.manifest" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <!-- The trusted bundle pin: only bundle-pin.props may set it (a value from /p: or the environment differs from the file's
+       own text, and is refused), both or neither, each well formed; then embedded as AssemblyMetadata. Empty values are
+       embedded as empty: TrustedBundlePin then reports "not configured" and preparation is refused. -->
+  <Target Name="SortViewBundlePin" BeforeTargets="CoreCompile">
+    <XmlPeek XmlInputPath="$(MSBuildThisFileDirectory)..\bundle-pin.props" Namespaces="&lt;Namespace Prefix='m' Uri='http://schemas.microsoft.com/developer/msbuild/2003' /&gt;"
+             Query="/m:Project/m:PropertyGroup/m:SortViewBundleManifestSha256/text()">
+      <Output TaskParameter="Result" PropertyName="_SortViewPinFileSha256" />
+    </XmlPeek>
+    <XmlPeek XmlInputPath="$(MSBuildThisFileDirectory)..\bundle-pin.props" Namespaces="&lt;Namespace Prefix='m' Uri='http://schemas.microsoft.com/developer/msbuild/2003' /&gt;"
+             Query="/m:Project/m:PropertyGroup/m:SortViewBundleVersion/text()">
+      <Output TaskParameter="Result" PropertyName="_SortViewPinFileVersion" />
+    </XmlPeek>
+    <Error Condition="'$(SortViewBundleManifestSha256)' != '$(_SortViewPinFileSha256)'"
+           Text="SortViewBundleManifestSha256 is set outside installer\bundle-pin.props (a /p: or environment override). Only that reviewed file may pin the trusted bundle." />
+    <Error Condition="'$(SortViewBundleVersion)' != '$(_SortViewPinFileVersion)'"
+           Text="SortViewBundleVersion is set outside installer\bundle-pin.props (a /p: or environment override). Only that reviewed file may pin the trusted bundle." />
+    <Error Condition="('$(SortViewBundleManifestSha256)' == '' and '$(SortViewBundleVersion)' != '') or ('$(SortViewBundleManifestSha256)' != '' and '$(SortViewBundleVersion)' == '')"
+           Text="installer\bundle-pin.props must set SortViewBundleManifestSha256 and SortViewBundleVersion together, or neither." />
+    <Error Condition="'$(SortViewBundleManifestSha256)' != '' and !$([System.Text.RegularExpressions.Regex]::IsMatch('$(SortViewBundleManifestSha256)', '^[0-9a-f]{64}$'))"
+           Text="SortViewBundleManifestSha256 in installer\bundle-pin.props must be 64 lowercase hexadecimal characters." />
+    <Error Condition="'$(SortViewBundleVersion)' != '' and (!$([System.Text.RegularExpressions.Regex]::IsMatch('$(SortViewBundleVersion)', '^[0-9]+\.[0-9]+\.[0-9]+(?:[-+.][0-9A-Za-z][0-9A-Za-z.+-]*)?$')) or $(SortViewBundleVersion.Length) &gt; 64)"
+           Text="SortViewBundleVersion in installer\bundle-pin.props is not a release version (for example 1.0.14)." />
+    <ItemGroup>
+      <_SortViewPinAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>SortView.BundleManifestSha256</_Parameter1>
+        <_Parameter2>pin:$(SortViewBundleManifestSha256)</_Parameter2>
+      </_SortViewPinAttribute>
+      <_SortViewPinAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>SortView.BundleVersion</_Parameter1>
+        <_Parameter2>pin:$(SortViewBundleVersion)</_Parameter2>
+      </_SortViewPinAttribute>
+    </ItemGroup>
+    <WriteCodeFragment Language="C#" OutputFile="$(IntermediateOutputPath)SortViewBundlePin.g.cs" AssemblyAttributes="@(_SortViewPinAttribute)">
+      <Output TaskParameter="OutputFile" ItemName="Compile" />
+      <Output TaskParameter="OutputFile" ItemName="FileWrites" />
+    </WriteCodeFragment>
+  </Target>
 </Project>

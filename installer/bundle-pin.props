@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The ONE place the installer's trusted Collector release bundle is pinned: the SHA-256 of that bundle's MANIFEST.json and
+     its version. SortView.Setup.csproj embeds both in SortView.Setup.exe (AssemblyMetadata), and the installer stages a
+     bundle only if its manifest has exactly this hash and version, and never a value read from the bundle, the command line,
+     the environment, the registry or a file beside the program.
+
+     Changed only by a reviewed commit. Both empty (the default) means no bundle is trusted: preparation is refused. Both
+     must be set together: the hash as 64 lowercase hexadecimal characters, the version as the release's own version.
+     The build refuses a value set anywhere else (/p:, an environment variable) or a malformed one. -->
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <SortViewBundleManifestSha256></SortViewBundleManifestSha256>
+    <SortViewBundleVersion></SortViewBundleVersion>
+  </PropertyGroup>
+</Project>

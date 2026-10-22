@@ -37,7 +37,8 @@ WIZARD_DIR = INSTALLER / "SortView.Setup.Wizard"
 WIZARD_PROJECT = WIZARD_DIR / "SortView.Setup.Wizard.csproj"
 WIZARD_CODE = WIZARD_DIR / "SetupWizardView.xaml.cs"
 PRODUCTION_SOURCES = [SETUP_DIR / "MainWindow.xaml", SETUP_DIR / "MainWindow.xaml.cs", SETUP_DIR / "App.xaml",
-                      SETUP_DIR / "App.xaml.cs", SETUP_DIR / "SingleInstanceLock.cs"]
+                      SETUP_DIR / "App.xaml.cs", SETUP_DIR / "SingleInstanceLock.cs", SETUP_DIR / "TrustedBundlePin.cs",
+                      SETUP_DIR / "BundlePreparation.cs"]
 APP_CODE = SETUP_DIR / "App.xaml.cs"
 LOCK_CODE = SETUP_DIR / "SingleInstanceLock.cs"
 WINDOW_CODE = SETUP_DIR / "MainWindow.xaml.cs"
