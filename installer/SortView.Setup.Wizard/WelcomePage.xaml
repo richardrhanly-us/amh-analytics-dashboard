@@ -9,7 +9,7 @@
                    Text="First, setup checks that this computer is ready. You will need administrator rights and the one-time enrollment code from SortView." />
         <Border Margin="0,20,0,0" Padding="10" BorderBrush="#8A4B00" BorderThickness="1" Background="#FFF8EC">
             <TextBlock x:Name="DevelopmentNotice" TextWrapping="Wrap" Foreground="#8A4B00" FontWeight="SemiBold"
-                       Text="Development build: this version can check your computer but cannot install anything. Nothing on this computer will be changed." />
+                       Text="Development build: this version can check your computer and the installation package, but cannot install anything. It does not install, enroll or change SortView Collector. To check the package, setup copies it to a protected folder and removes that copy when you go back or close setup." />
         </Border>
     </StackPanel>
 </UserControl>

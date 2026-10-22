@@ -41,6 +41,8 @@ namespace SortView.Setup
 
         protected override void OnExit(ExitEventArgs e)
         {
+            // The staged bundle goes first (normally already released when the window closed), then the lock.
+            (MainWindow as SortView.Setup.MainWindow)?.DisposePreparation();
             ReleaseLock();
             base.OnExit(e);
         }

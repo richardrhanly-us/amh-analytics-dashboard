@@ -402,7 +402,7 @@ public static class NavigationProbe {
                 Func<Dictionary<string, object>> snap = () => {
                     var s = new Dictionary<string, object>();
                     s["page"] = window.GetType().GetProperty("CurrentPage").GetValue(window).ToString();
-                    foreach (var name in new[] { "WelcomeView", "PrerequisitesView", "ReadyView", "Wizard" }) s[name] = find(name).IsVisible;
+                    foreach (var name in new[] { "WelcomeView", "PrerequisitesView", "ReadyView", "PrepareView", "Wizard" }) s[name] = find(name).IsVisible;
                     foreach (var name in new[] { "BackButton", "NextButton", "ExitButton" }) s[name] = find(name).IsEnabled;
                     s["checking"] = prop("IsChecking"); s["can_continue"] = prop("CanContinue");
                     s["check_again"] = ((FrameworkElement)checks.FindName("CheckAgainButton")).IsEnabled;
@@ -435,7 +435,10 @@ public static class NavigationProbe {
                 click("CheckAgainButton"); wait(); record("passed_again");
                 click("NextButton"); record("ready");
                 r["ready_notice_visible"] = ((FrameworkElement)find("ReadyView").FindName("DevelopmentNotice")).IsVisible;
-                click("NextButton"); record("setup");
+                // Prepare, with this build's own preparation: no package is trusted (the pin is empty), so it is refused.
+                click("NextButton"); record("prepare");
+                r["prepare_stage"] = ((System.Windows.Controls.TextBlock)find("PrepareView").FindName("StageText")).Text;
+                click("NextButton"); record("next_while_refused"); // refused: nothing is prepared
                 var wizard = find("Wizard");
                 r["start_enabled"] = ((FrameworkElement)wizard.FindName("StartButton")).IsEnabled;
                 r["installation_enabled"] = wizard.GetType().GetProperty("IsInstallationEnabled").GetValue(wizard);
@@ -478,7 +481,8 @@ def _buttons(step: dict) -> tuple:
     return step["BackButton"], step["NextButton"], step["ExitButton"]
 
 
-PAGE_VIEWS = {"Welcome": "WelcomeView", "Prerequisites": "PrerequisitesView", "Ready": "ReadyView", "Setup": "Wizard"}
+PAGE_VIEWS = {"Welcome": "WelcomeView", "Prerequisites": "PrerequisitesView", "Ready": "ReadyView", "Prepare": "PrepareView",
+              "Setup": "Wizard"}
 
 
 @needs_bridge
@@ -491,7 +495,7 @@ def test_exactly_one_page_is_visible_at_every_step(navigation):
 def test_welcome_comes_first_with_next_and_exit(navigation):
     welcome = navigation["by_step"]["welcome"]
     assert welcome["page"] == "Welcome"
-    assert (welcome["WelcomeView"], welcome["PrerequisitesView"], welcome["ReadyView"], welcome["Wizard"]) == (True, False, False, False)
+    assert [welcome[view] for view in PAGE_VIEWS.values()] == [True, False, False, False, False]
     assert _buttons(welcome) == (False, True, True)
     assert welcome["results"] is None and welcome["reads"] == 0  # nothing is read before Prerequisites
 
@@ -542,16 +546,18 @@ def test_back_and_next_move_between_pages_without_re_reading(navigation):
 
 
 @needs_bridge
-def test_the_setup_page_still_cannot_install(navigation):
-    setup = navigation["by_step"]["setup"]
-    assert setup["page"] == "Setup" and (setup["WelcomeView"], setup["PrerequisitesView"], setup["ReadyView"], setup["Wizard"]) == (False, False, False, True)
-    assert _buttons(setup) == (True, False, True)  # no Next past Setup
+def test_prepare_follows_ready_and_this_build_cannot_reach_setup(navigation):
+    prepare = navigation["by_step"]["prepare"]
+    assert prepare["page"] == "Prepare" and [prepare[view] for view in PAGE_VIEWS.values()] == [False, False, False, True, False]
+    # This build trusts no package (its pin is empty), so preparation is refused and Next stays off.
+    assert navigation["prepare_stage"] == "This setup program does not trust any installation package."
+    assert _buttons(prepare) == (True, False, True) and navigation["by_step"]["next_while_refused"]["page"] == "Prepare"
     assert navigation["installation_enabled"] is False and navigation["start_enabled"] is False
     assert navigation["closed"] is True and navigation["children"] == 0
 
 
 @needs_bridge
-def test_ready_comes_between_prerequisites_and_setup_without_re_reading(navigation):
+def test_ready_comes_between_prerequisites_and_prepare_without_re_reading(navigation):
     steps = navigation["by_step"]
     reads = steps["passed_again"]["reads"]
     ready = steps["ready"]
@@ -561,7 +567,7 @@ def test_ready_comes_between_prerequisites_and_setup_without_re_reading(navigati
     assert steps["back_to_prerequisites"]["page"] == "Prerequisites"
     assert steps["back_to_prerequisites"]["results"] == steps["passed_again"]["results"]  # results kept
     assert steps["ready_again"]["page"] == "Ready"
-    for name in ("ready", "setup", "back_to_ready", "back_to_prerequisites", "ready_again"):
+    for name in ("ready", "prepare", "back_to_ready", "back_to_prerequisites", "ready_again"):
         assert steps[name]["reads"] == reads, name  # no page after Prerequisites re-reads this computer
 
 
@@ -578,8 +584,8 @@ READY_STATEMENTS = [
     "Setup requires administrator rights on this computer.",
     ("You can cancel setup at any of its questions until the enrollment code is sent. Once enrollment may have begun, setup "
      "cannot be interrupted and finishes on its own."),
-    ("Development build: installation is not enabled in this version. Select Next to see the setup screen. Nothing will be "
-     "installed, enrolled or changed on this computer."),
+    ("Development build: installation is not enabled in this version. Select Next to check the installation package and copy it "
+     "to a protected folder; that copy is removed when you go back or close setup. Nothing will be installed or enrolled."),
 ]
 
 

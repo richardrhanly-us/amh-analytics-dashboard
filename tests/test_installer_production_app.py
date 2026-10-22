@@ -27,6 +27,11 @@ from pathlib import Path
 
 import pytest
 from test_installer_bridge import _MSBUILD, _POWERSHELL, needs_bridge
+from test_installer_prepare_page import (
+    FIXTURE_PREPARATION_CS,
+    FIXTURE_VERSION,
+    write_fixture_bundle,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTALLER = REPO_ROOT / "installer"
@@ -38,7 +43,7 @@ WIZARD_PROJECT = WIZARD_DIR / "SortView.Setup.Wizard.csproj"
 WIZARD_CODE = WIZARD_DIR / "SetupWizardView.xaml.cs"
 PRODUCTION_SOURCES = [SETUP_DIR / "MainWindow.xaml", SETUP_DIR / "MainWindow.xaml.cs", SETUP_DIR / "App.xaml",
                       SETUP_DIR / "App.xaml.cs", SETUP_DIR / "SingleInstanceLock.cs", SETUP_DIR / "TrustedBundlePin.cs",
-                      SETUP_DIR / "BundlePreparation.cs"]
+                      SETUP_DIR / "BundlePreparation.cs", SETUP_DIR / "PreparationStep.cs"]
 APP_CODE = SETUP_DIR / "App.xaml.cs"
 LOCK_CODE = SETUP_DIR / "SingleInstanceLock.cs"
 WINDOW_CODE = SETUP_DIR / "MainWindow.xaml.cs"
@@ -46,7 +51,8 @@ INSTALLER_LOCK = r"Global\SortView.Setup.Installer"
 ALREADY_RUNNING = ("SortView Setup is already running on this computer. Use the setup window that is already open, or wait for it "
                    "to finish.")
 
-DISABLED_NOTICE = "Installation is not yet enabled in this build. Nothing will be installed or changed on this computer."
+DISABLED_NOTICE = ("Installation is not yet enabled in this build. Nothing will be installed or enrolled, and SortView Collector is not "
+                   "changed. The checked copy of the installation package is removed when you close setup.")
 MSBUILD_NS = {"m": "http://schemas.microsoft.com/developer/msbuild/2003"}
 #: What the production build output may hold: the program and the three libraries it references (symbols allowed).
 PRODUCTION_FILES = {"SortView.Setup.exe", "SortView.Setup.Wizard.dll", "SortView.Setup.Wpf.dll", "SortView.Setup.Core.dll"}
@@ -151,12 +157,14 @@ def test_back_and_next_are_locked_while_the_wizard_runs():
     window = _flat(_without_comments(WINDOW_CODE.read_text(encoding="utf-8")))
     assert "Wizard.RunStateChanged += (s, e) => UpdateButtons();" in window
     buttons = window[window.index("private void UpdateButtons()"):window.index("private void BackButton_Click")]
-    assert "bool running = Wizard.IsRunning;" in buttons
-    assert "BackButton.IsEnabled = !running &&" in buttons and "NextButton.IsEnabled = !running &&" in buttons
+    # Busy: the wizard runs setup, or the Prepare step is preparing.
+    assert "private bool IsBusy => Wizard.IsRunning || preparation.IsBusy;" in window
+    assert "bool busy = IsBusy;" in buttons
+    assert "BackButton.IsEnabled = !busy &&" in buttons and "NextButton.IsEnabled = !busy &&" in buttons
     assert "ExitButton" not in buttons  # Exit stays on: the wizard defers the close while setup runs
     back = window[window.index("private void BackButton_Click"):window.index("private void NextButton_Click")]
     next_ = window[window.index("private void NextButton_Click"):window.index("private void ExitButton_Click")]
-    assert "!Wizard.IsRunning" in back and "if (Wizard.IsRunning) { return; }" in next_
+    assert "!IsBusy" in back and "if (IsBusy) { return; }" in next_
     assert "private void ExitButton_Click(object sender, RoutedEventArgs e) => Close();" in window
 
 
@@ -229,7 +237,7 @@ def test_windows_refuses_to_start_the_program_without_elevation(production_build
 # BeginRun -- and closes it.
 # Around that it records the machine state setup would change, to show nothing did.
 _PROBE = r"""
-param([string]$ExePath, [string]$OutPath)
+param([string]$ExePath, [string]$OutPath, [string]$FixtureSource, [string]$FixtureSha, [string]$FixtureVersion, [string]$FixtureRoot)
 $ErrorActionPreference = 'Stop'
 # Whether a path exists: 'present', 'absent', or 'access_denied' when this session may not look -- e.g. an installed
 # Collector's secrets folder, from a session without administrator rights. Only existence is asked: nothing is opened,
@@ -245,10 +253,11 @@ function Get-MachineState {
         token = (Get-PathState 'C:\ProgramData\SortViewCollector\secrets\api_token.dpapi')
     }
 }
-Add-Type -ReferencedAssemblies PresentationFramework, PresentationCore, WindowsBase, System.Xaml -TypeDefinition @"
+Add-Type -ReferencedAssemblies PresentationFramework, PresentationCore, WindowsBase, System.Xaml, System.Core -TypeDefinition @"
 using System; using System.Collections.Generic; using System.Reflection; using System.Threading;
 using System.Windows; using System.Windows.Automation; using System.Windows.Controls; using System.Windows.Controls.Primitives;
 using System.Windows.Threading;
+@@FIXTURE@@
 public static class ProductionProbe {
     static void Pump() {
         var frame = new DispatcherFrame();
@@ -257,7 +266,8 @@ public static class ProductionProbe {
     }
     static void Click(FrameworkElement button) { button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent)); Pump(); }
     // Gets to the Setup page the way a user does: Next past Welcome, the checks (on facts that pass, injected because a test
-    // session is not elevated -- MachineFacts.Read is never called here), then Next past Ready.
+    // session is not elevated -- MachineFacts.Read is never called here), Next past Ready, and Next once Prepare has
+    // staged the fixture bundle.
     static void GoToSetupPage(Window window) {
         var checks = (FrameworkElement)window.FindName("PrerequisitesView");
         var factsType = checks.GetType().Assembly.GetType("SortView.Setup.Wizard.MachineFacts", true);
@@ -274,13 +284,18 @@ public static class ProductionProbe {
         for (int i = 0; i < 1000 && !(bool)checks.GetType().GetProperty("CanContinue").GetValue(checks); i++) { Thread.Sleep(10); Pump(); }
         Click((FrameworkElement)window.FindName("NextButton"));
         Click((FrameworkElement)window.FindName("NextButton"));
+        var next = (FrameworkElement)window.FindName("NextButton");
+        for (int i = 0; i < 3000 && !next.IsEnabled; i++) { Thread.Sleep(10); Pump(); }
+        Click(next);
     }
-    public static Dictionary<string, object> Run(string exePath) {
+    public static Dictionary<string, object> Run(string exePath, string source, string sha, string version, string root) {
         var r = new Dictionary<string, object>();
         var thread = new Thread(() => {
             try {
+                SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());  // as in the application
                 var window = (Window)Activator.CreateInstance(Assembly.LoadFrom(exePath).GetType("SortView.Setup.MainWindow", true));
                 window.WindowStartupLocation = WindowStartupLocation.Manual; window.Left = -32000; window.Top = -32000; window.ShowActivated = false;
+                FixturePreparation.Install(window, source, sha, version, root);
                 window.Show(); Pump();
                 GoToSetupPage(window);
                 r["page"] = window.GetType().GetProperty("CurrentPage").GetValue(window).ToString();
@@ -323,12 +338,20 @@ public static class ProductionProbe {
 }
 "@
 $before = Get-MachineState
-$report = [ProductionProbe]::Run($ExePath)
+$report = [ProductionProbe]::Run($ExePath, $FixtureSource, $FixtureSha, $FixtureVersion, $FixtureRoot)
 $report['children'] = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $PID").Count
 $report['before'] = $before
 $report['after'] = Get-MachineState
 ConvertTo-Json -InputObject $report -Depth 4 | Set-Content -LiteralPath $OutPath -Encoding UTF8
-"""
+""".replace("@@FIXTURE@@", FIXTURE_PREPARATION_CS)
+
+
+def _fixture_args(tmp_path: Path) -> list[str]:
+    """Probe arguments for a fixture bundle, pinned, and a disposable staging root: what Prepare stages in the probes."""
+    source, root = tmp_path / "bundle", tmp_path / "staging"
+    sha = write_fixture_bundle(source)
+    root.mkdir()
+    return ["-FixtureSource", str(source), "-FixtureSha", sha, "-FixtureVersion", FIXTURE_VERSION, "-FixtureRoot", str(root)]
 
 
 @needs_bridge
@@ -336,7 +359,7 @@ def test_production_startup_shows_the_notice_and_cannot_start_setup_or_change_an
     probe, out = tmp_path / "probe.ps1", tmp_path / "probe.json"
     probe.write_text(_PROBE, encoding="utf-8")
     completed = subprocess.run([_POWERSHELL, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(probe),
-                                "-ExePath", str(production_build / "SortView.Setup.exe"), "-OutPath", str(out)],
+                                "-ExePath", str(production_build / "SortView.Setup.exe"), "-OutPath", str(out), *_fixture_args(tmp_path)],
                                capture_output=True, text=True, timeout=180, check=False)
     assert out.exists(), completed.stdout + completed.stderr
     report = json.loads(out.read_text(encoding="utf-8-sig"))
@@ -374,11 +397,11 @@ def test_production_startup_shows_the_notice_and_cannot_start_setup_or_change_an
 # 3. RUN SAFETY (M1): the single-instance lock, and navigation while setup runs
 # =====================================================================================
 
-def _run_probe(tmp_path: Path, script: str, production_build: Path) -> dict:
+def _run_probe(tmp_path: Path, script: str, production_build: Path, extra: tuple[str, ...] = ()) -> dict:
     probe, out = tmp_path / "probe.ps1", tmp_path / "probe.json"
     probe.write_text(script, encoding="utf-8")
     completed = subprocess.run([_POWERSHELL, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(probe),
-                                "-BuildDir", str(production_build), "-OutPath", str(out)],
+                                "-BuildDir", str(production_build), "-OutPath", str(out), *extra],
                                capture_output=True, text=True, timeout=180, check=False)
     assert out.exists(), completed.stdout + completed.stderr
     report = json.loads(out.read_text(encoding="utf-8-sig"))
@@ -498,7 +521,7 @@ def test_only_one_installer_holds_the_lock_and_anything_uncertain_is_refused(tmp
 # WINDOW ONLY and given a fake runner that runs nothing: no setup.ps1, no bundle, no enrollment, token or Scheduled Task,
 # no tool -- it only waits until the probe lets it return.
 _RUN_LOCK_PROBE = r"""
-param([string]$BuildDir, [string]$OutPath)
+param([string]$BuildDir, [string]$OutPath, [string]$FixtureSource, [string]$FixtureSha, [string]$FixtureVersion, [string]$FixtureRoot)
 $ErrorActionPreference = 'Stop'
 foreach ($name in 'Core', 'Wpf', 'Wizard') { Add-Type -Path (Join-Path $BuildDir "SortView.Setup.$name.dll") }
 $references = @('PresentationFramework', 'PresentationCore', 'WindowsBase', 'System.Xaml', 'System.Core') +
@@ -507,6 +530,7 @@ Add-Type -ReferencedAssemblies $references -TypeDefinition @"
 using System; using System.Collections.Generic; using System.Reflection; using System.Threading;
 using System.Windows; using System.Windows.Controls; using System.Windows.Controls.Primitives; using System.Windows.Threading;
 using SortView.Setup.Core; using SortView.Setup.Wpf; using SortView.Setup.Wizard;
+@@FIXTURE@@
 public static class RunLockProbe {
     public static readonly ManualResetEventSlim Gate = new ManualResetEventSlim(false);
     public static int Runs;
@@ -534,13 +558,17 @@ public static class RunLockProbe {
         WaitUntil(() => ((PrerequisitesPage)checks).CanContinue);
         Click((FrameworkElement)window.FindName("NextButton"));
         Click((FrameworkElement)window.FindName("NextButton"));
+        WaitUntil(() => ((Button)window.FindName("NextButton")).IsEnabled);  // Prepare: the fixture bundle is staged
+        Click((FrameworkElement)window.FindName("NextButton"));
     }
-    public static Dictionary<string, object> Run(string exePath) {
+    public static Dictionary<string, object> Run(string exePath, string source, string sha, string version, string root) {
         var r = new Dictionary<string, object>();
         var thread = new Thread(() => {
             try {
+                SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());  // as in the application
                 var window = (Window)Activator.CreateInstance(Assembly.LoadFrom(exePath).GetType("SortView.Setup.MainWindow", true));
                 window.WindowStartupLocation = WindowStartupLocation.Manual; window.Left = -32000; window.Top = -32000; window.ShowActivated = false;
+                FixturePreparation.Install(window, source, sha, version, root);
                 window.Show(); Pump();
                 GoToSetupPage(window);
                 var wizard = (SetupWizardView)window.FindName("Wizard");
@@ -578,10 +606,10 @@ public static class RunLockProbe {
     }
 }
 "@
-$report = [RunLockProbe]::Run((Join-Path $BuildDir 'SortView.Setup.exe'))
+$report = [RunLockProbe]::Run((Join-Path $BuildDir 'SortView.Setup.exe'), $FixtureSource, $FixtureSha, $FixtureVersion, $FixtureRoot)
 $report['children'] = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $PID").Count
 ConvertTo-Json -InputObject $report -Depth 5 | Set-Content -LiteralPath $OutPath -Encoding UTF8
-"""
+""".replace("@@FIXTURE@@", FIXTURE_PREPARATION_CS)
 
 
 def test_the_navigation_probes_fake_runner_runs_nothing():
@@ -594,7 +622,7 @@ def test_the_navigation_probes_fake_runner_runs_nothing():
 
 @needs_bridge
 def test_back_and_next_refuse_navigation_while_setup_runs_and_exit_waits_for_it(tmp_path, production_build):
-    report = _run_probe(tmp_path, _RUN_LOCK_PROBE, production_build)
+    report = _run_probe(tmp_path, _RUN_LOCK_PROBE, production_build, tuple(_fixture_args(tmp_path)))
     steps = report["steps"]
 
     def nav(label: str) -> tuple:
@@ -607,7 +635,7 @@ def test_back_and_next_refuse_navigation_while_setup_runs_and_exit_waits_for_it(
     assert nav("forced_back") == nav("running") and nav("forced_next") == nav("running")
     # The run ended: navigation as before.
     assert nav("finished") == ("Setup", False, True, False, True, True)
-    assert nav("back_after")[0] == "Ready" and nav("back_after")[3] is True
+    assert nav("back_after")[0] == "Prepare" and nav("back_after")[3] is True  # the prepared bundle is kept
     assert nav("next_after")[0] == "Setup"
     # Exit during a run: the window stays open, says why, and closes by itself once setup has returned.
     assert nav("exit_while_running") == ("Setup", True, False, False, True, True)
