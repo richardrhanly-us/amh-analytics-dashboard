@@ -70,7 +70,7 @@ def test_the_verifier_cannot_run_anything_connect_or_change_the_file_system():
 def test_the_verifier_is_part_of_core_with_no_extra_shipped_dependency():
     project = CORE_PROJECT.read_text(encoding="utf-8")
     assert '<Compile Include="BundleVerifier.cs" />' in project
-    # JavaScriptSerializer is part of .NET Framework 4.8 (in the GAC): referenced, never copied into the build output.
+    # JavaScriptSerializer is part of .NET Framework (in the GAC): referenced, never copied into the build output.
     assert '<Reference Include="System.Web.Extensions" />' in project
     assert "<PackageReference" not in project and "HintPath>" + "System.Web" not in project
 

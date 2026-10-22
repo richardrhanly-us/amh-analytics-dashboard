@@ -82,8 +82,23 @@ def test_the_production_program_references_only_the_wizard_and_the_bridges():
     assert _project_references(SETUP_PROJECT) == {"SortView.Setup.Wizard", "SortView.Setup.Wpf", "SortView.Setup.Core"}
     project = _project(SETUP_PROJECT)
     assert project.find(".//m:EmbeddedResource", MSBUILD_NS) is None  # no simulation script, or anything else, embedded
-    assert (_property(SETUP_PROJECT, "OutputType"), _property(SETUP_PROJECT, "TargetFrameworkVersion")) == ("WinExe", "v4.8")
+    assert _property(SETUP_PROJECT, "OutputType") == "WinExe"
     assert _property(SETUP_PROJECT, "ApplicationManifest") == "app.manifest"
+
+
+#: Every installer project, production or not: one target, the NBPL AMH PC's .NET Framework 4.7.2 (a project cannot
+#: reference one that targets a later framework).
+INSTALLER_PROJECTS = [SETUP_PROJECT, WIZARD_PROJECT, INSTALLER / "SortView.Setup.Wpf" / "SortView.Setup.Wpf.csproj",
+                      INSTALLER / "SortView.Setup.Core" / "SortView.Setup.Core.csproj",
+                      INSTALLER / "SortView.Setup.Spike" / "SortView.Setup.Spike.csproj",
+                      INSTALLER / "SortView.Setup.Core" / "Testing" / "SortView.Setup.Core.Testing.csproj",
+                      INSTALLER / "SortView.Setup.Wpf" / "Testing" / "SortView.Setup.Wpf.Testing.csproj"]
+
+
+def test_every_installer_project_targets_net_framework_472():
+    found = sorted(INSTALLER.glob("**/*.csproj"))
+    assert sorted(INSTALLER_PROJECTS) == [p for p in found if "bin" not in p.parts and "obj" not in p.parts]
+    assert {p.name: _property(p, "TargetFrameworkVersion") for p in INSTALLER_PROJECTS} == {p.name: "v4.7.2" for p in INSTALLER_PROJECTS}
 
 
 def test_the_wizard_references_only_the_bridges():

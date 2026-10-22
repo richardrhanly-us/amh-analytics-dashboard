@@ -290,8 +290,8 @@ namespace SortView.Setup.Wizard
         /// <summary>Provisional minimum: Windows 10 version 1809 (build 17763), the NBPL AMH PC's version.</summary>
         public const int MinimumWindowsBuild = 17763;
         public const int Windows11FirstBuild = 22000;
-        /// <summary>.NET Framework 4.8.</summary>
-        public const int MinimumDotNetRelease = 528040;
+        /// <summary>.NET Framework 4.7.2 (461808 on Windows 10 1803, 461814 elsewhere, e.g. the NBPL AMH PC).</summary>
+        public const int MinimumDotNetRelease = 461808;
         /// <summary>Provisional: to be validated against the real package size and temporary extraction space before release.</summary>
         public const long FailBelowBytes = 1L * 1024 * 1024 * 1024;
         public const long WarnBelowBytes = 5L * 1024 * 1024 * 1024;
@@ -381,7 +381,7 @@ namespace SortView.Setup.Wizard
 
         private static PrerequisiteResult DotNet(MachineFacts f)
         {
-            const string id = "dotnet", title = ".NET Framework 4.8";
+            const string id = "dotnet", title = ".NET Framework 4.7.2";
             const string later = " (Checking this before SortView Setup even starts is part of the future installer package.)";
             if (f.DotNetRelease == null)
             {
@@ -389,10 +389,10 @@ namespace SortView.Setup.Wizard
             }
             if (f.DotNetRelease.Value >= MinimumDotNetRelease)
             {
-                return Result(id, title, PrerequisiteStatus.Passed, ".NET Framework 4.8 or later is installed.", "");
+                return Result(id, title, PrerequisiteStatus.Passed, ".NET Framework 4.7.2 or later is installed.", "");
             }
             return Result(id, title, PrerequisiteStatus.Failed, "An older .NET Framework is installed (release " + f.DotNetRelease + ")." + later,
-                "Install .NET Framework 4.8 from Microsoft (or through Windows Update), then run SortView Setup again.");
+                "Install .NET Framework 4.7.2 or later from Microsoft (or through Windows Update), then run SortView Setup again.");
         }
 
         private static PrerequisiteResult PowerShell(MachineFacts f)
