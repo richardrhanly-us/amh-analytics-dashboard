@@ -70,6 +70,33 @@ namespace SortView.Setup.Core
         RunMarker,
     }
 
+    /// <summary>How a run folder is removed: its limits, and TEST ONLY hooks. The production policy always uses
+    /// <see cref="Default"/>; a test policy may be given others (internal, by reflection).</summary>
+    internal sealed class CleanupSettings
+    {
+        internal static readonly CleanupSettings Default = new CleanupSettings(40, 100000, false, null);
+
+        internal CleanupSettings(int maxDepth, int maxEntries, bool forceClassicDisposition, Action<string> beforeOpen)
+        {
+            MaxDepth = maxDepth;
+            MaxEntries = maxEntries;
+            ForceClassicDisposition = forceClassicDisposition;
+            BeforeOpen = beforeOpen;
+        }
+
+        /// <summary>Folder levels below the run folder (BundleVerifier allows 32).</summary>
+        internal int MaxDepth { get; }
+
+        /// <summary>Entries removed from one run, at most (BundleVerifier allows 100000).</summary>
+        internal int MaxEntries { get; }
+
+        /// <summary>TEST ONLY: skip POSIX deletion, as if it were unsupported, and use the classic disposition.</summary>
+        internal bool ForceClassicDisposition { get; }
+
+        /// <summary>TEST ONLY: called with an entry's path after its folder was listed and before the entry is opened.</summary>
+        internal Action<string> BeforeOpen { get; }
+    }
+
     public sealed class StagingProblem
     {
         internal StagingProblem(StagingProblemCode code, string path)
@@ -176,6 +203,27 @@ namespace SortView.Setup.Core
             }
         }
 
+        private CleanupSettings cleanupSettings;
+
+        /// <summary>TEST ONLY (internal; set by reflection on a policy a test built): other cleanup limits or hooks. Always
+        /// null for the production policy, which refuses to have any set.</summary>
+        internal CleanupSettings CleanupTestSettings
+        {
+            get => isProduction ? null : cleanupSettings;
+            set
+            {
+                if (isProduction)
+                {
+                    throw new InvalidOperationException("The production staging policy takes no cleanup test settings.");
+                }
+                cleanupSettings = value;
+            }
+        }
+
+        /// <summary>The cleanup settings a staging under this policy uses: <see cref="CleanupSettings.Default"/> unless a test
+        /// policy was given others.</summary>
+        internal CleanupSettings EffectiveCleanup => (isProduction ? null : cleanupSettings) ?? CleanupSettings.Default;
+
         public string StagingRoot { get; }
 
         public IReadOnlyList<SecurityIdentifier> TrustedPrincipals { get; }
@@ -201,9 +249,10 @@ namespace SortView.Setup.Core
         private readonly string stagingRoot;
         private string runFolder;
         private SafeFileHandle runLock;
+        private readonly CleanupSettings cleanup;
 
         internal StagedBundle(IList<StagingProblem> problems, BundleVerification sourceVerification, BundleVerification stagedVerification,
-            string stagingRoot, string runFolder, string bundlePath, SafeFileHandle runLock = null)
+            string stagingRoot, string runFolder, string bundlePath, SafeFileHandle runLock = null, CleanupSettings cleanup = null)
         {
             Problems = new ReadOnlyCollection<StagingProblem>(problems);
             SourceVerification = sourceVerification;
@@ -211,6 +260,7 @@ namespace SortView.Setup.Core
             this.stagingRoot = stagingRoot;
             this.runFolder = runFolder;
             this.runLock = runLock;
+            this.cleanup = cleanup;
             IsStaged = problems.Count == 0 && bundlePath != null && stagedVerification != null && stagedVerification.IsVerified;
             BundlePath = IsStaged ? bundlePath : null;
             Version = IsStaged ? stagedVerification.Version : null;
@@ -255,7 +305,7 @@ namespace SortView.Setup.Core
             runLock = null;
             if (runFolder != null)
             {
-                cleanupProblems.AddRange(BundleStager.RemoveRunFolder(stagingRoot, runFolder, held)); // closes the handle
+                cleanupProblems.AddRange(BundleStager.RemoveRunFolder(stagingRoot, runFolder, held, cleanup)); // closes the handle
                 runFolder = null;
             }
             else
@@ -426,6 +476,7 @@ namespace SortView.Setup.Core
             string runFolder = null;
             string bundlePath = null;
             SafeFileHandle runLock = null;
+            CleanupSettings cleanup = policy == null ? CleanupSettings.Default : policy.EffectiveCleanup;
             try
             {
                 // (1) The request.
@@ -484,17 +535,17 @@ namespace SortView.Setup.Core
                 runLock = AcquireRunLock(runFolder, policy, problems);
                 if (problems.Count > 0)
                 {
-                    return Fail(problems, sourceVerification, root, runFolder, runLock: runLock);
+                    return Fail(problems, sourceVerification, root, runFolder, runLock: runLock, cleanup: cleanup);
                 }
                 CheckCreated(runFolder, policy, problems);
                 if (problems.Count > 0)
                 {
-                    return Fail(problems, sourceVerification, root, runFolder, runLock: runLock);
+                    return Fail(problems, sourceVerification, root, runFolder, runLock: runLock, cleanup: cleanup);
                 }
                 WriteRunMarker(runFolder, expectedHash, policy, problems);
                 if (problems.Count > 0)
                 {
-                    return Fail(problems, sourceVerification, root, runFolder, runLock: runLock);
+                    return Fail(problems, sourceVerification, root, runFolder, runLock: runLock, cleanup: cleanup);
                 }
                 bundlePath = Path.Combine(runFolder, "bundle");
                 Directory.CreateDirectory(bundlePath);
@@ -503,20 +554,20 @@ namespace SortView.Setup.Core
                 byte[] manifestBytes = ReadSourceManifest(source, expectedHash, problems);
                 if (problems.Count > 0)
                 {
-                    return Fail(problems, sourceVerification, root, runFolder, runLock: runLock);
+                    return Fail(problems, sourceVerification, root, runFolder, runLock: runLock, cleanup: cleanup);
                 }
                 var report = new BundleVerifier.Report();
                 BundleVerifier.Manifest manifest = BundleVerifier.Parse(manifestBytes, report);
                 if (manifest == null || report.Any)
                 {
                     problems.Add(new StagingProblem(StagingProblemCode.SourceChanged, BundleVerifier.ManifestFileName));
-                    return Fail(problems, sourceVerification, root, runFolder, runLock: runLock);
+                    return Fail(problems, sourceVerification, root, runFolder, runLock: runLock, cleanup: cleanup);
                 }
                 long needed = SpaceMargin + manifestBytes.Length + manifest.Files.Sum(f => f.SizeBytes);
                 if (new DriveInfo(Path.GetPathRoot(root)).AvailableFreeSpace < needed)
                 {
                     problems.Add(new StagingProblem(StagingProblemCode.InsufficientSpace, root));
-                    return Fail(problems, sourceVerification, root, runFolder, runLock: runLock);
+                    return Fail(problems, sourceVerification, root, runFolder, runLock: runLock, cleanup: cleanup);
                 }
                 int done = 0;
                 foreach (BundleVerifier.ManifestFile entry in manifest.Files)
@@ -525,7 +576,7 @@ namespace SortView.Setup.Core
                     CopyListedFile(source, bundlePath, entry, cancellationToken, problems);
                     if (problems.Count > 0)
                     {
-                        return Fail(problems, sourceVerification, root, runFolder, runLock: runLock);
+                        return Fail(problems, sourceVerification, root, runFolder, runLock: runLock, cleanup: cleanup);
                     }
                     Report(progress, StagingStep.FileCopied, entry.Path, ++done, manifest.Files.Count);
                 }
@@ -536,7 +587,7 @@ namespace SortView.Setup.Core
                 CheckCreated(runFolder, policy, problems);
                 if (problems.Count > 0)
                 {
-                    return Fail(problems, sourceVerification, root, runFolder, runLock: runLock);
+                    return Fail(problems, sourceVerification, root, runFolder, runLock: runLock, cleanup: cleanup);
                 }
 
                 // (7) The staged copy, on its own, by the same rules.
@@ -545,10 +596,10 @@ namespace SortView.Setup.Core
                 if (!stagedVerification.IsVerified)
                 {
                     problems.Add(new StagingProblem(StagingProblemCode.StagedNotVerified, ""));
-                    return Fail(problems, sourceVerification, root, runFolder, stagedVerification, runLock);
+                    return Fail(problems, sourceVerification, root, runFolder, stagedVerification, runLock, cleanup: cleanup);
                 }
                 Report(progress, StagingStep.StagedVerified, null, manifest.Files.Count, manifest.Files.Count);
-                var staged = new StagedBundle(problems, sourceVerification, stagedVerification, root, runFolder, bundlePath, runLock);
+                var staged = new StagedBundle(problems, sourceVerification, stagedVerification, root, runFolder, bundlePath, runLock, cleanup);
                 runLock = null; // the staged bundle owns it now
                 return staged;
             }
@@ -570,18 +621,18 @@ namespace SortView.Setup.Core
             }
             // Every exit after the run folder was pinned passes runLock on: to the StagedBundle on success, otherwise to Fail,
             // whose cleanup closes it (RemoveRunFolder closes it in a finally, and never throws).
-            return Fail(problems, sourceVerification, root, runFolder, stagedVerification, runLock);
+            return Fail(problems, sourceVerification, root, runFolder, stagedVerification, runLock, cleanup: cleanup);
         }
 
         /// <summary>A failed staging: removes the run folder it created (through <paramref name="runLock"/> when it was
         /// pinned, which also closes the handle).</summary>
         private static StagedBundle Fail(List<StagingProblem> problems, BundleVerification sourceVerification, string root, string runFolder,
-            BundleVerification stagedVerification = null, SafeFileHandle runLock = null)
+            BundleVerification stagedVerification = null, SafeFileHandle runLock = null, CleanupSettings cleanup = null)
         {
             var result = new StagedBundle(problems, sourceVerification, stagedVerification, root, null, null);
             if (runFolder != null)
             {
-                result.AddCleanupProblems(RemoveRunFolder(root, runFolder, runLock));
+                result.AddCleanupProblems(RemoveRunFolder(root, runFolder, runLock, cleanup));
             }
             else
             {
@@ -1072,16 +1123,74 @@ namespace SortView.Setup.Core
         }
 
         // ---- cleanup -------------------------------------------------------------------------------------------------
+        //
+        // Everything is removed THROUGH HANDLES, never by path. Each entry is opened on itself (FILE_FLAG_OPEN_REPARSE_POINT:
+        // a link is opened as the link, never followed), sharing nothing (so it fails if anyone else has it open), judged by
+        // what its handle reports, and deleted through that handle. A folder is listed through its own handle and stays open
+        // -- pinned, so it cannot be renamed, replaced or deleted, nor can anything above it be renamed -- until everything
+        // in it is gone; a path below a pinned folder therefore always names something inside it. The first failure stops
+        // the removal. The run's marker goes only once everything else has, and the run folder last, through its pin.
+
+        private const uint FileWriteAttributesAccess = 0x100;
+        // Each entry: delete it, list it (if a folder), read its attributes, and clear read-only on the classic path.
+        private const uint EntryAccess = DeleteAccess | FileListDirectory | 0x80 | FileWriteAttributesAccess | SynchronizeAccess;
+        private const uint ShareNothing = 0;
+        private const int FileDispositionInfoExClass = 21;
+        private const int FileBasicInfoClass = 0;
+        private const int FileFullDirectoryInfoClass = 14;
+        private const int FileFullDirectoryRestartInfoClass = 15;
+        // FILE_DISPOSITION_FLAG_DELETE | POSIX_SEMANTICS (the name goes when this handle closes, even if others are open)
+        // | IGNORE_READONLY_ATTRIBUTE.
+        private const uint PosixDeleteFlags = 0x1 | 0x2 | 0x10;
+        private const int ErrorInvalidFunction = 1;
+        private const int ErrorNotSupported = 50;
+        private const int ErrorInvalidParameter = 87;
+        private const int ErrorNoMoreFiles = 18;
+        private const uint InvalidFileAttributes = 0xFFFFFFFF;
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetFileInformationByHandle(SafeFileHandle handle, int informationClass, ref uint dispositionFlags, int size);
+
+        // FILE_BASIC_INFO: four LARGE_INTEGER times and the attributes, 40 bytes in 32 and 64 bits alike.
+        [StructLayout(LayoutKind.Explicit, Size = 40)]
+        private struct FileBasicInfo
+        {
+            [FieldOffset(0)] public long CreationTime;
+            [FieldOffset(8)] public long LastAccessTime;
+            [FieldOffset(16)] public long LastWriteTime;
+            [FieldOffset(24)] public long ChangeTime;
+            [FieldOffset(32)] public uint FileAttributes;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetFileInformationByHandle(SafeFileHandle handle, int informationClass, ref FileBasicInfo information, int size);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int informationClass, out FileBasicInfo information, int size);
+
+        // A folder's entries, read through its handle into a managed buffer (FILE_FULL_DIR_INFO records).
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int informationClass, byte[] buffer, int size);
+
+        [DllImport("kernel32.dll", EntryPoint = "GetFileAttributesW", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern uint GetFileAttributes(string path);
+
+        /// <summary>The extended-length form, so no path inside a run is limited to 260 characters.</summary>
+        private static string ExtendedPath(string path) => path.StartsWith(@"\\?\", StringComparison.Ordinal) ? path : @"\\?\" + path;
 
         /// <summary>
         /// Removes a run folder staging created, and nothing else: it must be a direct child of the staging root, named as a
-        /// run id, and a plain folder. Its contents are removed bottom-up by walking it, never by a recursive delete: a
-        /// reparse point found inside is removed as a link only (its target is never entered), and every path removed is
-        /// checked to be inside the run folder. Returns the problems; never throws.
+        /// run id, and a plain folder. It is removed through <paramref name="runLock"/> (its lifetime handle), or a pin opened
+        /// now when there is none; everything in it first, the marker after that, then the folder itself. Returns the problems
+        /// (CleanupFailed, naming what could not be removed and why); never throws; always closes the handle.
         /// </summary>
-        internal static IList<StagingProblem> RemoveRunFolder(string stagingRoot, string runFolder, SafeFileHandle runLock = null)
+        internal static IList<StagingProblem> RemoveRunFolder(string stagingRoot, string runFolder, SafeFileHandle runLock = null,
+            CleanupSettings settings = null)
         {
+            settings = settings ?? CleanupSettings.Default;
             var problems = new List<StagingProblem>();
+            SafeFileHandle pin = runLock;
+            bool deleted = false;
             try
             {
                 Guid ignored;
@@ -1092,35 +1201,62 @@ namespace SortView.Setup.Core
                     problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, runFolder));
                     return problems;
                 }
-                FileAttributes attributes = File.GetAttributes(runFolder);
-                if ((attributes & FileAttributes.ReparsePoint) != 0 || (attributes & FileAttributes.Directory) == 0 ||
-                    (runLock != null && !IsPlainFolderHandle(runLock)))
+                if (pin == null)
                 {
-                    problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, runFolder));
+                    // The run was never pinned (its lock failed): pin it now, sharing nothing.
+                    pin = CreateFile(ExtendedPath(runFolder), FileListDirectory | DeleteAccess | 0x80 | SynchronizeAccess, ShareNothing, IntPtr.Zero,
+                        OpenExisting, FileFlagBackupSemantics | FileFlagOpenReparsePoint, IntPtr.Zero);
+                    if (pin.IsInvalid)
+                    {
+                        int error = new Win32Exception().NativeErrorCode;
+                        if (error == ErrorFileNotFound || error == ErrorPathNotFound)
+                        {
+                            return problems; // already gone
+                        }
+                        problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, runFolder + " (error " + error + ")"));
+                        return problems;
+                    }
+                }
+                if (!IsPlainFolderHandle(pin))
+                {
+                    problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, runFolder + " (not a plain folder)"));
                     return problems;
                 }
-                RemoveContents(runFolder, runFolder, problems);
-                if (problems.Count == 0)
+
+                // (1) Everything but the marker.
+                int budget = settings.MaxEntries;
+                string markerPath = runFolder + "\\" + RunMarkerFileName;
+                if (!RemoveChildren(pin, runFolder, 0, RunMarkerFileName, settings, ref budget, problems))
                 {
-                    if (runLock != null)
+                    if (GetFileAttributes(ExtendedPath(markerPath)) != InvalidFileAttributes)
                     {
-                        // Pinned: delete through the handle that pins it (no moment when it is unpinned but still there);
-                        // it goes when the handle is closed, below.
-                        var disposition = new FileDispositionInfo { DeleteFile = 1 };
-                        if (!SetFileInformationByHandle(runLock, FileDispositionInfoClass, ref disposition, Marshal.SizeOf(typeof(FileDispositionInfo))))
-                        {
-                            problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, runFolder + " (error " + new Win32Exception().NativeErrorCode + ")"));
-                        }
+                        problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, markerPath + " (kept: the run was not removed)"));
                     }
-                    else
-                    {
-                        Directory.Delete(runFolder, false);
-                    }
+                    return problems;
                 }
-            }
-            catch (Exception e) when (e is FileNotFoundException || e is DirectoryNotFoundException)
-            {
-                // Already gone.
+                // (2) The marker, only if it is now the one entry left, and a plain file.
+                List<string> remaining = ListThroughHandle(pin, runFolder, problems);
+                if (remaining == null)
+                {
+                    return problems;
+                }
+                if (remaining.Any(name => !string.Equals(name, RunMarkerFileName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, runFolder + " (an entry appeared during cleanup)"));
+                    return problems;
+                }
+                if (remaining.Count == 1 && !RemoveMarker(markerPath, settings, problems))
+                {
+                    return problems;
+                }
+                // (3) The run folder, through its pin. The marker is gone from here on: a failure is reported as such.
+                int deleteError;
+                if (!DeleteThroughHandle(pin, settings, out deleteError))
+                {
+                    problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, runFolder + " (error " + deleteError + "; marker already removed)"));
+                    return problems;
+                }
+                deleted = true;
             }
             catch (Exception)
             {
@@ -1128,46 +1264,226 @@ namespace SortView.Setup.Core
             }
             finally
             {
-                runLock?.Dispose(); // on every path: a run's handle is never left open by its cleanup
+                pin?.Dispose(); // on every path: a run's handle is never left open by its cleanup
+            }
+            if (deleted)
+            {
+                ConfirmAbsent(runFolder, " (marker already removed)", problems);
             }
             return problems;
         }
 
-        private static void RemoveContents(string folder, string runFolder, List<StagingProblem> problems)
+        /// <summary>Removes everything in the folder <paramref name="pin"/> is open on (at <paramref name="folder"/>), except
+        /// <paramref name="keep"/>; false at the first failure (with the problem added).</summary>
+        private static bool RemoveChildren(SafeFileHandle pin, string folder, int depth, string keep, CleanupSettings settings, ref int budget,
+            List<StagingProblem> problems)
         {
-            foreach (FileSystemInfo entry in new DirectoryInfo(folder).EnumerateFileSystemInfos().ToList())
+            if (depth > settings.MaxDepth)
             {
-                string path = entry.FullName;
-                try
+                problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, folder + " (too deep)"));
+                return false;
+            }
+            List<string> names = ListThroughHandle(pin, folder, problems);
+            if (names == null)
+            {
+                return false;
+            }
+            foreach (string name in names)
+            {
+                if (keep != null && string.Equals(name, keep, StringComparison.OrdinalIgnoreCase))
                 {
-                    if (!path.StartsWith(runFolder + "\\", StringComparison.OrdinalIgnoreCase))
-                    {
-                        problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, path));
-                        continue;
-                    }
-                    bool isLink = (entry.Attributes & FileAttributes.ReparsePoint) != 0;
-                    bool isFolder = (entry.Attributes & FileAttributes.Directory) != 0;
-                    if (isFolder && !isLink)
-                    {
-                        RemoveContents(path, runFolder, problems);
-                        Directory.Delete(path, false);
-                    }
-                    else if (isFolder)
-                    {
-                        Directory.Delete(path, false); // a junction or directory link: removes the link, never its target
-                    }
-                    else
-                    {
-                        if ((entry.Attributes & FileAttributes.ReadOnly) != 0)
-                        {
-                            entry.Attributes &= ~FileAttributes.ReadOnly;
-                        }
-                        File.Delete(path); // a file link is removed as a link
-                    }
+                    continue;
                 }
-                catch (Exception)
+                if (--budget < 0)
                 {
-                    problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, path));
+                    problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, folder + " (too many entries)"));
+                    return false;
+                }
+                string path = folder + "\\" + name;
+                settings.BeforeOpen?.Invoke(path);
+                if (!RemoveEntry(path, depth, settings, ref budget, problems))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /// <summary>One entry, opened on itself and sharing nothing, judged by its handle: a link is deleted as a link, a folder
+        /// is emptied (while pinned by this handle) and then deleted, a file is deleted. Then confirmed gone.</summary>
+        private static bool RemoveEntry(string path, int depth, CleanupSettings settings, ref int budget, List<StagingProblem> problems)
+        {
+            using (SafeFileHandle entry = CreateFile(ExtendedPath(path), EntryAccess, ShareNothing, IntPtr.Zero, OpenExisting,
+                FileFlagBackupSemantics | FileFlagOpenReparsePoint, IntPtr.Zero))
+            {
+                if (entry.IsInvalid)
+                {
+                    problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, path + " (error " + new Win32Exception().NativeErrorCode + ")"));
+                    return false;
+                }
+                if (!GetFileInformationByHandle(entry, out ByHandleFileInformation information))
+                {
+                    problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, path + " (error " + new Win32Exception().NativeErrorCode + ")"));
+                    return false;
+                }
+                bool link = (information.FileAttributes & (uint)FileAttributes.ReparsePoint) != 0;
+                bool folder = (information.FileAttributes & (uint)FileAttributes.Directory) != 0;
+                if (folder && !link && !RemoveChildren(entry, path, depth + 1, null, settings, ref budget, problems))
+                {
+                    return false;
+                }
+                int error;
+                if (!DeleteThroughHandle(entry, settings, out error))
+                {
+                    problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, path + " (error " + error + ")"));
+                    return false;
+                }
+            }
+            return ConfirmAbsent(path, "", problems);
+        }
+
+        /// <summary>The marker: opened on itself, sharing nothing, and deleted only if its handle shows a plain file.</summary>
+        private static bool RemoveMarker(string markerPath, CleanupSettings settings, List<StagingProblem> problems)
+        {
+            using (SafeFileHandle marker = CreateFile(ExtendedPath(markerPath), EntryAccess, ShareNothing, IntPtr.Zero, OpenExisting,
+                FileFlagBackupSemantics | FileFlagOpenReparsePoint, IntPtr.Zero))
+            {
+                if (marker.IsInvalid)
+                {
+                    problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, markerPath + " (error " + new Win32Exception().NativeErrorCode + ")"));
+                    return false;
+                }
+                if (!GetFileInformationByHandle(marker, out ByHandleFileInformation information) ||
+                    (information.FileAttributes & (uint)(FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+                {
+                    problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, markerPath + " (kept: not a plain file)"));
+                    return false;
+                }
+                int error;
+                if (!DeleteThroughHandle(marker, settings, out error))
+                {
+                    problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, markerPath + " (error " + error + ")"));
+                    return false;
+                }
+            }
+            return ConfirmAbsent(markerPath, "", problems);
+        }
+
+        /// <summary>Marks what <paramref name="handle"/> is open on for deletion: POSIX semantics (the name goes as soon as the
+        /// handle closes) ignoring read-only; the classic disposition only if that is not supported here.</summary>
+        private static bool DeleteThroughHandle(SafeFileHandle handle, CleanupSettings settings, out int error)
+        {
+            error = 0;
+            if (!settings.ForceClassicDisposition)
+            {
+                uint flags = PosixDeleteFlags;
+                if (SetFileInformationByHandle(handle, FileDispositionInfoExClass, ref flags, sizeof(uint)))
+                {
+                    return true;
+                }
+                error = new Win32Exception().NativeErrorCode;
+                if (error != ErrorInvalidFunction && error != ErrorNotSupported && error != ErrorInvalidParameter)
+                {
+                    return false; // refused, not unsupported: never retried another way
+                }
+            }
+            // Classic: it refuses a read-only entry (access denied); then clear read-only through the handle and try once more.
+            if (ClassicDisposition(handle, out error))
+            {
+                return true;
+            }
+            if (error != ErrorAccessDenied ||
+                !GetFileInformationByHandleEx(handle, FileBasicInfoClass, out FileBasicInfo basic, Marshal.SizeOf(typeof(FileBasicInfo))) ||
+                (basic.FileAttributes & (uint)FileAttributes.ReadOnly) == 0)
+            {
+                return false; // not a read-only refusal (or the attributes cannot be read): the first error stands
+            }
+            // Times of 0 are left unchanged; attributes of 0 would mean "unchanged" too, so Normal stands for "none".
+            basic.CreationTime = basic.LastAccessTime = basic.LastWriteTime = basic.ChangeTime = 0;
+            basic.FileAttributes &= ~(uint)FileAttributes.ReadOnly;
+            if (basic.FileAttributes == 0)
+            {
+                basic.FileAttributes = (uint)FileAttributes.Normal;
+            }
+            if (!SetFileInformationByHandle(handle, FileBasicInfoClass, ref basic, Marshal.SizeOf(typeof(FileBasicInfo))))
+            {
+                error = new Win32Exception().NativeErrorCode;
+                return false;
+            }
+            return ClassicDisposition(handle, out error);
+        }
+
+        private static bool ClassicDisposition(SafeFileHandle handle, out int error)
+        {
+            var disposition = new FileDispositionInfo { DeleteFile = 1 };
+            if (SetFileInformationByHandle(handle, FileDispositionInfoClass, ref disposition, Marshal.SizeOf(typeof(FileDispositionInfo))))
+            {
+                error = 0;
+                return true;
+            }
+            error = new Win32Exception().NativeErrorCode;
+            return false;
+        }
+
+        /// <summary>After its handle closed: the entry's name must be gone. Still there means it is delete-pending (another
+        /// handle shares delete) or was replaced: a failure either way.</summary>
+        private static bool ConfirmAbsent(string path, string note, List<StagingProblem> problems)
+        {
+            if (GetFileAttributes(ExtendedPath(path)) == InvalidFileAttributes)
+            {
+                int error = new Win32Exception().NativeErrorCode;
+                if (error == ErrorFileNotFound || error == ErrorPathNotFound)
+                {
+                    return true;
+                }
+                problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, path + (error == ErrorAccessDenied ? " (delete pending" : " (error " + error) + ")" + note));
+                return false;
+            }
+            problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, path + " (still present)" + note));
+            return false;
+        }
+
+        /// <summary>The names in the folder <paramref name="pin"/> is open on, read through that handle; null (with a problem)
+        /// if it cannot be listed.</summary>
+        private static List<string> ListThroughHandle(SafeFileHandle pin, string folder, List<StagingProblem> problems)
+        {
+            var names = new List<string>();
+            var buffer = new byte[64 * 1024];
+            int informationClass = FileFullDirectoryRestartInfoClass;
+            while (true)
+            {
+                if (!GetFileInformationByHandleEx(pin, informationClass, buffer, buffer.Length))
+                {
+                    int error = new Win32Exception().NativeErrorCode;
+                    if (error == ErrorNoMoreFiles)
+                    {
+                        return names;
+                    }
+                    problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, folder + " (cannot list: error " + error + ")"));
+                    return null;
+                }
+                informationClass = FileFullDirectoryInfoClass;
+                int offset = 0;
+                while (true)
+                {
+                    // FILE_FULL_DIR_INFO: NextEntryOffset at 0, FileNameLength at 60, FileName at 68.
+                    int next = BitConverter.ToInt32(buffer, offset);
+                    int nameLength = BitConverter.ToInt32(buffer, offset + 60);
+                    if (nameLength < 0 || offset + 68 + nameLength > buffer.Length)
+                    {
+                        problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, folder + " (unreadable listing)"));
+                        return null;
+                    }
+                    string name = Encoding.Unicode.GetString(buffer, offset + 68, nameLength);
+                    if (name != "." && name != "..")
+                    {
+                        names.Add(name);
+                    }
+                    if (next <= 0)
+                    {
+                        break;
+                    }
+                    offset += next;
                 }
             }
         }

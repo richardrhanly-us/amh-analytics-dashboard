@@ -77,19 +77,21 @@ def test_the_stager_runs_nothing_and_never_copies_or_deletes_by_wildcard_or_recu
                       "Assembly.Load", "File.Copy", "CopyTo(", "Directory.Move", "File.Move", "MoveTo(", "SearchOption.AllDirectories",
                       '"*"', "Directory.Delete(path, true)", "Directory.Delete(runFolder, true)", ", true);\n"):
         assert forbidden not in code, forbidden
-    assert re.findall(r"Directory\.Delete\([^)]*\)", code) == ["Directory.Delete(runFolder, false)", "Directory.Delete(path, false)",
-                                                                "Directory.Delete(path, false)"]
+    # Nothing is deleted by path at all: cleanup deletes through handles (see the cleanup checks below).
+    assert "Directory.Delete" not in code and "File.Delete" not in code
     # The only native calls: create-new with a security descriptor, and the run folder's lifetime handle (opened, its
     # attributes read, and the folder finally deleted through it).
-    # The classifier adds one read: a handle's security descriptor, into a managed buffer.
-    assert code.count("[DllImport(") == 5
+    # The classifier adds one read: a handle's security descriptor, into a managed buffer. Cleanup adds listing a folder
+    # through its handle, the POSIX disposition and read-only clearing through a handle, and an entry's attributes by name.
+    assert code.count("[DllImport(") == 10
     assert set(re.findall(r"static extern \w+ (\w+)\(", code)) == {"CreateDirectoryWithSecurity", "CreateFile", "GetFileInformationByHandle",
-                                                                 "SetFileInformationByHandle", "GetKernelObjectSecurity"}
-    assert sorted(re.findall(r'EntryPoint = "(\w+)"', code)) == ["CreateDirectoryW", "CreateFileW"]
+                                                                 "SetFileInformationByHandle", "GetKernelObjectSecurity",
+                                                                 "GetFileInformationByHandleEx", "GetFileAttributes"}
+    assert sorted(re.findall(r'EntryPoint = "(\w+)"', code)) == ["CreateDirectoryW", "CreateFileW", "GetFileAttributesW"]
     # Every handle only ever opens something that EXISTS, on the entry itself (never through a link), and never shares
     # delete: the lifetime handle, and the classifier's root pin, check handle and marker read.
     calls = re.findall(r"CreateFile\((?!string)[^;]*;", code)
-    assert len(calls) == 4 and all("OpenExisting" in call and "FileFlagOpenReparsePoint" in call for call in calls), calls
+    assert len(calls) == 7 and all("OpenExisting" in call and "FileFlagOpenReparsePoint" in call for call in calls), calls
     assert "OpenExisting, FileFlagBackupSemantics | FileFlagOpenReparsePoint" in code
     assert "FileShareRead | FileShareWrite," in code and "FileShareDelete" not in code
     # New files only (CreateNew), never overwriting: the copied files, the staged manifest and the run marker.
@@ -370,6 +372,19 @@ public static class StagingProbe {
         ((Dictionary<string, object>)outcome["_production"])["fault_read"] = FaultProperty().GetValue(production).ToString();
         ((Dictionary<string, object>)outcome["_production"])["fault_public"] =
             typeof(StagingPolicy).GetProperty("InjectedFault") != null || typeof(StagingPolicy).Assembly.GetType("SortView.Setup.Core.StagingFault").IsPublic;
+        // ...nor cleanup test settings: setting them is refused, and it always uses the defaults.
+        var settingsProperty = typeof(StagingPolicy).GetProperty("CleanupTestSettings", BindingFlags.Instance | BindingFlags.NonPublic);
+        var settingsType = typeof(StagingPolicy).Assembly.GetType("SortView.Setup.Core.CleanupSettings");
+        object lax = Activator.CreateInstance(settingsType, BindingFlags.Instance | BindingFlags.NonPublic, null, new object[] { 1000, 1000000, true, null }, null);
+        string settingsSet;
+        try { settingsProperty.SetValue(production, lax); settingsSet = "ACCEPTED"; }
+        catch (TargetInvocationException e) { settingsSet = e.InnerException.GetType().Name; }
+        object effective = typeof(StagingPolicy).GetProperty("EffectiveCleanup", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(production);
+        object defaults = settingsType.GetField("Default", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+        ((Dictionary<string, object>)outcome["_production"])["cleanup_settings_set"] = settingsSet;
+        ((Dictionary<string, object>)outcome["_production"])["cleanup_settings_read"] = settingsProperty.GetValue(production) == null;
+        ((Dictionary<string, object>)outcome["_production"])["cleanup_effective_is_default"] = ReferenceEquals(effective, defaults);
+        ((Dictionary<string, object>)outcome["_production"])["cleanup_public"] = settingsType.IsPublic || typeof(StagingPolicy).GetProperty("CleanupTestSettings") != null;
         return outcome;
     }
 }
@@ -721,6 +736,9 @@ def test_the_production_policy_cannot_take_an_injected_fault(results):
     production = results["_production"]
     assert production["fault_set"] == "InvalidOperationException" and production["fault_read"] == "None"
     assert production["fault_public"] is False
+    # Nor cleanup test settings (limits, the forced classic disposition, the swap hook).
+    assert production["cleanup_settings_set"] == "InvalidOperationException" and production["cleanup_settings_read"] is True
+    assert production["cleanup_effective_is_default"] is True and production["cleanup_public"] is False
 
 
 _KILLED_CHILD = r"""
@@ -1233,3 +1251,266 @@ def test_cancellation_and_the_entry_limit(tmp_path, core_dll):
     assert {(e["state"], e["reason"]) for e in limited["entries"]} == {("Unknown", "NotARunName")}
     cancelled = _classify(work, core_dll, "cancelled", **_test_policy(root))["scan"]
     assert cancelled["completed"] is False and cancelled["root_problems"] == ["Cancelled"] and cancelled["entries"] == []
+
+
+# =====================================================================================================================
+# 4. HANDLE-BASED CLEANUP (M2b-2c.1)
+# =====================================================================================================================
+
+def _cleanup_code() -> str:
+    code = _code()
+    return code[code.index("internal static IList<StagingProblem> RemoveRunFolder"):code.index("internal const int MaxRunEntries")]
+
+
+def test_cleanup_deletes_only_through_handles_and_keeps_the_marker_for_last():
+    code = _cleanup_code()
+    for path_based in ("Directory.Delete", "File.Delete", "Directory.Enumerate", "EnumerateFileSystemInfos", "new DirectoryInfo", "GetDirectories",
+                       ".Attributes", "StartsWith(runFolder", "DeleteOnClose", "0x04000000", "Marshal.Copy", "SearchOption", "Directory.Move"):
+        assert path_based not in code, path_based
+    # Every entry, the marker and a run with no lifetime handle are opened sharing nothing, on the entry itself.
+    assert code.count("ShareNothing, IntPtr.Zero") == 3
+    assert code.count("FileFlagBackupSemantics | FileFlagOpenReparsePoint") == 3
+    # Folders are listed only through their handles; deletion only through a disposition on a handle.
+    assert "GetFileInformationByHandleEx(pin, informationClass, buffer, buffer.Length)" in code
+    assert code.count("SetFileInformationByHandle(") == 3  # POSIX disposition, read-only clearing, classic disposition
+    # POSIX semantics first; the classic disposition only when that is unsupported (1, 50, 87).
+    assert "PosixDeleteFlags = 0x1 | 0x2 | 0x10;" in _code()
+    assert "error != ErrorInvalidFunction && error != ErrorNotSupported && error != ErrorInvalidParameter" in code
+    # The order in RemoveRunFolder: everything but the marker, then only-the-marker-is-left, the marker, the run folder.
+    remove = code[:code.index("private static bool RemoveChildren")]
+    order = [remove.index(s) for s in ("RemoveChildren(pin, runFolder, 0, RunMarkerFileName", "List<string> remaining = ListThroughHandle(pin",
+                                       "RemoveMarker(markerPath", "DeleteThroughHandle(pin", "ConfirmAbsent(runFolder")]
+    assert order == sorted(order)
+    assert "pin?.Dispose();" in remove and "finally" in remove
+
+
+_CLEANUP_HOLDER = r"""
+param([string]$Path, [string]$Signal, [string]$Release)
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @"
+using System; using System.Runtime.InteropServices; using Microsoft.Win32.SafeHandles;
+public static class Hold {
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern SafeFileHandle CreateFileW(string p, uint a, uint s, IntPtr sa, uint d, uint f, IntPtr t);
+}
+"@
+# Read access, sharing read, write AND delete -- as Explorer, an indexer or antivirus might hold a file or folder.
+$h = [Hold]::CreateFileW($Path, 0x1 -bor 0x100000, 7, [IntPtr]::Zero, 3, 0x02000000, [IntPtr]::Zero)
+[IO.File]::WriteAllText($Signal, $(if ($h.IsInvalid) { 'FAILED ' + [Runtime.InteropServices.Marshal]::GetLastWin32Error() } else { 'held' }))
+while (-not (Test-Path -LiteralPath $Release)) { Start-Sleep -Milliseconds 50 }
+$h.Dispose()
+"""
+
+_CLEANUP_PROBE = r"""
+param([string]$CorePath, [string]$ArgsPath, [string]$OutPath)
+$ErrorActionPreference = 'Stop'
+Add-Type -Path $CorePath
+Add-Type -ReferencedAssemblies @($CorePath, 'System.Web.Extensions', 'System.Core') -TypeDefinition @"
+using System; using System.Collections; using System.Collections.Generic; using System.Diagnostics; using System.IO; using System.Linq;
+using System.Reflection; using System.Security.Principal; using System.Threading; using System.Web.Script.Serialization; using SortView.Setup.Core;
+public static class CleanupProbe {
+    static void Cmd(string arguments) {
+        var psi = new ProcessStartInfo("cmd", "/c " + arguments) { UseShellExecute = false, CreateNoWindow = true };
+        using (var p = Process.Start(psi)) p.WaitForExit();
+    }
+    public static Dictionary<string, object> Run(string json) {
+        var a = (IDictionary<string, object>)new JavaScriptSerializer().DeserializeObject(json);
+        var me = WindowsIdentity.GetCurrent().User;
+        Func<string, SecurityIdentifier> sid = s => s == "ME" ? me : new SecurityIdentifier(s);
+        var policy = new StagingPolicy((string)a["root"], ((IEnumerable)a["trusted"]).Cast<string>().Select(sid),
+            ((IEnumerable)a["access"]).Cast<string>().Select(sid), null);
+        string outside = (string)a["outside"];
+        // TEST-ONLY cleanup settings, by reflection, on this test policy.
+        if (a.ContainsKey("settings")) {
+            var s = (IDictionary<string, object>)a["settings"];
+            Action<string> hook = null;
+            if (s.ContainsKey("swap")) {
+                // Between its folder being listed and it being opened: the entry moves outside, and a junction to outside
+                // takes its place.
+                string suffix = (string)s["swap"], moved = Path.Combine(outside, "moved");
+                hook = path => { if (path.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) { Directory.Move(path, moved); Cmd("mklink /J \"" + path + "\" \"" + outside + "\""); } };
+            }
+            var type = typeof(StagingPolicy).Assembly.GetType("SortView.Setup.Core.CleanupSettings");
+            object settings = Activator.CreateInstance(type, BindingFlags.Instance | BindingFlags.NonPublic, null,
+                new object[] { Convert.ToInt32(s["max_depth"]), Convert.ToInt32(s["max_entries"]), (bool)s["force_classic"], hook }, null);
+            typeof(StagingPolicy).GetProperty("CleanupTestSettings", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(policy, settings);
+        }
+        var r = new Dictionary<string, object> { { "bits", IntPtr.Size * 8 } };
+        var staged = BundleStager.Stage((string)a["source"], (string)a["hash"], (string)a["version"], policy, CancellationToken.None);
+        r["staged"] = staged.IsStaged;
+        string run = Path.GetDirectoryName(staged.BundlePath);
+        r["run"] = Path.GetFileName(run);
+        // Entries planted in the live run (this user may: the test policy grants it full control).
+        foreach (IDictionary<string, object> plant in (IEnumerable)a["plant"]) {
+            string kind = (string)plant["kind"], path = Path.Combine(run, ((string)plant["path"]).Replace('/', '\\'));
+            if (kind == "dir") Directory.CreateDirectory(path);
+            else if (kind == "file") {
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                File.WriteAllText(path, "planted");
+                if (plant.ContainsKey("attributes")) File.SetAttributes(path, (FileAttributes)Enum.Parse(typeof(FileAttributes), (string)plant["attributes"]));
+            }
+            else if (kind == "junction") Cmd("mklink /J \"" + path + "\" \"" + (string)plant["target"] + "\"");
+            else if (kind == "hardlink") Cmd("mklink /H \"" + path + "\" \"" + (string)plant["target"] + "\"");
+        }
+        // Another process holding something open (sharing everything) while Dispose runs.
+        Process holder = null; string release = null;
+        if (a.ContainsKey("hold")) {
+            string held = Path.Combine(run, ((string)a["hold"]).Replace('/', '\\')).TrimEnd('\\');
+            string signal = Path.Combine((string)a["work"], "held-" + r["run"]); release = signal + ".release";
+            holder = Process.Start(new ProcessStartInfo((string)a["powershell"], "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" +
+                (string)a["holder_script"] + "\" -Path \"" + held + "\" -Signal \"" + signal + "\" -Release \"" + release + "\"")
+                // Its own standard streams: it must never hold this probe's (pytest's) pipes open.
+                { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true });
+            for (int i = 0; i < 600 && !File.Exists(signal); i++) Thread.Sleep(50);
+            r["holder"] = File.Exists(signal) ? File.ReadAllText(signal) : "TIMEOUT";
+        }
+        try {
+            staged.Dispose();
+            r["problems"] = staged.CleanupProblems.Select(p => p.ToString()).ToList();
+            // While the other process (if any) still holds its handle: what cleanup left.
+            r["marker_exists"] = File.Exists(Path.Combine(run, "staging-run.json"));
+            r["run_exists"] = Directory.Exists(run);
+            try { r["run_entries"] = Directory.Exists(run) ? new DirectoryInfo(run).EnumerateFileSystemInfos().Select(e => e.Name).OrderBy(n => n).ToList() : new List<string>(); }
+            catch (Exception e) { r["run_entries"] = new List<string> { "unlistable: " + e.GetType().Name }; } // e.g. delete-pending
+        } finally {
+            if (holder != null) {
+                File.WriteAllText(release, "go");
+                if (!holder.WaitForExit(30000)) holder.Kill();
+            }
+        }
+        r["run_exists_after_holder"] = Directory.Exists(run);
+        // The run, once nobody holds it: classified as cleanup left it.
+        var scan = BundleStager.ClassifyRuns(policy, CancellationToken.None);
+        r["classified"] = scan.Entries.Where(e => e.Name == (string)r["run"]).Select(e => e.State + "/" + e.Reason).FirstOrDefault();
+        return r;
+    }
+}
+"@
+$result = [CleanupProbe]::Run((Get-Content -LiteralPath $ArgsPath -Raw))
+ConvertTo-Json -InputObject $result -Depth 6 | Set-Content -LiteralPath $OutPath -Encoding UTF8
+"""
+
+
+def _cleanup(tmp_path: Path, core_dll: Path, name: str, *, plant=(), hold=None, settings=None, powershell: str = _POWERSHELL) -> dict:
+    """Stages a fresh run under a test policy, plants entries in it, optionally has another process hold something open,
+    disposes it -- and reports what cleanup did. Whatever cleanup rightly left behind is removed afterwards by the test."""
+    case = tmp_path / name
+    source, root, outside, work = case / "source", case / "root", case / "outside", case / "work"
+    sha = _bundle(source)
+    root.mkdir()
+    outside.mkdir()
+    work.mkdir()
+    (outside / "sentinel.txt").write_bytes(b"outside, never touched")
+    (outside / "linked.txt").write_bytes(b"hard-linked from inside the run")
+    (work / "probe.ps1").write_text(_CLEANUP_PROBE, encoding="utf-8")
+    (work / "holder.ps1").write_text(_CLEANUP_HOLDER, encoding="utf-8")
+    args = {**_test_policy(root), "source": str(source), "hash": sha, "version": VERSION, "outside": str(outside), "work": str(work),
+            "powershell": _POWERSHELL, "holder_script": str(work / "holder.ps1"),
+            "plant": [{**p, "target": str(outside / p["target"]) if p.get("target") else str(outside)} if p["kind"] in ("junction", "hardlink") else p
+                      for p in plant]}
+    if hold is not None:  # "" is the run folder itself
+        args["hold"] = hold
+    if settings:
+        args["settings"] = {"max_depth": 40, "max_entries": 100000, "force_classic": False, **settings}
+    (work / "args.json").write_text(json.dumps(args), encoding="utf-8")
+    completed = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(work / "probe.ps1"),
+                                "-CorePath", str(core_dll), "-ArgsPath", str(work / "args.json"), "-OutPath", str(work / "out.json")],
+                               capture_output=True, text=True, timeout=300, check=False)
+    assert (work / "out.json").exists(), completed.stdout + completed.stderr
+    result = json.loads((work / "out.json").read_text(encoding="utf-8-sig"))
+    result["outside"] = sorted(str(p.relative_to(outside)) for p in outside.rglob("*"))
+    result["sentinel"] = (outside / "sentinel.txt").read_bytes()
+    result["linked"] = (outside / "linked.txt").read_bytes()
+    _remove_links(case)
+    for path in root.rglob("*"):
+        if path.is_file():
+            os.chmod(path, 0o666)  # clears read-only on anything cleanup rightly left
+    return result
+
+
+_ATTRIBUTE_FILES = [{"kind": "file", "path": "bundle/runtime/_internal/readonly.dll", "attributes": "ReadOnly"},
+                    {"kind": "file", "path": "bundle/runtime/_internal/hidden-system.dat", "attributes": "Hidden, System, ReadOnly"},
+                    {"kind": "file", "path": "bundle/a/b/c/d/e/deep.txt"}]
+_LINKS = [{"kind": "junction", "path": "bundle/runtime/linked"}, {"kind": "hardlink", "path": "bundle/runtime/hardlink.txt", "target": "linked.txt"}]
+
+
+def _assert_removed(result: dict) -> None:
+    assert result["staged"] is True, result
+    assert result["problems"] == [] and result["run_exists"] is False and result["classified"] is None, result
+
+
+@needs_bridge
+def test_dispose_removes_read_only_hidden_system_and_nested_entries(tmp_path, core_dll):
+    _assert_removed(_cleanup(tmp_path, core_dll, "attributes", plant=_ATTRIBUTE_FILES))
+
+
+@needs_bridge
+def test_dispose_removes_links_as_links_and_never_their_targets(tmp_path, core_dll):
+    r = _cleanup(tmp_path, core_dll, "links", plant=_LINKS)
+    _assert_removed(r)
+    assert r["sentinel"] == b"outside, never touched" and r["linked"] == b"hard-linked from inside the run"
+    assert r["outside"] == ["linked.txt", "sentinel.txt"]
+
+
+@needs_bridge
+@pytest.mark.parametrize(("name", "hold", "first_problem"), [
+    ("busy_file", "bundle/runtime/SortViewCollector.exe", r"\\bundle\\runtime\\SortViewCollector\.exe \(error 32\)$"),
+    ("busy_folder", "bundle/runtime/_internal", r"\\bundle\\runtime\\_internal \(error 32\)$"),
+])
+def test_a_busy_entry_stops_cleanup_and_the_marker_is_kept(tmp_path, core_dll, name, hold, first_problem):
+    r = _cleanup(tmp_path, core_dll, name, hold=hold)
+    assert r["holder"] == "held", r
+    assert len(r["problems"]) == 2 and re.search(first_problem, r["problems"][0]), r["problems"]
+    assert r["problems"][1].endswith("staging-run.json (kept: the run was not removed)"), r["problems"]
+    assert r["marker_exists"] is True and r["run_exists"] is True and "bundle" in r["run_entries"]
+    # Not lost: its own process closed its handle, so the run is a candidate for later recovery.
+    assert r["classified"] == "AbandonedCandidate/None"
+
+
+@needs_bridge
+def test_an_entry_swapped_for_a_junction_mid_cleanup_is_removed_as_a_link(tmp_path, core_dll):
+    r = _cleanup(tmp_path, core_dll, "swap", settings={"swap": "\\bundle\\tools"})
+    _assert_removed(r)
+    # The folder moved outside (and the junction's target) survived, untouched.
+    assert "moved\\set-api-token.ps1" in r["outside"] and r["sentinel"] == b"outside, never touched"
+
+
+@needs_bridge
+def test_the_run_folder_held_open_elsewhere_is_removed_by_posix_semantics(tmp_path, core_dll):
+    r = _cleanup(tmp_path, core_dll, "posix", hold="")  # the run folder itself
+    assert r["holder"] == "held", r
+    _assert_removed(r)
+
+
+@needs_bridge
+def test_the_classic_fallback_reports_delete_pending_and_clears_read_only(tmp_path, core_dll):
+    classic = _cleanup(tmp_path, core_dll, "classic", plant=_ATTRIBUTE_FILES, settings={"force_classic": True})
+    _assert_removed(classic)  # read-only cleared through the handle; nothing held: nothing pending
+    pending = _cleanup(tmp_path, core_dll, "classic_pending", hold="", settings={"force_classic": True})
+    assert pending["holder"] == "held", pending
+    assert len(pending["problems"]) == 1 and pending["problems"][0].endswith("(delete pending) (marker already removed)"), pending["problems"]
+    assert pending["marker_exists"] is False  # by then the marker was gone: reported, not promised
+    assert pending["run_exists_after_holder"] is False  # it went once the other process closed it
+
+
+@needs_bridge
+@pytest.mark.parametrize(("name", "settings", "reason"), [("too_deep", {"max_depth": 2}, "(too deep)"),
+                                                          ("too_many", {"max_entries": 3}, "(too many entries)")])
+def test_the_depth_and_entry_limits_stop_cleanup_with_the_marker_kept(tmp_path, core_dll, name, settings, reason):
+    r = _cleanup(tmp_path, core_dll, name, plant=_ATTRIBUTE_FILES, settings=settings)
+    assert len(r["problems"]) == 2 and r["problems"][0].endswith(reason), r["problems"]
+    assert r["marker_exists"] is True and r["classified"] == "AbandonedCandidate/None"
+
+
+@needs_bridge
+def test_cleanup_works_in_a_32_bit_process(tmp_path, core_dll):
+    if not WINDOWS_POWERSHELL_32.exists():
+        pytest.skip("no 32-bit Windows PowerShell on this machine")
+    ps32 = str(WINDOWS_POWERSHELL_32)
+    for name, kwargs in (("x86_attributes", {"plant": _ATTRIBUTE_FILES + _LINKS}), ("x86_posix", {"hold": ""}),
+                         ("x86_classic", {"plant": _ATTRIBUTE_FILES, "settings": {"force_classic": True}})):
+        r = _cleanup(tmp_path, core_dll, name, powershell=ps32, **kwargs)
+        assert r["bits"] == 32
+        _assert_removed(r)
+    busy = _cleanup(tmp_path, core_dll, "x86_busy", powershell=ps32, hold="bundle/runtime/SortViewCollector.exe")
+    assert busy["marker_exists"] is True and busy["problems"][0].endswith("(error 32)"), busy
