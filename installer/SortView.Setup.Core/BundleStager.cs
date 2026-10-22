@@ -265,6 +265,117 @@ namespace SortView.Setup.Core
         }
     }
 
+    /// <summary>What <see cref="BundleStager.ClassifyRuns(StagingPolicy, CancellationToken)"/> found for one entry of the
+    /// staging root. None of these is permission to delete anything.</summary>
+    public enum StagingRunState
+    {
+        /// <summary>The folder could not be opened for the classifier's check because something holds it open without
+        /// sharing delete: a live staging run -- or another program. It is not proof that a SortView process is alive.</summary>
+        Active,
+        /// <summary>Every check passed and no conflicting handle was held at that moment: it looks exactly like a SortView
+        /// run nobody is using. A candidate only -- never by itself permission to delete it.</summary>
+        AbandonedCandidate,
+        /// <summary>Anything that could not be confidently classified; <see cref="StagingRunEntry.Reason"/> says why.</summary>
+        Unknown,
+    }
+
+    public enum StagingRunReason
+    {
+        /// <summary>AbandonedCandidate: every check passed.</summary>
+        None,
+        /// <summary>Active: a sharing conflict on the classifier's check.</summary>
+        InUse,
+        NotAFolder,
+        ReparsePoint,
+        /// <summary>The name is not a run id (32 lowercase hexadecimal characters).</summary>
+        NotARunName,
+        /// <summary>No staging-run.json (an older run, a run not yet marked, or one being removed). Such a folder is never
+        /// opened for the check, so a staging still being set up is never disturbed.</summary>
+        MarkerMissing,
+        /// <summary>The marker is not a plain file (a folder or a link), or is too large.</summary>
+        MarkerUnsafe,
+        MarkerInvalid,
+        /// <summary>The marker names a different run id than its folder.</summary>
+        MarkerMismatch,
+        /// <summary>The folder's owner or permissions are not exactly those staging creates.</summary>
+        UnexpectedSecurity,
+        AccessDenied,
+        /// <summary>It disappeared while being classified.</summary>
+        Vanished,
+        /// <summary>The check failed with another Windows error (see <see cref="StagingRunEntry.Detail"/>).</summary>
+        ProbeFailed,
+        Error,
+    }
+
+    /// <summary>One direct child of the staging root, as classified. Names, paths, reasons and codes only -- never file
+    /// contents.</summary>
+    public sealed class StagingRunEntry
+    {
+        internal StagingRunEntry(string name, string path, StagingRunState state, StagingRunReason reason, string detail = "",
+            string runId = null, string manifestSha256 = null, string createdUtc = null)
+        {
+            Name = name;
+            Path = path;
+            State = state;
+            Reason = reason;
+            Detail = detail ?? "";
+            RunId = runId;
+            ManifestSha256 = manifestSha256;
+            CreatedUtc = createdUtc;
+        }
+
+        public string Name { get; }
+
+        public string Path { get; }
+
+        public StagingRunState State { get; }
+
+        public StagingRunReason Reason { get; }
+
+        /// <summary>For example the Windows error code; empty when there is nothing to add.</summary>
+        public string Detail { get; }
+
+        /// <summary>From a valid marker only (AbandonedCandidate).</summary>
+        public string RunId { get; }
+
+        /// <summary>From a valid marker only (AbandonedCandidate).</summary>
+        public string ManifestSha256 { get; }
+
+        /// <summary>From a valid marker only, for information: never used to classify.</summary>
+        public string CreatedUtc { get; }
+
+        public override string ToString() => Name + ": " + State + (Reason == StagingRunReason.None ? "" : " (" + Reason + ")") +
+            (Detail.Length == 0 ? "" : " " + Detail);
+    }
+
+    /// <summary>The result of a read-only classification of a staging root's entries.</summary>
+    public sealed class StagingRunScan
+    {
+        internal StagingRunScan(bool completed, bool rootExists, IList<StagingProblem> rootProblems, IList<StagingRunEntry> entries, bool truncated)
+        {
+            Completed = completed;
+            RootExists = rootExists;
+            RootProblems = new ReadOnlyCollection<StagingProblem>(rootProblems);
+            Entries = new ReadOnlyCollection<StagingRunEntry>(entries);
+            Truncated = truncated;
+        }
+
+        /// <summary>False when the root was refused, the scan was cancelled, or it stopped on an error (see
+        /// <see cref="RootProblems"/>). Entries already classified are kept.</summary>
+        public bool Completed { get; }
+
+        /// <summary>False when the staging root does not exist (nothing to classify; nothing is created).</summary>
+        public bool RootExists { get; }
+
+        /// <summary>Why the root was refused, by the same checks (and codes) as staging's.</summary>
+        public IReadOnlyList<StagingProblem> RootProblems { get; }
+
+        public IReadOnlyList<StagingRunEntry> Entries { get; }
+
+        /// <summary>The root held more entries than are classified in one scan.</summary>
+        public bool Truncated { get; }
+    }
+
     /// <summary>
     /// Stages a frozen Collector release bundle: verifies the source with <see cref="BundleVerifier"/>, copies exactly the
     /// files its manifest lists into a new run folder with protected permissions, and verifies the copy again on its own.
@@ -807,6 +918,16 @@ namespace SortView.Setup.Core
                 return;
             }
             DirectorySecurity security = new DirectoryInfo(folder).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
+            if (!IsCreatedSecurity(security, policy))
+            {
+                problems.Add(new StagingProblem(StagingProblemCode.PermissionsNotApplied, folder));
+            }
+        }
+
+        /// <summary>The security of a folder staging created: owned as the policy says, protected (no inherited entries), and
+        /// granting full control to exactly the policy's access principals and nothing to anyone else.</summary>
+        private static bool IsCreatedSecurity(DirectorySecurity security, StagingPolicy policy)
+        {
             var owner = security.GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
             bool ownerOk = policy.Owner != null ? policy.Owner.Equals(owner) : owner != null && policy.TrustedPrincipals.Contains(owner);
             var granted = new HashSet<SecurityIdentifier>();
@@ -822,10 +943,7 @@ namespace SortView.Setup.Core
                 }
                 granted.Add(sid);
             }
-            if (!ownerOk || !rulesOk || !policy.AccessPrincipals.All(granted.Contains))
-            {
-                problems.Add(new StagingProblem(StagingProblemCode.PermissionsNotApplied, folder));
-            }
+            return ownerOk && rulesOk && policy.AccessPrincipals.All(granted.Contains);
         }
 
         // ---- copying -------------------------------------------------------------------------------------------------
@@ -1052,6 +1170,346 @@ namespace SortView.Setup.Core
                     problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, path));
                 }
             }
+        }
+
+        // ---- classifying existing runs (READ ONLY) ---------------------------------------------------------------------
+        //
+        // Never creates, writes, moves, renames or deletes anything, and never changes a permission. It opens handles only
+        // to look: the staging root (pinned for the scan) and, for a folder that already carries a plain-file marker, a
+        // short-lived check handle. Both share read and write but not delete, so while open nothing can rename or delete
+        // what they are on. Neither ever marks anything for deletion. The bundle folder is never entered.
+
+        /// <summary>At most this many root entries are classified in one scan (then <see cref="StagingRunScan.Truncated"/>).</summary>
+        internal const int MaxRunEntries = 1024;
+        private const int MaxMarkerBytes = 4096;
+        private const uint ReadControlAccess = 0x20000;
+        private const uint FileReadAttributesAccess = 0x80;
+        private const uint FileReadDataAccess = 0x1;
+        private const int ErrorFileNotFound = 2;
+        private const int ErrorPathNotFound = 3;
+        private const int ErrorAccessDenied = 5;
+        private const int ErrorSharingViolation = 32;
+        private const uint OwnerSecurityInformation = 0x1;
+        private const uint DaclSecurityInformation = 0x4;
+        private static readonly string[] MarkerKeys = { "schema", "run_id", "manifest_sha256", "created_utc" };
+        private static readonly System.Text.RegularExpressions.Regex RunIdPattern =
+            new System.Text.RegularExpressions.Regex("^[0-9a-f]{32}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        private static readonly System.Text.RegularExpressions.Regex LowerSha256Pattern =
+            new System.Text.RegularExpressions.Regex("^[0-9a-f]{64}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        private static readonly System.Text.RegularExpressions.Regex CreatedUtcPattern =
+            new System.Text.RegularExpressions.Regex(@"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        // Reads a handle's security descriptor straight into a managed buffer (no unmanaged memory to copy or free).
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool GetKernelObjectSecurity(SafeFileHandle handle, uint requestedInformation, byte[] descriptor, uint length,
+            out uint lengthNeeded);
+
+        /// <summary>The installer's entry point: always <see cref="StagingPolicy.Production"/>.</summary>
+        public static StagingRunScan ClassifyRuns(CancellationToken cancellationToken) => ClassifyRuns(StagingPolicy.Production, cancellationToken);
+
+        /// <summary>
+        /// Classifies each direct child of <paramref name="policy"/>'s staging root, READ ONLY. The root and the chain above it
+        /// are checked (as staging checks them), the root is pinned for the scan and checked again, then each entry is
+        /// classified: Active (something holds it open without sharing delete), AbandonedCandidate (every identity, security and
+        /// handle check passed), or Unknown (anything else). Never throws.
+        /// </summary>
+        public static StagingRunScan ClassifyRuns(StagingPolicy policy, CancellationToken cancellationToken)
+        {
+            var rootProblems = new List<StagingProblem>();
+            var entries = new List<StagingRunEntry>();
+            try
+            {
+                if (policy == null || policy.AccessPrincipals.Count == 0 || policy.AccessPrincipals.Any(p => !policy.TrustedPrincipals.Contains(p)) ||
+                    (policy.Owner != null && !policy.TrustedPrincipals.Contains(policy.Owner)))
+                {
+                    rootProblems.Add(new StagingProblem(StagingProblemCode.RequestInvalid, ""));
+                    return new StagingRunScan(false, false, rootProblems, entries, false);
+                }
+                string root = NormalizeLocalPath(policy.StagingRoot);
+                if (root == null)
+                {
+                    rootProblems.Add(new StagingProblem(StagingProblemCode.StagingRootInvalid, policy.StagingRoot));
+                    return new StagingRunScan(false, false, rootProblems, entries, false);
+                }
+                List<string> missing = CheckChain(root, policy, rootProblems);
+                if (rootProblems.Count > 0)
+                {
+                    return new StagingRunScan(false, false, rootProblems, entries, false);
+                }
+                if (missing.Count > 0)
+                {
+                    return new StagingRunScan(true, false, rootProblems, entries, false); // no root: nothing to classify
+                }
+
+                // Pin the root for the scan (it, and the folders above it, cannot be renamed or deleted meanwhile), and check
+                // the chain again now that it cannot be swapped.
+                using (SafeFileHandle rootPin = CreateFile(root, FileListDirectory | ReadControlAccess | FileReadAttributesAccess | SynchronizeAccess,
+                    FileShareRead | FileShareWrite, IntPtr.Zero, OpenExisting, FileFlagBackupSemantics | FileFlagOpenReparsePoint, IntPtr.Zero))
+                {
+                    if (rootPin.IsInvalid)
+                    {
+                        int error = new Win32Exception().NativeErrorCode;
+                        rootProblems.Add(new StagingProblem(error == ErrorAccessDenied ? StagingProblemCode.AccessDenied : StagingProblemCode.StagingRootInvalid,
+                            root + " (error " + error + ")"));
+                        return new StagingRunScan(false, true, rootProblems, entries, false);
+                    }
+                    if (!IsPlainFolderHandle(rootPin))
+                    {
+                        rootProblems.Add(new StagingProblem(StagingProblemCode.ReparsePoint, root));
+                        return new StagingRunScan(false, true, rootProblems, entries, false);
+                    }
+                    CheckChain(root, policy, rootProblems, mustExist: true);
+                    if (rootProblems.Count > 0)
+                    {
+                        return new StagingRunScan(false, true, rootProblems, entries, false);
+                    }
+
+                    // Direct children only, by their directory-listing entries; never recursively.
+                    List<FileSystemInfo> children = new DirectoryInfo(root).EnumerateFileSystemInfos().Take(MaxRunEntries + 1).ToList();
+                    bool truncated = children.Count > MaxRunEntries;
+                    foreach (FileSystemInfo child in children.Take(MaxRunEntries))
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        entries.Add(ClassifyEntry(child, policy));
+                    }
+                    return new StagingRunScan(true, true, rootProblems, entries, truncated);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                rootProblems.Add(new StagingProblem(StagingProblemCode.Cancelled, ""));
+            }
+            catch (UnauthorizedAccessException)
+            {
+                rootProblems.Add(new StagingProblem(StagingProblemCode.AccessDenied, ""));
+            }
+            catch (Exception)
+            {
+                rootProblems.Add(new StagingProblem(StagingProblemCode.UnexpectedError, ""));
+            }
+            return new StagingRunScan(false, true, rootProblems, entries, false);
+        }
+
+        /// <summary>One root entry. The first failing check decides; anything uncertain is Unknown. Never throws.</summary>
+        private static StagingRunEntry ClassifyEntry(FileSystemInfo child, StagingPolicy policy)
+        {
+            string name = child.Name;
+            string path = child.FullName;
+            Func<StagingRunReason, string, StagingRunEntry> unknown = (reason, detail) =>
+                new StagingRunEntry(name, path, StagingRunState.Unknown, reason, detail);
+            try
+            {
+                // (a) The listing entry itself: a link is never opened; only a folder can be a run.
+                FileAttributes attributes = child.Attributes;
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    return unknown(StagingRunReason.ReparsePoint, "");
+                }
+                if ((attributes & FileAttributes.Directory) == 0)
+                {
+                    return unknown(StagingRunReason.NotAFolder, "");
+                }
+                // (b) A run id: 32 lowercase hexadecimal characters (necessary, never sufficient).
+                if (!RunIdPattern.IsMatch(name))
+                {
+                    return unknown(StagingRunReason.NotARunName, "");
+                }
+                // (c) The marker, by its attributes only (nothing opened). A folder without a plain-file marker is NEVER opened
+                // for the check: it may be a run still being set up (staging writes the marker only once it holds its lock).
+                string markerPath = path + "\\" + RunMarkerFileName;
+                FileAttributes markerAttributes;
+                try
+                {
+                    markerAttributes = File.GetAttributes(markerPath);
+                }
+                catch (Exception e) when (e is FileNotFoundException || e is DirectoryNotFoundException)
+                {
+                    return unknown(Directory.Exists(path) ? StagingRunReason.MarkerMissing : StagingRunReason.Vanished, "");
+                }
+                if ((markerAttributes & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0)
+                {
+                    return unknown(StagingRunReason.MarkerUnsafe, "");
+                }
+
+                // (d) The check handle: DELETE access (conflicts with a staging run's lifetime handle, which does not share
+                // delete) sharing read and write but not delete (so while open, nobody can rename or delete the folder).
+                using (SafeFileHandle check = CreateFile(path, DeleteAccess | ReadControlAccess | FileReadAttributesAccess | SynchronizeAccess,
+                    FileShareRead | FileShareWrite, IntPtr.Zero, OpenExisting, FileFlagBackupSemantics | FileFlagOpenReparsePoint, IntPtr.Zero))
+                {
+                    if (check.IsInvalid)
+                    {
+                        int error = new Win32Exception().NativeErrorCode;
+                        switch (error)
+                        {
+                            case ErrorSharingViolation:
+                                return new StagingRunEntry(name, path, StagingRunState.Active, StagingRunReason.InUse, "(error 32)");
+                            case ErrorFileNotFound:
+                            case ErrorPathNotFound:
+                                return unknown(StagingRunReason.Vanished, "");
+                            case ErrorAccessDenied:
+                                return unknown(StagingRunReason.AccessDenied, "(error 5)");
+                            default:
+                                return unknown(StagingRunReason.ProbeFailed, "(error " + error + ")");
+                        }
+                    }
+
+                    // (e) While pinned, through the handle: a plain folder, with exactly the security staging creates...
+                    if (!IsPlainFolderHandle(check))
+                    {
+                        return unknown(StagingRunReason.ReparsePoint, "");
+                    }
+                    DirectorySecurity security = ReadSecurity(check);
+                    if (security == null)
+                    {
+                        return unknown(StagingRunReason.AccessDenied, "(security unreadable)");
+                    }
+                    if (!IsCreatedSecurity(security, policy))
+                    {
+                        return unknown(StagingRunReason.UnexpectedSecurity, "");
+                    }
+                    // ...and a marker that is a plain, small file whose contents name this very run.
+                    byte[] markerBytes;
+                    StagingRunReason markerProblem = ReadMarker(markerPath, out markerBytes);
+                    if (markerProblem != StagingRunReason.None)
+                    {
+                        return unknown(markerProblem, "");
+                    }
+                    string runId, manifestSha256, createdUtc;
+                    StagingRunReason contentProblem = ParseMarker(markerBytes, name, out runId, out manifestSha256, out createdUtc);
+                    if (contentProblem != StagingRunReason.None)
+                    {
+                        return unknown(contentProblem, "");
+                    }
+                    // (f) Complete evidence, and nothing held it: a candidate (never, by itself, permission to delete).
+                    return new StagingRunEntry(name, path, StagingRunState.AbandonedCandidate, StagingRunReason.None, "", runId, manifestSha256, createdUtc);
+                }
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return unknown(StagingRunReason.AccessDenied, "");
+            }
+            catch (Exception e) when (e is FileNotFoundException || e is DirectoryNotFoundException)
+            {
+                return unknown(StagingRunReason.Vanished, "");
+            }
+            catch (Exception)
+            {
+                return unknown(StagingRunReason.Error, "");
+            }
+        }
+
+        /// <summary>The owner and permissions of what <paramref name="handle"/> is open on, read through the handle (never by
+        /// path); null if they cannot be read.</summary>
+        private static DirectorySecurity ReadSecurity(SafeFileHandle handle)
+        {
+            const uint information = OwnerSecurityInformation | DaclSecurityInformation;
+            uint needed;
+            // First the size (fails with ERROR_INSUFFICIENT_BUFFER), then the descriptor itself, self-relative.
+            GetKernelObjectSecurity(handle, information, null, 0, out needed);
+            if (needed == 0 || needed > 65536)
+            {
+                return null;
+            }
+            var bytes = new byte[needed];
+            if (!GetKernelObjectSecurity(handle, information, bytes, needed, out needed))
+            {
+                return null;
+            }
+            var security = new DirectorySecurity();
+            security.SetSecurityDescriptorBinaryForm(bytes, AccessControlSections.Owner | AccessControlSections.Access);
+            return security;
+        }
+
+        /// <summary>Reads the marker through a handle opened on the entry itself (never through a link), sharing read only:
+        /// it must be a plain file of at most <see cref="MaxMarkerBytes"/>.</summary>
+        private static StagingRunReason ReadMarker(string markerPath, out byte[] bytes)
+        {
+            bytes = null;
+            SafeFileHandle handle = CreateFile(markerPath, FileReadDataAccess | FileReadAttributesAccess | SynchronizeAccess, FileShareRead, IntPtr.Zero,
+                OpenExisting, FileFlagOpenReparsePoint, IntPtr.Zero);
+            if (handle.IsInvalid)
+            {
+                int error = new Win32Exception().NativeErrorCode;
+                handle.Dispose();
+                return error == ErrorFileNotFound || error == ErrorPathNotFound ? StagingRunReason.MarkerMissing : StagingRunReason.MarkerUnsafe;
+            }
+            using (var stream = new FileStream(handle, FileAccess.Read)) // owns the handle from here
+            {
+                if (!GetFileInformationByHandle(handle, out ByHandleFileInformation information) ||
+                    (information.FileAttributes & (uint)(FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0 ||
+                    information.FileSizeHigh != 0 || information.FileSizeLow > MaxMarkerBytes)
+                {
+                    return StagingRunReason.MarkerUnsafe;
+                }
+                var buffer = new byte[MaxMarkerBytes + 1];
+                int total = 0, read;
+                while (total < buffer.Length && (read = stream.Read(buffer, total, buffer.Length - total)) > 0)
+                {
+                    total += read;
+                }
+                if (total > MaxMarkerBytes)
+                {
+                    return StagingRunReason.MarkerUnsafe;
+                }
+                bytes = new byte[total];
+                Array.Copy(buffer, bytes, total);
+                return StagingRunReason.None;
+            }
+        }
+
+        /// <summary>The marker's contents, strictly: UTF-8 without a byte-order mark; a JSON object of exactly the four keys,
+        /// each appearing once, all strings; the exact schema; a lowercase run id that is this folder's name; a lowercase
+        /// SHA-256; and the timestamp format staging writes.</summary>
+        private static StagingRunReason ParseMarker(byte[] bytes, string folderName, out string runId, out string manifestSha256, out string createdUtc)
+        {
+            runId = manifestSha256 = createdUtc = null;
+            if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+            {
+                return StagingRunReason.MarkerInvalid;
+            }
+            IDictionary<string, object> map;
+            string text;
+            try
+            {
+                text = new UTF8Encoding(false, true).GetString(bytes);
+                var serializer = new System.Web.Script.Serialization.JavaScriptSerializer { MaxJsonLength = MaxMarkerBytes, RecursionLimit = 2 };
+                map = serializer.DeserializeObject(text) as IDictionary<string, object>;
+            }
+            catch (Exception)
+            {
+                return StagingRunReason.MarkerInvalid;
+            }
+            if (map == null || map.Count != MarkerKeys.Length || MarkerKeys.Any(k => !map.ContainsKey(k) || !(map[k] is string)) ||
+                MarkerKeys.Any(k => CountOccurrences(text, "\"" + k + "\"") != 1)) // a repeated key would be silently overwritten
+            {
+                return StagingRunReason.MarkerInvalid;
+            }
+            string schema = (string)map["schema"], id = (string)map["run_id"], sha = (string)map["manifest_sha256"], created = (string)map["created_utc"];
+            if (!string.Equals(schema, "sortview.staging-run/1", StringComparison.Ordinal) || !RunIdPattern.IsMatch(id) ||
+                !LowerSha256Pattern.IsMatch(sha) || !CreatedUtcPattern.IsMatch(created) ||
+                !DateTime.TryParseExact(created, "yyyy-MM-dd'T'HH:mm:ss.fff'Z'", System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out DateTime _))
+            {
+                return StagingRunReason.MarkerInvalid;
+            }
+            if (!string.Equals(id, folderName, StringComparison.Ordinal))
+            {
+                return StagingRunReason.MarkerMismatch;
+            }
+            runId = id;
+            manifestSha256 = sha;
+            createdUtc = created;
+            return StagingRunReason.None;
+        }
+
+        private static int CountOccurrences(string text, string value)
+        {
+            int count = 0;
+            for (int at = text.IndexOf(value, StringComparison.Ordinal); at >= 0; at = text.IndexOf(value, at + value.Length, StringComparison.Ordinal))
+            {
+                count++;
+            }
+            return count;
         }
     }
 }

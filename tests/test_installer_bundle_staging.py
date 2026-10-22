@@ -81,12 +81,16 @@ def test_the_stager_runs_nothing_and_never_copies_or_deletes_by_wildcard_or_recu
                                                                 "Directory.Delete(path, false)"]
     # The only native calls: create-new with a security descriptor, and the run folder's lifetime handle (opened, its
     # attributes read, and the folder finally deleted through it).
-    assert code.count("[DllImport(") == 4
+    # The classifier adds one read: a handle's security descriptor, into a managed buffer.
+    assert code.count("[DllImport(") == 5
     assert set(re.findall(r"static extern \w+ (\w+)\(", code)) == {"CreateDirectoryWithSecurity", "CreateFile", "GetFileInformationByHandle",
-                                                                 "SetFileInformationByHandle"}
+                                                                 "SetFileInformationByHandle", "GetKernelObjectSecurity"}
     assert sorted(re.findall(r'EntryPoint = "(\w+)"', code)) == ["CreateDirectoryW", "CreateFileW"]
-    # The handle only ever opens an EXISTING folder, on the entry itself (never through a link), and never shares delete.
-    assert code.count("CreateFile(") == 2 and "OpenExisting, FileFlagBackupSemantics | FileFlagOpenReparsePoint" in code
+    # Every handle only ever opens something that EXISTS, on the entry itself (never through a link), and never shares
+    # delete: the lifetime handle, and the classifier's root pin, check handle and marker read.
+    calls = re.findall(r"CreateFile\((?!string)[^;]*;", code)
+    assert len(calls) == 4 and all("OpenExisting" in call and "FileFlagOpenReparsePoint" in call for call in calls), calls
+    assert "OpenExisting, FileFlagBackupSemantics | FileFlagOpenReparsePoint" in code
     assert "FileShareRead | FileShareWrite," in code and "FileShareDelete" not in code
     # New files only (CreateNew), never overwriting: the copied files, the staged manifest and the run marker.
     assert code.count("FileMode.CreateNew") == 3 and "FileMode.Create," not in code and "FileMode.OpenOrCreate" not in code
@@ -826,3 +830,406 @@ def test_the_native_staging_call_works_in_a_32_bit_process(results32):
 @needs_bridge
 def test_the_main_run_is_a_64_bit_process(results):
     assert results["_process_bits"] == 64
+
+
+# =====================================================================================================================
+# 3. CLASSIFYING EXISTING RUNS (M2b-2b): read only
+# =====================================================================================================================
+
+def _classifier_code() -> str:
+    code = _code()
+    return code[code.index("internal const int MaxRunEntries"):]  # the classifier is the last section of BundleStager
+
+
+def test_the_classifier_is_read_only_and_never_enters_a_run():
+    code = _classifier_code()
+    for writer in ("Directory.Delete", "File.Delete", "SetFileInformationByHandle", "MoveFile", "MoveTo(", "Move(", "SetAccessControl",
+                   "SetOwner", "CreateDirectory", "FileMode.", "WriteAll", ".Write(", "DeleteOnClose", "0x04000000", "FileShareDelete",
+                   "Directory.Enumerate", "SearchOption", "EnumerateFiles", "GetDirectories"):
+        assert writer not in code, writer
+    # Direct children of the pinned root only: one listing, of the root itself.
+    assert code.count("EnumerateFileSystemInfos()") == 1 and "new DirectoryInfo(root).EnumerateFileSystemInfos()" in code
+    # A folder without a plain-file marker is never opened for the check: the marker pre-check comes first.
+    classify = code[code.index("private static StagingRunEntry ClassifyEntry"):code.index("private static DirectorySecurity ReadSecurity")]
+    assert classify.index("File.GetAttributes(markerPath)") < classify.index("CreateFile(path, DeleteAccess")
+    # The production entry point always uses the production policy.
+    assert re.sub(r"\s+", " ", code).count(
+        "public static StagingRunScan ClassifyRuns(CancellationToken cancellationToken) => ClassifyRuns(StagingPolicy.Production, cancellationToken);") == 1
+
+
+_CLASSIFY_PROBE = r"""
+param([string]$CorePath, [string]$ArgsPath, [string]$OutPath)
+$ErrorActionPreference = 'Stop'
+Add-Type -Path $CorePath
+Add-Type -ReferencedAssemblies @($CorePath, 'System.Web.Extensions', 'System.Core') -TypeDefinition @"
+using System; using System.Collections; using System.Collections.Generic; using System.IO; using System.Linq; using System.Security.Principal;
+using System.Threading; using System.Web.Script.Serialization; using SortView.Setup.Core;
+public static class ClassifyProbe {
+    static StagingPolicy Policy(IDictionary<string, object> a) {
+        var me = WindowsIdentity.GetCurrent().User;
+        Func<string, SecurityIdentifier> sid = s => s == "ME" ? me : new SecurityIdentifier(s);
+        var trusted = ((IEnumerable)a["trusted"]).Cast<string>().Select(sid);
+        var access = ((IEnumerable)a["access"]).Cast<string>().Select(sid);
+        return new StagingPolicy((string)a["root"], trusted, access, a["owner"] == null ? null : sid((string)a["owner"]));
+    }
+    static Dictionary<string, object> Describe(StagingRunScan scan) {
+        return new Dictionary<string, object> {
+            { "completed", scan.Completed }, { "root_exists", scan.RootExists }, { "truncated", scan.Truncated },
+            { "root_problems", scan.RootProblems.Select(p => p.Code.ToString()).ToList() },
+            { "entries", scan.Entries.Select(e => new Dictionary<string, object> {
+                { "name", e.Name }, { "state", e.State.ToString() }, { "reason", e.Reason.ToString() }, { "detail", e.Detail },
+                { "run_id", e.RunId }, { "manifest_sha256", e.ManifestSha256 }, { "created_utc", e.CreatedUtc } }).ToList() } };
+    }
+    public static Dictionary<string, object> Run(string json) {
+        var a = (IDictionary<string, object>)new JavaScriptSerializer().DeserializeObject(json);
+        var policy = Policy(a);
+        var r = new Dictionary<string, object> { { "bits", IntPtr.Size * 8 } };
+        string mode = (string)a["mode"];
+        if (mode == "classify") {
+            r["scan"] = Describe(BundleStager.ClassifyRuns(policy, CancellationToken.None));
+        } else if (mode == "cancelled") {
+            r["scan"] = Describe(BundleStager.ClassifyRuns(policy, new CancellationToken(true)));
+        } else if (mode == "live_here") {
+            // A run alive in THIS process, classified by this process; then disposed, and classified again.
+            var staged = BundleStager.Stage((string)a["source"], (string)a["hash"], (string)a["version"], policy, CancellationToken.None);
+            r["staged"] = staged.IsStaged;
+            r["run"] = staged.IsStaged ? Path.GetFileName(Path.GetDirectoryName(staged.BundlePath)) : null;
+            r["during"] = Describe(BundleStager.ClassifyRuns(policy, CancellationToken.None));
+            staged.Dispose();
+            r["cleanup"] = staged.CleanupProblems.Select(p => p.ToString()).ToList();
+            r["after"] = Describe(BundleStager.ClassifyRuns(policy, CancellationToken.None));
+        } else if (mode == "interference") {
+            // One thread stages and disposes over and over; two others classify the same root the whole time.
+            int iterations = Convert.ToInt32(a["iterations"]);
+            var stageProblems = new List<string>(); var cleanupProblems = new List<string>(); var errors = new List<string>();
+            var live = new HashSet<string>(); var violations = new List<string>(); var states = new Dictionary<string, int>();
+            int scans = 0, incomplete = 0; bool done = false; object gate = new object();
+            var stager = new Thread(() => {
+                try {
+                    for (int i = 0; i < iterations; i++) {
+                        var staged = BundleStager.Stage((string)a["source"], (string)a["hash"], (string)a["version"], policy, CancellationToken.None);
+                        string run = staged.IsStaged ? Path.GetFileName(Path.GetDirectoryName(staged.BundlePath)) : null;
+                        lock (gate) { stageProblems.AddRange(staged.Problems.Select(p => p.ToString())); if (run != null) live.Add(run); }
+                        Thread.Sleep(2);
+                        staged.Dispose();
+                        lock (gate) { cleanupProblems.AddRange(staged.CleanupProblems.Select(p => p.ToString())); }
+                    }
+                } catch (Exception e) { lock (gate) errors.Add(e.ToString()); }
+                finally { done = true; }
+            });
+            Func<Thread> classifier = () => new Thread(() => {
+                try {
+                    while (!done) {
+                        var scan = BundleStager.ClassifyRuns(policy, CancellationToken.None);
+                        lock (gate) {
+                            scans++; if (!scan.Completed) incomplete++;
+                            foreach (var e in scan.Entries) {
+                                string key = e.State + "/" + e.Reason; states[key] = states.ContainsKey(key) ? states[key] + 1 : 1;
+                                if (e.State == StagingRunState.AbandonedCandidate) violations.Add(e.ToString()); // every run here is live
+                            }
+                        }
+                    }
+                } catch (Exception e) { lock (gate) errors.Add(e.ToString()); }
+            });
+            var threads = new[] { stager, classifier(), classifier() };
+            foreach (var t in threads) t.Start();
+            foreach (var t in threads) t.Join();
+            r["stage_problems"] = stageProblems; r["cleanup_problems"] = cleanupProblems; r["errors"] = errors;
+            r["violations"] = violations; r["scans"] = scans; r["incomplete"] = incomplete; r["runs"] = live.Count; r["states"] = states;
+            r["after"] = Describe(BundleStager.ClassifyRuns(policy, CancellationToken.None));
+        }
+        return r;
+    }
+}
+"@
+$result = [ClassifyProbe]::Run((Get-Content -LiteralPath $ArgsPath -Raw))
+ConvertTo-Json -InputObject $result -Depth 8 | Set-Content -LiteralPath $OutPath -Encoding UTF8
+"""
+
+
+def _test_policy(root: Path, **overrides) -> dict:
+    return {"root": str(root), "trusted": [SYSTEM, ADMINISTRATORS, TRUSTED_INSTALLER, "ME"], "access": [SYSTEM, ADMINISTRATORS, "ME"],
+            "owner": None, **overrides}
+
+
+def _classify(work: Path, core_dll: Path, mode: str = "classify", powershell: str = _POWERSHELL, **args) -> dict:
+    work.mkdir(parents=True, exist_ok=True)
+    tag = f"{mode}-{len(list(work.glob('args-*.json')))}"
+    (work / "classify.ps1").write_text(_CLASSIFY_PROBE, encoding="utf-8")
+    (work / f"args-{tag}.json").write_text(json.dumps({"mode": mode, "version": VERSION, **args}), encoding="utf-8")
+    out = work / f"out-{tag}.json"
+    completed = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(work / "classify.ps1"),
+                                "-CorePath", str(core_dll), "-ArgsPath", str(work / f"args-{tag}.json"), "-OutPath", str(out)],
+                               capture_output=True, text=True, timeout=600, check=False)
+    assert out.exists(), completed.stdout + completed.stderr
+    return json.loads(out.read_text(encoding="utf-8-sig"))
+
+
+def _by_name(scan: dict) -> dict:
+    return {e["name"]: e for e in scan["entries"]}
+
+
+def _start_staging_children(work: Path, core_dll: Path, source: Path, sha: str, root: Path, count: int, tag: str) -> list:
+    """`count` separate processes, each staging into `root` and staying alive (holding its run's lifetime handle)."""
+    (work / "child.ps1").write_text(_KILLED_CHILD, encoding="utf-8")
+    children = []
+    for i in range(count):
+        signal = work / f"staged-{tag}-{i}.txt"
+        proc = subprocess.Popen([_POWERSHELL, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(work / "child.ps1"),
+                                 "-CorePath", str(core_dll), "-Source", str(source), "-Hash", sha, "-Root", str(root), "-Signal", str(signal)],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        children.append((proc, signal))
+    runs = []
+    deadline = time.monotonic() + 180
+    try:
+        for proc, signal in children:
+            while not signal.exists():
+                assert proc.poll() is None, proc.stderr.read()
+                assert time.monotonic() < deadline, "a child never staged"
+                time.sleep(0.1)
+            bundle = signal.read_text(encoding="utf-8")
+            assert not bundle.startswith("FAILED"), bundle
+            runs.append(Path(bundle).parent)
+    except BaseException:
+        _kill([(proc, None) for proc, _ in children])
+        raise
+    return [(proc, run) for (proc, _), run in zip(children, runs)]
+
+
+def _kill(children: list) -> None:
+    for proc, _ in children:
+        proc.kill()  # TerminateProcess: as in a crash, nothing is disposed
+    for proc, _ in children:
+        proc.wait(timeout=30)
+
+
+def _snapshot(root: Path) -> dict:
+    """Everything a read-only scan must leave exactly as it was: every entry under the root (links not entered), its
+    attributes, size, write time and (files) SHA-256, and the owner and permissions of the root and its direct children."""
+    entries = {}
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+        for name in dirnames + filenames:
+            path = Path(dirpath) / name
+            info = os.lstat(path)
+            is_file = name in filenames and not _is_reparse(path)
+            entries[str(path.relative_to(root))] = (info.st_file_attributes, info.st_size, info.st_mtime_ns, _sha256(path.read_bytes()) if is_file else None)
+        dirnames[:] = [d for d in dirnames if not _is_reparse(Path(dirpath) / d)]
+    script = ("Get-ChildItem -LiteralPath $env:SV_SNAPSHOT_ROOT -Force | ForEach-Object { $_.Name + '|' + (Get-Acl -LiteralPath $_.FullName).Sddl }; "
+              "'.|' + (Get-Acl -LiteralPath $env:SV_SNAPSHOT_ROOT).Sddl")
+    completed = subprocess.run([_POWERSHELL, "-NoProfile", "-NonInteractive", "-Command", script], capture_output=True, text=True,
+                               check=False, env={**os.environ, "SV_SNAPSHOT_ROOT": str(root)})
+    assert completed.returncode == 0, completed.stderr
+    return {"entries": entries, "security": sorted(completed.stdout.splitlines())}
+
+
+#: The marker variants written into abandoned runs, and the reason each must give.
+MARKER_CASES = {
+    "invalid_json": "MarkerInvalid",
+    "wrong_schema": "MarkerInvalid",
+    "extra_key": "MarkerInvalid",
+    "missing_key": "MarkerInvalid",
+    "uppercase_hash": "MarkerInvalid",
+    "repeated_key": "MarkerInvalid",
+    "bom": "MarkerInvalid",
+    "other_run_id": "MarkerMismatch",
+    "oversized": "MarkerUnsafe",
+}
+#: Other changes made to abandoned runs, and the reason each must give.
+RUN_CASES = {"no_marker": "MarkerMissing", "marker_is_folder": "MarkerUnsafe", "marker_is_junction": "MarkerUnsafe",
+             "extra_permission": "UnexpectedSecurity"}
+
+
+def _marker_variant(name: str, marker: dict) -> bytes:
+    variants = {
+        "wrong_schema": {**marker, "schema": "sortview.staging-run/2"},
+        "extra_key": {**marker, "pid": "1234"},
+        "missing_key": {k: v for k, v in marker.items() if k != "created_utc"},
+        "uppercase_hash": {**marker, "manifest_sha256": marker["manifest_sha256"].upper()},
+        "other_run_id": {**marker, "run_id": "f" * 32},
+    }
+    if name in variants:
+        return json.dumps(variants[name]).encode()
+    if name == "repeated_key":
+        return json.dumps(marker)[:-1].encode() + b', "run_id": "' + marker["run_id"].encode() + b'"}'
+    if name == "bom":
+        return b"\xef\xbb\xbf" + json.dumps(marker).encode()
+    if name == "oversized":
+        return json.dumps(marker).encode() + b" " * 5000
+    return b"{ not json"
+
+
+@pytest.fixture(scope="module")
+def abandoned(tmp_path_factory, core_dll) -> dict:
+    """A staging root holding: runs alive in other processes, runs whose process was killed (then altered into every unsafe
+    variant), and plain unsafe entries -- classified while the live ones lived, with snapshots around a scan."""
+    base = tmp_path_factory.mktemp("classify")
+    source, root, work = base / "source", base / "root", base / "work"
+    sha = _bundle(source)
+    root.mkdir()
+    work.mkdir()
+    killed_names = ["candidate", *MARKER_CASES, *RUN_CASES]
+    live = _start_staging_children(work, core_dll, source, sha, root, 2, "live")
+    try:
+        killed = _start_staging_children(work, core_dll, source, sha, root, len(killed_names), "killed")
+        _kill(killed)
+        runs = dict(zip(killed_names, (run for _, run in killed)))
+        marker = json.loads((runs["candidate"] / "staging-run.json").read_text(encoding="utf-8"))
+        for name in MARKER_CASES:
+            (runs[name] / "staging-run.json").write_bytes(_marker_variant(name, {**marker, "run_id": runs[name].name}))
+        (runs["no_marker"] / "staging-run.json").unlink()  # an older run, or one not yet marked
+        (runs["marker_is_folder"] / "staging-run.json").unlink()
+        (runs["marker_is_folder"] / "staging-run.json").mkdir()
+        outside = base / "outside"
+        outside.mkdir()
+        (outside / "sentinel.txt").write_bytes(b"outside, never touched")
+        (runs["marker_is_junction"] / "staging-run.json").unlink()
+        _junction(runs["marker_is_junction"] / "staging-run.json", outside)
+        _icacls(runs["extra_permission"], "/grant", "*S-1-1-0:(R)")  # Everyone may read: not what staging creates
+        # Plain unsafe entries beside the runs.
+        (root / ("a" * 32)).write_bytes(b"a file with a run-id name")
+        _junction(root / ("b" * 32), outside)
+        for name in ("notes", "C" * 32, "{" + "d" * 32 + "}"):
+            (root / name).mkdir()
+        (root / ("e" * 32)).mkdir()  # run-named, with ordinary inherited permissions, and a perfect marker of its own
+        (root / ("e" * 32) / "staging-run.json").write_text(json.dumps({**marker, "run_id": "e" * 32}), encoding="utf-8")
+        before = _snapshot(root)
+        scan = _classify(work, core_dll, **_test_policy(root))
+        after = _snapshot(root)
+        scan32 = _classify(work, core_dll, powershell=str(WINDOWS_POWERSHELL_32), **_test_policy(root)) if WINDOWS_POWERSHELL_32.exists() else None
+        owner_policy = _classify(work, core_dll, **_test_policy(root, owner=ADMINISTRATORS))
+    finally:
+        _kill(live)
+    after_live_ended = _classify(work, core_dll, **_test_policy(root))
+    result = {"scan": scan, "scan32": scan32, "owner_policy": owner_policy, "after_live_ended": after_live_ended, "before": before,
+              "after": after, "runs": {k: v.name for k, v in runs.items()}, "live": [run.name for _, run in live], "sha": sha, "outside": outside}
+    _remove_links(base)
+    return result
+
+
+@needs_bridge
+def test_runs_alive_in_other_processes_are_active(abandoned):
+    entries = _by_name(abandoned["scan"]["scan"])
+    for name in abandoned["live"]:
+        assert (entries[name]["state"], entries[name]["reason"]) == ("Active", "InUse"), entries[name]
+    # Once those processes ended (killed: nothing disposed), the same runs are candidates -- and still there.
+    later = _by_name(abandoned["after_live_ended"]["scan"])
+    for name in abandoned["live"]:
+        assert (later[name]["state"], later[name]["reason"]) == ("AbandonedCandidate", "None"), later[name]
+
+
+@needs_bridge
+def test_a_run_whose_process_was_killed_is_an_abandoned_candidate(abandoned):
+    entry = _by_name(abandoned["scan"]["scan"])[abandoned["runs"]["candidate"]]
+    assert (entry["state"], entry["reason"]) == ("AbandonedCandidate", "None"), entry
+    assert entry["run_id"] == abandoned["runs"]["candidate"] and entry["manifest_sha256"] == abandoned["sha"]
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z", entry["created_utc"])
+
+
+@needs_bridge
+@pytest.mark.parametrize("name", [*MARKER_CASES, *RUN_CASES])
+def test_a_killed_run_with_missing_or_bad_evidence_is_unknown(abandoned, name):
+    entry = _by_name(abandoned["scan"]["scan"])[abandoned["runs"][name]]
+    assert (entry["state"], entry["reason"]) == ("Unknown", {**MARKER_CASES, **RUN_CASES}[name]), entry
+    assert entry["run_id"] is None and entry["manifest_sha256"] is None  # nothing taken from unverified evidence
+
+
+@needs_bridge
+@pytest.mark.parametrize(("name", "reason"), [("a" * 32, "NotAFolder"), ("b" * 32, "ReparsePoint"), ("notes", "NotARunName"),
+                                              ("C" * 32, "NotARunName"), ("{" + "d" * 32 + "}", "NotARunName"),
+                                              ("e" * 32, "UnexpectedSecurity")])
+def test_unsafe_entries_beside_the_runs_are_unknown(abandoned, name, reason):
+    entry = _by_name(abandoned["scan"]["scan"])[name]
+    assert (entry["state"], entry["reason"]) == ("Unknown", reason), entry
+
+
+@needs_bridge
+def test_a_scan_changes_nothing_and_never_follows_a_link(abandoned):
+    assert abandoned["after"] == abandoned["before"]
+    assert (abandoned["outside"] / "sentinel.txt").read_bytes() == b"outside, never touched"
+    scan = abandoned["scan"]["scan"]
+    assert scan["completed"] is True and scan["root_exists"] is True and scan["root_problems"] == [] and scan["truncated"] is False
+    # Only the root's direct children: nothing from inside a run, or from behind the junction, is listed.
+    assert all("\\" not in e["name"] and e["name"] not in ("bundle", "staging-run.json", "sentinel.txt") for e in scan["entries"])
+
+
+@needs_bridge
+def test_an_owner_other_than_the_policys_is_unexpected_security(abandoned):
+    # The same runs, judged by a policy whose run folders are owned by Administrators: these (owned by this user) are not.
+    entry = _by_name(abandoned["owner_policy"]["scan"])[abandoned["runs"]["candidate"]]
+    assert (entry["state"], entry["reason"]) == ("Unknown", "UnexpectedSecurity"), entry
+
+
+@needs_bridge
+def test_the_classifier_works_in_a_32_bit_process(abandoned):
+    if abandoned["scan32"] is None:
+        pytest.skip("no 32-bit Windows PowerShell on this machine")
+    assert abandoned["scan32"]["bits"] == 32 and abandoned["scan"]["bits"] == 64
+
+    def simplify(result: dict) -> dict:
+        return {e["name"]: (e["state"], e["reason"]) for e in result["scan"]["entries"]}
+
+    assert simplify(abandoned["scan32"]) == simplify(abandoned["scan"])
+
+
+@needs_bridge
+def test_a_run_alive_in_the_classifying_process_is_active_and_gone_after_dispose(tmp_path, core_dll):
+    source, root = tmp_path / "source", tmp_path / "root"
+    sha = _bundle(source)
+    root.mkdir()
+    for powershell in [_POWERSHELL] + ([str(WINDOWS_POWERSHELL_32)] if WINDOWS_POWERSHELL_32.exists() else []):
+        r = _classify(tmp_path / "work", core_dll, "live_here", powershell=powershell, source=str(source), hash=sha, **_test_policy(root))
+        assert r["staged"] is True, r
+        during = _by_name(r["during"])
+        assert list(during) == [r["run"]] and (during[r["run"]]["state"], during[r["run"]]["reason"]) == ("Active", "InUse")
+        assert r["cleanup"] == [] and r["after"]["entries"] == [] and r["after"]["completed"] is True
+
+
+@needs_bridge
+def test_classifying_never_disturbs_a_concurrent_staging_and_never_calls_a_live_run_abandoned(tmp_path, core_dll):
+    source, root = tmp_path / "source", tmp_path / "root"
+    sha = _bundle(source)
+    root.mkdir()
+    r = _classify(tmp_path / "work", core_dll, "interference", source=str(source), hash=sha, iterations=40, **_test_policy(root))
+    assert r["errors"] == [] and r["runs"] == 40, r
+    assert r["stage_problems"] == [] and r["cleanup_problems"] == [], r  # no staging failed, and every Dispose cleaned up
+    assert r["violations"] == [], r  # a live run was never an AbandonedCandidate
+    assert r["scans"] > 0 and r["incomplete"] == 0, r  # two concurrent classifiers, every scan completed
+    assert set(r["states"]) <= {"Active/InUse", "Unknown/MarkerMissing", "Unknown/Vanished"}, r["states"]
+    assert r["after"]["entries"] == []
+
+
+@needs_bridge
+def test_an_unsafe_missing_or_invalid_root_is_refused_without_enumerating(tmp_path, core_dll):
+    work = tmp_path / "work"
+    writable = tmp_path / "writable"
+    (writable / ("0" * 32)).mkdir(parents=True)
+    _icacls(writable, "/grant", "*S-1-1-0:(OI)(CI)(W)")  # Everyone may write: a fixture folder only
+    try:
+        refused = _classify(work, core_dll, **_test_policy(writable))["scan"]
+    finally:
+        _icacls(writable, "/remove:g", "*S-1-1-0")
+    assert refused["root_problems"] == ["WritableByUntrusted"] and refused["entries"] == [] and refused["completed"] is False
+    (tmp_path / "real").mkdir()
+    _junction(tmp_path / "junction", tmp_path / "real")
+    linked = _classify(work, core_dll, **_test_policy(tmp_path / "junction"))["scan"]
+    os.rmdir(tmp_path / "junction")
+    assert linked["root_problems"] == ["ReparsePoint"] and linked["entries"] == []
+    missing = _classify(work, core_dll, **_test_policy(tmp_path / "missing" / "SetupStaging"))["scan"]
+    assert (missing["completed"], missing["root_exists"], missing["root_problems"], missing["entries"]) == (True, False, [], [])
+    assert not (tmp_path / "missing").exists()  # nothing created
+    invalid = _classify(work, core_dll, **_test_policy(tmp_path, access=[SYSTEM, ADMINISTRATORS, "ME", "S-1-1-0"]))["scan"]
+    assert invalid["root_problems"] == ["RequestInvalid"] and invalid["entries"] == []
+
+
+@needs_bridge
+def test_cancellation_and_the_entry_limit(tmp_path, core_dll):
+    root = tmp_path / "root"
+    root.mkdir()
+    for i in range(1025):  # one more than a scan classifies
+        (root / f"entry-{i:04d}").mkdir()
+    work = tmp_path / "work"
+    limited = _classify(work, core_dll, **_test_policy(root))["scan"]
+    assert limited["truncated"] is True and limited["completed"] is True and len(limited["entries"]) == 1024
+    assert {(e["state"], e["reason"]) for e in limited["entries"]} == {("Unknown", "NotARunName")}
+    cancelled = _classify(work, core_dll, "cancelled", **_test_policy(root))["scan"]
+    assert cancelled["completed"] is False and cancelled["root_problems"] == ["Cancelled"] and cancelled["entries"] == []
