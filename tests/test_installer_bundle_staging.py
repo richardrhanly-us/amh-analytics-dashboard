@@ -91,7 +91,7 @@ def test_the_stager_runs_nothing_and_never_copies_or_deletes_by_wildcard_or_recu
     # Every handle only ever opens something that EXISTS, on the entry itself (never through a link), and never shares
     # delete: the lifetime handle, and the classifier's root pin, check handle and marker read.
     calls = re.findall(r"CreateFile\((?!string)[^;]*;", code)
-    assert len(calls) == 7 and all("OpenExisting" in call and "FileFlagOpenReparsePoint" in call for call in calls), calls
+    assert len(calls) == 8 and all("OpenExisting" in call and "FileFlagOpenReparsePoint" in call for call in calls), calls
     assert "OpenExisting, FileFlagBackupSemantics | FileFlagOpenReparsePoint" in code
     assert "FileShareRead | FileShareWrite," in code and "FileShareDelete" not in code
     # New files only (CreateNew), never overwriting: the copied files, the staged manifest and the run marker.
@@ -1051,10 +1051,19 @@ MARKER_CASES = {
     "bom": "MarkerInvalid",
     "other_run_id": "MarkerMismatch",
     "oversized": "MarkerUnsafe",
+    "escaped_duplicate_key": "MarkerInvalid",
+    "noncanonical_spacing": "MarkerInvalid",
 }
 #: Other changes made to abandoned runs, and the reason each must give.
 RUN_CASES = {"no_marker": "MarkerMissing", "marker_is_folder": "MarkerUnsafe", "marker_is_junction": "MarkerUnsafe",
              "extra_permission": "UnexpectedSecurity"}
+
+
+def _canonical_marker(run_id: str, manifest_sha256: str, created_utc: str) -> bytes:
+    """Exactly the form staging writes (M2b-2a's template, now RenderRunMarker)."""
+    lines = ["{", '  "schema": "sortview.staging-run/1",', f'  "run_id": "{run_id}",', f'  "manifest_sha256": "{manifest_sha256}",',
+             f'  "created_utc": "{created_utc}"', "}", ""]
+    return chr(10).join(lines).encode()  # LF line ends, a final LF
 
 
 def _marker_variant(name: str, marker: dict) -> bytes:
@@ -1063,8 +1072,15 @@ def _marker_variant(name: str, marker: dict) -> bytes:
         "extra_key": {**marker, "pid": "1234"},
         "missing_key": {k: v for k, v in marker.items() if k != "created_utc"},
         "uppercase_hash": {**marker, "manifest_sha256": marker["manifest_sha256"].upper()},
-        "other_run_id": {**marker, "run_id": "f" * 32},
     }
+    if name == "other_run_id":  # canonical in every other respect: the run id alone is wrong
+        return _canonical_marker("f" * 32, marker["manifest_sha256"], marker["created_utc"])
+    if name == "escaped_duplicate_key":  # a second run_id spelled with an escape: the parser would keep it, unnoticed
+        escaped_key = "run" + chr(92) + "u005fid"  # JSON for "run_id", spelled with an escape
+        tail = chr(10).join([",", f'  "{escaped_key}": "{marker["run_id"]}"', "}", ""])
+        return _canonical_marker(marker["run_id"], marker["manifest_sha256"], marker["created_utc"])[:-3] + tail.encode()
+    if name == "noncanonical_spacing":  # every value right, the layout not staging's
+        return json.dumps(marker).encode()
     if name in variants:
         return json.dumps(variants[name]).encode()
     if name == "repeated_key":
@@ -1259,7 +1275,7 @@ def test_cancellation_and_the_entry_limit(tmp_path, core_dll):
 
 def _cleanup_code() -> str:
     code = _code()
-    return code[code.index("internal static IList<StagingProblem> RemoveRunFolder"):code.index("internal const int MaxRunEntries")]
+    return code[code.index("internal static IList<StagingProblem> RemoveRunFolder"):code.index("private const uint RecoveryAccess")]
 
 
 def test_cleanup_deletes_only_through_handles_and_keeps_the_marker_for_last():
@@ -1514,3 +1530,435 @@ def test_cleanup_works_in_a_32_bit_process(tmp_path, core_dll):
         _assert_removed(r)
     busy = _cleanup(tmp_path, core_dll, "x86_busy", powershell=ps32, hold="bundle/runtime/SortViewCollector.exe")
     assert busy["marker_exists"] is True and busy["problems"][0].endswith("(error 32)"), busy
+
+
+# =====================================================================================================================
+# 5. EXPLICIT RECOVERY OF ONE ABANDONED RUN (M2b-2c.2)
+# =====================================================================================================================
+
+def _recovery_code() -> str:
+    code = _code()
+    return code[code.index("private const uint RecoveryAccess"):code.index("internal const int MaxRunEntries")]
+
+
+def test_recovery_checks_and_removes_through_one_handle_that_shares_nothing():
+    code = _recovery_code()
+    flat = re.sub(r"\s+", " ", code)
+    assert flat.count("public static StagingRunRemoval RemoveAbandonedRun(string runId, CancellationToken cancellationToken) => "
+                      "RemoveAbandonedRun(runId, StagingPolicy.Production, cancellationToken);") == 1
+    # The run id: exactly 32 lowercase hex characters, before anything is touched.
+    assert "runId.Length != 32 || !RunIdPattern.IsMatch(runId)" in flat
+    assert flat.index("runId.Length != 32") < flat.index("PinStagingRoot(")
+    # One recovery handle: list, delete, security, attributes -- sharing NOTHING, opened on the folder itself.
+    assert "RecoveryAccess = FileListDirectory | DeleteAccess | ReadControlAccess | FileReadAttributesAccess | SynchronizeAccess;" in flat
+    assert flat.count("CreateFile(") == 1 and "CreateFile(ExtendedPath(runFolder), RecoveryAccess, ShareNothing, IntPtr.Zero, OpenExisting, " \
+                                               "FileFlagBackupSemantics | FileFlagOpenReparsePoint, IntPtr.Zero)" in flat
+    # Verified through that handle, then that same handle removes it -- no other run is ever named.
+    order = [flat.index(s) for s in ("PinStagingRoot(policy", "File.GetAttributes(markerPath)", "pin = CreateFile(", "VerifyPinnedRun(pin,",
+                                     "SafeFileHandle handedOver = pin;", "RemoveRunFolder(root, runFolder, handedOver,")]
+    assert order == sorted(order)
+    assert 'string runFolder = root + "\\\\" + runId;' in flat
+    # Cancellation: checked before starting and immediately before removal, never after removal starts.
+    assert flat.count("cancellationToken.IsCancellationRequested") == 2
+    assert flat.rindex("cancellationToken.IsCancellationRequested") < flat.index("removalStarted = true;")
+    # Nothing here deletes by itself, by path, or by listing anything.
+    for forbidden in ("Directory.Delete", "File.Delete", "SetFileInformationByHandle", "Enumerate", "GetFiles", "GetDirectories", "Move("):
+        assert forbidden not in code, forbidden
+
+
+def test_markers_are_rendered_once_and_read_back_canonically():
+    code = re.sub(r"\s+", " ", _code())
+    assert "byte[] bytes = RenderRunMarker(Path.GetFileName(runFolder), expectedHash.ToLowerInvariant()," in code
+    assert "if (!RenderRunMarker(id, sha, created).SequenceEqual(bytes))" in code
+    assert "CountOccurrences" not in code  # replaced by the byte-for-byte comparison
+
+
+def test_the_run_reasons_only_grew():
+    body = _code()
+    body = body[body.index("public enum StagingRunReason"):]
+    body = body[body.index("{") + 1:body.index("}")]
+    assert re.findall(r"^\s*(\w+),\s*$", body, flags=re.MULTILINE) == [
+        "None", "InUse", "NotAFolder", "ReparsePoint", "NotARunName", "MarkerMissing", "MarkerUnsafe", "MarkerInvalid", "MarkerMismatch",
+        "UnexpectedSecurity", "AccessDenied", "Vanished", "ProbeFailed", "Error", "InvalidRunId", "RootRefused", "Cancelled"]
+
+
+_RECOVERY_PROBE = r"""
+param([string]$CorePath, [string]$ArgsPath, [string]$OutPath)
+$ErrorActionPreference = 'Stop'
+Add-Type -Path $CorePath
+Add-Type -ReferencedAssemblies @($CorePath, 'System.Web.Extensions', 'System.Core') -TypeDefinition @"
+using System; using System.Collections; using System.Collections.Generic; using System.Diagnostics; using System.IO; using System.Linq;
+using System.Reflection; using System.Security.Principal; using System.Threading; using System.Web.Script.Serialization; using SortView.Setup.Core;
+public static class RecoveryProbe {
+    static Dictionary<string, object> Describe(StagingRunRemoval x) {
+        return new Dictionary<string, object> { { "run_id", x.RunId }, { "outcome", x.Outcome.ToString() }, { "skip_reason", x.SkipReason.ToString() },
+            { "problems", x.Problems.Select(p => p.ToString()).ToList() }, { "root_problems", x.RootProblems.Select(p => p.Code.ToString()).ToList() },
+            { "marker_kept", x.MarkerKept } };
+    }
+    public static Dictionary<string, object> Run(string json) {
+        var a = (IDictionary<string, object>)new JavaScriptSerializer().DeserializeObject(json);
+        var me = WindowsIdentity.GetCurrent().User;
+        Func<string, SecurityIdentifier> sid = s => s == "ME" ? me : new SecurityIdentifier(s);
+        var policy = new StagingPolicy((string)a["root"], ((IEnumerable)a["trusted"]).Cast<string>().Select(sid),
+            ((IEnumerable)a["access"]).Cast<string>().Select(sid), a["owner"] == null ? null : sid((string)a["owner"]));
+        var cancel = new CancellationTokenSource();
+        if (a.ContainsKey("cancelled") && (bool)a["cancelled"]) cancel.Cancel();
+        // TEST-ONLY cleanup settings, by reflection, on this test policy: limits, the forced classic disposition, and a hook
+        // run before each entry is opened (to swap an entry, hold the removal at its first entry, or cancel mid-removal).
+        if (a.ContainsKey("settings")) {
+            var s = (IDictionary<string, object>)a["settings"];
+            bool first = true;
+            Action<string> hook = path => {
+                if (s.ContainsKey("swap") && path.EndsWith((string)s["swap"], StringComparison.OrdinalIgnoreCase)) {
+                    Directory.Move(path, Path.Combine((string)a["outside"], "moved"));
+                    var psi = new ProcessStartInfo("cmd", "/c mklink /J \"" + path + "\" \"" + (string)a["outside"] + "\"") { UseShellExecute = false, CreateNoWindow = true };
+                    using (var p = Process.Start(psi)) p.WaitForExit();
+                }
+                if (s.ContainsKey("cancel_during") && (bool)s["cancel_during"]) cancel.Cancel();
+                if (s.ContainsKey("plant_on_marker") && path.EndsWith("staging-run.json", StringComparison.OrdinalIgnoreCase))
+                    File.WriteAllText(Path.Combine(Path.GetDirectoryName(path), (string)s["plant_on_marker"]), "late");
+                if (first && s.ContainsKey("hold_signal")) {
+                    first = false;
+                    File.WriteAllText((string)s["hold_signal"], "holding");
+                    for (int i = 0; i < 1200 && !File.Exists((string)s["hold_release"]); i++) Thread.Sleep(50);
+                }
+            };
+            var type = typeof(StagingPolicy).Assembly.GetType("SortView.Setup.Core.CleanupSettings");
+            object settings = Activator.CreateInstance(type, BindingFlags.Instance | BindingFlags.NonPublic, null,
+                new object[] { Convert.ToInt32(s["max_depth"]), Convert.ToInt32(s["max_entries"]), (bool)s["force_classic"], hook }, null);
+            typeof(StagingPolicy).GetProperty("CleanupTestSettings", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(policy, settings);
+        }
+        var r = new Dictionary<string, object> { { "bits", IntPtr.Size * 8 } };
+        string mode = (string)a["mode"];
+        if (mode == "recover") {
+            var results = new List<object>();
+            foreach (object id in (IEnumerable)a["run_ids"]) results.Add(Describe(BundleStager.RemoveAbandonedRun((string)id, policy, cancel.Token)));
+            r["results"] = results;
+        } else if (mode == "render") {
+            var render = typeof(BundleStager).GetMethod("RenderRunMarker", BindingFlags.Static | BindingFlags.NonPublic);
+            r["rendered"] = Convert.ToBase64String((byte[])render.Invoke(null, new object[] { "0123456789abcdef0123456789abcdef", new string('a', 64), "2026-10-22T01:02:03.004Z" }));
+        } else if (mode == "while_staging") {
+            // One thread stages and disposes over and over; this one keeps asking to recover whichever run is live, and the
+            // killed run, at the same time.
+            int iterations = Convert.ToInt32(a["iterations"]);
+            string live = null; bool done = false; var stageProblems = new List<string>(); var errors = new List<string>();
+            var stager = new Thread(() => {
+                try {
+                    for (int i = 0; i < iterations; i++) {
+                        var staged = BundleStager.Stage((string)a["source"], (string)a["hash"], (string)a["version"], policy, CancellationToken.None);
+                        lock (stageProblems) stageProblems.AddRange(staged.Problems.Concat(staged.CleanupProblems).Select(p => p.ToString()));
+                        if (staged.IsStaged) live = Path.GetFileName(Path.GetDirectoryName(staged.BundlePath));
+                        Thread.Sleep(3);
+                        string stagedPath = staged.BundlePath;
+                        bool intact = staged.IsStaged && File.Exists(Path.Combine(stagedPath, "MANIFEST.json"));
+                        if (staged.IsStaged && !intact) lock (stageProblems) stageProblems.Add("live run damaged: " + live);
+                        live = null;
+                        staged.Dispose();
+                        lock (stageProblems) stageProblems.AddRange(staged.CleanupProblems.Select(p => p.ToString()));
+                    }
+                } catch (Exception e) { lock (errors) errors.Add(e.ToString()); }
+                finally { done = true; }
+            });
+            stager.Start();
+            var outcomes = new Dictionary<string, int>(); var violations = new List<string>();
+            var killed = Describe(BundleStager.RemoveAbandonedRun((string)a["killed"], policy, CancellationToken.None));
+            while (!done) {
+                string target = live;
+                if (target == null) continue;
+                var x = BundleStager.RemoveAbandonedRun(target, policy, CancellationToken.None);
+                string key = x.Outcome + "/" + x.SkipReason; outcomes[key] = outcomes.ContainsKey(key) ? outcomes[key] + 1 : 1;
+                if (x.Outcome != StagingRunRemovalOutcome.Skipped) violations.Add(x.ToString());
+            }
+            stager.Join();
+            r["killed"] = killed; r["outcomes"] = outcomes; r["violations"] = violations; r["stage_problems"] = stageProblems; r["errors"] = errors;
+        }
+        return r;
+    }
+}
+"@
+$result = [RecoveryProbe]::Run((Get-Content -LiteralPath $ArgsPath -Raw))
+ConvertTo-Json -InputObject $result -Depth 6 | Set-Content -LiteralPath $OutPath -Encoding UTF8
+"""
+
+
+def _recover(work: Path, core_dll: Path, policy: dict, run_ids: list, *, mode: str = "recover", powershell: str = _POWERSHELL,
+             wait: bool = True, **extra):
+    """Runs the recovery probe in its own process. wait=False starts it and returns the process (for concurrency)."""
+    work.mkdir(parents=True, exist_ok=True)
+    tag = f"{mode}-{len(list(work.glob('recover-args-*.json')))}"
+    (work / "recover.ps1").write_text(_RECOVERY_PROBE, encoding="utf-8")
+    args_path, out = work / f"recover-args-{tag}.json", work / f"recover-out-{tag}.json"
+    args_path.write_text(json.dumps({"mode": mode, "run_ids": run_ids, "version": VERSION, **policy, **extra}), encoding="utf-8")
+    command = [powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(work / "recover.ps1"),
+               "-CorePath", str(core_dll), "-ArgsPath", str(args_path), "-OutPath", str(out)]
+    if not wait:
+        return subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL), out
+    completed = subprocess.run(command, capture_output=True, text=True, timeout=600, check=False)
+    assert out.exists(), completed.stdout + completed.stderr
+    return json.loads(out.read_text(encoding="utf-8-sig"))
+
+
+def _settings(**overrides) -> dict:
+    return {"max_depth": 40, "max_entries": 100000, "force_classic": False, **overrides}
+
+
+def _hold(work: Path, path: Path, tag: str):
+    """Another process holding `path` open (sharing everything) until released."""
+    (work / "holder.ps1").write_text(_CLEANUP_HOLDER, encoding="utf-8")
+    signal, release = work / f"{tag}.held", work / f"{tag}.release"
+    proc = subprocess.Popen([_POWERSHELL, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(work / "holder.ps1"),
+                             "-Path", str(path), "-Signal", str(signal), "-Release", str(release)],
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + 60
+    while not signal.exists():
+        assert proc.poll() is None and time.monotonic() < deadline, "the holder never held"
+        time.sleep(0.05)
+    assert signal.read_text(encoding="utf-8").strip() == "held"
+
+    def done() -> None:
+        release.write_text("go", encoding="utf-8")
+        proc.wait(timeout=30)
+    return done
+
+
+def _killed_runs(base: Path, core_dll: Path, count: int, live: int = 0):
+    """A staging root with `count` runs whose process was killed (and `live` runs still held by live processes)."""
+    source, root, work = base / "source", base / "root", base / "work"
+    sha = _bundle(source)
+    root.mkdir(parents=True)
+    work.mkdir(parents=True, exist_ok=True)
+    live_children = _start_staging_children(work, core_dll, source, sha, root, live, "live") if live else []
+    killed = _start_staging_children(work, core_dll, source, sha, root, count, "killed")
+    _kill(killed)
+    return source, sha, root, work, [run for _, run in killed], live_children
+
+
+def _one(result: dict) -> dict:
+    assert len(result["results"]) == 1, result
+    return result["results"][0]
+
+
+@needs_bridge
+def test_a_killed_run_is_recovered_and_nothing_else_is_touched(tmp_path, core_dll):
+    _source, _sha, root, work, runs, live = _killed_runs(tmp_path, core_dll, 2, live=1)
+    try:
+        target, sibling = runs
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "sentinel.txt").write_bytes(b"outside, never touched")
+        before = _snapshot(root)
+        r = _one(_recover(work, core_dll, _test_policy(root), [target.name]))
+        assert (r["outcome"], r["skip_reason"], r["problems"], r["marker_kept"]) == ("Removed", "None", [], False), r
+        assert not target.exists() and sibling.exists() and live[0][1].exists()
+        after = _snapshot(root)
+        kept = {k: v for k, v in before["entries"].items() if not k.startswith(target.name)}
+        assert after["entries"] == kept  # every other entry exactly as it was
+        assert [line for line in after["security"]] == [line for line in before["security"] if not line.startswith(target.name + "|")]
+        assert (outside / "sentinel.txt").read_bytes() == b"outside, never touched"
+        # Asked again: it is gone, so there is nothing to do.
+        again = _one(_recover(work, core_dll, _test_policy(root), [target.name]))
+        assert (again["outcome"], again["skip_reason"]) == ("Skipped", "Vanished")
+    finally:
+        _kill(live)
+
+
+@needs_bridge
+def test_a_live_run_is_never_removed(tmp_path, core_dll):
+    _source, _sha, root, work, _runs, live = _killed_runs(tmp_path, core_dll, 0, live=1)
+    try:
+        run = live[0][1]
+        before = _snapshot(run)
+        r = _one(_recover(work, core_dll, _test_policy(root), [run.name]))
+        assert (r["outcome"], r["skip_reason"]) == ("Skipped", "InUse"), r
+        assert _snapshot(run) == before
+    finally:
+        _kill(live)
+
+
+@needs_bridge
+def test_unsafe_unmarked_and_malformed_runs_are_refused_unchanged(tmp_path, core_dll):
+    names = [*MARKER_CASES, *RUN_CASES]
+    _source, _sha, root, work, runs, _ = _killed_runs(tmp_path, core_dll, len(names) + 1)
+    runs = dict(zip(["candidate", *names], runs))
+    marker = json.loads((runs["candidate"] / "staging-run.json").read_text(encoding="utf-8"))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "sentinel.txt").write_bytes(b"outside, never touched")
+    for name in MARKER_CASES:
+        (runs[name] / "staging-run.json").write_bytes(_marker_variant(name, {**marker, "run_id": runs[name].name}))
+    (runs["no_marker"] / "staging-run.json").unlink()
+    (runs["marker_is_folder"] / "staging-run.json").unlink()
+    (runs["marker_is_folder"] / "staging-run.json").mkdir()
+    (runs["marker_is_junction"] / "staging-run.json").unlink()
+    _junction(runs["marker_is_junction"] / "staging-run.json", outside)
+    _icacls(runs["extra_permission"], "/grant", "*S-1-1-0:(R)")
+    (root / ("a" * 32)).write_bytes(b"a file with a run-id name")
+    _junction(root / ("b" * 32), outside)
+    (root / ("e" * 32)).mkdir()  # run-named, ordinary inherited permissions, with a canonical marker of its own
+    (root / ("e" * 32) / "staging-run.json").write_bytes(_canonical_marker("e" * 32, marker["manifest_sha256"], marker["created_utc"]))
+    before = _snapshot(root)
+    ids = [runs[name].name for name in names] + ["a" * 32, "b" * 32, "e" * 32]
+    results = {x["run_id"]: x for x in _recover(work, core_dll, _test_policy(root), ids)["results"]}
+    expected = {**{runs[name].name: reason for name, reason in {**MARKER_CASES, **RUN_CASES}.items()},
+                "a" * 32: "NotAFolder", "b" * 32: "ReparsePoint", "e" * 32: "UnexpectedSecurity"}
+    assert {k: (v["outcome"], v["skip_reason"]) for k, v in results.items()} == {k: ("Skipped", v) for k, v in expected.items()}
+    # A policy whose run folders are owned by Administrators: these (owned by this user) are not, and are refused.
+    owned = _one(_recover(work, core_dll, _test_policy(root, owner=ADMINISTRATORS), [runs["candidate"].name]))
+    assert (owned["outcome"], owned["skip_reason"]) == ("Skipped", "UnexpectedSecurity")
+    assert _snapshot(root) == before and (outside / "sentinel.txt").read_bytes() == b"outside, never touched"
+    _remove_links(tmp_path)
+
+
+@needs_bridge
+def test_invalid_run_ids_are_refused_before_anything_is_opened(tmp_path, core_dll):
+    _source, _sha, root, work, runs, _ = _killed_runs(tmp_path, core_dll, 1)
+    real = runs[0].name
+    bad = [None, "", real.upper(), "{" + real + "}", real[:31], real + "0", real + "\n", "..\\" + real[3:], real[:16] + "\\" + real[17:],
+           real[:16] + "/" + real[17:], "c:" + real[2:], " " + real[1:], real[:31] + "g"]
+    before = _snapshot(root)
+    results = _recover(work, core_dll, _test_policy(root), bad)["results"]
+    assert [(x["outcome"], x["skip_reason"]) for x in results] == [("Skipped", "InvalidRunId")] * len(bad), results
+    assert _snapshot(root) == before
+
+
+@needs_bridge
+def test_an_unsafe_or_missing_root_is_refused_and_nothing_is_created(tmp_path, core_dll):
+    _source, _sha, root, work, runs, _ = _killed_runs(tmp_path, core_dll, 1)
+    run = runs[0].name
+    _icacls(root, "/grant", "*S-1-1-0:(W)")  # Everyone may write the root
+    try:
+        writable = _one(_recover(work, core_dll, _test_policy(root), [run]))
+    finally:
+        _icacls(root, "/remove:g", "*S-1-1-0")
+    assert (writable["outcome"], writable["skip_reason"], writable["root_problems"]) == ("Skipped", "RootRefused", ["WritableByUntrusted"])
+    _junction(tmp_path / "linked-root", root)
+    linked = _one(_recover(work, core_dll, _test_policy(tmp_path / "linked-root"), [run]))
+    os.rmdir(tmp_path / "linked-root")
+    assert (linked["skip_reason"], linked["root_problems"]) == ("RootRefused", ["ReparsePoint"])
+    missing = _one(_recover(work, core_dll, _test_policy(tmp_path / "missing" / "SetupStaging"), [run]))
+    assert (missing["outcome"], missing["skip_reason"]) == ("Skipped", "Vanished") and not (tmp_path / "missing").exists()
+    invalid = _one(_recover(work, core_dll, _test_policy(root, access=[SYSTEM, ADMINISTRATORS, "ME", "S-1-1-0"]), [run]))
+    assert (invalid["skip_reason"], invalid["root_problems"]) == ("RootRefused", ["RequestInvalid"])
+    assert (root / run / "staging-run.json").is_file()  # the run itself untouched throughout
+
+
+@needs_bridge
+def test_a_failure_before_the_marker_keeps_the_run_recoverable(tmp_path, core_dll):
+    _source, _sha, root, work, runs, _ = _killed_runs(tmp_path, core_dll, 1)
+    run = runs[0]
+    release = _hold(work, run / "bundle" / "runtime" / "SortViewCollector.exe", "busy")
+    try:
+        failed = _one(_recover(work, core_dll, _test_policy(root), [run.name]))
+    finally:
+        release()
+    assert (failed["outcome"], failed["marker_kept"]) == ("Failed", True), failed
+    assert failed["problems"][0].endswith("SortViewCollector.exe (error 32)") and failed["problems"][-1].endswith("(kept: the run was not removed)")
+    assert (run / "staging-run.json").is_file()
+    # Nothing lost: once the file is free, the same call recovers it.
+    retried = _one(_recover(work, core_dll, _test_policy(root), [run.name]))
+    assert (retried["outcome"], retried["problems"]) == ("Removed", []) and not run.exists()
+
+
+@needs_bridge
+def test_a_failure_after_the_marker_is_failed_and_says_the_marker_is_gone(tmp_path, core_dll):
+    _source, _sha, root, work, runs, _ = _killed_runs(tmp_path, core_dll, 1)
+    run = runs[0]
+    # On the marker's turn (everything else removed), an entry appears in the run: the final delete then fails.
+    r = _one(_recover(work, core_dll, _test_policy(root), [run.name], settings=_settings(plant_on_marker="late.txt")))
+    assert (r["outcome"], r["marker_kept"]) == ("Failed", False), r
+    assert len(r["problems"]) == 1 and r["problems"][0].endswith("(error 145; marker already removed)"), r["problems"]
+    assert not (run / "staging-run.json").exists() and [p.name for p in run.iterdir()] == ["late.txt"]
+    # Without its marker the leftover is not a run any more: recovery refuses it (it is for an administrator).
+    again = _one(_recover(work, core_dll, _test_policy(root), [run.name]))
+    assert (again["outcome"], again["skip_reason"]) == ("Skipped", "MarkerMissing")
+
+
+@needs_bridge
+def test_links_are_removed_as_links_and_a_swap_mid_removal_is_not_followed(tmp_path, core_dll):
+    _source, _sha, root, work, runs, _ = _killed_runs(tmp_path, core_dll, 2)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "sentinel.txt").write_bytes(b"outside, never touched")
+    (outside / "linked.txt").write_bytes(b"hard-linked")
+    linked, swapped = runs
+    _junction(linked / "bundle" / "runtime" / "linked", outside)
+    subprocess.run(["cmd", "/c", "mklink", "/H", str(linked / "bundle" / "runtime" / "hardlink.txt"), str(outside / "linked.txt")],
+                   capture_output=True, check=True)
+    r = _one(_recover(work, core_dll, _test_policy(root), [linked.name]))
+    assert (r["outcome"], r["problems"]) == ("Removed", []), r
+    swap = _one(_recover(work, core_dll, _test_policy(root), [swapped.name], outside=str(outside), settings=_settings(swap="\\bundle\\tools")))
+    assert (swap["outcome"], swap["problems"]) == ("Removed", []), swap
+    assert (outside / "sentinel.txt").read_bytes() == b"outside, never touched" and (outside / "linked.txt").read_bytes() == b"hard-linked"
+    assert (outside / "moved" / "set-api-token.ps1").is_file()  # the moved folder, behind the junction, was never entered
+    _remove_links(tmp_path)
+
+
+@needs_bridge
+def test_concurrent_recoveries_of_one_run_never_both_act(tmp_path, core_dll):
+    _source, _sha, root, work, runs, _ = _killed_runs(tmp_path, core_dll, 3)
+    for i, run in enumerate(runs):
+        signal, go = work / f"holding-{i}", work / f"go-{i}"
+        first, out = _recover(work, core_dll, _test_policy(root), [run.name], wait=False,
+                              settings=_settings(hold_signal=str(signal), hold_release=str(go)))
+        deadline = time.monotonic() + 120
+        while not signal.exists():
+            assert first.poll() is None and time.monotonic() < deadline, "the first recovery never started removing"
+            time.sleep(0.05)
+        second = _one(_recover(work, core_dll, _test_policy(root), [run.name]))  # while the first holds its handle
+        classify = _by_name(_classify(work, core_dll, **_test_policy(root))["scan"]).get(run.name)
+        go.write_text("go", encoding="utf-8")
+        first.wait(timeout=120)
+        winner = _one(json.loads(out.read_text(encoding="utf-8-sig")))
+        assert (second["outcome"], second["skip_reason"]) == ("Skipped", "InUse"), second
+        assert (classify["state"], classify["reason"]) == ("Active", "InUse")
+        assert (winner["outcome"], winner["problems"]) == ("Removed", []), winner
+        assert not run.exists()
+
+
+@needs_bridge
+def test_recovery_never_disturbs_a_concurrent_staging(tmp_path, core_dll):
+    source, sha, root, work, runs, _ = _killed_runs(tmp_path, core_dll, 1)
+    r = _recover(work, core_dll, _test_policy(root), [], mode="while_staging", source=str(source), hash=sha, iterations=30, killed=runs[0].name)
+    assert r["errors"] == [] and r["stage_problems"] == [], r
+    assert r["violations"] == [], r  # a live run was never removed (nor a removal attempted)
+    assert set(r["outcomes"]) <= {"Skipped/InUse", "Skipped/MarkerMissing", "Skipped/Vanished"} and r["outcomes"], r["outcomes"]
+    assert (r["killed"]["outcome"], r["killed"]["problems"]) == ("Removed", [])
+    assert list(root.iterdir()) == []
+
+
+@needs_bridge
+def test_cancellation_before_removal_changes_nothing_and_during_removal_is_ignored(tmp_path, core_dll):
+    _source, _sha, root, work, runs, _ = _killed_runs(tmp_path, core_dll, 2)
+    before = _snapshot(runs[0])
+    early = _one(_recover(work, core_dll, _test_policy(root), [runs[0].name], cancelled=True))
+    assert (early["outcome"], early["skip_reason"]) == ("Skipped", "Cancelled") and _snapshot(runs[0]) == before
+    late = _one(_recover(work, core_dll, _test_policy(root), [runs[1].name], settings=_settings(cancel_during=True)))
+    assert (late["outcome"], late["problems"]) == ("Removed", []), late  # never left half-removed by a late cancellation
+
+
+@needs_bridge
+def test_the_rendered_marker_is_exactly_m2b2a_format(tmp_path, core_dll):
+    r = _recover(tmp_path / "work", core_dll, _test_policy(tmp_path), [], mode="render")
+    import base64
+    assert base64.b64decode(r["rendered"]) == _canonical_marker("0123456789abcdef0123456789abcdef", "a" * 64, "2026-10-22T01:02:03.004Z")
+
+
+@needs_bridge
+def test_recovery_works_in_a_32_bit_process(tmp_path, core_dll):
+    if not WINDOWS_POWERSHELL_32.exists():
+        pytest.skip("no 32-bit Windows PowerShell on this machine")
+    ps32 = str(WINDOWS_POWERSHELL_32)
+    _source, _sha, root, work, runs, live = _killed_runs(tmp_path, core_dll, 2, live=1)
+    try:
+        release = _hold(work, runs[1] / "bundle" / "setup.ps1", "busy32")
+        try:
+            results = _recover(work, core_dll, _test_policy(root), [runs[0].name, live[0][1].name, runs[1].name, "X" * 32], powershell=ps32)
+        finally:
+            release()
+        assert results["bits"] == 32
+        removed, active, failed, invalid = results["results"]
+        assert (removed["outcome"], active["skip_reason"], failed["outcome"], failed["marker_kept"], invalid["skip_reason"]) == \
+            ("Removed", "InUse", "Failed", True, "InvalidRunId"), results
+        assert _one(_recover(work, core_dll, _test_policy(root), [runs[1].name], powershell=ps32))["outcome"] == "Removed"
+    finally:
+        _kill(live)
