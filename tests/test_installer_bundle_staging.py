@@ -19,7 +19,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -77,10 +79,45 @@ def test_the_stager_runs_nothing_and_never_copies_or_deletes_by_wildcard_or_recu
         assert forbidden not in code, forbidden
     assert re.findall(r"Directory\.Delete\([^)]*\)", code) == ["Directory.Delete(runFolder, false)", "Directory.Delete(path, false)",
                                                                 "Directory.Delete(path, false)"]
-    # The only native call: create-new with a security descriptor.
-    assert code.count("[DllImport(") == 1 and 'EntryPoint = "CreateDirectoryW"' in code
-    # New files only (CreateNew), never overwriting.
-    assert code.count("FileMode.CreateNew") == 2 and "FileMode.Create," not in code and "FileMode.OpenOrCreate" not in code
+    # The only native calls: create-new with a security descriptor, and the run folder's lifetime handle (opened, its
+    # attributes read, and the folder finally deleted through it).
+    assert code.count("[DllImport(") == 4
+    assert set(re.findall(r"static extern \w+ (\w+)\(", code)) == {"CreateDirectoryWithSecurity", "CreateFile", "GetFileInformationByHandle",
+                                                                 "SetFileInformationByHandle"}
+    assert sorted(re.findall(r'EntryPoint = "(\w+)"', code)) == ["CreateDirectoryW", "CreateFileW"]
+    # The handle only ever opens an EXISTING folder, on the entry itself (never through a link), and never shares delete.
+    assert code.count("CreateFile(") == 2 and "OpenExisting, FileFlagBackupSemantics | FileFlagOpenReparsePoint" in code
+    assert "FileShareRead | FileShareWrite," in code and "FileShareDelete" not in code
+    # New files only (CreateNew), never overwriting: the copied files, the staged manifest and the run marker.
+    assert code.count("FileMode.CreateNew") == 3 and "FileMode.Create," not in code and "FileMode.OpenOrCreate" not in code
+
+
+def test_the_injected_fault_is_internal_and_never_honored_by_the_production_policy():
+    code = re.sub(r"\s+", " ", _code())
+    assert "internal enum StagingFault" in code and "internal StagingFault InjectedFault" in code
+    assert "public enum StagingFault" not in code and "public StagingFault" not in code
+    # Only the production property builds a production policy; the public constructor never does.
+    assert ": this(stagingRoot, trustedPrincipals, accessPrincipals, owner, false)" in code
+    production = code[code.index("public static StagingPolicy Production =>"):code.index("internal StagingFault InjectedFault")]
+    assert "AdministratorsSid, true);" in production
+    # Read as None, and refused when set, on the production policy.
+    assert "get => isProduction ? StagingFault.None : injectedFault;" in code
+    assert "if (isProduction) { throw new InvalidOperationException(" in code
+    # Consulted at exactly the two steps, and nowhere else.
+    assert code.count("policy.InjectedFault ==") == 2
+    assert "policy.InjectedFault == StagingFault.RunLock" in code and "policy.InjectedFault == StagingFault.RunMarker" in code
+
+
+def test_the_problem_codes_only_grew():
+    body = _code()
+    body = body[body.index("public enum StagingProblemCode"):]
+    body = body[body.index("{") + 1:body.index("}")]
+    # M2b-1's codes in their original order (so their values are unchanged), then M2b-2a's, appended.
+    assert re.findall(r"^\s*(\w+),\s*$", body, flags=re.MULTILINE) == [
+        "RequestInvalid", "StagingRootInvalid", "UnsupportedVolume", "ReparsePoint", "NotADirectory", "UntrustedOwner",
+        "WritableByUntrusted", "CreateFailed", "PermissionsNotApplied", "RunFolderExists", "InsufficientSpace", "SourceNotVerified",
+        "SourceChanged", "SourceUnsafe", "CopyFailed", "AccessDenied", "Cancelled", "StagedNotVerified", "CleanupFailed",
+        "UnexpectedError", "RunLockFailed", "RunMarkerFailed"]
 
 
 def test_source_and_staged_copy_are_verified_by_the_same_strict_rules():
@@ -88,8 +125,10 @@ def test_source_and_staged_copy_are_verified_by_the_same_strict_rules():
     assert "sourceVerification = BundleVerifier.Verify(sourceRoot, expectedHash, expectedVersion);" in code
     assert "stagedVerification = BundleVerifier.Verify(bundlePath, expectedHash, expectedVersion);" in code
     order = [code.index(s) for s in ("CheckChain(root, policy, problems)", "sourceVerification = BundleVerifier.Verify",
-                                     "CreateProtected(runFolder", "ReadSourceManifest(source", "CopyListedFile(source",
-                                     "CheckCreated(runFolder, policy, problems);\n                if",
+                                     "CreateProtected(runFolder", "runLock = AcquireRunLock(runFolder",
+                                     "CheckCreated(runFolder, policy, problems);\n                if",  # again, now it is pinned
+                                     "WriteRunMarker(runFolder", "ReadSourceManifest(source", "CopyListedFile(source",
+                                     "CheckChain(root, policy, problems, mustExist: true);\n                CheckCreated(runFolder, policy, problems);",
                                      "stagedVerification = BundleVerifier.Verify")]
     assert order == sorted(order)
 
@@ -138,6 +177,47 @@ def _icacls(path: Path, *args: str) -> None:
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
+# What another process can do to a run folder. Opens on the entry itself (never through a link); renames are put back at
+# once if they ever succeed, so a failing check cannot leave the fixture moved.
+_PIN_CS = r"""
+public static class Pin {
+    const uint DELETE = 0x10000, OPEN_EXISTING = 3, BACKUP = 0x02000000, OPEN_REPARSE = 0x00200000;
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFileW(string p, uint access, uint share, System.IntPtr sa, uint disp, uint flags, System.IntPtr t);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    static extern bool MoveFileExW(string a, string b, uint flags);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    static extern bool RemoveDirectoryW(string p);
+    static string Error() { return "error " + System.Runtime.InteropServices.Marshal.GetLastWin32Error(); }
+    public static string ExclusiveDeleteOpen(string p) {
+        using (var h = CreateFileW(p, DELETE, 0, System.IntPtr.Zero, OPEN_EXISTING, BACKUP | OPEN_REPARSE, System.IntPtr.Zero)) return h.IsInvalid ? Error() : "OK";
+    }
+    public static string Remove(string p) { return RemoveDirectoryW(p) ? "REMOVED" : Error(); }
+    public static string RenameAndBack(string p) {
+        if (!MoveFileExW(p, p + "-renamed", 0)) return Error();
+        MoveFileExW(p + "-renamed", p, 0);
+        return "RENAMED";
+    }
+    public static System.Collections.Generic.Dictionary<string, object> Live(string run) {
+        return new System.Collections.Generic.Dictionary<string, object> {
+            { "exclusive_delete_open", ExclusiveDeleteOpen(run) }, { "remove", Remove(run) }, { "rename", RenameAndBack(run) },
+            { "rename_root", RenameAndBack(System.IO.Path.GetDirectoryName(run)) } };
+    }
+}
+"""
+
+# A second process's view of a run folder: "live" tries to remove and rename it (and its staging root); "exclusive" only
+# tries the exclusive delete-access open a future cleanup would use.
+_OTHER_PROCESS = r"""
+param([string]$Path, [string]$Mode = 'live')
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @"
+""" + _PIN_CS + r"""
+"@
+if ($Mode -eq 'exclusive') { ConvertTo-Json -Compress -InputObject @{ exclusive_delete_open = [Pin]::ExclusiveDeleteOpen($Path) } }
+else { ConvertTo-Json -Compress -InputObject ([Pin]::Live($Path)) }
+"""
+
 _PROBE = r"""
 param([string]$CorePath, [string]$CasesPath, [string]$OutPath)
 $ErrorActionPreference = 'Stop'
@@ -145,8 +225,8 @@ Add-Type -Path $CorePath
 Add-Type -ReferencedAssemblies @($CorePath, 'System.Web.Extensions', 'System.Core') -TypeDefinition @"
 using System; using System.Collections; using System.Collections.Generic; using System.IO; using System.Linq;
 using System.Security.AccessControl; using System.Security.Cryptography; using System.Security.Principal; using System.Threading;
-using System.Web.Script.Serialization; using SortView.Setup.Core;
-
+using System.Web.Script.Serialization; using System.Reflection; using SortView.Setup.Core;
+""" + _PIN_CS + r"""
 // TEST HOOKS, reached only through the stager's public progress callback (called synchronously on the staging thread).
 public sealed class Hook : IProgress<StagingProgress> {
     readonly IDictionary<string, object> spec; readonly string source; readonly CancellationTokenSource cancel;
@@ -174,7 +254,14 @@ public static class StagingProbe {
     static StagingPolicy Policy(IDictionary<string, object> c) {
         Func<string, IEnumerable<SecurityIdentifier>> sids = key => ((IEnumerable)c[key]).Cast<string>().Select(s => s == "ME" ? WindowsIdentity.GetCurrent().User : new SecurityIdentifier(s));
         object owner = c.ContainsKey("owner") ? c["owner"] : null;
-        return new StagingPolicy((string)c["root"], sids("trusted"), sids("access"), owner == null ? null : new SecurityIdentifier((string)owner));
+        var policy = new StagingPolicy((string)c["root"], sids("trusted"), sids("access"), owner == null ? null : new SecurityIdentifier((string)owner));
+        if (c.ContainsKey("fault")) FaultProperty().SetValue(policy, Enum.Parse(FaultProperty().PropertyType, (string)c["fault"]));
+        return policy;
+    }
+
+    // The TEST-ONLY injected fault: internal, so reached by reflection, on a policy this probe built.
+    static PropertyInfo FaultProperty() {
+        return typeof(StagingPolicy).GetProperty("InjectedFault", BindingFlags.Instance | BindingFlags.NonPublic);
     }
 
     static Dictionary<string, object> Describe(StagedBundle staged, string root) {
@@ -199,6 +286,9 @@ public static class StagingProbe {
             r["run_rules"] = security.GetAccessRules(true, true, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>()
                 .Select(x => x.IdentityReference.Value + "|" + x.AccessControlType + "|" + x.FileSystemRights + "|" + x.IsInherited + "|" + x.InheritanceFlags).ToList();
             r["run_folder"] = run;
+            r["run_entries"] = new DirectoryInfo(run).EnumerateFileSystemInfos().Select(e => e.Name).OrderBy(n => n, StringComparer.Ordinal).ToList();
+            string marker = Path.Combine(run, "staging-run.json");
+            r["marker"] = File.Exists(marker) ? File.ReadAllText(marker) : null;
         }
         return r;
     }
@@ -235,6 +325,15 @@ public static class StagingProbe {
                     var staged = BundleStager.Stage((string)c["source"], (string)c["hash"], (string)c["version"], Policy(c), cancel.Token, hook, runId);
                     r = Describe(staged, (string)c["root"]);
                     r["progress"] = hook.Seen;
+                    if (staged.IsStaged && c.ContainsKey("other_process")) {
+                        // While the run is alive: this process, then another one, try to remove and rename it.
+                        string liveRun = Path.GetDirectoryName(staged.BundlePath);
+                        r["live_same_process"] = Pin.Live(liveRun);
+                        var other = new System.Diagnostics.ProcessStartInfo((string)c["powershell"],
+                            "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" + (string)c["other_process"] + "\" -Path \"" + liveRun + "\"");
+                        other.UseShellExecute = false; other.CreateNoWindow = true; other.RedirectStandardOutput = true;
+                        using (var p = System.Diagnostics.Process.Start(other)) { r["live_other_process"] = p.StandardOutput.ReadToEnd().Trim(); p.WaitForExit(); }
+                    }
                     if (staged.IsStaged && c.ContainsKey("plant_junction")) {
                         // A link inside the staged tree before cleanup: removed as a link, its target never entered.
                         var psi = new System.Diagnostics.ProcessStartInfo("cmd", "/c mklink /J \"" + Path.Combine(staged.BundlePath, "runtime\\linked") + "\" \"" + (string)c["plant_junction"] + "\"");
@@ -259,6 +358,14 @@ public static class StagingProbe {
             { "root", production.StagingRoot }, { "program_files", Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles) },
             { "trusted", production.TrustedPrincipals.Select(s => s.Value).ToList() }, { "access", production.AccessPrincipals.Select(s => s.Value).ToList() },
             { "owner", production.Owner.Value } };
+        // The production policy takes no injected fault: setting one is refused, and it always reads None.
+        string faultSet;
+        try { FaultProperty().SetValue(production, Enum.Parse(FaultProperty().PropertyType, "RunMarker")); faultSet = "ACCEPTED"; }
+        catch (TargetInvocationException e) { faultSet = e.InnerException.GetType().Name; }
+        ((Dictionary<string, object>)outcome["_production"])["fault_set"] = faultSet;
+        ((Dictionary<string, object>)outcome["_production"])["fault_read"] = FaultProperty().GetValue(production).ToString();
+        ((Dictionary<string, object>)outcome["_production"])["fault_public"] =
+            typeof(StagingPolicy).GetProperty("InjectedFault") != null || typeof(StagingPolicy).Assembly.GetType("SortView.Setup.Core.StagingFault").IsPublic;
         return outcome;
     }
 }
@@ -347,6 +454,10 @@ def _build(base: Path) -> tuple[dict, dict]:
     source = case("unreadable_during_copy", hook={"kind": "deny_read", "file": "runtime/_internal/zz-last.dll"})
     notes["denied"].append(source / "runtime/_internal/zz-last.dll")
     case("cancelled", hook={"kind": "cancel", "file": "setup.ps1"})
+    # TEST-ONLY injected faults (test policies only): the run folder's handle opened but not kept, and the marker created
+    # but not written. Either way the run folder must go, and no handle may stay open (one would block its removal).
+    case("fault_run_lock", fault="RunLock")
+    case("fault_run_marker", fault="RunMarker")
 
     # The destination.
     root = base / "roots" / "root_missing" / "SortView" / "SetupStaging"
@@ -397,6 +508,9 @@ def _build(base: Path) -> tuple[dict, dict]:
 
 
 def _run_probe(base: Path, cases: dict, core_dll: Path, powershell: str) -> dict:
+    if "valid" in cases:  # while it is alive, another process (always 64-bit Windows PowerShell) tries to remove or rename it
+        (base / "other_process.ps1").write_text(_OTHER_PROCESS, encoding="utf-8")
+        cases["valid"] = {**cases["valid"], "other_process": str(base / "other_process.ps1"), "powershell": _POWERSHELL}
     (base / "cases.json").write_text(json.dumps(cases), encoding="utf-8")
     (base / "probe.ps1").write_text(_PROBE, encoding="utf-8")
     completed = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
@@ -435,7 +549,8 @@ def results(tmp_path_factory, core_dll) -> dict:
 
 
 # The native call in a 32-bit process (SysWOW64 Windows PowerShell): SECURITY_ATTRIBUTES is 12 bytes there, not 24.
-CASES_32 = ("valid", "listed_hidden_and_system", "collision", "unassignable_owner", "cleanup_with_junction", "concurrent")
+CASES_32 = ("valid", "listed_hidden_and_system", "collision", "unassignable_owner", "cleanup_with_junction", "concurrent", "cancelled",
+            "fault_run_lock", "fault_run_marker")
 
 
 @pytest.fixture(scope="module")
@@ -506,6 +621,8 @@ EXPECTED = {
     "access_not_trusted": (["RequestInvalid"], None),
     "collision": (["RunFolderExists"], []),
     "unassignable_owner": (["CreateFailed"], []),
+    "fault_run_lock": (["RunLockFailed"], []),
+    "fault_run_marker": (["RunMarkerFailed"], []),
 }
 
 
@@ -561,6 +678,104 @@ def test_concurrent_stagings_are_independent(results):
     assert r["cleanup_after_dispose"] == [] and r["root_entries_after"] == []
 
 
+#: While a run is alive: an exclusive delete-access open, removing it and renaming it all fail with a sharing violation
+#: (32), and its staging root cannot be renamed either (access denied, 5) -- from this process and from any other.
+LIVE = {"exclusive_delete_open": "error 32", "remove": "error 32", "rename": "error 32", "rename_root": "error 5"}
+
+
+@needs_bridge
+def test_a_staged_run_is_marked_beside_its_bundle(results):
+    r = _r(results, "valid")
+    assert r["run_entries"] == ["bundle", "staging-run.json"]
+    marker = json.loads(r["marker"])
+    assert list(marker) == ["schema", "run_id", "manifest_sha256", "created_utc"]
+    assert marker["schema"] == "sortview.staging-run/1"
+    assert marker["run_id"] == Path(r["run_folder"]).name and re.fullmatch(r"[0-9a-f]{32}", marker["run_id"])
+    assert marker["manifest_sha256"] == _sha256((results["_notes"]["sources"]["valid"] / "MANIFEST.json").read_bytes())
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z", marker["created_utc"])
+    # Not part of the bundle: the staged copy verified on its own, and holds exactly the listed files and manifest.
+    assert r["staged_verified"] is True and "staging-run.json" not in r["staged_files"]
+
+
+@needs_bridge
+def test_a_live_run_cannot_be_deleted_or_renamed_by_this_or_another_process(results):
+    r = _r(results, "valid")
+    assert r["live_same_process"] == LIVE
+    assert json.loads(r["live_other_process"]) == LIVE
+    # ...and Dispose, through the handle that pinned it, removed it completely.
+    assert r["run_folder_gone"] is True and r["cleanup_after_dispose"] == [] and r["root_entries_after"] == []
+
+
+@needs_bridge
+def test_an_injected_lock_or_marker_failure_says_where(results):
+    assert _r(results, "fault_run_lock")["problem_paths"][0].endswith("(injected test fault)")
+    assert _r(results, "fault_run_marker")["problem_paths"] == ["staging-run.json"]
+
+
+@needs_bridge
+def test_the_production_policy_cannot_take_an_injected_fault(results):
+    production = results["_production"]
+    assert production["fault_set"] == "InvalidOperationException" and production["fault_read"] == "None"
+    assert production["fault_public"] is False
+
+
+_KILLED_CHILD = r"""
+param([string]$CorePath, [string]$Source, [string]$Hash, [string]$Root, [string]$Signal)
+$ErrorActionPreference = 'Stop'
+Add-Type -Path $CorePath
+$me = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$system = New-Object Security.Principal.SecurityIdentifier('S-1-5-18')
+$admins = New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')
+$installer = New-Object Security.Principal.SecurityIdentifier('TRUSTED_INSTALLER_SID')
+$policy = New-Object SortView.Setup.Core.StagingPolicy($Root, [Security.Principal.SecurityIdentifier[]]@($system, $admins, $installer, $me),
+    [Security.Principal.SecurityIdentifier[]]@($system, $admins, $me), $null)
+$staged = [SortView.Setup.Core.BundleStager]::Stage($Source, $Hash, 'VERSION', $policy, [Threading.CancellationToken]::None, $null, [guid]::NewGuid())
+$text = if ($staged.IsStaged) { $staged.BundlePath } else { 'FAILED: ' + ((@($staged.Problems) | ForEach-Object { $_.ToString() }) -join '; ') }
+[IO.File]::WriteAllText($Signal + '.tmp', $text)
+[IO.File]::Move($Signal + '.tmp', $Signal)
+Start-Sleep -Seconds 300   # killed long before this
+""".replace("TRUSTED_INSTALLER_SID", TRUSTED_INSTALLER).replace("'VERSION'", f"'{VERSION}'")
+
+
+def _other_process(script: Path, run: Path, mode: str) -> dict:
+    completed = subprocess.run([_POWERSHELL, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script),
+                                "-Path", str(run), "-Mode", mode], capture_output=True, text=True, timeout=120, check=False)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    return json.loads(completed.stdout.strip())
+
+
+@needs_bridge
+def test_a_killed_staging_process_releases_its_lock_and_leaves_its_run_untouched(tmp_path, core_dll):
+    source, root, signal = tmp_path / "source", tmp_path / "root", tmp_path / "staged.txt"
+    sha = _bundle(source)
+    root.mkdir()
+    (tmp_path / "child.ps1").write_text(_KILLED_CHILD, encoding="utf-8")
+    other = tmp_path / "other_process.ps1"
+    other.write_text(_OTHER_PROCESS, encoding="utf-8")
+    child = subprocess.Popen([_POWERSHELL, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(tmp_path / "child.ps1"),
+                              "-CorePath", str(core_dll), "-Source", str(source), "-Hash", sha, "-Root", str(root), "-Signal", str(signal)],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    try:
+        deadline = time.monotonic() + 120
+        while not signal.exists():
+            assert child.poll() is None, child.stderr.read()
+            assert time.monotonic() < deadline, "the child never staged"
+            time.sleep(0.1)
+        bundle = signal.read_text(encoding="utf-8")
+        assert not bundle.startswith("FAILED"), bundle
+        run = Path(bundle).parent
+        assert _other_process(other, run, "live") == LIVE  # pinned while the child lives
+    finally:
+        child.kill()  # TerminateProcess: no Dispose, no finally -- as in a crash
+        child.wait(timeout=30)
+    # Windows closed the dead process's handle: the run is no longer pinned...
+    assert _other_process(other, run, "exclusive") == {"exclusive_delete_open": "OK"}
+    # ...and nothing removed it: no automatic cleanup of an abandoned run.
+    assert (run / "staging-run.json").is_file() and (run / "bundle" / "MANIFEST.json").is_file()
+    assert [p.name for p in root.iterdir()] == [run.name]
+    shutil.rmtree(run)  # the test's own fixture (the test policy gives this user full control of it)
+
+
 @needs_bridge
 def test_no_staging_leaves_anything_behind(results):
     # Every staging root holds nothing but what the tests put there themselves (the root_missing case's created
@@ -600,6 +815,12 @@ def test_the_native_staging_call_works_in_a_32_bit_process(results32):
     assert (results32["_notes"]["outside"] / "from-outside.dll").read_bytes() == b"outside"
     concurrent = _r(results32, "concurrent")
     assert all(x["staged"] for x in concurrent["results"]) and concurrent["root_entries_after"] == []
+    # The lifetime handle's native calls (CreateFileW, GetFileInformationByHandle, SetFileInformationByHandle) in 32 bits.
+    assert valid["live_same_process"] == LIVE and json.loads(valid["live_other_process"]) == LIVE
+    assert json.loads(valid["marker"])["run_id"] == Path(valid["run_folder"]).name
+    for name, problem in (("cancelled", "Cancelled"), ("fault_run_lock", "RunLockFailed"), ("fault_run_marker", "RunMarkerFailed")):
+        failed = _r(results32, name)
+        assert failed["problems"] == [problem] and failed["cleanup_problems"] == [] and failed["root_entries_after"] == [], failed
 
 
 @needs_bridge

@@ -8,7 +8,9 @@ using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
+using System.Text;
 using System.Threading;
+using Microsoft.Win32.SafeHandles;
 
 namespace SortView.Setup.Core
 {
@@ -50,6 +52,22 @@ namespace SortView.Setup.Core
         /// <summary>The staging folder could not be removed completely, or was not a safe target to remove.</summary>
         CleanupFailed,
         UnexpectedError,
+        /// <summary>The run folder could not be pinned open (the handle that keeps it from being deleted or renamed while
+        /// the run is alive), or the handle did not show a plain folder.</summary>
+        RunLockFailed,
+        /// <summary>The run's identity marker (staging-run.json, beside the bundle) could not be written.</summary>
+        RunMarkerFailed,
+    }
+
+    /// <summary>TEST ONLY: a failure to inject at one step, honored only by a policy that is not
+    /// <see cref="StagingPolicy.Production"/>.</summary>
+    internal enum StagingFault
+    {
+        None,
+        /// <summary>Fail after the run folder's handle is opened, before it is kept.</summary>
+        RunLock,
+        /// <summary>Fail after the marker file is created, before it is written.</summary>
+        RunMarker,
     }
 
     public sealed class StagingProblem
@@ -117,12 +135,22 @@ namespace SortView.Setup.Core
         /// trusted).</param>
         public StagingPolicy(string stagingRoot, IEnumerable<SecurityIdentifier> trustedPrincipals,
             IEnumerable<SecurityIdentifier> accessPrincipals, SecurityIdentifier owner)
+            : this(stagingRoot, trustedPrincipals, accessPrincipals, owner, false)
+        {
+        }
+
+        private StagingPolicy(string stagingRoot, IEnumerable<SecurityIdentifier> trustedPrincipals,
+            IEnumerable<SecurityIdentifier> accessPrincipals, SecurityIdentifier owner, bool isProduction)
         {
             StagingRoot = stagingRoot;
             TrustedPrincipals = new ReadOnlyCollection<SecurityIdentifier>((trustedPrincipals ?? Enumerable.Empty<SecurityIdentifier>()).Distinct().ToList());
             AccessPrincipals = new ReadOnlyCollection<SecurityIdentifier>((accessPrincipals ?? Enumerable.Empty<SecurityIdentifier>()).Distinct().ToList());
             Owner = owner;
+            this.isProduction = isProduction;
         }
+
+        private readonly bool isProduction;
+        private StagingFault injectedFault;
 
         /// <summary>The installer's policy. Built fresh each time; it has no settable state.</summary>
         public static StagingPolicy Production =>
@@ -130,7 +158,23 @@ namespace SortView.Setup.Core
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "SortView", "SetupStaging"),
                 new[] { SystemSid, AdministratorsSid, TrustedInstallerSid },
                 new[] { SystemSid, AdministratorsSid },
-                AdministratorsSid);
+                AdministratorsSid,
+                true);
+
+        /// <summary>TEST ONLY (internal; tests reach it by reflection on a policy they built): a failure to inject. Always
+        /// None for the production policy, which refuses to have one set.</summary>
+        internal StagingFault InjectedFault
+        {
+            get => isProduction ? StagingFault.None : injectedFault;
+            set
+            {
+                if (isProduction)
+                {
+                    throw new InvalidOperationException("The production staging policy takes no injected fault.");
+                }
+                injectedFault = value;
+            }
+        }
 
         public string StagingRoot { get; }
 
@@ -146,22 +190,27 @@ namespace SortView.Setup.Core
 
     /// <summary>
     /// A bundle staged by <see cref="BundleStager"/>. While it is alive and <see cref="IsStaged"/>, <see cref="BundlePath"/>
-    /// holds exactly the verified bundle. Dispose removes the run folder this staging created -- and nothing else.
+    /// holds exactly the verified bundle, and the run folder is pinned: this object holds a handle that keeps it from being
+    /// deleted or renamed by anyone (this process included). Dispose removes the run folder this staging created -- and
+    /// nothing else -- and releases the handle. Keep this object referenced for as long as <see cref="BundlePath"/> is used:
+    /// if it is dropped, the handle is released when it is collected.
     /// </summary>
     public sealed class StagedBundle : IDisposable
     {
         private readonly List<StagingProblem> cleanupProblems = new List<StagingProblem>();
         private readonly string stagingRoot;
         private string runFolder;
+        private SafeFileHandle runLock;
 
         internal StagedBundle(IList<StagingProblem> problems, BundleVerification sourceVerification, BundleVerification stagedVerification,
-            string stagingRoot, string runFolder, string bundlePath)
+            string stagingRoot, string runFolder, string bundlePath, SafeFileHandle runLock = null)
         {
             Problems = new ReadOnlyCollection<StagingProblem>(problems);
             SourceVerification = sourceVerification;
             StagedVerification = stagedVerification;
             this.stagingRoot = stagingRoot;
             this.runFolder = runFolder;
+            this.runLock = runLock;
             IsStaged = problems.Count == 0 && bundlePath != null && stagedVerification != null && stagedVerification.IsVerified;
             BundlePath = IsStaged ? bundlePath : null;
             Version = IsStaged ? stagedVerification.Version : null;
@@ -202,10 +251,16 @@ namespace SortView.Setup.Core
             }
             IsDisposed = true;
             BundlePath = null;
+            SafeFileHandle held = runLock;
+            runLock = null;
             if (runFolder != null)
             {
-                cleanupProblems.AddRange(BundleStager.RemoveRunFolder(stagingRoot, runFolder));
+                cleanupProblems.AddRange(BundleStager.RemoveRunFolder(stagingRoot, runFolder, held)); // closes the handle
                 runFolder = null;
+            }
+            else
+            {
+                held?.Dispose();
             }
         }
     }
@@ -220,7 +275,9 @@ namespace SortView.Setup.Core
     /// untrusted able to change them (at the drive root only "create folders" is tolerated, as Windows grants it to every
     /// user there), NTFS or ReFS; (3) BundleVerifier on the source; (4) missing staging-root folders and the run folder,
     /// each created new (CreateDirectoryW, failing if it exists) with its owner and protected permissions in place from the
-    /// start, then read back; (5) the source manifest read again and required to hash to the expected value, then each
+    /// start, then read back; (4b) the run folder pinned by a handle held until the run is disposed (no one can delete or
+    /// rename it meanwhile), checked again through and under that handle, and marked with staging-run.json beside the
+    /// bundle; (5) the source manifest read again and required to hash to the expected value, then each
     /// listed file copied -- its path validated, every source component checked to be a plain folder or file, its size
     /// and SHA-256 computed while copying; (6) the chain and run-folder permissions checked again; (7) BundleVerifier on
     /// the staged copy, with the same expected hash and version.
@@ -257,6 +314,7 @@ namespace SortView.Setup.Core
             string root = null;
             string runFolder = null;
             string bundlePath = null;
+            SafeFileHandle runLock = null;
             try
             {
                 // (1) The request.
@@ -310,6 +368,23 @@ namespace SortView.Setup.Core
                     runFolder = null;
                     return new StagedBundle(problems, sourceVerification, null, root, null, null);
                 }
+
+                // (4b) Pin the run folder for the life of the run, check it again now it cannot be swapped, and mark it.
+                runLock = AcquireRunLock(runFolder, policy, problems);
+                if (problems.Count > 0)
+                {
+                    return Fail(problems, sourceVerification, root, runFolder, runLock: runLock);
+                }
+                CheckCreated(runFolder, policy, problems);
+                if (problems.Count > 0)
+                {
+                    return Fail(problems, sourceVerification, root, runFolder, runLock: runLock);
+                }
+                WriteRunMarker(runFolder, expectedHash, policy, problems);
+                if (problems.Count > 0)
+                {
+                    return Fail(problems, sourceVerification, root, runFolder, runLock: runLock);
+                }
                 bundlePath = Path.Combine(runFolder, "bundle");
                 Directory.CreateDirectory(bundlePath);
 
@@ -317,20 +392,20 @@ namespace SortView.Setup.Core
                 byte[] manifestBytes = ReadSourceManifest(source, expectedHash, problems);
                 if (problems.Count > 0)
                 {
-                    return Fail(problems, sourceVerification, root, runFolder);
+                    return Fail(problems, sourceVerification, root, runFolder, runLock: runLock);
                 }
                 var report = new BundleVerifier.Report();
                 BundleVerifier.Manifest manifest = BundleVerifier.Parse(manifestBytes, report);
                 if (manifest == null || report.Any)
                 {
                     problems.Add(new StagingProblem(StagingProblemCode.SourceChanged, BundleVerifier.ManifestFileName));
-                    return Fail(problems, sourceVerification, root, runFolder);
+                    return Fail(problems, sourceVerification, root, runFolder, runLock: runLock);
                 }
                 long needed = SpaceMargin + manifestBytes.Length + manifest.Files.Sum(f => f.SizeBytes);
                 if (new DriveInfo(Path.GetPathRoot(root)).AvailableFreeSpace < needed)
                 {
                     problems.Add(new StagingProblem(StagingProblemCode.InsufficientSpace, root));
-                    return Fail(problems, sourceVerification, root, runFolder);
+                    return Fail(problems, sourceVerification, root, runFolder, runLock: runLock);
                 }
                 int done = 0;
                 foreach (BundleVerifier.ManifestFile entry in manifest.Files)
@@ -339,7 +414,7 @@ namespace SortView.Setup.Core
                     CopyListedFile(source, bundlePath, entry, cancellationToken, problems);
                     if (problems.Count > 0)
                     {
-                        return Fail(problems, sourceVerification, root, runFolder);
+                        return Fail(problems, sourceVerification, root, runFolder, runLock: runLock);
                     }
                     Report(progress, StagingStep.FileCopied, entry.Path, ++done, manifest.Files.Count);
                 }
@@ -350,7 +425,7 @@ namespace SortView.Setup.Core
                 CheckCreated(runFolder, policy, problems);
                 if (problems.Count > 0)
                 {
-                    return Fail(problems, sourceVerification, root, runFolder);
+                    return Fail(problems, sourceVerification, root, runFolder, runLock: runLock);
                 }
 
                 // (7) The staged copy, on its own, by the same rules.
@@ -359,10 +434,12 @@ namespace SortView.Setup.Core
                 if (!stagedVerification.IsVerified)
                 {
                     problems.Add(new StagingProblem(StagingProblemCode.StagedNotVerified, ""));
-                    return Fail(problems, sourceVerification, root, runFolder, stagedVerification);
+                    return Fail(problems, sourceVerification, root, runFolder, stagedVerification, runLock);
                 }
                 Report(progress, StagingStep.StagedVerified, null, manifest.Files.Count, manifest.Files.Count);
-                return new StagedBundle(problems, sourceVerification, stagedVerification, root, runFolder, bundlePath);
+                var staged = new StagedBundle(problems, sourceVerification, stagedVerification, root, runFolder, bundlePath, runLock);
+                runLock = null; // the staged bundle owns it now
+                return staged;
             }
             catch (OperationCanceledException)
             {
@@ -380,16 +457,24 @@ namespace SortView.Setup.Core
             {
                 problems.Add(new StagingProblem(StagingProblemCode.UnexpectedError, ""));
             }
-            return Fail(problems, sourceVerification, root, runFolder, stagedVerification);
+            // Every exit after the run folder was pinned passes runLock on: to the StagedBundle on success, otherwise to Fail,
+            // whose cleanup closes it (RemoveRunFolder closes it in a finally, and never throws).
+            return Fail(problems, sourceVerification, root, runFolder, stagedVerification, runLock);
         }
 
+        /// <summary>A failed staging: removes the run folder it created (through <paramref name="runLock"/> when it was
+        /// pinned, which also closes the handle).</summary>
         private static StagedBundle Fail(List<StagingProblem> problems, BundleVerification sourceVerification, string root, string runFolder,
-            BundleVerification stagedVerification = null)
+            BundleVerification stagedVerification = null, SafeFileHandle runLock = null)
         {
             var result = new StagedBundle(problems, sourceVerification, stagedVerification, root, null, null);
             if (runFolder != null)
             {
-                result.AddCleanupProblems(RemoveRunFolder(root, runFolder));
+                result.AddCleanupProblems(RemoveRunFolder(root, runFolder, runLock));
+            }
+            else
+            {
+                runLock?.Dispose();
             }
             return result;
         }
@@ -534,6 +619,126 @@ namespace SortView.Setup.Core
         // reads the thread's last Win32 error, kept by SetLastError = true).
         [DllImport("kernel32.dll", EntryPoint = "CreateDirectoryW", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern bool CreateDirectoryWithSecurity(string path, ref SecurityAttributes attributes);
+
+        // The run folder's lifetime handle: list access (so an exclusive open by anyone else conflicts) and DELETE (so the
+        // folder is finally removed through this same handle), sharing read and write but NOT delete -- so while it is
+        // open no one can delete or rename the folder, or rename the folders above it. Opened on the entry itself, never
+        // through a link.
+        private const uint FileListDirectory = 0x1;
+        private const uint DeleteAccess = 0x10000;
+        private const uint SynchronizeAccess = 0x100000;
+        private const uint FileShareRead = 0x1;
+        private const uint FileShareWrite = 0x2;
+        private const uint OpenExisting = 3;
+        private const uint FileFlagBackupSemantics = 0x02000000;
+        private const uint FileFlagOpenReparsePoint = 0x00200000;
+        private const int FileDispositionInfoClass = 4;
+
+        [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFile(string path, uint access, uint share, IntPtr securityAttributes, uint creation,
+            uint flags, IntPtr template);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ByHandleFileInformation
+        {
+            public uint FileAttributes;
+            public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+            public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+            public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+            public uint VolumeSerialNumber;
+            public uint FileSizeHigh;
+            public uint FileSizeLow;
+            public uint NumberOfLinks;
+            public uint FileIndexHigh;
+            public uint FileIndexLow;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out ByHandleFileInformation information);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FileDispositionInfo
+        {
+            public byte DeleteFile;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetFileInformationByHandle(SafeFileHandle handle, int informationClass, ref FileDispositionInfo information,
+            int size);
+
+        /// <summary>Whether <paramref name="handle"/> is open on a plain folder (a directory, not a reparse point).</summary>
+        private static bool IsPlainFolderHandle(SafeFileHandle handle) =>
+            GetFileInformationByHandle(handle, out ByHandleFileInformation information) &&
+            (information.FileAttributes & (uint)FileAttributes.Directory) != 0 &&
+            (information.FileAttributes & (uint)FileAttributes.ReparsePoint) == 0;
+
+        /// <summary>Opens the run folder's lifetime handle and checks, through it, that it is a plain folder. Returns it, or
+        /// null with a RunLockFailed problem -- and then no handle is left open.</summary>
+        private static SafeFileHandle AcquireRunLock(string runFolder, StagingPolicy policy, List<StagingProblem> problems)
+        {
+            SafeFileHandle handle = CreateFile(runFolder, FileListDirectory | DeleteAccess | SynchronizeAccess, FileShareRead | FileShareWrite,
+                IntPtr.Zero, OpenExisting, FileFlagBackupSemantics | FileFlagOpenReparsePoint, IntPtr.Zero);
+            bool kept = false;
+            try
+            {
+                if (handle.IsInvalid)
+                {
+                    problems.Add(new StagingProblem(StagingProblemCode.RunLockFailed, runFolder + " (error " + new Win32Exception().NativeErrorCode + ")"));
+                    return null;
+                }
+                if (!IsPlainFolderHandle(handle))
+                {
+                    problems.Add(new StagingProblem(StagingProblemCode.RunLockFailed, runFolder));
+                    return null;
+                }
+                if (policy.InjectedFault == StagingFault.RunLock)
+                {
+                    problems.Add(new StagingProblem(StagingProblemCode.RunLockFailed, runFolder + " (injected test fault)"));
+                    return null;
+                }
+                kept = true;
+                return handle;
+            }
+            finally
+            {
+                if (!kept)
+                {
+                    handle.Dispose();
+                }
+            }
+        }
+
+        /// <summary>The run's identity marker, beside (never inside) the bundle: created new, and holding nothing secret. It
+        /// identifies the run; on its own it proves nothing (anyone who may change the run folder may write one).</summary>
+        internal const string RunMarkerFileName = "staging-run.json";
+
+        private static void WriteRunMarker(string runFolder, string expectedHash, StagingPolicy policy, List<StagingProblem> problems)
+        {
+            // Every value is a fixed string, a 32-hex run id, a 64-hex hash or an invariant timestamp: nothing to escape.
+            string json = "{\n" +
+                "  \"schema\": \"sortview.staging-run/1\",\n" +
+                "  \"run_id\": \"" + Path.GetFileName(runFolder) + "\",\n" +
+                "  \"manifest_sha256\": \"" + expectedHash.ToLowerInvariant() + "\",\n" +
+                "  \"created_utc\": \"" + DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", System.Globalization.CultureInfo.InvariantCulture) + "\"\n" +
+                "}\n";
+            byte[] bytes = new UTF8Encoding(false).GetBytes(json);
+            try
+            {
+                using (var output = new FileStream(Path.Combine(runFolder, RunMarkerFileName), FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    if (policy.InjectedFault == StagingFault.RunMarker)
+                    {
+                        throw new IOException("injected test fault"); // the file now exists, empty: cleanup must remove it
+                    }
+                    output.Write(bytes, 0, bytes.Length);
+                    output.Flush(true);
+                }
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                problems.Add(new StagingProblem(StagingProblemCode.RunMarkerFailed, RunMarkerFileName));
+            }
+        }
 
         private static DirectorySecurity ProtectedSecurity(StagingPolicy policy)
         {
@@ -756,7 +961,7 @@ namespace SortView.Setup.Core
         /// reparse point found inside is removed as a link only (its target is never entered), and every path removed is
         /// checked to be inside the run folder. Returns the problems; never throws.
         /// </summary>
-        internal static IList<StagingProblem> RemoveRunFolder(string stagingRoot, string runFolder)
+        internal static IList<StagingProblem> RemoveRunFolder(string stagingRoot, string runFolder, SafeFileHandle runLock = null)
         {
             var problems = new List<StagingProblem>();
             try
@@ -770,7 +975,8 @@ namespace SortView.Setup.Core
                     return problems;
                 }
                 FileAttributes attributes = File.GetAttributes(runFolder);
-                if ((attributes & FileAttributes.ReparsePoint) != 0 || (attributes & FileAttributes.Directory) == 0)
+                if ((attributes & FileAttributes.ReparsePoint) != 0 || (attributes & FileAttributes.Directory) == 0 ||
+                    (runLock != null && !IsPlainFolderHandle(runLock)))
                 {
                     problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, runFolder));
                     return problems;
@@ -778,7 +984,20 @@ namespace SortView.Setup.Core
                 RemoveContents(runFolder, runFolder, problems);
                 if (problems.Count == 0)
                 {
-                    Directory.Delete(runFolder, false);
+                    if (runLock != null)
+                    {
+                        // Pinned: delete through the handle that pins it (no moment when it is unpinned but still there);
+                        // it goes when the handle is closed, below.
+                        var disposition = new FileDispositionInfo { DeleteFile = 1 };
+                        if (!SetFileInformationByHandle(runLock, FileDispositionInfoClass, ref disposition, Marshal.SizeOf(typeof(FileDispositionInfo))))
+                        {
+                            problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, runFolder + " (error " + new Win32Exception().NativeErrorCode + ")"));
+                        }
+                    }
+                    else
+                    {
+                        Directory.Delete(runFolder, false);
+                    }
                 }
             }
             catch (Exception e) when (e is FileNotFoundException || e is DirectoryNotFoundException)
@@ -788,6 +1007,10 @@ namespace SortView.Setup.Core
             catch (Exception)
             {
                 problems.Add(new StagingProblem(StagingProblemCode.CleanupFailed, runFolder));
+            }
+            finally
+            {
+                runLock?.Dispose(); // on every path: a run's handle is never left open by its cleanup
             }
             return problems;
         }
