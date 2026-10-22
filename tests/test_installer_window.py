@@ -172,6 +172,14 @@ for ($i = 0; $i -lt 300 -and $null -eq $window; $i++) {
 function Find([string]$id) {
     $window.FindFirst($TS::Descendants, (New-Object System.Windows.Automation.PropertyCondition($AE::AutomationIdProperty, $id)))
 }
+# On screen: in the UI Automation tree AND not offscreen. Being in the tree is not enough: a collapsed WPF element is left
+# out of it under WPF's newer accessibility behavior (programs targeting .NET Framework 4.8), but stays in it, offscreen,
+# under the older one (programs targeting 4.7.2, and every program on a 4.7.2 runtime).
+function Shown([string]$id) {
+    $e = Find $id
+    if ($null -ne $e -and -not $e.Current.IsOffscreen) { $e } else { $null }
+}
+function OnScreen($elements) { @($elements | Where-Object { -not $_.Current.IsOffscreen }) }
 function Sample {
     $kids = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $($proc.Id)")
     if ($kids.Count -gt $out.max_children) { $out.max_children = $kids.Count }
@@ -184,8 +192,8 @@ function Sample {
         $null = (Find 'StatusText').Current.Name   # answered by the window's UI thread
         $out.latencies += $watch.ElapsedMilliseconds
         # Every question that appears on screen, in order (a new entry each time a different one shows).
-        # (While no question is showing, the panel is collapsed and its id is not in the tree at all.)
-        $promptElement = Find 'PromptId'
+        # (While no question is showing, the panel is collapsed: its id is not shown -- whether or not it is in the tree.)
+        $promptElement = Shown 'PromptId'
         $prompt = if ($null -ne $promptElement) { $promptElement.Current.Name } else { $null }
         if (-not [string]::IsNullOrEmpty($prompt) -and $prompt -ne 'none' -and
             ($out.prompt_history.Count -eq 0 -or $out.prompt_history[-1] -ne $prompt)) { $out.prompt_history += $prompt }
@@ -201,11 +209,18 @@ function Names($element) {
     @($element.FindAll($TS::Children, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name })
 }
 function PanelText([string]$id) {
-    $panel = Find $id
+    $panel = Shown $id
     if ($null -eq $panel) { return $null }
-    (@($panel.FindAll($TS::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name }) -join "`n")
+    (@(OnScreen $panel.FindAll($TS::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name }) -join "`n")
 }
-function Enabled([string]$id) { $e = Find $id; if ($null -eq $e) { $null } else { $e.Current.IsEnabled } }
+# Whether a shown control is enabled ($null when it is not shown at all).
+function Enabled([string]$id) { $e = Shown $id; if ($null -eq $e) { $null } else { $e.Current.IsEnabled } }
+# Every element in the tree that is NOT shown, with what a keyboard or assistive technology could do with it.
+function Offscreen {
+    @($window.FindAll($TS::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.IsOffscreen } |
+      ForEach-Object { [ordered]@{ id = $_.Current.AutomationId; type = $_.Current.ControlType.ProgrammaticName
+                                   focusable = $_.Current.IsKeyboardFocusable; enabled = $_.Current.IsEnabled } })
+}
 function Snapshot([string]$label) {
     $cancel = Find 'CancelButton'
     [ordered]@{
@@ -213,7 +228,7 @@ function Snapshot([string]$label) {
         status = (Find 'StatusText').Current.Name
         cancel_enabled = $cancel.Current.IsEnabled
         cancel_note = (Find 'CancelNote').Current.Name
-        prompt = (Find 'PromptId').Current.Name
+        prompt = (Shown 'PromptId').Current.Name
         details = PanelText 'PromptPanel'
         outcome = PanelText 'OutcomePanel'
         use_path_enabled = Enabled 'UsePathButton'
@@ -223,10 +238,11 @@ function Snapshot([string]$label) {
         console = Names (Find 'DiagnosticList')
         steps = @((Find 'ProgressPanel').FindAll($TS::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
                   ForEach-Object { $_.Current.Name } | Where-Object { $_ -like 'Step *' })
-        busy = ($null -ne (Find 'BusyIndicator'))
-        current_step = $(if ($null -ne (Find 'CurrentStepText')) { (Find 'CurrentStepText').Current.Name } else { $null })
-        resume_notice = $(if ($null -ne (Find 'ResumeText')) { (Find 'ResumeText').Current.Name } else { $null })
-        all_text = (@($window.FindAll($TS::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name }) -join "`n")
+        busy = ($null -ne (Shown 'BusyIndicator'))
+        current_step = $(if ($null -ne (Shown 'CurrentStepText')) { (Shown 'CurrentStepText').Current.Name } else { $null })
+        resume_notice = $(if ($null -ne (Shown 'ResumeText')) { (Shown 'ResumeText').Current.Name } else { $null })
+        all_text = (@(OnScreen $window.FindAll($TS::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name }) -join "`n")
+        offscreen = @(Offscreen)
     }
 }
 function Wait-Until([scriptblock]$condition, [int]$seconds, [string]$what) {
@@ -280,13 +296,13 @@ try {
             }
             'text' { (Find $step.id).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value) }
             'wait_prompt' {
-                Wait-Until { (Find 'PromptId').Current.Name -eq $step.prompt } 90 "the question $($step.prompt)"
+                Wait-Until { (Shown 'PromptId').Current.Name -eq $step.prompt } 90 "the question $($step.prompt)"
                 Sample   # record it in prompt_history even when it was already showing
                 $out.prompts_seen += $step.prompt
             }
             'wait_status' { Wait-Until { (Find 'StatusText').Current.Name -like "*$($step.contains)*" } 90 "status '$($step.contains)'" }
             'wait_text' {
-                Wait-Until { $e = Find $step.id; $null -ne $e -and $e.Current.Name -like "*$($step.contains)*" } 90 "$($step.id) '$($step.contains)'"
+                Wait-Until { $e = Shown $step.id; $null -ne $e -and $e.Current.Name -like "*$($step.contains)*" } 90 "$($step.id) '$($step.contains)'"
             }
             'wait_disabled' { Wait-Until { -not (Find $step.id).Current.IsEnabled } 30 "$($step.id) disabled" }
             'snapshot' { $out.snapshots += Snapshot $step.label }
@@ -444,6 +460,30 @@ def test_a_legacy_setup_through_the_window_answers_every_question_on_screen(tmp_
     assert workspace_tools(result) == LEGACY_TOOLS
     assert result["exited"] is True
     assert_window_invariants(result)
+
+
+#: What is collapsed when the window opens (the Spike enables installation, so its notice is hidden too). WPF's older
+#: accessibility behavior (.NET Framework 4.7.2) keeps these in the UI Automation tree, offscreen; the newer one (programs
+#: targeting 4.8) leaves them out. Their children are never in the tree.
+HIDDEN_AT_START = {"InstallationNotice": "ControlType.Text", "ResumeText": "ControlType.Text", "CurrentStepText": "ControlType.Text",
+                   "BusyIndicator": "ControlType.ProgressBar", "PromptPanel": "ControlType.Group", "OutcomePanel": "ControlType.Group"}
+
+
+@needs_bridge
+def test_hidden_elements_are_offscreen_and_cannot_be_reached_by_keyboard(tmp_path, window_exe):
+    result = drive(window_exe, tmp_path, [{"op": "snapshot", "label": "start"}, {"op": "close"}, {"op": "wait_exit"}])
+    start = snapshot(result, "start")
+    hidden = {element["id"]: element for element in start["offscreen"]}
+    # Exactly the collapsed elements (older behavior) or none (newer): nothing else is in the tree yet off screen.
+    assert set(hidden) in (set(), set(HIDDEN_AT_START)), sorted(hidden)
+    for name, element in hidden.items():
+        # Status text, a progress bar and two panels -- never a control someone could act on, and none takes focus.
+        assert element["type"] == HIDDEN_AT_START[name] and element["focusable"] is False, element
+    # What is hidden is not part of what the window shows.
+    assert start["busy"] is False and start["current_step"] is None and start["resume_notice"] is None and start["prompt"] is None
+    assert start["details"] is None and start["outcome"] is None
+    assert "Installation is not enabled." not in start["all_text"] and "Setup needs your answer" not in start["all_text"]
+    assert "SIMULATION ONLY" in start["all_text"] and result["exited"] is True
 
 
 def _stop_text(shot: dict) -> str:

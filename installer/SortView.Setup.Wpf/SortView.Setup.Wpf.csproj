@@ -9,7 +9,7 @@
     <OutputType>Library</OutputType>
     <RootNamespace>SortView.Setup.Wpf</RootNamespace>
     <AssemblyName>SortView.Setup.Wpf</AssemblyName>
-    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
     <Prefer32Bit>false</Prefer32Bit>
     <OutputPath>bin\$(Configuration)\</OutputPath>
   </PropertyGroup>

@@ -471,13 +471,29 @@ NEWBRAUNFELSSOR environment, including Windows 10 build 17763 and .NET Framework
 Framework or operating system upgrade. This machine's configuration is the deployment compatibility baseline: do not
 propose upgrading Windows, .NET Framework, PowerShell or other system components to satisfy installer requirements.
 
-**Known development compatibility gap (not a production-machine defect):** every installer project
-(`installer/*/*.csproj`) targets .NET Framework **v4.8**, and the Prerequisites check requires release **528040**
-(`PrerequisiteChecks.MinimumDotNetRelease`). NEWBRAUNFELSSOR has **4.7.2 (461814)**, so the installer as built today
-would fail its own check there (and a 4.8-targeted program may not start). The installer must be brought down to what
-this machine has; deciding how is its own task.
+**.NET Framework 4.7.2 compatibility (development gap, not a production-machine defect).** The installer used to target
+.NET Framework 4.8 and require release 528040, which NEWBRAUNFELSSOR (4.7.2, release 461814) would fail. Status
+(branch `installer/net472-compatibility`, 2026-10-22):
 
-The separate .NET 4.7.2 compatibility assessment addresses this gap. Framework targets are not changed until then.
+- **Retargeting done:** all seven installer projects (`installer/**/*.csproj`) target **v4.7.2**, and the
+  Prerequisites check requires release **461808** or later (`PrerequisiteChecks.MinimumDotNetRelease`), which accepts
+  461814.
+- **Build validation done:** Release builds of SortView.Setup and SortView.Setup.Spike compile with no warnings
+  against Microsoft's 4.7.2 reference assemblies, and the built assemblies declare `.NETFramework,Version=v4.7.2`.
+  Building needs the .NET Framework 4.7.2 targeting pack. It is not installed on the development PC, so the
+  validation used the official `Microsoft.NETFramework.ReferenceAssemblies.net472` 1.0.3 package (hash checked against
+  NuGet).
+- **UI Automation window-test failure resolved (test harness only):** a program targeting 4.7.2 keeps collapsed
+  WPF elements in the UI Automation tree, marked offscreen. A program targeting 4.8 leaves them out. The window-test
+  driver had treated every element in the tree as visible. It now uses UI Automation's `IsOffscreen` property.
+  - The normal 4.7.2-targeted build passed all 19 window tests.
+  - An experiment with the 4.8 accessibility behavior turned on passed all 18 applicable behavior tests.
+  - A new guard test checks that hidden elements are offscreen and cannot take keyboard focus.
+  - No production application change and no App.config workaround were needed.
+- **Runtime validation pending:** a successful build does not prove the installer runs correctly on 4.7.2. Every test
+  so far ran on the development PC's 4.8 runtime. Still to do, on a genuine Windows 10 Enterprise LTSC 2019 (build
+  17763) VM with .NET Framework 4.7.2 and no upgrades: run the installer, and test it with screen readers (NVDA and
+  Narrator), including whether hidden elements are announced. NEWBRAUNFELSSOR itself is not used for this.
 
 **Verified on the machine, 2026-10-22** (read-only PowerShell run by the product owner on NEWBRAUNFELSSOR). These are
 existing conditions: nothing here is an instruction to change the production machine.

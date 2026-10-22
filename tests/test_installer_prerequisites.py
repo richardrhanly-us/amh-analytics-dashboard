@@ -139,10 +139,12 @@ CASES = {
     # Architecture.
     "x86": ({"Is64BitOperatingSystem": False}, {"architecture": "Failed"}),
     "arch_unknown": ({"Is64BitOperatingSystem": None}, {"architecture": "NotChecked"}),
-    # .NET Framework 4.8 = release 528040.
-    "dotnet_min": ({"DotNetRelease": 528040}, {}),
-    "dotnet_below": ({"DotNetRelease": 528039}, {"dotnet": "Failed"}),
-    "dotnet_472": ({"DotNetRelease": 461808}, {"dotnet": "Failed"}),
+    # .NET Framework 4.7.2 = release 461808 (Windows 10 1803) or 461814 (elsewhere); 4.8 and later pass.
+    "dotnet_min": ({"DotNetRelease": 461808}, {}),
+    "dotnet_below": ({"DotNetRelease": 461807}, {"dotnet": "Failed"}),
+    "dotnet_472_nbpl": ({"DotNetRelease": 461814}, {}),  # the NBPL AMH PC (NEWBRAUNFELSSOR)
+    "dotnet_471": ({"DotNetRelease": 461308}, {"dotnet": "Failed"}),
+    "dotnet_48": ({"DotNetRelease": 528040}, {}),
     "dotnet_unknown": ({"DotNetRelease": None}, {"dotnet": "NotChecked"}),
     # Windows PowerShell 5.1.
     "ps_51": ({"PowerShellVersion": "5.1"}, {}),
@@ -338,7 +340,7 @@ def test_reading_this_machine_reports_real_facts_and_changes_nothing(tmp_path, w
     report = json.loads(out.read_text(encoding="utf-8-sig"))
     facts = report["facts"]
     assert facts["build"] == report["expected_build"]
-    assert facts["x64"] is True and facts["dotnet"] >= 528040 and facts["ps"].startswith("5.1")
+    assert facts["x64"] is True and facts["dotnet"] >= 461808 and facts["ps"].startswith("5.1")
     assert isinstance(facts["admin"], bool) and facts["free"] > 0
     assert facts["tasks_read"] is True and facts["tasks"] == [SCHEDULER, AGENT]
     assert facts["machine_read"] is True and facts["user_read"] is True
