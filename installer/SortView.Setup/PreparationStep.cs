@@ -48,6 +48,10 @@ namespace SortView.Setup
         public bool IsPrepared => !IsBusy && last != null && last.Outcome == PreparationOutcome.Prepared &&
                                   preparation != null && preparation.TryGetStagedBundle() != null;
 
+        /// <summary>The verified bundle this step stages and holds (its protected copy, pinned by its lifetime handle), or
+        /// null when it is not prepared. It stays held until the step is left going back, or the window closes.</summary>
+        public StagedBundle StagedBundle => IsPrepared ? preparation.TryGetStagedBundle() : null;
+
         /// <summary>The step was entered going forward (from Ready): prepares afresh. Coming back from Setup, the prepared
         /// bundle is kept and shown again.</summary>
         public void Enter()

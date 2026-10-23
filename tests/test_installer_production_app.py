@@ -118,12 +118,18 @@ def _without_comments(text: str) -> str:
     return "\n".join(line for line in text.splitlines() if not line.strip().startswith("//"))
 
 
-def test_the_production_program_has_no_path_that_starts_setup():
-    # Phase 4B.1: the production program hands the wizard no runner at all, so it has no way to run the engine. (Enabling
-    # installation -- one runner over SetupEngineHost -- is a later milestone, which replaces this check.)
-    sources = "\n".join(_without_comments(path.read_text(encoding="utf-8")) for path in PRODUCTION_SOURCES)
-    for run_path in ("BeginRun", "SetupRunner", "SetupRunSession", "SetupEngineHost", "SimulatedSetupHarness", "StartRequested"):
-        assert run_path not in sources, run_path
+def test_the_production_programs_only_path_to_setup_is_the_gated_runner_over_the_staged_bundle():
+    # M2d-1 Stage 2: the program has ONE way to run the engine -- InstallationRunner, over the bundle the Prepare step
+    # holds -- and the wizard may use it only in a build whose gate is enabled and pin configured (tests/
+    # test_installer_engine_wiring.py checks the behaviour). Nothing else in the program names a run path.
+    code = {path.name: _without_comments(path.read_text(encoding="utf-8")) for path in PRODUCTION_SOURCES + [SETUP_DIR / "InstallationRunner.cs"]}
+    allowed = {"BeginRun": {"MainWindow.xaml.cs"}, "StartRequested": {"MainWindow.xaml.cs"},
+               "SetupRunner": {"MainWindow.xaml.cs", "InstallationRunner.cs"}, "SetupEngineHost": {"InstallationRunner.cs"}}
+    for run_path, files in allowed.items():
+        assert {name for name, text in code.items() if run_path in text} == files, run_path
+    for never in ("SetupRunSession", "SimulatedSetupHarness", "Core.Testing", "IsInstallationEnabled = true"):
+        assert not any(never in text for text in code.values()), never
+    assert code["MainWindow.xaml.cs"].count("Wizard.BeginRun(") == 1
     window = (SETUP_DIR / "MainWindow.xaml").read_text(encoding="utf-8")
     assert 'IsInstallationEnabled="False"' in window
     assert f'DisabledNotice="{DISABLED_NOTICE}"' in window

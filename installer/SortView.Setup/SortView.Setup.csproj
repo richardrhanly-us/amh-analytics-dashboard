@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SortView Setup: the production installer program. Requires administrator rights (app.manifest). References only the
-     shared wizard and the Core and WPF bridges: never a simulation or testing assembly. In this build installation is
-     not enabled: there is no setup runner, and nothing is installed or changed. -->
+     shared wizard and the Core and WPF bridges: never a simulation or testing assembly. It installs only when built with
+     the installation gate on and a trusted bundle pin (both below); by default neither is set, and nothing is installed. -->
 <Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <!-- The trusted bundle pin (see the file): checked and embedded by the SortViewBundlePin target below. -->
@@ -47,6 +47,7 @@
     <Compile Include="SingleInstanceLock.cs" />
     <Compile Include="TrustedBundlePin.cs" />
     <Compile Include="InstallationGate.cs" />
+    <Compile Include="InstallationRunner.cs" />
     <Compile Include="BundlePreparation.cs" />
     <Compile Include="PreparationStep.cs" />
     <Page Include="MainWindow.xaml" />

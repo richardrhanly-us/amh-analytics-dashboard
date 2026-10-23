@@ -114,11 +114,15 @@ def test_the_production_factory_cannot_be_redirected():
 
 def test_nothing_in_the_program_removes_runs_runs_anything_or_takes_outside_values():
     sources = {path.name: _code(path) for path in SETUP_DIR.glob("*.cs")}
+    # The run path is confined (M2d-1 Stage 2): the engine only in InstallationRunner.cs, BeginRun only in the window.
+    confined = {"SetupEngineHost": {"InstallationRunner.cs"}, "BeginRun": {"MainWindow.xaml.cs"},
+                "SetupRunner": {"InstallationRunner.cs", "MainWindow.xaml.cs"}}
     for name, code in sources.items():
         for forbidden in ("RemoveAbandonedRun", "new StagingPolicy(", "Process", "PowerShell", "SetupEngineHost", "BeginRun",
                           "SetupRunner", "GetCommandLineArgs", "GetEnvironmentVariable", "Registry", "File.Delete", "Directory.Delete",
                           "File.Write", "File.Copy", "Core.Testing"):
-            assert forbidden not in code, (name, forbidden)
+            if name not in confined.get(forbidden, set()):
+                assert forbidden not in code, (name, forbidden)
 
 
 # =====================================================================================================================
