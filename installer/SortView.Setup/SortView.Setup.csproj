@@ -6,6 +6,8 @@
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <!-- The trusted bundle pin (see the file): checked and embedded by the SortViewBundlePin target below. -->
   <Import Project="..\bundle-pin.props" />
+  <!-- The installation gate (see the file): checked and embedded by the SortViewInstallationGate target below. -->
+  <Import Project="..\installation-gate.props" />
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
@@ -44,6 +46,7 @@
     </Compile>
     <Compile Include="SingleInstanceLock.cs" />
     <Compile Include="TrustedBundlePin.cs" />
+    <Compile Include="InstallationGate.cs" />
     <Compile Include="BundlePreparation.cs" />
     <Compile Include="PreparationStep.cs" />
     <Page Include="MainWindow.xaml" />
@@ -86,6 +89,32 @@
       </_SortViewPinAttribute>
     </ItemGroup>
     <WriteCodeFragment Language="C#" OutputFile="$(IntermediateOutputPath)SortViewBundlePin.g.cs" AssemblyAttributes="@(_SortViewPinAttribute)">
+      <Output TaskParameter="OutputFile" ItemName="Compile" />
+      <Output TaskParameter="OutputFile" ItemName="FileWrites" />
+    </WriteCodeFragment>
+  </Target>
+  <!-- The installation gate: only installation-gate.props may set it (a value from /p: or the environment differs from the
+       file's own text, and is refused), exactly "true" or "false", and "true" only with a trusted bundle pin; then embedded
+       as AssemblyMetadata. InstallationGate reads it, and treats anything but exactly "true" as disabled. -->
+  <Target Name="SortViewInstallationGate" BeforeTargets="CoreCompile" DependsOnTargets="SortViewBundlePin">
+    <XmlPeek XmlInputPath="$(MSBuildThisFileDirectory)..\installation-gate.props" Namespaces="&lt;Namespace Prefix='m' Uri='http://schemas.microsoft.com/developer/msbuild/2003' /&gt;"
+             Query="/m:Project/m:PropertyGroup/m:SortViewInstallationEnabled/text()">
+      <Output TaskParameter="Result" PropertyName="_SortViewGateFileValue" />
+    </XmlPeek>
+    <Error Condition="'$(SortViewInstallationEnabled)' != '$(_SortViewGateFileValue)'"
+           Text="SortViewInstallationEnabled is set outside installer\installation-gate.props (a /p: or environment override). Only that reviewed file may enable installation." />
+    <!-- Case-sensitive (MSBuild's own comparisons are not): exactly "true" or "false". -->
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(SortViewInstallationEnabled)', '^(true|false)$'))"
+           Text="SortViewInstallationEnabled in installer\installation-gate.props must be exactly true or false." />
+    <Error Condition="'$(SortViewInstallationEnabled)' == 'true' and ('$(SortViewBundleManifestSha256)' == '' or '$(SortViewBundleVersion)' == '')"
+           Text="SortViewInstallationEnabled is true, but installer\bundle-pin.props trusts no bundle. Installation may be enabled only for a pinned bundle." />
+    <ItemGroup>
+      <_SortViewGateAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>SortView.InstallationEnabled</_Parameter1>
+        <_Parameter2>gate:$(SortViewInstallationEnabled)</_Parameter2>
+      </_SortViewGateAttribute>
+    </ItemGroup>
+    <WriteCodeFragment Language="C#" OutputFile="$(IntermediateOutputPath)SortViewInstallationGate.g.cs" AssemblyAttributes="@(_SortViewGateAttribute)">
       <Output TaskParameter="OutputFile" ItemName="Compile" />
       <Output TaskParameter="OutputFile" ItemName="FileWrites" />
     </WriteCodeFragment>
