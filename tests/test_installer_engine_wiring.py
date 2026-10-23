@@ -58,7 +58,14 @@ def test_the_runner_runs_the_staged_bundle_with_the_engines_fixed_roots_only():
     assert "staged == null || staged.IsDisposed || !staged.IsStaged || string.IsNullOrEmpty(staged.BundlePath)" in code
     assert "!string.Equals(staged.Version, pin.Version, StringComparison.Ordinal)" in code
     assert code.count("new SetupEngineHost()") == 1 and code.count("BundleRoot =") == 1
-    for forbidden in ("Environment.", "Registry", "GetCommandLineArgs", "File.", "Directory.", "Process", "BundleDirectory"):
+    # Immediately before the engine runs: the staged copy again, against the pin; only an explicit success continues.
+    assert "BundleVerification verification = BundleVerifier.Verify(request.BundleRoot, expectedSha256, expectedVersion);" in code
+    assert "string expectedSha256 = pin.ManifestSha256; string expectedVersion = pin.Version;" in code
+    assert "if (verification == null || !verification.IsVerified) { throw new InvalidOperationException(" in code
+    verify_at = code.index("BundleVerifier.Verify(")
+    assert code.index("throw new InvalidOperationException(", verify_at) < code.index("return run(presenter, onEvent, onConsoleText, cancellationToken);")
+    assert code.count("BundleVerifier.Verify(") == 1 and code.count("return run(") == 1
+    for forbidden in ("Environment.", "Registry", "GetCommandLineArgs", "File.", "Directory.", "Process", "BundleDirectory", "catch"):
         assert forbidden not in code, forbidden
 
 
@@ -78,13 +85,15 @@ def test_the_window_asks_for_a_runner_only_from_start_over_the_prepared_bundle()
 # =====================================================================================================================
 
 _PROBE = r"""
-param([string]$BuildDir, [string]$OutPath, [string]$FixtureSource, [string]$FixtureSha, [string]$FixtureVersion, [string]$FixtureRoot)
+param([string]$BuildDir, [string]$OutPath, [string]$FixtureSource, [string]$FixtureSha, [string]$FixtureVersion, [string]$FixtureRoot,
+      [string]$Tamper = '')
 $ErrorActionPreference = 'Stop'
 foreach ($name in 'Core', 'Wpf', 'Wizard') { Add-Type -Path (Join-Path $BuildDir "SortView.Setup.$name.dll") }
 $references = @('PresentationFramework', 'PresentationCore', 'WindowsBase', 'System.Xaml', 'System.Core') +
     @('Core', 'Wpf', 'Wizard' | ForEach-Object { Join-Path $BuildDir "SortView.Setup.$_.dll" })
 Add-Type -ReferencedAssemblies $references -TypeDefinition @"
-using System; using System.Collections.Generic; using System.IO; using System.Reflection; using System.Threading;
+using System; using System.Collections.Generic; using System.IO; using System.Reflection; using System.Security.Cryptography;
+using System.Text; using System.Threading;
 using System.Windows; using System.Windows.Controls; using System.Windows.Controls.Primitives; using System.Windows.Threading;
 using SortView.Setup.Core; using SortView.Setup.Wpf; using SortView.Setup.Wizard;
 @@FIXTURE@@
@@ -111,6 +120,32 @@ public static class WiringProbe {
     static void Click(FrameworkElement button) { button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent)); Pump(); }
     static void WaitUntil(Func<bool> condition) { for (int i = 0; i < 3000 && !condition(); i++) { Thread.Sleep(10); Pump(); } }
     static string Page(Window window) { return window.GetType().GetProperty("CurrentPage").GetValue(window).ToString(); }
+    static string Sha256(byte[] bytes) { using (var sha = SHA256.Create()) return BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant(); }
+    // Changes the STAGED copy after Prepare (the test staging policy lets this user write to it). For "consistent", a file
+    // and MANIFEST.json are changed together; returns whether the result is self-consistent (it verifies against its OWN
+    // manifest hash), so only the pin can tell it from the real bundle.
+    static object TamperWith(string bundle, string kind) {
+        string manifest = Path.Combine(bundle, "MANIFEST.json");
+        switch (kind) {
+            case "none": return null;
+            case "modify": File.AppendAllText(Path.Combine(bundle, "install.ps1"), "x"); return null;
+            case "unlisted": File.WriteAllText(Path.Combine(bundle, "unlisted.txt"), "x"); return null;
+            case "no_manifest": File.Delete(manifest); return null;
+            case "consistent":
+                string target = Path.Combine(bundle, "install.ps1");
+                byte[] before = File.ReadAllBytes(target), after = Encoding.ASCII.GetBytes("# fixture, NOT a script");
+                if (after.Length != before.Length) throw new InvalidOperationException("the replacement must keep the size");
+                File.WriteAllBytes(target, after);
+                // The fixture's setup.ps1 has the same bytes (so the same manifest hash): change it too, to stay consistent.
+                File.WriteAllBytes(Path.Combine(bundle, "setup.ps1"), after);
+                string text = Encoding.UTF8.GetString(File.ReadAllBytes(manifest));
+                if (!text.Contains(Sha256(before))) throw new InvalidOperationException("install.ps1 is not in the manifest");
+                byte[] changed = Encoding.UTF8.GetBytes(text.Replace(Sha256(before), Sha256(after)));
+                File.WriteAllBytes(manifest, changed);
+                return BundleVerifier.Verify(bundle, Sha256(changed)).IsVerified;
+        }
+        throw new ArgumentException(kind);
+    }
     static void PrepareAndGoToSetup(Window window) {
         WaitUntil(() => ((Button)window.FindName("NextButton")).IsEnabled);  // Prepare: the fixture bundle is staged
         Click((FrameworkElement)window.FindName("NextButton"));
@@ -165,7 +200,7 @@ public static class WiringProbe {
         }
         return r;
     }
-    public static Dictionary<string, object> Run(string exePath, string source, string sha, string version, string root) {
+    public static Dictionary<string, object> Run(string exePath, string source, string sha, string version, string root, string tamper) {
         var r = new Dictionary<string, object>();
         var thread = new Thread(() => {
             try {
@@ -195,6 +230,21 @@ public static class WiringProbe {
                 r["staged_is_not_source"] = !string.Equals(Path.GetFullPath(stagedPath).TrimEnd('\\'), Path.GetFullPath(source).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
                 r["matrix"] = Matrix(setup, staged, sha, version);
                 record("idle");
+                if (tamper.Length > 0) {
+                    // Prepared, then the staged copy changed before Start: Start must not reach the engine.
+                    r["tamper_self_consistent"] = TamperWith(stagedPath, tamper);
+                    Gate.Set();  // the unchanged case runs the fake, which then returns at once
+                    Click(wizardButton("StartButton")); WaitUntil(() => !wizard.IsRunning); Pump();
+                    record("tampered_start");
+                    r["tamper_status"] = status();
+                    r["tamper_outcome"] = ((TextBlock)wizard.FindName("OutcomeTitle")).Text;
+                    r["tamper_outcome_visible"] = ((FrameworkElement)wizard.FindName("OutcomePanel")).IsVisible;
+                    window.Close(); Pump();
+                    r["closed"] = !window.IsVisible;
+                    r["staged_removed_after_close"] = !Directory.Exists(stagedPath);
+                    r["runs"] = Runs; r["requests"] = Requests.Count;
+                    return;
+                }
 
                 Click(wizardButton("StartButton")); record("started");  // a forced click, if Start is disabled
                 window.GetType().GetMethod("OnStartRequested", Any).Invoke(window, new object[] { wizard, EventArgs.Empty }); Pump();
@@ -246,7 +296,7 @@ public static class WiringProbe {
     }
 }
 "@
-$report = [WiringProbe]::Run((Join-Path $BuildDir 'SortView.Setup.exe'), $FixtureSource, $FixtureSha, $FixtureVersion, $FixtureRoot)
+$report = [WiringProbe]::Run((Join-Path $BuildDir 'SortView.Setup.exe'), $FixtureSource, $FixtureSha, $FixtureVersion, $FixtureRoot, $Tamper)
 $report['children'] = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $PID").Count
 ConvertTo-Json -InputObject $report -Depth 6 | Set-Content -LiteralPath $OutPath -Encoding UTF8
 """.replace("@@FIXTURE@@", FIXTURE_PREPARATION_CS)
@@ -267,8 +317,10 @@ def _fixture(tmp_path: Path) -> tuple[list[str], str]:
     return ["-FixtureSource", str(source), "-FixtureSha", sha, "-FixtureVersion", FIXTURE_VERSION, "-FixtureRoot", str(root)], sha
 
 
-def _run(tmp_path: Path, build: Path) -> dict:
+def _run(tmp_path: Path, build: Path, tamper: str = "") -> dict:
     args, _ = _fixture(tmp_path)
+    if tamper:
+        args += ["-Tamper", tamper]
     probe, out = tmp_path / "probe.ps1", tmp_path / "probe.json"
     probe.write_text(_PROBE, encoding="utf-8")
     completed = subprocess.run([_POWERSHELL, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(probe),
@@ -360,3 +412,31 @@ def test_an_enabled_build_runs_the_engine_over_the_staged_copy_and_keeps_it_unti
     assert report["closed"] is True and report["staged_removed_after_close"] is True
     assert (report["runs"], report["requests"], report["children"]) == (2, 2, 0)
     assert report["matrix"] == EXPECTED_MATRIX
+
+
+TAMPERS = ["modify", "unlisted", "consistent", "no_manifest"]
+
+
+@needs_bridge
+def test_an_unchanged_staged_bundle_runs_the_engine_exactly_once(tmp_path, enabled_build):
+    report = _run(tmp_path, enabled_build, "none")
+    assert (report["runs"], report["requests"], report["children"]) == (1, 1, 0)
+    assert _nav(report["steps"]["tampered_start"]) == ("Setup", False, True, False, True, True, True, 1)
+    assert report["tamper_status"].startswith("Finished:")
+    assert report["closed"] is True and report["staged_removed_after_close"] is True
+
+
+@needs_bridge
+@pytest.mark.parametrize("tamper", TAMPERS)
+def test_a_staged_bundle_changed_after_prepare_never_reaches_the_engine(tmp_path, enabled_build, tamper):
+    report = _run(tmp_path, enabled_build, tamper)
+    # The runner was created (the bundle object is still held), but the engine never ran.
+    assert (report["runs"], report["requests"], report["children"]) == (0, 1, 0)
+    if tamper == "consistent":
+        assert report["tamper_self_consistent"] is True  # the engine's own manifest check would accept it; the pin does not
+    # The existing failure outcome: the run ended without running, and the window is usable again.
+    assert _nav(report["steps"]["tampered_start"])[:6] == ("Setup", False, True, False, True, True)
+    assert report["tamper_outcome"] == "Setup could not run" and report["tamper_outcome_visible"] is True
+    assert report["tamper_status"].startswith("Setup could not run: InvalidOperationException")
+    # The staged copy stays held until the window closes, and is then removed as usual (extra file included).
+    assert report["closed"] is True and report["staged_removed_after_close"] is True
