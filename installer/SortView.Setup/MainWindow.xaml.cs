@@ -146,7 +146,7 @@ namespace SortView.Setup
             SetupRunner runner = InstallationRunner.Create(gate, pin, preparation.StagedBundle, EngineFactory);
             if (runner == null)
             {
-                Wizard.ShowStatus("Setup cannot start: the checked installation package is not ready. Go back to prepare it again.");
+                Wizard.ShowStatus("Setup cannot start: the checked installation package is not ready. Select Back until the Ready page is shown, then select Next to prepare it again.");
                 return;
             }
             Wizard.BeginRun(runner, "Running setup...");

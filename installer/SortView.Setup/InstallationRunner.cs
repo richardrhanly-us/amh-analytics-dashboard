@@ -24,7 +24,9 @@ namespace SortView.Setup
         /// <summary>
         /// The runner for one setup run over <paramref name="staged"/>, or null: this build may not install, or no verified
         /// bundle of the pinned version is staged and held. <paramref name="engine"/> turns the request into a runner (the
-        /// real engine, <see cref="RealEngine"/>, except in tests); it is never called when the answer is null.
+        /// real engine, <see cref="RealEngine"/>, except in tests); it is never called when the answer is null. The runner
+        /// returned verifies the staged copy against the pin again before it runs <paramref name="engine"/>'s runner, and
+        /// throws instead of running it unless that verification succeeds.
         /// </summary>
         internal static SetupRunner Create(InstallationGate gate, TrustedBundlePin pin, StagedBundle staged, Func<SetupRunRequest, SetupRunner> engine)
         {
@@ -38,7 +40,26 @@ namespace SortView.Setup
                 return null;
             }
             var request = new SetupRunRequest { BundleRoot = staged.BundlePath, InstallRoot = InstallRoot, DataRoot = DataRoot };
-            return engine(request);
+            SetupRunner run = engine(request);
+            if (run == null)
+            {
+                return null;
+            }
+            string expectedSha256 = pin.ManifestSha256;
+            string expectedVersion = pin.Version;
+            // Immediately before the engine runs (on the run's own thread, never the UI's): the staged copy is verified again
+            // against the pin -- it was verified when it was prepared, but setup may start much later. Only an explicit
+            // success runs the engine; anything else (a changed, added or missing file, an unreadable bundle) stops here.
+            return (presenter, onEvent, onConsoleText, cancellationToken) =>
+            {
+                BundleVerification verification = BundleVerifier.Verify(request.BundleRoot, expectedSha256, expectedVersion);
+                if (verification == null || !verification.IsVerified)
+                {
+                    throw new InvalidOperationException("The checked installation package changed after it was prepared, so setup " +
+                        "did not start. Nothing was installed or changed. Select Back until the Ready page is shown, then select Next to prepare it again.");
+                }
+                return run(presenter, onEvent, onConsoleText, cancellationToken);
+            };
         }
 
         /// <summary>The real engine: one <see cref="SetupEngineHost"/> run of the staged bundle's setup.ps1.</summary>
