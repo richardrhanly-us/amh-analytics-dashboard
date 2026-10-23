@@ -3,8 +3,8 @@ target in installer/SortView.Setup/SortView.Setup.csproj, and installer/SortView
 
   1. STATIC (run everywhere): the gate is "false" by default and only its file sets it; the build refuses overrides,
      anything but exactly true/false, and "true" without a trusted bundle pin, and embeds the gate as AssemblyMetadata;
-     the gate is read only from the program's own assembly and fails closed; nothing uses it yet (Stage 1), so the Setup
-     page stays disabled and no engine is wired.
+     the gate is read only from the program's own assembly and fails closed; with the pin, it alone decides whether the
+     Setup page may install (Stage 2; the wiring itself is tested in test_installer_engine_wiring.py).
   2. BUILD (Windows): the default build embeds "gate:false" (disabled); a /p: override is refused; an environment
      variable is ignored; a gated build (of a COPY of the installer sources, never the real gate or pin files) embeds
      "gate:true" only with a pin; a malformed gate, or "true" without a pin, fails the build.
@@ -88,17 +88,22 @@ def test_the_gate_is_read_only_from_the_programs_own_assembly_and_fails_closed()
     assert "public bool IsEnabled => State == InstallationGateState.Enabled;" in flat
 
 
-def test_stage_1_uses_the_gate_nowhere_so_installation_stays_disabled():
-    # Stage 1 adds the gate only. Nothing reads it yet: the Setup page keeps installation disabled and no engine is wired.
-    # (Stage 2, wiring the runner behind the gate, replaces this test.)
-    for path in list(SETUP_DIR.glob("*.cs")) + list(SETUP_DIR.glob("*.xaml")) + list((INSTALLER / "SortView.Setup.Wizard").glob("*.cs")):
-        if path != GATE_CODE:
-            assert "InstallationGate" not in _code(path), path
-    window = (SETUP_DIR / "MainWindow.xaml").read_text(encoding="utf-8")
-    assert window.count('IsInstallationEnabled="False"') == 1
-    for name in ("MainWindow.xaml.cs", "App.xaml.cs", "BundlePreparation.cs", "PreparationStep.cs"):
+def test_the_gate_with_the_pin_only_decides_whether_the_wizard_may_install():
+    # M2d-1 Stage 2: the window reads its own gate and pin, and they alone decide whether the wizard is enabled; nothing
+    # else reads the gate, and nothing turns installation on otherwise.
+    users = {path.name for path in list(SETUP_DIR.glob("*.cs")) + list(SETUP_DIR.glob("*.xaml")) + list((INSTALLER / "SortView.Setup.Wizard").glob("*.cs"))
+             if path != GATE_CODE and "InstallationGate" in _code(path)}
+    assert users == {"MainWindow.xaml.cs", "InstallationRunner.cs"}
+    window = re.sub(r"\s+", " ", _code(SETUP_DIR / "MainWindow.xaml.cs"))
+    assert "private readonly InstallationGate gate = InstallationGate.ForThisInstaller();" in window
+    assert "private readonly TrustedBundlePin pin = TrustedBundlePin.ForThisInstaller();" in window
+    assert window.count("Wizard.IsInstallationEnabled =") == 1 and "Wizard.IsInstallationEnabled = InstallationRunner.MayInstall(gate, pin);" in window
+    runner = re.sub(r"\s+", " ", _code(SETUP_DIR / "InstallationRunner.cs"))
+    assert "gate != null && gate.IsEnabled && pin != null && pin.IsConfigured" in runner
+    assert (SETUP_DIR / "MainWindow.xaml").read_text(encoding="utf-8").count('IsInstallationEnabled="False"') == 1
+    for name in ("App.xaml.cs", "BundlePreparation.cs", "PreparationStep.cs"):
         code = _code(SETUP_DIR / name)
-        for forbidden in ("SetupEngineHost", "BeginRun", "SetupRunner", "SetupRunSession", "IsInstallationEnabled = true"):
+        for forbidden in ("SetupEngineHost", "BeginRun", "SetupRunner", "SetupRunSession", "IsInstallationEnabled"):
             assert forbidden not in code, (name, forbidden)
 
 
