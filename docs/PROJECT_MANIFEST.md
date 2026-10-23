@@ -536,6 +536,52 @@ propose upgrading Windows, .NET Framework, PowerShell or other system components
     - explicit recovery of an abandoned run (`RemoveAbandonedRun`)
     - cleanup failures caused by locked files
 
+- **Engine execution path (M2d-1 Stage 3B): expected-stop validation passed for the functions tested, 2026-10-22.**
+  This was a deliberate stop before enrollment. **No Collector was installed or enrolled.** It shows that an
+  installation-enabled Setup page runs the real setup engine and stops safely when SortView cannot be reached. It is
+  not a completed installation and not production-release readiness. NEWBRAUNFELSSOR was not used or changed.
+
+  *Context:* by default, installation stays disabled. A build can install only with the build-time installation gate
+  on (`installer/installation-gate.props`) and a trusted bundle pin configured (`installer/bundle-pin.props`). The
+  repository keeps the gate `false` and the pin empty (M2d-1 Stage 1). Start runs the existing setup engine
+  (`setup.ps1`, through `SetupEngineHost`) over the protected staged copy (Stage 2). Immediately before the engine
+  runs, the staged copy is verified against the pin again (Stage 3A).
+
+  *Environment:*
+  - An isolated VMware VM: Windows 10 Enterprise LTSC 2019, build 17763, with .NET Framework 4.7.2. Network
+    disconnected.
+  - A disposable installer, built from a source copy with the gate on and the pin set to the fixture. The repository's
+    gate and pin were not changed.
+  - A 15-file fixture, version `0.0.0-m2d1vm`:
+    - the unmodified setup scripts from `collector/deploy`
+    - a harmless stand-in `SortViewCollector.exe` that only reports its version (no production Collector executable)
+    - an API address of `https://sortview-m2d1-vmtest.invalid`
+
+  *Passed:*
+  - The transferred package matched its SHA-256 hashes and file sizes.
+  - The installer's prerequisites passed.
+  - All 15 fixture files were verified and staged.
+  - The enabled Setup page started the real setup engine.
+  - The engine completed its initial bundle checks and its computer checks.
+  - The engine accepted three harmless placeholder files in place of the Tech Logic logs.
+  - The HTTPS request to `https://sortview-m2d1-vmtest.invalid` failed, as intended.
+  - The engine stopped at its step 4 (connection) with exit code 1. The wizard shows this as Step 3 of 7.
+  - Enrollment, Collector installation, verification and Scheduled Task configuration were not reached.
+  - After the installer closed, PowerShell on the VM confirmed:
+    - no `C:\SortView\Collector`
+    - no `C:\ProgramData\SortViewCollector`
+    - no `SortViewCollector` Scheduled Task
+    - no staging run folders
+
+  *Not tested, so still pending:*
+  - Any real Collector installation, enrollment, update or rollback.
+  - Any engine step after the failed HTTPS connection.
+  - A production Collector executable.
+  - A signed production release.
+
+  *UI issue found (fix separately):* the Welcome and Ready pages show fixed warnings meant for development builds.
+  In an installation-enabled build those warnings are wrong.
+
 **Verified on the machine, 2026-10-22** (read-only PowerShell run by the product owner on NEWBRAUNFELSSOR). These are
 existing conditions: nothing here is an instruction to change the production machine.
 
@@ -686,6 +732,18 @@ deployment, not a fresh install. What remains unverified above must not be assum
 
 ## 5. Done recently (newest first)
 
+- 2026-10-22 — M2d-1 Stage 3B expected-stop validation passed on an isolated Windows 10 Enterprise LTSC 2019 VM
+  (build 17763, .NET Framework 4.7.2, network disconnected). The test used a disposable installation-enabled build,
+  a 15-file harmless fixture (`0.0.0-m2d1vm`) and a stand-in Collector executable.
+  - The Setup page started the real setup engine.
+  - The engine passed its bundle and computer checks.
+  - It stopped as intended at the failed HTTPS connection (its step 4; Step 3 of 7 in the wizard), with exit code 1.
+  - Nothing was installed or enrolled: no install or data folder, no Scheduled Task, and no staging run were left.
+
+  This was a deliberate stop before enrollment, not a Collector installation. Still pending: real installation,
+  enrollment, update and rollback; engine steps after the connection check; a production Collector executable; and a
+  signed production release. UI issue to fix separately: the Welcome and Ready pages show development-build warnings
+  that are wrong in an installation-enabled build (section 4, C).
 - 2026-10-22 — M2c-3 runtime validation of the installer passed on Windows 10 Enterprise LTSC 2019 (build 17763)
   with .NET Framework 4.7.2, in an isolated VM, using test-only pinned builds and harmless fixtures. Covered:
   - verified protected staging
