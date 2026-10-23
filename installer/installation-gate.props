@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The ONE place that decides whether this installer build may install SortView Collector: SortView.Setup.csproj embeds
+     the value in SortView.Setup.exe (AssemblyMetadata), and the program reads it only from its own assembly: never from
+     the command line, the environment, the registry or a file beside the program.
+
+     Changed only by a reviewed commit. "false" (the default) means this build cannot install anything. "true" is allowed
+     only together with a trusted bundle pin (bundle-pin.props): it never weakens bundle verification or protected staging,
+     which every installation still goes through. Exactly "true" or "false"; the build refuses any other value, and a value
+     set anywhere else (/p:, an environment variable). -->
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <SortViewInstallationEnabled>false</SortViewInstallationEnabled>
+  </PropertyGroup>
+</Project>

@@ -78,7 +78,8 @@ def test_the_build_refuses_overrides_and_malformed_pins_and_embeds_the_pin():
     assert project.count('XmlInputPath="$(MSBuildThisFileDirectory)..\\bundle-pin.props"') == 2
     assert "'$(SortViewBundleManifestSha256)' != '$(_SortViewPinFileSha256)'" in project
     assert "'$(SortViewBundleVersion)' != '$(_SortViewPinFileVersion)'" in project
-    assert project.count("<Error ") == 5
+    pin_target = project[project.index('<Target Name="SortViewBundlePin"'):project.index("</Target>", project.index('<Target Name="SortViewBundlePin"'))]
+    assert pin_target.count("<Error ") == 5  # (the installation gate's own target has its own checks)
     assert "'^[0-9a-f]{64}$'" in project and "$(SortViewBundleVersion.Length) &gt; 64" in project
     assert "<_Parameter1>SortView.BundleManifestSha256</_Parameter1> <_Parameter2>pin:$(SortViewBundleManifestSha256)</_Parameter2>" in project
     assert "<_Parameter1>SortView.BundleVersion</_Parameter1> <_Parameter2>pin:$(SortViewBundleVersion)</_Parameter2>" in project
@@ -133,7 +134,7 @@ _READ_PIN = r"""
 param([string]$ExePath)
 $ErrorActionPreference = 'Stop'
 $assembly = [Reflection.Assembly]::LoadFrom($ExePath)
-$metadata = @($assembly.GetCustomAttributes([Reflection.AssemblyMetadataAttribute], $false) | Where-Object { $_.Key -like 'SortView.*' } |
+$metadata = @($assembly.GetCustomAttributes([Reflection.AssemblyMetadataAttribute], $false) | Where-Object { $_.Key -like 'SortView.Bundle*' } |
               ForEach-Object { "$($_.Key)=$($_.Value)" })
 $pin = $assembly.GetType('SortView.Setup.TrustedBundlePin', $true).GetMethod('ForThisInstaller').Invoke($null, @())
 ConvertTo-Json -Compress -InputObject ([ordered]@{ metadata = $metadata; state = $pin.State.ToString(); sha = $pin.ManifestSha256; version = $pin.Version })
@@ -181,6 +182,7 @@ def installer_copy(tmp_path_factory) -> Path:
     for name in ("SortView.Setup", "SortView.Setup.Core", "SortView.Setup.Wizard", "SortView.Setup.Wpf"):
         shutil.copytree(INSTALLER / name, copy / name, ignore=shutil.ignore_patterns("bin", "obj", "Testing"))
     shutil.copyfile(PIN_FILE, copy / "bundle-pin.props")
+    shutil.copyfile(INSTALLER / "installation-gate.props", copy / "installation-gate.props")  # unchanged: installation stays off
     return copy
 
 
