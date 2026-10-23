@@ -3,7 +3,7 @@
 The big picture, kept in one place so a single task does not swallow the plan. Read this before starting any
 non-trivial task, and check the task against it before widening scope.
 
-Last reviewed: 2026-10-19. Facts marked **(verify)** were not confirmed against production or the person who
+Last reviewed: 2026-10-22. Facts marked **(verify)** were not confirmed against production or the person who
 knows; everything else was checked in the repository on that date.
 
 ---
@@ -490,10 +490,51 @@ propose upgrading Windows, .NET Framework, PowerShell or other system components
   - An experiment with the 4.8 accessibility behavior turned on passed all 18 applicable behavior tests.
   - A new guard test checks that hidden elements are offscreen and cannot take keyboard focus.
   - No production application change and no App.config workaround were needed.
-- **Runtime validation pending:** a successful build does not prove the installer runs correctly on 4.7.2. Every test
-  so far ran on the development PC's 4.8 runtime. Still to do, on a genuine Windows 10 Enterprise LTSC 2019 (build
-  17763) VM with .NET Framework 4.7.2 and no upgrades: run the installer, and test it with screen readers (NVDA and
-  Narrator), including whether hidden elements are announced. NEWBRAUNFELSSOR itself is not used for this.
+- **Runtime validation (M2c-3) completed for the functions tested, 2026-10-22.** This is runtime compatibility
+  validation of the installer as built at `31632e9`, not production-release readiness. NEWBRAUNFELSSOR was not used
+  or changed.
+
+  *Environment:*
+  - VMware Workstation on the home PC.
+  - Windows 10 Enterprise LTSC 2019, build 17763, x64, with .NET Framework 4.7.2 (release 461814).
+  - Network disconnected; clean snapshot taken first.
+  - Three disposable test packages, each built against Microsoft's genuine 4.7.2 reference assemblies:
+    - the default build, with an empty pin
+    - a build pinned to a 4-file harmless fixture
+    - a build pinned to a 51-file (about 210 MB) harmless fixture
+  - The pins were set only in disposable source copies. The repository's `installer/bundle-pin.props` stayed empty.
+
+  *Passed, as seen in the installer window:*
+  - It launched on the genuine 4.7.2 runtime.
+  - The prerequisites (Windows version, 64-bit, .NET Framework, Windows PowerShell 5.1, administrator rights, disk
+    space) passed.
+  - The empty-pin build refused preparation with `PinNotConfigured`.
+  - The pinned 4-file fixture was verified and staged.
+  - The Setup page's installation controls stayed disabled.
+  - Cancelling during copying was reported after 5 of 51 files.
+  - "Try again" then prepared all 51 files.
+  - Clicking the window's close button (X) during active copying closed the window normally.
+  - The product owner confirmed that keyboard navigation and Narrator announcements worked.
+
+  *Passed, checked directly on the VM* (folders and permissions, outside the installer):
+  - The empty-pin refusal created no `C:\Program Files\SortView`.
+  - The staging root is owned by Administrators, with only SYSTEM and Administrators having Full Control.
+  - Going back from Prepare to Ready removed the staging run, and re-entering Prepare created a run with a new ID.
+  - Exiting after preparation removed the staged run.
+  - The cancelled run was removed.
+  - Going back after the retry removed the staged run.
+  - Closing the window during copying left no staging run.
+
+  *Not tested, so still pending:*
+  - **Release packaging:** a signed production release. Only test-only pinned builds and harmless fixtures were
+    used.
+  - **Collector changes:** any real installation, enrollment or update. Installation stays disabled.
+  - **Screen readers in depth:** a full audit of every hidden or collapsed control, and NVDA (only Narrator was
+    used).
+  - **Failure paths:**
+    - forced process termination during staging
+    - explicit recovery of an abandoned run (`RemoveAbandonedRun`)
+    - cleanup failures caused by locked files
 
 **Verified on the machine, 2026-10-22** (read-only PowerShell run by the product owner on NEWBRAUNFELSSOR). These are
 existing conditions: nothing here is an instruction to change the production machine.
@@ -645,6 +686,16 @@ deployment, not a fresh install. What remains unverified above must not be assum
 
 ## 5. Done recently (newest first)
 
+- 2026-10-22 — M2c-3 runtime validation of the installer passed on Windows 10 Enterprise LTSC 2019 (build 17763)
+  with .NET Framework 4.7.2, in an isolated VM, using test-only pinned builds and harmless fixtures. Covered:
+  - verified protected staging
+  - cancellation during copying, and retry
+  - cleanup of every staging run
+  - installation controls staying disabled
+  - basic keyboard and Narrator accessibility
+
+  Still pending: a signed production release; real installation, enrollment and update; a full screen-reader audit
+  (including NVDA); and the forced-termination, abandoned-run-recovery and locked-file failure paths (section 4, C).
 - 2026-10-22 — NBPL AMH machine (`NEWBRAUNFELSSOR`) baseline verified from the product owner's read-only checks:
   Windows 10 Enterprise LTSC build 17763, 64-bit, .NET Framework 4.7.2 (461814), PowerShell 5.1.17763.9020; Collector
   at `C:\SortView\Collector` run by the SYSTEM task `SortView Collector` every 15 minutes; Tech Logic logs in
