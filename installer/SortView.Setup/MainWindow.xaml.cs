@@ -41,6 +41,8 @@ namespace SortView.Setup
             InitializeComponent();
             // Disabled (as in the XAML) unless this build may install.
             Wizard.IsInstallationEnabled = InstallationRunner.MayInstall(gate, pin);
+            // The Welcome and Ready notices follow the same decision: they say installation is disabled only when it is.
+            WelcomeView.IsInstallationEnabled = ReadyView.IsInstallationEnabled = Wizard.IsInstallationEnabled;
             Wizard.StartRequested += OnStartRequested;
             preparation = new PreparationStep(PrepareView, Dispatcher, () => PreparationFactory());
             PrerequisitesView.StateChanged += (s, e) => UpdateButtons();

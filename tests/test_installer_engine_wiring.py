@@ -38,6 +38,7 @@ INSTALLER = REPO_ROOT / "installer"
 SETUP_DIR = INSTALLER / "SortView.Setup"
 SETUP_PROJECT = SETUP_DIR / "SortView.Setup.csproj"
 RUNNER_CODE = SETUP_DIR / "InstallationRunner.cs"
+WIZARD_DIR = INSTALLER / "SortView.Setup.Wizard"
 WINDOW_CODE = SETUP_DIR / "MainWindow.xaml.cs"
 
 
@@ -67,6 +68,32 @@ def test_the_runner_runs_the_staged_bundle_with_the_engines_fixed_roots_only():
     assert code.count("BundleVerifier.Verify(") == 1 and code.count("return run(") == 1
     for forbidden in ("Environment.", "Registry", "GetCommandLineArgs", "File.", "Directory.", "Process", "BundleDirectory", "catch"):
         assert forbidden not in code, forbidden
+
+
+def _disabled_notice(page: str) -> str:
+    return re.search(r'x:Name="DevelopmentNotice"[^>]*Text="([^"]*)"', (WIZARD_DIR / f"{page}.xaml").read_text(encoding="utf-8")).group(1)
+
+
+def _enabled_notice(page: str) -> str:
+    return re.search(r'public const string EnabledNotice = "([^"]*)";', (WIZARD_DIR / f"{page}.xaml.cs").read_text(encoding="utf-8")).group(1)
+
+
+def test_the_welcome_and_ready_notices_follow_the_wizards_own_installation_decision():
+    window = _code(WINDOW_CODE)
+    assert "WelcomeView.IsInstallationEnabled = ReadyView.IsInstallationEnabled = Wizard.IsInstallationEnabled;" in window
+    assert window.index("Wizard.IsInstallationEnabled = InstallationRunner.MayInstall(gate, pin);") < window.index("WelcomeView.IsInstallationEnabled")
+    for page in ("WelcomePage", "ReadyPage"):
+        code = _code(WIZARD_DIR / f"{page}.xaml.cs")
+        assert "disabledNotice = DevelopmentNotice.Text;" in code  # the XAML's own (disabled) text stays the default
+        assert "DevelopmentNotice.Text = value ? EnabledNotice : disabledNotice;" in code
+        for forbidden in ("InstallationGate", "TrustedBundlePin", "Environment.", "Registry", "File.", "GetCommandLineArgs"):
+            assert forbidden not in code, (page, forbidden)
+        disabled, enabled = _disabled_notice(page).lower(), _enabled_notice(page).lower()
+        assert "not enabled" in disabled or "cannot install" in disabled
+        # Enabled: no claim that installation is disabled, and no claim of a released (production) version.
+        for claim in ("not enabled", "cannot install", "development build", "nothing will be installed"):
+            assert claim not in enabled, (page, claim)
+        assert enabled.startswith("test build:") and "not a released version" in enabled
 
 
 def test_the_window_asks_for_a_runner_only_from_start_over_the_prepared_bundle():
@@ -211,6 +238,8 @@ public static class WiringProbe {
                 FixturePreparation.Install(window, source, sha, version, root);
                 window.GetType().GetProperty("EngineFactory", Any).SetValue(window, new Func<SetupRunRequest, SetupRunner>(FakeEngine));
                 window.Show(); Pump();
+                Func<string, string> notice = page => ((TextBlock)((FrameworkElement)window.FindName(page)).FindName("DevelopmentNotice")).Text;
+                r["welcome_notice"] = notice("WelcomeView"); r["ready_notice"] = notice("ReadyView");
                 GoToSetupPage(window);
                 var wizard = (SetupWizardView)window.FindName("Wizard");
                 Func<string, Button> button = name => (Button)window.FindName(name);
@@ -374,6 +403,8 @@ def test_the_default_build_never_asks_for_a_runner(tmp_path, default_build):
     report = _run(tmp_path, default_build)
     steps = report["steps"]
     assert report["installation_enabled"] is False and report["start_enabled"] is False
+    # The Welcome and Ready pages still say installation is disabled.
+    assert (report["welcome_notice"], report["ready_notice"]) == (_disabled_notice("WelcomePage"), _disabled_notice("ReadyPage"))
     idle = ("Setup", False, True, False, True, True, True, 0)
     # Neither a forced click nor a forced StartRequested asks for a runner; BeginRun refuses; nothing runs.
     assert _nav(steps["idle"]) == _nav(steps["started"]) == _nav(steps["forced_start_requested"]) == idle
@@ -389,6 +420,8 @@ def test_an_enabled_build_runs_the_engine_over_the_staged_copy_and_keeps_it_unti
     report = _run(tmp_path, enabled_build)
     steps = report["steps"]
     assert report["installation_enabled"] is True and report["start_enabled"] is True
+    # ...and the Welcome and Ready pages no longer say it is disabled (they say it is a test build instead).
+    assert (report["welcome_notice"], report["ready_notice"]) == (_enabled_notice("WelcomePage"), _enabled_notice("ReadyPage"))
     assert _nav(steps["idle"]) == ("Setup", False, True, False, True, True, True, 0)
     # Start: the engine is asked once, for the staged copy (under the protected root, not the source) and the fixed roots.
     assert report["staged_under_root"] is True and report["staged_is_not_source"] is True
