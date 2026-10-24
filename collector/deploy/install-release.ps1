@@ -546,7 +546,7 @@ if ($isFrozenBundle) {
     # contents can never overlay stale files -- there is nothing there yet.
     New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
     Copy-Item (Join-Path $FrozenRuntimeDir "*") -Destination $InstallRoot -Recurse -Force
-    $frozenFileCount = (Get-ChildItem -Path $FrozenRuntimeDir -Recurse -File).Count
+    $frozenFileCount = @(Get-ChildItem -Path $FrozenRuntimeDir -Recurse -File).Count
     Write-Host "Copied frozen runtime ($frozenFileCount file(s)) to $InstallRoot"
 } else {
     $TargetCollectorDir = Join-Path $InstallRoot "collector"
@@ -568,7 +568,7 @@ if ($isFrozenBundle) {
     $TargetAgentDir = Join-Path $InstallRoot "agent"
     New-Item -ItemType Directory -Path $TargetAgentDir -Force | Out-Null
     Copy-Item (Join-Path $SourceAgentDir "*") -Destination $TargetAgentDir -Recurse -Force
-    $parserFileCount = (Get-ChildItem -Path $SourceAgentDir -Filter "*.py" -Recurse -File).Count
+    $parserFileCount = @(Get-ChildItem -Path $SourceAgentDir -Filter "*.py" -Recurse -File).Count
     Write-Host "Copied $parserFileCount canonical parser runtime file(s) to $TargetAgentDir"
 }
 
