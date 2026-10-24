@@ -41,7 +41,7 @@ def read_chunk(path: str, cursor: Cursor | None, max_lines: int) -> ChunkRead:
     rotated = truncated = False
     if cursor is None or cursor.identity is None:
         start = 0
-    elif cursor.identity != identity:
+    elif not reader.same_file(cursor.identity, identity):
         start, rotated = 0, True
     else:
         try:

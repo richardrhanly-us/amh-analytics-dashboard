@@ -35,6 +35,7 @@ from collector_v2_support import (
     write_rules,
 )
 
+from collector import reader as collector_reader
 from collector import run as collector_run
 from collector import state as v1_state
 from collector import v2_run, v2_status, v2_uploader
@@ -294,6 +295,85 @@ def test_a_rotated_source_is_read_from_its_start(env):
     session = ScriptedSession()
     env.run(session)
     assert len(uploaded_events(session)) == 2 and env.status()["counters"]["sources_rotated"] == 1
+
+
+LEGACY_SERIAL, FULL_SERIAL = 0xF43F455C, 0xECF43F79F43F455C  # st_dev of one NTFS volume under Python 3.11 / 3.12+
+
+
+def as_runtime(monkeypatch, serial):
+    """identify() as a Python runtime reports the REAL files: its own volume serial, the file's real file index."""
+    real = collector_reader.identify
+
+    def identify(path):
+        found = real(path)
+        return None if found is None else collector_reader.FileIdentity((serial, found.token[1]))
+
+    monkeypatch.setattr(collector_reader, "identify", identify)
+
+
+@pytest.fixture
+def upgraded_from_3_11(env, monkeypatch):
+    """The reported transition: a full run by a Python 3.11-based runtime, then the same install under Python 3.14."""
+    monkeypatch.setattr(collector_reader, "_is_windows", lambda: True)
+    as_runtime(monkeypatch, LEGACY_SERIAL)
+    env.put_all()
+    first = ScriptedSession()
+    assert env.run(first) == 0 and len(uploaded_events(first)) > 0
+    assert {entry["identity"][0] for entry in env.state()["sources"].values()} == {LEGACY_SERIAL}
+    as_runtime(monkeypatch, FULL_SERIAL)
+    return env
+
+
+def test_an_upgrade_from_a_3_11_runtime_keeps_every_cursor_and_sends_only_new_lines_once(upgraded_from_3_11):
+    env = upgraded_from_3_11
+    offsets = {name: env.cursor_offset(name) for name in ("acs", "checkins", "rejects")}
+    write_lines(env.tech / "checkins.txt", checkin_lines(2, start=500), append=True)
+    session = ScriptedSession()
+    assert env.run(session) == 0
+    assert len(uploaded_events(session)) == 2  # the two new lines -- no historical event is sent again
+    assert env.status()["counters"]["sources_rotated"] == 0 and env.status()["counters"]["sources_truncated"] == 0
+    assert {name: env.cursor_offset(name) for name in ("acs", "rejects")} == {"acs": offsets["acs"], "rejects": offsets["rejects"]}
+    assert env.cursor_offset("checkins") == (env.tech / "checkins.txt").stat().st_size
+    assert {entry["identity"][0] for entry in env.state()["sources"].values()} == {FULL_SERIAL}  # the current form, from now on
+    again = ScriptedSession()
+    assert env.run(again) == 0 and uploaded_events(again) == []
+
+
+def test_an_upgrade_with_nothing_new_sends_nothing_and_records_the_current_identity(upgraded_from_3_11):
+    env = upgraded_from_3_11
+    session = ScriptedSession()
+    assert env.run(session) == 0 and uploaded_events(session) == []
+    assert env.status()["counters"]["sources_rotated"] == 0
+    assert {entry["identity"][0] for entry in env.state()["sources"].values()} == {FULL_SERIAL}
+
+
+def test_a_genuine_rotation_during_the_upgrade_is_still_read_from_its_start(upgraded_from_3_11):
+    import os
+    env = upgraded_from_3_11
+    os.replace(env.tech / "checkins.txt", env.tech / "checkins.old")
+    write_lines(env.tech / "checkins.txt", checkin_lines(2, start=700))
+    session = ScriptedSession()
+    env.run(session)
+    assert len(uploaded_events(session)) == 2 and env.status()["counters"]["sources_rotated"] == 1
+
+
+def test_a_truncation_during_the_upgrade_is_still_read_from_its_start(upgraded_from_3_11):
+    import os
+    env = upgraded_from_3_11
+    os.truncate(env.tech / "checkins.txt", 0)
+    write_lines(env.tech / "checkins.txt", checkin_lines(1, start=900), append=True)
+    session = ScriptedSession()
+    env.run(session)
+    counters = env.status()["counters"]
+    assert len(uploaded_events(session)) == 1 and (counters["sources_truncated"], counters["sources_rotated"]) == (1, 0)
+
+
+def test_off_windows_the_same_transition_is_still_a_rotation(upgraded_from_3_11, monkeypatch):
+    env = upgraded_from_3_11
+    monkeypatch.setattr(collector_reader, "_is_windows", lambda: False)
+    session = ScriptedSession()
+    env.run(session)
+    assert env.status()["counters"]["sources_rotated"] == 3 and len(uploaded_events(session)) > 0
 
 
 def test_a_partial_trailing_line_waits_for_its_newline(env):
