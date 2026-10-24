@@ -93,6 +93,29 @@ def test_none_identity_round_trips(tmp_path):
     assert state_mod.get_source(loaded, "checkins").identity is None
 
 
+@pytest.mark.parametrize("identity", [
+    (16174321340889392710, 281474976791971),  # observed on Windows 10 LTSC 2019: Python 3.12+ reports the 64-bit volume serial
+    (2**63, 1),
+    (2**64 - 1, 2**64 - 1),
+])
+def test_identity_beyond_int64_round_trips_exactly(tmp_path, identity):
+    path = tmp_path / "state.json"
+    s = state_mod.with_source(state_mod.empty_state(), "checkins", state_mod.SourceState(identity=identity, offset=0))
+    state_mod.save_state(path, s)
+
+    assert json.loads(path.read_text(encoding="utf-8"))["sources"]["checkins"]["identity"] == list(identity)  # integers, not floats
+    assert state_mod.get_source(state_mod.load_state(path), "checkins").identity == identity
+
+
+@pytest.mark.parametrize("raw", ["[16174321340889392710.0, 1]", "[1.6174321340889392710e19, 1]", "[1.0, 2]", "[true, 2]"])
+def test_non_integer_identity_parts_raise(tmp_path, raw):
+    path = tmp_path / "state.json"
+    path.write_text('{"schema_version": 1, "sources": {"checkins": {"identity": ' + raw + ', "offset": 0}}}', encoding="utf-8")
+
+    with pytest.raises(state_mod.CorruptStateError):
+        state_mod.load_state(path)
+
+
 def test_three_sources_persist_independently(tmp_path):
     path = tmp_path / "state.json"
     s = state_mod.empty_state()

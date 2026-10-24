@@ -291,7 +291,15 @@ function Get-FinishStateProblems {
             $identity = @($identityProperty.Value)
             $wellFormed = ($identity.Count -eq 2)
             foreach ($part in $identity) {
-                if ($part -isnot [int] -and $part -isnot [long]) { $wellFormed = $false }
+                # Any JSON integer, as collector/state.py accepts: a Windows volume serial is unsigned 64-bit, so a
+                # real identity can exceed Int64 (Python 3.12+ reports the full serial). Beyond Int64, Windows
+                # PowerShell 5.1 parses an integer as Decimal and PowerShell 7 as BigInteger; a Decimal is an
+                # integer literal only at scale 0 ("1.0" keeps scale 1), and a JSON float with an exponent is a
+                # Double. Booleans, strings and fractions are not integers.
+                $isInteger = ($part -is [int]) -or ($part -is [long]) -or
+                    ($null -ne $part -and $part.GetType().FullName -eq "System.Numerics.BigInteger") -or
+                    ($part -is [decimal] -and ((([decimal]::GetBits($part))[3] -shr 16) -band 0xFF) -eq 0)
+                if (-not $isInteger) { $wellFormed = $false }
             }
             if (-not $wellFormed) {
                 $problems += "source '$name': 'identity' must be a 2-element integer list or null."

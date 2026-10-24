@@ -2281,8 +2281,33 @@ def _state_sources(**entries):
     return sources
 
 
+VM_OBSERVED_IDENTITY = [16174321340889392710, 281474976791971]  # Python 3.12+ on Windows: the full 64-bit volume serial
+
+
+def _raw_identity_state(first: str, second: str) -> str:
+    """A state whose acs identity is [first, second] as RAW JSON number text (json.dumps cannot write 16174321340889392710.0)."""
+    text = json.dumps(_state_doc(sources=_state_sources(acs={"offset": 1, "identity": ["@first@", "@second@"]})))
+    return text.replace('"@first@"', first).replace('"@second@"', second)
+
+
 FINISH_STATE_CASES = {
     "valid": json.dumps(_state_doc()),
+    "valid_identity_observed_on_the_vm": json.dumps(
+        _state_doc(sources={n: {"offset": 0, "identity": VM_OBSERVED_IDENTITY} for n in FINISH_SOURCES})
+    ),
+    "valid_identity_int64_max": _raw_identity_state("9223372036854775807", "9223372036854775807"),
+    "valid_identity_just_above_int64": _raw_identity_state("9223372036854775808", "1"),
+    "valid_identity_uint64_max": _raw_identity_state("18446744073709551615", "18446744073709551615"),
+    "identity_integral_float_above_int64": _raw_identity_state("16174321340889392710.0", "281474976791971"),
+    "identity_fraction_above_int64": _raw_identity_state("16174321340889392710.5", "281474976791971"),
+    "identity_exponent_above_int64": _raw_identity_state("1.6174321340889392710e19", "281474976791971"),
+    "identity_integral_float": _raw_identity_state("1.0", "2"),
+    "identity_fraction": _raw_identity_state("1.5", "2"),
+    "identity_exponent": _raw_identity_state("1e3", "2"),
+    "identity_boolean_element": _raw_identity_state("true", "2"),
+    "identity_null_element": _raw_identity_state("null", "2"),
+    "identity_nested_list": _raw_identity_state("[1]", "[2]"),
+    "identity_object": json.dumps(_state_doc(sources=_state_sources(acs={"offset": 1, "identity": {"a": 1, "b": 2}}))),
     "valid_all_zero_null_identity": json.dumps(
         _state_doc(sources={n: {"offset": 0, "identity": None} for n in FINISH_SOURCES})
     ),
@@ -2512,18 +2537,30 @@ def test_finish_state_helper_integer_checks_accept_both_int32_and_int64():
     text = _extract_ps_function("Get-FinishStateProblems", FINISH_SCRIPT)
     integer_checks = re.findall(r"\$[\w.]+ -isnot \[(int|long)\]", text)
 
-    # schema_version, offset, and each identity element -- every one tests BOTH types.
-    assert integer_checks.count("int") == integer_checks.count("long") == 3
+    # schema_version and offset test BOTH types; each identity element tests both and the types beyond Int64.
+    assert integer_checks.count("int") == integer_checks.count("long") == 2
+    identity_check = text[text.index("$isInteger = "):text.index("if (-not $isInteger)")]
+    for accepted in ("$part -is [int]", "$part -is [long]", '"System.Numerics.BigInteger"', "$part -is [decimal]"):
+        assert accepted in identity_check, accepted
     version_check = next(line for line in text.splitlines() if "$versionProperty.Value -isnot" in line)
     assert "$versionProperty.Value -isnot [int] -and $versionProperty.Value -isnot [long]" in version_check
 
 
 POWERSHELL_7_JSON_TYPING = r"""
-# Makes ConvertFrom-Json type every JSON integer as Int64, exactly as PowerShell 7
-# does. Under PowerShell 7 itself this is a no-op, so the same test is valid there.
+# Makes ConvertFrom-Json type JSON numbers exactly as PowerShell 7 does: every integer as Int64,
+# an integer beyond Int64 as BigInteger, a fraction as Double (Windows PowerShell 5.1 types the
+# last two as Decimal: at scale 0 for an integer, as typed, otherwise above 0). Under PowerShell 7
+# itself this is a no-op, so the same test is valid there.
+Add-Type -AssemblyName System.Numerics
 function Convert-ToInt64Typing {
     param($Value)
     if ($Value -is [int]) { return [long]$Value }
+    if ($Value -is [decimal]) {
+        if (((([decimal]::GetBits($Value))[3] -shr 16) -band 0xFF) -eq 0) {
+            return [System.Numerics.BigInteger]::Parse($Value.ToString([Globalization.CultureInfo]::InvariantCulture), [Globalization.CultureInfo]::InvariantCulture)
+        }
+        return [double]$Value
+    }
     if ($Value -is [System.Management.Automation.PSCustomObject]) {
         foreach ($property in @($Value.PSObject.Properties)) { $property.Value = Convert-ToInt64Typing $property.Value }
         return $Value
@@ -2545,6 +2582,8 @@ def finish_state_results_with_int64_json():
     # Proof the emulation is real: an integer really does arrive as Int64.
     lines.append("$results['probe'] = (('{\"n\":1,\"a\":[2,3]}' | ConvertFrom-Json).n.GetType().Name) + "
                  "'/' + (('{\"n\":1,\"a\":[2,3]}' | ConvertFrom-Json).a[0].GetType().Name)")
+    lines.append("$results['probe_large'] = @(('[16174321340889392710, 16174321340889392710.0, 1.5]' | ConvertFrom-Json) | "
+                 "ForEach-Object { $_.GetType().Name + '=' + $_.ToString([Globalization.CultureInfo]::InvariantCulture) }) -join '/'")
     sources = "@(" + ",".join(_ps_literal(name) for name in FINISH_SOURCES) + ")"
     for name, text in FINISH_STATE_CASES.items():
         lines.append(
@@ -2561,8 +2600,26 @@ def finish_state_results_with_int64_json():
 
 
 @needs_powershell
+def test_large_json_integers_reach_the_state_helper_exactly_as_this_edition_types_them():
+    """The premise of the identity check, on the PowerShell running these tests (Windows PowerShell 5.1 locally,
+    PowerShell 7 in CI): beyond Int64, 5.1 gives an exact Decimal at scale 0 (scale 1 for "...710.0"), 7 a BigInteger."""
+    script = ("$v = '[16174321340889392710, 16174321340889392710.0]' | ConvertFrom-Json; "
+              "$PSVersionTable.PSEdition + '|' + (@($v | ForEach-Object { $_.GetType().Name + '=' + "
+              "$(if ($_ -is [decimal]) { ((([decimal]::GetBits($_))[3] -shr 16) -band 0xFF) } else { '-' }) + '=' + "
+              "$_.ToString([Globalization.CultureInfo]::InvariantCulture) }) -join '|')")
+    edition, big, integral_float = _run_powershell(script).strip().split("|")
+    if edition == "Desktop":
+        assert (big, integral_float) == ("Decimal=0=16174321340889392710", "Decimal=1=16174321340889392710.0")
+    else:
+        assert big == "BigInteger=-=16174321340889392710" and integral_float.startswith("Double=-=")
+
+
+@needs_powershell
 def test_finish_state_helper_int64_emulation_is_real(finish_state_results_with_int64_json):
     assert finish_state_results_with_int64_json["probe"] == "Int64/Int64"
+    big, integral_float, fraction = finish_state_results_with_int64_json["probe_large"].split("/")
+    assert big == "BigInteger=16174321340889392710"  # exact: no Decimal or Double rounding
+    assert integral_float.startswith("Double=") and fraction == "Double=1.5"
 
 
 @needs_powershell
