@@ -71,6 +71,40 @@ def identify(path: str) -> FileIdentity | None:
     return FileIdentity(token=(st.st_dev, st.st_ino))
 
 
+_UINT32 = 2**32
+
+
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
+def _is_identity_token(token: object) -> bool:
+    return (isinstance(token, tuple) and len(token) == 2
+            and all(isinstance(part, int) and not isinstance(part, bool) and part >= 0 for part in token))
+
+
+def same_file(saved: tuple[int, int] | None, current: tuple[int, int] | None) -> bool:
+    """Whether a persisted identity token and the current one name the same physical file.
+
+    Exact equality, on every platform -- and, on Windows only, ONE legacy form: Python <= 3.11 reports
+    os.stat's st_dev as the 32-bit volume serial, Python >= 3.12 as the full 64-bit NTFS serial, whose low
+    32 bits are the old value (st_ino, the file index, is the same in both). A cursor saved by a 3.11-based
+    runtime therefore names the same file as the current one when the file index is identical and the
+    saved 32-bit serial equals the low 32 bits of a current serial that is itself beyond 32 bits. Nothing
+    else is equivalent: not two different 64-bit serials, not the reverse direction, not a different file
+    index (a replaced file -- genuine rotation -- always has one), and not a malformed token. The tokens
+    themselves are never changed; the next committed cursor simply stores the current one."""
+    if saved is None or current is None:
+        return False
+    if saved == current:
+        return True
+    if not _is_windows() or not (_is_identity_token(saved) and _is_identity_token(current)):
+        return False
+    (saved_volume, saved_index), (current_volume, current_index) = saved, current
+    return (saved_index == current_index and saved_volume < _UINT32 <= current_volume
+            and current_volume % _UINT32 == saved_volume)
+
+
 @dataclass(frozen=True)
 class SourceCursor:
     """Durable position in one source file. identity is None only when no
@@ -146,7 +180,7 @@ def read_new_lines(path: str, cursor: SourceCursor | None) -> ReadResult:
 
     if cursor is None or cursor.identity is None:
         start_offset = 0
-    elif cursor.identity != current_identity:
+    elif not same_file(cursor.identity.token, current_identity.token):
         start_offset = 0
         rotated = True
     else:
