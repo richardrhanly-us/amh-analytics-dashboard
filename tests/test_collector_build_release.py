@@ -1682,12 +1682,15 @@ def test_installer_has_no_direct_database_dependency():
 FINISH_SCRIPT = "finish-collector-install.ps1"
 FINISH_TOKEN_STEP = "$seededNow = $false"  # the first statement after Step 0's read-only checks
 FINISH_MAPPING = ("collector/deploy/finish-collector-install.ps1", "tools/finish-install.ps1")
+# finish-install's one way of running the Collector (Invoke-CollectorCommand): stderr merged into what is shown.
+HELPER_LINE = "& $ExePath @args 2>&1 | ForEach-Object {"
+NEWLINE = "\n"
 
 STEP_CALLS = (
     "& $SetTokenScript",
-    "& $ExePath preflight --config $ConfigPath",
+    "Invoke-CollectorCommand preflight --config $ConfigPath",
     "& $PreflightSystemScript -InstallRoot $InstallRoot -ConfigPath $ConfigPath",
-    "& $ExePath bootstrap --config $ConfigPath",
+    "Invoke-CollectorCommand bootstrap --config $ConfigPath",
     "& $RegisterTaskScript -InstallRoot $InstallRoot -ConfigPath $ConfigPath",
 )
 
@@ -1812,7 +1815,7 @@ def test_finish_requires_elevation_before_any_prompt_or_child_process():
     assert "-ExitCode 1" in main[guard : guard + 500]
     for later in (
         "Read-Host", "Get-ScheduledTask", "Test-Path $ConfigPath", "Get-Content", *STEP_CALLS,
-        "& $ExePath api-token check",
+        "Invoke-CollectorCommand api-token check",
     ):
         assert guard < main.index(later), later
 
@@ -1903,7 +1906,7 @@ def test_finish_prompts_keep_or_replace_only_when_a_stored_token_exists():
 
 def test_finish_checks_the_stored_token_first_and_never_bypasses_a_damaged_one():
     main = _finish_main()
-    first_check = main.index("& $ExePath api-token check --config $ConfigPath | Out-Host")
+    first_check = main.index("Invoke-CollectorCommand api-token check --config $ConfigPath")
     damaged = main.index("if ($storedTokenCheck -ne 0 -and $storedTokenCheck -ne 3) {")
     decide = main.index("$tokenAction = Get-TokenStepAction")
 
@@ -1917,13 +1920,13 @@ def test_finish_runs_the_token_tool_only_when_needed_and_verifies_with_the_colle
     main = _finish_main()
     run_tool = main.index("if ($runTokenTool) {")
     call = main.index("& $SetTokenScript -InstallRoot $InstallRoot -ConfigPath $ConfigPath")
-    verify = main.index("& $ExePath api-token check --config $ConfigPath | Out-Host", call)
+    verify = main.index("Invoke-CollectorCommand api-token check --config $ConfigPath", call)
 
-    assert run_tool < call < verify < main.index("& $ExePath preflight")
+    assert run_tool < call < verify < main.index("Invoke-CollectorCommand preflight")
     # (A Contract v2 config has one more step between the two -- the local secret, step 1b, which starts at
     # `if ($IsV2) {` and is covered by tests/test_collector_install_v2.py. The token gate ends before it.)
     secret_step = main.index("if ($IsV2) {", verify)
-    assert verify < secret_step < main.index("& $ExePath v2-key check") < main.index("& $ExePath preflight")
+    assert verify < secret_step < main.index("Invoke-CollectorCommand v2-key check") < main.index("Invoke-CollectorCommand preflight")
     after = main[verify : secret_step]
     # After the token step the Collector's own check MUST exit 0 -- whether the token was kept or just stored. Exit 3
     # (no api_token.dpapi at all) is a stop like any other non-zero: nothing else can stand in for the file.
@@ -1961,10 +1964,11 @@ def test_finish_never_writes_the_token_or_anything_else_to_a_file_or_a_command_l
         "WriteAllBytes", "[System.IO.File]", "[IO.File]", "Write-Output", "Write-Verbose", "Write-Debug",
         "Write-Information", "Out-String", ">>", " > ", "2>",
     ):
-        assert forbidden not in code, forbidden
+        assert forbidden not in code.replace(HELPER_LINE, ""), forbidden
+    assert code.count("2>") == 1 and code.count(HELPER_LINE) == 1  # stderr is merged into what is SHOWN, nowhere else
     # No child process is given anything token-shaped on its command line (the `api-token` subcommand NAME is not a token).
     for line in code.splitlines():
-        if line.strip().startswith("& $"):
+        if line.strip().startswith(("& $", "Invoke-CollectorCommand ")):
             assert "token" not in line.replace("$SetTokenScript", "").replace("api-token check", "").lower(), line
 
 
@@ -1972,7 +1976,7 @@ def test_finish_requires_a_usable_stored_token_before_the_first_child_that_needs
     main = _finish_main()
     gate = main.index("if ($storedTokenCheck -ne 0) {", main.index("& $SetTokenScript"))
 
-    assert gate < main.index("& $ExePath preflight") < main.index("& $PreflightSystemScript") < main.index("& $ExePath bootstrap")
+    assert gate < main.index("Invoke-CollectorCommand preflight") < main.index("& $PreflightSystemScript") < main.index("Invoke-CollectorCommand bootstrap")
 
 
 def test_finish_has_no_environment_to_restore_so_nothing_runs_after_the_final_exit():
@@ -2002,7 +2006,7 @@ def _gate(main: str, call: str, ok_marker: str) -> str:
 
 
 def test_finish_stops_with_exit_1_unless_the_interactive_preflight_exits_0():
-    segment = _gate(_finish_main(), "& $ExePath preflight --config $ConfigPath", '"  OK: interactive preflight passed."')
+    segment = _gate(_finish_main(), "Invoke-CollectorCommand preflight --config $ConfigPath", '"  OK: interactive preflight passed."')
 
     assert "if ($LASTEXITCODE -ne 0) {" in segment
     assert "-ExitCode 1" in segment
@@ -2025,10 +2029,14 @@ def test_finish_never_softens_a_child_result():
     code = _finish_code()
 
     for line in code.splitlines():
-        if line.strip().startswith("& $"):
+        if line.strip().startswith(("& $", "Invoke-CollectorCommand ")) and line.strip() != HELPER_LINE:
             for softener in ("Out-Null", "SilentlyContinue", "2>", "||", "; exit", "-ErrorAction"):
                 assert softener not in line, (softener, line)
     assert "$LASTEXITCODE = 0" not in code
+    # The helper: stderr merged and every line shown (Write-Host), never dropped, and the exit code left as it was.
+    helper = code[code.index("function Invoke-CollectorCommand {"):]
+    helper = helper[: helper.index(NEWLINE + "}" + NEWLINE)]
+    assert HELPER_LINE in helper and "Write-Host" in helper and "Out-Null" not in helper and "LASTEXITCODE" not in helper
 
 
 def test_finish_every_stop_names_the_step_what_is_unchanged_and_what_to_do_with_an_explicit_exit_code():
@@ -2053,20 +2061,20 @@ def test_finish_every_stop_names_the_step_what_is_unchanged_and_what_to_do_with_
 def test_finish_inspects_state_json_and_skips_bootstrap_when_it_is_valid():
     main = _finish_main()
     exists = main.index("if (Test-Path -LiteralPath $StatePath) {")
-    fresh = main.index("} else {\n    & $ExePath bootstrap --config $ConfigPath")
+    fresh = main.index("} else {\n    Invoke-CollectorCommand bootstrap --config $ConfigPath")
     existing_branch = main[exists:fresh]
 
     assert exists < fresh
-    assert "& $ExePath" not in existing_branch  # nothing is executed when state.json exists
+    assert "& $ExePath" not in existing_branch and "Invoke-CollectorCommand" not in existing_branch  # nothing runs when state.json exists
     assert "bootstrap skipped" in existing_branch
     assert "Get-FinishStateProblems -StateText $stateText" in existing_branch
-    assert main.count("& $ExePath bootstrap") == 1
+    assert main.count("Invoke-CollectorCommand bootstrap") == 1
 
 
 def test_finish_refuses_an_invalid_incomplete_or_unreadable_state_file_with_exit_2_and_touches_nothing():
     main = _finish_main()
     exists = main.index("if (Test-Path -LiteralPath $StatePath) {")
-    existing_branch = main[exists : main.index("} else {\n    & $ExePath bootstrap --config $ConfigPath")]
+    existing_branch = main[exists : main.index("} else {\n    Invoke-CollectorCommand bootstrap --config $ConfigPath")]
 
     assert existing_branch.count("Stop-Setup") == 3  # not a file / unreadable / invalid-or-incomplete
     assert existing_branch.count("-ExitCode 2") == 3
@@ -2076,7 +2084,7 @@ def test_finish_refuses_an_invalid_incomplete_or_unreadable_state_file_with_exit
 
 def test_finish_verifies_the_state_file_after_a_fresh_bootstrap():
     main = _finish_main()
-    fresh = main.index("& $ExePath bootstrap --config $ConfigPath")
+    fresh = main.index("Invoke-CollectorCommand bootstrap --config $ConfigPath")
     segment = main[fresh : main.index("$seededNow = $true")]
 
     assert "if ($LASTEXITCODE -ne 0) {" in segment

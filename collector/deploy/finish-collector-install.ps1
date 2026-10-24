@@ -408,6 +408,20 @@ function Get-TokenChoice {
     return "Invalid"
 }
 
+function Invoke-CollectorCommand {
+    # Runs this install's SortViewCollector.exe with the given arguments and shows every line it prints, stdout and
+    # stderr alike. Its exit code is left in $LASTEXITCODE for the caller to decide on, exactly as a direct call
+    # leaves it. Its stderr -- a failure reason such as "failed: secret_missing", which a first install expects -- is
+    # never turned into a terminating error: Windows PowerShell 5.1 does that to a native command's stderr in a hosted
+    # runspace (the WPF setup's SetupEngineHost) under $ErrorActionPreference = "Stop", which would end this script
+    # before its own exit-code handling. Lines go out through Write-Host, the one channel a hosted setup shows (Out-Host
+    # has no console there). The Collector prints fixed codes only, never a token or a secret.
+    $ErrorActionPreference = "Continue"
+    & $ExePath @args 2>&1 | ForEach-Object {
+        if ($_ -is [System.Management.Automation.ErrorRecord]) { Write-Host $_.Exception.Message } else { Write-Host $_ }
+    }
+}
+
 # === STEP 0: read-only safety checks -- before any prompt or change =========
 
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -508,7 +522,7 @@ Write-Host "=== Step 1 of 5: API token ===" -ForegroundColor Cyan
 
 # The Collector's own check of api_token.dpapi: 0 = stored and usable, 3 = no file at all.
 # Anything else is a PRESENT but unusable file -- a stop, never bypassed.
-& $ExePath api-token check --config $ConfigPath | Out-Host
+Invoke-CollectorCommand api-token check --config $ConfigPath
 $storedTokenCheck = $LASTEXITCODE
 if ($storedTokenCheck -ne 0 -and $storedTokenCheck -ne 3) {
     Stop-Setup -Step "step 1 of 5 (API token)" -Problem "api_token.dpapi exists but cannot be used (exit code $storedTokenCheck; reason above). It is never bypassed." `
@@ -555,7 +569,7 @@ if ($runTokenTool) {
 
 # Verify with the Collector itself what it will actually use. api_token.dpapi is its only token source,
 # so anything but 0 stops here (3 = no token file at all).
-& $ExePath api-token check --config $ConfigPath | Out-Host
+Invoke-CollectorCommand api-token check --config $ConfigPath
 $storedTokenCheck = $LASTEXITCODE
 if ($storedTokenCheck -ne 0) {
     $tokenProblem = if ($storedTokenCheck -eq 3) { "no api_token.dpapi is stored" } else { "api_token.dpapi cannot be used" }
@@ -573,7 +587,7 @@ $secretCreatedNow = $false
 if ($IsV2) {
     Write-Host ""
     Write-Host "=== Step 1b: Contract v2 secret ===" -ForegroundColor Cyan
-    & $ExePath v2-key check --config $ConfigPath | Out-Host
+    Invoke-CollectorCommand v2-key check --config $ConfigPath
     $secretAction = Get-V2SecretStepAction -CheckExitCode $LASTEXITCODE -SecretFilePresent (Test-Path -LiteralPath $V2SecretPath)
     if ($secretAction -eq "Refuse") {
         Stop-Setup -Step "step 1b (Contract v2 secret)" -Problem "A Contract v2 secret already exists at '$V2SecretPath' but the Collector cannot use it for this installation (reason above). It is never overwritten." `
@@ -582,13 +596,13 @@ if ($IsV2) {
     }
     if ($secretAction -eq "Create") {
         Write-Host "No Contract v2 secret yet (the line above is expected on a first install) -- creating one on this machine."
-        & $ExePath v2-key init --config $ConfigPath | Out-Host
+        Invoke-CollectorCommand v2-key init --config $ConfigPath
         if ($LASTEXITCODE -ne 0) {
             Stop-Setup -Step "step 1b (Contract v2 secret)" -Problem "The Collector could not create the Contract v2 secret (v2-key init exit code $LASTEXITCODE; reason above)." `
                 -Unchanged "no preflight, bootstrap, or Scheduled Task step was run" `
                 -Fix "Resolve what the reason names (usually the permissions of the secrets folder), then re-run." -ExitCode 1
         }
-        & $ExePath v2-key check --config $ConfigPath | Out-Host
+        Invoke-CollectorCommand v2-key check --config $ConfigPath
         if ($LASTEXITCODE -ne 0) {
             Stop-Setup -Step "step 1b (Contract v2 secret)" -Problem "The Contract v2 secret was created but the Collector could not verify it (v2-key check exit code $LASTEXITCODE; reason above)." `
                 -Unchanged "no preflight, bootstrap, or Scheduled Task step was run" `
@@ -602,7 +616,7 @@ if ($IsV2) {
 # === STEP 2: interactive preflight ======================================
 Write-Host ""
 Write-Host "=== Step 2 of 5: interactive preflight ===" -ForegroundColor Cyan
-& $ExePath preflight --config $ConfigPath
+Invoke-CollectorCommand preflight --config $ConfigPath
 if ($LASTEXITCODE -ne 0) {
     Stop-Setup -Step "step 2 of 5 (interactive preflight)" -Problem "Preflight reported FAIL (exit code $LASTEXITCODE) -- see the [FAIL] lines above." `
         -Unchanged "the token stays stored; no state file, and no Scheduled Task, was created by this run" `
@@ -655,7 +669,7 @@ if (Test-Path -LiteralPath $StatePath) {
     }
     Write-Host "  OK: state file already exists and covers every configured source -- bootstrap skipped." -ForegroundColor Green
 } else {
-    & $ExePath bootstrap --config $ConfigPath
+    Invoke-CollectorCommand bootstrap --config $ConfigPath
     if ($LASTEXITCODE -eq 3) {
         # Contract v2 only (collector/bootstrap_state.py's EXIT_REFUSED): a state file already on this
         # machine makes a fresh start unsafe -- typically the legacy state.json of an earlier v1 install.

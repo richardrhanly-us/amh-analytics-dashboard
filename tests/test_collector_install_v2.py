@@ -298,6 +298,12 @@ public class FakeCollector {
             File.Copy(p[0], p[1]);
         }
         Console.WriteLine("FAKE " + key + " -> exit " + code);
+        string warn = Path.Combine(dir, "warn_" + key + ".txt");
+        if (File.Exists(warn)) { Console.Error.WriteLine(File.ReadAllText(warn).Trim()); }
+        if (code != 0) {
+            string reason = Path.Combine(dir, "stderr_" + key + ".txt");
+            Console.Error.WriteLine(File.Exists(reason) ? File.ReadAllText(reason).Trim() : "failed: fake_failure");
+        }
         return code;
     }
 }
@@ -317,6 +323,46 @@ function Get-ScheduledTask {
 }
 & '@@FINISH@@' -InstallRoot '@@INSTALL@@' -ConfigPath '@@CONFIG@@' -UseExistingMachineToken
 "FINISH_EXIT=$LASTEXITCODE"
+"""
+
+
+# The WPF setup's way of running a script: a runspace with no console host (SetupEngineHost's), whose only shown output
+# is Write-Host's (information records tagged PSHOST).
+_HOSTED = r"""
+$ErrorActionPreference = 'Stop'
+$state = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+$state.ExecutionPolicy = [Microsoft.PowerShell.ExecutionPolicy]::Bypass
+$runspace = [runspacefactory]::CreateRunspace($state)
+$runspace.Open()
+$ps = [powershell]::Create()
+$ps.Runspace = $runspace
+$null = $ps.AddScript((Get-Content -LiteralPath '@@WRAPPER@@' -Raw))
+$output = $ps.Invoke()
+foreach ($record in $ps.Streams.Information) { if ($record.Tags -contains 'PSHOST') { "HOST: $($record.MessageData)" } }
+foreach ($item in $output) { "$item" }
+foreach ($e in $ps.Streams.Error) { "ERRORSTREAM: $e" }
+$runspace.Close()
+"""
+
+# Inside it, finish-install.ps1 is called as setup.ps1's Invoke-SetupTool calls it: in-process, output to Out-Host, and
+# a thrown error caught and reported as a failure.
+_HOSTED_WRAPPER = r"""
+$ErrorActionPreference = 'Stop'
+$FakeDir = $env:FAKE_DIR
+function Get-ScheduledTask {
+    [CmdletBinding()] param([string]$TaskName)
+    $file = Join-Path $FakeDir 'task.json'
+    if (-not (Test-Path -LiteralPath $file)) { return $null }
+    $t = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
+    return [pscustomobject]@{ State = $t.State; Actions = @([pscustomobject]@{ Execute = $t.Execute; Arguments = $t.Arguments }) }
+}
+$global:LASTEXITCODE = $null
+try {
+    & '@@FINISH@@' -InstallRoot '@@INSTALL@@' -ConfigPath '@@CONFIG@@' -UseExistingMachineToken | Out-Host
+    "FINISH_EXIT=$LASTEXITCODE"
+} catch {
+    "FINISH_THREW=$($_.Exception.Message)"
+}
 """
 
 
@@ -352,6 +398,7 @@ class Machine:
     tools: Path
     exit_code: int | None = None
     output: str = ""
+    threw: str | None = None
 
     @property
     def config_path(self) -> Path:
@@ -387,26 +434,41 @@ class Machine:
         file = self.fake / "task.json"
         return json.loads(file.read_text(encoding="utf-8-sig")) if file.exists() else None
 
-    def run(self) -> Machine:
-        script = (_WRAPPER.replace("@@FINISH@@", str(self.tools / "finish-install.ps1"))
+    def stderr(self, subcommand: str, line: str) -> None:
+        """What a subcommand writes to stderr when it exits non-zero (the real Collector: `failed: <code>`)."""
+        (self.fake / f"stderr_{subcommand}.txt").write_text(line + "\n", encoding="utf-8")
+
+    def warns(self, subcommand: str, line: str) -> None:
+        """A line a subcommand writes to stderr on every call, success included."""
+        (self.fake / f"warn_{subcommand}.txt").write_text(line + "\n", encoding="utf-8")
+
+    def run(self, *, hosted: bool = False) -> Machine:
+        """Runs finish-install.ps1 in a console PowerShell -- or, hosted, inside a runspace like SetupEngineHost's."""
+        script = ((_HOSTED_WRAPPER if hosted else _WRAPPER).replace("@@FINISH@@", str(self.tools / "finish-install.ps1"))
                   .replace("@@INSTALL@@", str(self.install_root)).replace("@@CONFIG@@", str(self.config_path)))
+        if hosted:
+            wrapper = self.fake / "hosted-wrapper.ps1"
+            wrapper.write_text(script, encoding="utf-8")
+            script = _HOSTED.replace("@@WRAPPER@@", str(wrapper))
         completed = _run_ps_file(script, self.fake, env={"FAKE_DIR": str(self.fake)})
         self.output = completed.stdout + "\n" + completed.stderr
         match = re.search(r"FINISH_EXIT=(\d+)", completed.stdout)
         self.exit_code = int(match.group(1)) if match else None
+        threw = re.search(r"FINISH_THREW=(.*)", completed.stdout)
+        self.threw = threw.group(1).strip() if threw else None
         return self
 
 
 def make_machine(tmp_path: Path, fake_exe: Path, *, contract_mode: str | None = "v2", v2_extra: dict | None = None,
-                 config_mutation=None) -> Machine:
+                 config_mutation=None, finish_text: str = FINISH_TEXT) -> Machine:
     machine = Machine(root=tmp_path, fake=tmp_path / "fake", install_root=tmp_path / "install", data_root=tmp_path / "data",
                       tools=tmp_path / "bundle" / "tools")
     for folder in (machine.fake, machine.install_root, machine.tools, machine.config_path.parent):
         folder.mkdir(parents=True)
     shutil.copy2(fake_exe, machine.install_root / "SortViewCollector.exe")
 
-    assert FINISH_TEXT.count(_ELEVATION_CHECK) == 1
-    (machine.tools / "finish-install.ps1").write_text(FINISH_TEXT.replace(_ELEVATION_CHECK, "if ($false) {"), encoding="utf-8")
+    assert finish_text.count(_ELEVATION_CHECK) == 1
+    (machine.tools / "finish-install.ps1").write_text(finish_text.replace(_ELEVATION_CHECK, "if ($false) {"), encoding="utf-8")
     log = "Add-Content -LiteralPath (Join-Path $env:FAKE_DIR 'calls.txt') -Value "
     (machine.tools / "set-api-token.ps1").write_text(f"{log}'tool:set-api-token'\n", encoding="utf-8")
     (machine.tools / "preflight-system.ps1").write_text(
@@ -439,6 +501,7 @@ def fresh_v2_machine(tmp_path: Path, fake_exe: Path, **kwargs) -> Machine:
     `bootstrap` writes a valid v2 cursor."""
     machine = make_machine(tmp_path, fake_exe, **kwargs)
     machine.exits("v2-key_check", 1, 0)
+    machine.stderr("v2-key_check", "failed: secret_missing")  # exactly what the real Collector prints when there is none
     machine.on_success("v2-key_init", machine.secret, "dpapi-blob")
     machine.on_success("bootstrap", machine.v2_state, _valid_state())
     return machine
@@ -665,6 +728,110 @@ def test_an_unsupported_contract_mode_stops_at_step_0_before_anything_runs(tmp_p
     assert machine.calls() == [] and machine.task() is None
 
 
+# --- the WPF setup's hosted runspace: the Collector's stderr (M2d-2b) ---------------------------------------------------
+
+def _committed_finish_text_before_the_fix() -> str:
+    """finish-collector-install.ps1 as it was before Invoke-CollectorCommand: its Collector calls made directly."""
+    import subprocess as _subprocess
+
+    for revision in ("8cc14f8", "HEAD"):
+        text = _subprocess.run(["git", "show", f"{revision}:collector/deploy/finish-collector-install.ps1"], cwd=REPO_ROOT,
+                               capture_output=True, check=False).stdout.decode("utf-8")
+        if "& $ExePath v2-key check --config $ConfigPath | Out-Host" in text:
+            return text
+    pytest.skip("the pre-fix finish-collector-install.ps1 is not in this checkout's history")
+
+
+@needs_windows_powershell
+def test_hosted_the_pre_fix_script_stops_on_the_expected_secret_missing_line(tmp_path, fake_exe):
+    """The defect itself: in a runspace like SetupEngineHost's, `v2-key check`'s expected stderr line ended the script
+    before its own exit-code handling could create the secret."""
+    machine = fresh_v2_machine(tmp_path, fake_exe, finish_text=_committed_finish_text_before_the_fix()).run(hosted=True)
+
+    assert machine.threw == "failed: secret_missing" and machine.exit_code is None, machine.output
+    assert machine.calls() == ["exe:api-token_check", "exe:api-token_check", "exe:v2-key_check"]  # no init, nothing after
+    assert not machine.secret.exists() and machine.task() is None
+
+
+@needs_windows_powershell
+def test_hosted_a_fresh_v2_finish_proceeds_through_check_init_check_and_completes(tmp_path, fake_exe):
+    machine = fresh_v2_machine(tmp_path, fake_exe).run(hosted=True)
+
+    assert machine.threw is None and machine.exit_code == 0, machine.output
+    assert machine.calls() == V2_FRESH_CALLS
+    assert machine.secret.exists() and machine.v2_state.exists() and machine.task()["State"] == "Disabled"
+    # The Collector's line is SHOWN (on the channel the WPF setup displays), followed by the script's own explanation.
+    assert "HOST: failed: secret_missing" in machine.output
+    assert "HOST: No Contract v2 secret yet (the line above is expected on a first install)" in machine.output
+    assert "ERRORSTREAM" not in machine.output and "RemoteException" not in machine.output
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize(("subcommand", "reason", "message", "calls_end"), [
+    ("v2-key_init", "failed: secret_not_writable", "could not create the Contract v2 secret", "exe:v2-key_init"),
+    ("preflight", "failed: fake_preflight", "SETUP STOPPED at step 2 of 5", "exe:preflight"),
+])
+def test_hosted_an_unexpected_non_zero_exit_still_stops_safely_with_its_reason(tmp_path, fake_exe, subcommand, reason, message, calls_end):
+    machine = fresh_v2_machine(tmp_path, fake_exe)
+    machine.exits(subcommand, 1)
+    machine.stderr(subcommand, reason)
+
+    machine.run(hosted=True)
+
+    assert machine.threw is None and machine.exit_code == 1, machine.output  # the script's own stop, not a thrown error
+    assert message in machine.output and f"HOST: {reason}" in machine.output
+    assert machine.calls()[-1] == calls_end and "tool:register-task" not in machine.calls() and machine.task() is None
+
+
+@needs_windows_powershell
+def test_hosted_bootstrap_exit_3_is_still_the_scripts_own_refusal(tmp_path, fake_exe):
+    machine = fresh_v2_machine(tmp_path, fake_exe)
+    machine.exits("bootstrap", 3)
+    machine.stderr("bootstrap", "Refusing to bootstrap (reason=v2_state_exists)")
+
+    machine.run(hosted=True)
+
+    assert machine.threw is None and machine.exit_code == 2, machine.output
+    assert "Bootstrap REFUSED to start a fresh Contract v2 cursor (exit code 3)" in machine.output
+    assert machine.task() is None
+
+
+@needs_windows_powershell
+def test_hosted_a_successful_command_that_writes_to_stderr_does_not_stop_setup(tmp_path, fake_exe):
+    machine = fresh_v2_machine(tmp_path, fake_exe)
+    for subcommand in ("api-token_check", "preflight", "bootstrap"):
+        machine.warns(subcommand, f"warning: {subcommand} wrote to stderr and succeeded")
+
+    machine.run(hosted=True)
+
+    assert machine.threw is None and machine.exit_code == 0, machine.output
+    assert machine.calls() == V2_FRESH_CALLS and machine.task()["State"] == "Disabled"
+    assert "HOST: warning: preflight wrote to stderr and succeeded" in machine.output
+
+
+@needs_windows_powershell
+@pytest.mark.parametrize("hosted", [False, True])
+def test_the_collectors_stderr_is_reported_and_nothing_secret_is(tmp_path, fake_exe, hosted):
+    machine = fresh_v2_machine(tmp_path, fake_exe)
+    machine.run(hosted=hosted)
+
+    assert machine.exit_code == 0, machine.output
+    assert "failed: secret_missing" in machine.output                    # the reason, as the Collector gave it
+    assert "dpapi-blob" not in machine.output                            # the secret's contents never
+    assert KEY_ID not in machine.output                                  # nor the key id
+    assert "NativeCommandError" not in machine.output and "RemoteException" not in machine.output
+
+
+def test_every_collector_call_in_the_finish_script_goes_through_the_one_helper():
+    body = FINISH_TEXT[FINISH_TEXT.index("#>") + 2:]
+    code = "\n".join(line for line in body.splitlines() if not line.strip().startswith("#"))
+    helper = code[code.index("function Invoke-CollectorCommand {"):]
+    helper = helper[:helper.index("\n}\n") + 3]
+    assert '$ErrorActionPreference = "Continue"' in helper and "& $ExePath @args 2>&1" in helper and "Write-Host" in helper
+    assert code.replace(helper, "").count("& $ExePath") == 0  # no direct call anywhere else
+    assert code.count("Invoke-CollectorCommand ") == 7 + 1    # the seven calls, and the definition
+
+
 def test_the_finish_script_never_enables_starts_or_forces_anything_for_v2():
     body = FINISH_TEXT[FINISH_TEXT.index("#>") + 2:]
     code = "\n".join(line for line in body.splitlines() if not line.strip().startswith("#"))
@@ -672,9 +839,9 @@ def test_the_finish_script_never_enables_starts_or_forces_anything_for_v2():
         assert forbidden not in code.replace('Write-Host \'    Enable-ScheduledTask -TaskName "SortView Collector"\'', "").replace(
             'Write-Host \'    Start-ScheduledTask -TaskName "SortView Collector"\'', ""), forbidden
     # The secret step sits between the token and the first preflight, and bootstrap after both preflights.
-    order = [code.index(marker) for marker in ("& $ExePath v2-key check --config $ConfigPath", "& $ExePath preflight --config $ConfigPath",
-                                               "& $PreflightSystemScript", "& $ExePath bootstrap --config $ConfigPath",
-                                               "& $RegisterTaskScript")]
+    order = [code.index(marker) for marker in ("Invoke-CollectorCommand v2-key check --config $ConfigPath",
+                                               "Invoke-CollectorCommand preflight --config $ConfigPath", "& $PreflightSystemScript",
+                                               "Invoke-CollectorCommand bootstrap --config $ConfigPath", "& $RegisterTaskScript")]
     assert order == sorted(order)
-    assert code.count("& $ExePath v2-key init --config $ConfigPath") == 1  # one place creates a secret, and only after `Create`
+    assert code.count("Invoke-CollectorCommand v2-key init --config $ConfigPath") == 1  # one place creates a secret, only after `Create`
     assert "$V2SecretPath" in code and "Out-File" not in code and "Set-Content" not in code  # the script itself writes nothing
