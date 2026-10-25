@@ -45,6 +45,9 @@ namespace SortView.Setup.Wizard
         private SetupEvent stopEvent;
         private SetupEvent finishEvent;
         private readonly SetupProgress progress = new SetupProgress();
+        // What to do after a run that did not complete, from the same events; and when that run ended.
+        private readonly StopGuidance guidance = new StopGuidance();
+        private DateTimeOffset endedAt;
         // The status said while the enrollment step runs. It is retired once progress moves past that step.
         private const string EnrollingStatus = "Enrolling this computer with SortView… This cannot be interrupted.";
         private bool enrollingStatusShown;
@@ -160,7 +163,8 @@ namespace SortView.Setup.Wizard
             closeWhenFinished = false;
             enrollingStatusShown = false;
             ShowProgress(progress.Reset());
-            session = SetupRunSession.Start(runner, Dispatcher, this, OnSetupEvent, text => consoleText.Add(text));
+            guidance.Reset();
+            session =SetupRunSession.Start(runner, Dispatcher, this, OnSetupEvent, text => consoleText.Add(text));
             SetupRunSession started = session;
             session.Completion.ContinueWith(task => Dispatcher.BeginInvoke(new Action(() => OnFinished(started, task))),
                 TaskScheduler.Default);
@@ -243,6 +247,8 @@ namespace SortView.Setup.Wizard
             }
             ClearPrompt();
             ShowProgress(progress.Finish(task.IsFaulted));
+            guidance.Finish(task.IsFaulted);
+            endedAt = DateTimeOffset.Now;
             if (task.IsFaulted)
             {
                 Exception error = task.Exception.GetBaseException();
@@ -347,6 +353,7 @@ namespace SortView.Setup.Wizard
                 events.Add(line);
             }
             ShowProgress(progress.Apply(setupEvent));
+            guidance.Apply(setupEvent);
             SetupEventReceived?.Invoke(setupEvent);
             EventList.ScrollIntoView(events[events.Count - 1]);
             UpdateControls();
@@ -514,7 +521,13 @@ namespace SortView.Setup.Wizard
 
         private void ResumeButton_Click(object sender, RoutedEventArgs e) => Answer(PromptAnswers.Yes);
 
-        private void DontResumeButton_Click(object sender, RoutedEventArgs e) => Answer(PromptAnswers.No);
+        private void DontResumeButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (Answer(PromptAnswers.No))
+            {
+                guidance.NoteResumeDeclined();
+            }
+        }
 
         private void EnableTaskButton_Click(object sender, RoutedEventArgs e) => Answer(PromptAnswers.Yes);
 
@@ -670,13 +683,16 @@ namespace SortView.Setup.Wizard
             context.TryGetValue(key, out object value) && value != null ? Convert.ToString(value) : null;
 
         // ---- outcome ------------------------------------------------------------------------------------------
-        // How the run ended, from its final events. A stop is shown in the engine's exact words (what went wrong, what
-        // was left unchanged, its advice about the code and the saved enrollment, and what to do). No retry is offered.
+        // How the run ended, from its final events. A run that did not complete says first what to do now (StopGuidance:
+        // Install again only where that is safe), and where it stopped in the seven steps. The engine's exact words follow
+        // as technical details (its step, what went wrong, what was left unchanged, its advice about the code and the saved
+        // enrollment, and what to do), and Copy details copies the guidance's own summary -- never those words.
 
         private void ShowOutcome(Task<SetupRunResult> task)
         {
             ClearOutcome();
             bool completed = !task.IsFaulted && finishEvent != null && Field(finishEvent, "result") == "completed" && task.Result.ExitCode == 0;
+            const string technical = "Technical details from setup (for your IT staff or SortView support):";
             if (task.IsFaulted)
             {
                 OutcomeTitle.Text = "Setup could not run";
@@ -699,7 +715,9 @@ namespace SortView.Setup.Wizard
                 OutcomeTitle.Text = ending == SetupEnding.Cancelled ? "Setup was cancelled"
                     : ending == SetupEnding.Interrupted ? "Setup stopped before it finished. The saved enrollment was kept."
                     : "Setup stopped before it finished";
-                OutcomeSummary.Text = "Setup stopped at " + Field(stopEvent, "step_label") + ".";
+                OutcomeSummary.Text = guidance.StepText == null ? "" : "Setup stopped at " + guidance.StepText + ".";
+                OutcomeDetailsHeading.Text = technical;
+                OutcomeStepLabel.Text = "Setup step: " + Field(stopEvent, "step_label");
                 OutcomeProblem.Text = "What went wrong: " + Field(stopEvent, "problem");
                 OutcomeUnchanged.Text = "Left unchanged: " + Field(stopEvent, "unchanged");
                 OutcomeAdvice.Text = string.Join("\n", Lines(stopEvent, "advice"));
@@ -708,6 +726,8 @@ namespace SortView.Setup.Wizard
             else if (stopEvent != null)
             {
                 OutcomeTitle.Text = "Setup stopped because of an unexpected error";
+                OutcomeSummary.Text = guidance.StepText == null ? "" : "Setup stopped at " + guidance.StepText + ".";
+                OutcomeDetailsHeading.Text = technical;
                 OutcomeProblem.Text = "What went wrong: " + Field(stopEvent, "exception_type") + ": " + Field(stopEvent, "message");
                 OutcomeAdvice.Text = string.Join("\n", Lines(stopEvent, "advice"));
             }
@@ -720,7 +740,17 @@ namespace SortView.Setup.Wizard
             bool plannedStop = !task.IsFaulted && stopEvent != null && stopEvent.Type == "run_stopped";
             OutcomePanel.BorderBrush = completed ? Brushes.SeaGreen
                 : plannedStop ? new SolidColorBrush(Color.FromRgb(0x8A, 0x4B, 0x00)) : Brushes.Firebrick;
-            foreach (TextBlock text in new[] { OutcomeSummary, OutcomeProblem, OutcomeUnchanged, OutcomeAdvice, OutcomeFix })
+            if (!completed && guidance.Category != StopCategory.None)
+            {
+                OutcomeActionHeading.Text = "What to do now: " + guidance.CategoryLabel;
+                OutcomeAction.Text = guidance.Action;
+                CopyDetailsPanel.Visibility = Visibility.Visible;
+                if (guidance.ShowDetails)
+                {
+                    DetailsExpander.IsExpanded = true; // the cause is only in the setup log
+                }
+            }
+            foreach (TextBlock text in OutcomeTexts())
             {
                 text.Visibility = string.IsNullOrEmpty(text.Text) ? Visibility.Collapsed : Visibility.Visible;
             }
@@ -728,13 +758,37 @@ namespace SortView.Setup.Wizard
             Announce(OutcomeTitle);
         }
 
+        private TextBlock[] OutcomeTexts() => new[]
+        {
+            OutcomeSummary, OutcomeActionHeading, OutcomeAction, OutcomeDetailsHeading, OutcomeStepLabel, OutcomeProblem,
+            OutcomeUnchanged, OutcomeAdvice, OutcomeFix,
+        };
+
         private void ClearOutcome()
         {
-            foreach (TextBlock text in new[] { OutcomeTitle, OutcomeSummary, OutcomeProblem, OutcomeUnchanged, OutcomeAdvice, OutcomeFix })
+            OutcomeTitle.Text = "";
+            foreach (TextBlock text in OutcomeTexts())
             {
                 text.Text = "";
             }
+            CopyStatus.Text = "";
+            CopyDetailsPanel.Visibility = Visibility.Collapsed;
             OutcomePanel.Visibility = Visibility.Collapsed;
+        }
+
+        /// <summary>Copies the guidance's own summary (fixed text and checked values only) -- never the engine's words, the
+        /// setup log, or anything typed.</summary>
+        private void CopyDetailsButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Clipboard.SetText(guidance.DiagnosticSummary(endedAt));
+                CopyStatus.Text = "Copied. Paste it into your message to SortView support.";
+            }
+            catch (Exception)
+            {
+                CopyStatus.Text = "The details could not be copied. Try again.";
+            }
         }
     }
 }

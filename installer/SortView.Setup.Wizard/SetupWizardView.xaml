@@ -136,15 +136,24 @@
                 </StackPanel>
             </GroupBox>
 
-            <!-- How the run ended, in the engine's own words. -->
+            <!-- How the run ended: what to do now (StopGuidance), then the engine's own words, unchanged. -->
             <GroupBox x:Name="OutcomePanel" Header="Result" Margin="0,8,0,0" Padding="8" BorderThickness="2" Visibility="Collapsed">
                 <StackPanel>
                     <TextBlock x:Name="OutcomeTitle" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
                     <TextBlock x:Name="OutcomeSummary" Margin="0,4,0,0" TextWrapping="Wrap" />
-                    <TextBlock x:Name="OutcomeProblem" Margin="0,6,0,0" TextWrapping="Wrap" />
+                    <TextBlock x:Name="OutcomeActionHeading" Margin="0,8,0,0" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    <TextBlock x:Name="OutcomeAction" Margin="0,2,0,0" TextWrapping="Wrap" />
+                    <TextBlock x:Name="OutcomeDetailsHeading" Margin="0,10,0,0" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    <TextBlock x:Name="OutcomeStepLabel" Margin="0,4,0,0" TextWrapping="Wrap" />
+                    <TextBlock x:Name="OutcomeProblem" Margin="0,4,0,0" TextWrapping="Wrap" />
                     <TextBlock x:Name="OutcomeUnchanged" Margin="0,4,0,0" TextWrapping="Wrap" />
                     <TextBlock x:Name="OutcomeAdvice" Margin="0,4,0,0" TextWrapping="Wrap" />
-                    <TextBlock x:Name="OutcomeFix" Margin="0,6,0,0" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    <TextBlock x:Name="OutcomeFix" Margin="0,4,0,0" TextWrapping="Wrap" />
+                    <StackPanel x:Name="CopyDetailsPanel" Orientation="Horizontal" Margin="0,10,0,0" Visibility="Collapsed">
+                        <Button x:Name="CopyDetailsButton" Content="C_opy details" Padding="12,4" Click="CopyDetailsButton_Click"
+                                AutomationProperties.HelpText="Copies a summary for SortView support. It holds no enrollment code, token, secret, file path or setup log." />
+                        <TextBlock x:Name="CopyStatus" Margin="8,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+                    </StackPanel>
                 </StackPanel>
             </GroupBox>
         </StackPanel>
