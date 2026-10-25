@@ -6,6 +6,7 @@
 - `collector.__version__`: `1.0.14`
 - Canonical release artifact: **built 2026-10-24, not yet published** (see *Canonical release artifact* below). The
   remaining checks in *Before this release is published* are still to be performed and recorded.
+- G3 real-API GUI installation: **passed 2026-10-25** (see *G3 validation: real-API GUI installation* below).
 
 ## Canonical release artifact
 
@@ -30,6 +31,25 @@ The setup program for this bundle is packaged with `scripts/package_installer_re
 Contract v2. **Contract 2 is not yet what a newly provisioned installation gets:** Super Admin still
 creates a contract 1 installation unless an administrator selects Contract v2 explicitly. Making it the
 default is a later, separate change, made only after this bundle has been rehearsed and published.
+
+## G3 validation: real-API GUI installation
+
+Passed on 2026-10-25. The setup program package was installed with the GUI on a fresh machine against the deployed
+SortView API.
+
+- Environment: fresh Windows 10 Enterprise LTSC 2019 VM (`SortView-G3-RealAPI-Install`), VMware Workstation NAT
+- Setup program package: built from `de858df`; package ZIP SHA-256
+  `e932200f63c2f3179cc2b19e7dd9cbe69836cb5d54002de7553db41be27b7659`; Collector `1.0.14`
+- API: the deployed SortView API over publicly trusted HTTPS
+- Test organization: `SortView G3 Installer Test`, branch `G3 Test Branch`, installation ID `7`, Contract v2
+- GUI prerequisite checks passed; bundle verification passed for all 1,392 manifest files
+- GUI installation completed all seven stages, exit code 0
+- Scheduled Task `SortView Collector` (SYSTEM) enabled; its SYSTEM run ended with LastTaskResult 0
+- Collector health: healthy, no errors
+- Synthetic Tech Logic data (7 ACS events, 3 check-ins, 1 reject) reached the real API: 11 events inserted in 3
+  batches, 3 chunks committed, 0 server duplicates, 0 quarantined events
+- Backend: installation active, onboarding Ready, pipeline OK
+- Cleanup: the Scheduled Task was disabled after testing; the test installation and its evidence are preserved
 
 ## What changed
 
@@ -140,7 +160,7 @@ path, and grew without bound); its `collector.log` is unchanged. Contract v2 par
 
 To be performed on a real Windows machine with the frozen 1.0.14 bundle, and recorded here:
 
-- a clean install against the real API with a Contract v2 test organization;
+- a clean install against the real API with a Contract v2 test organization -- **passed in G3** (2026-10-25);
 - the SYSTEM-context preflight, with the secrets folder restricted to Administrators and SYSTEM;
 - bootstrap against Tech Logic files that are being written;
 - the automatic task enable, and a first scheduled run that uploads only records written after bootstrap;
