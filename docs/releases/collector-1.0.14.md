@@ -4,14 +4,52 @@
 
 - Release: `1.0.14`
 - `collector.__version__`: `1.0.14`
-- Canonical release artifact: **not built yet**. The fingerprint, the frozen-runtime record and the
-  installation validation are added to this document when the release is built and rehearsed (see
-  *Before this release is published*). Nothing here has been validated on a Windows machine yet.
+- Canonical release artifact: **built 2026-10-24, not yet published** (see *Canonical release artifact* below). The
+  remaining checks in *Before this release is published* are still to be performed and recorded.
+- G3 real-API GUI installation: **passed 2026-10-25** (see *G3 validation: real-API GUI installation* below).
+
+## Canonical release artifact
+
+Built from `62a4ae8f96728c281ce0575589850959c9886efc` (PRs #265 and #266) with `collector/freeze/build_frozen.ps1` and
+`python -m collector.build_release`, then compressed and verified as an extracted copy:
+
+- Release ZIP: `SortViewCollector-1.0.14.zip` (36,543,962 bytes)
+- Release ZIP SHA-256: `75e7830affaad61cc1c5716996287b9d8115a802087d6e25b63da9c132e501f5`
+- Bundle `MANIFEST.json` SHA-256: `8758e0f6dc86f288d94e013ad1540b8f95ea9675efb5514899c5898463339bb4`
+- Manifest entries: `1392`; frozen runtime files: `1378`
+- `runtime\SortViewCollector.exe` SHA-256: `e7c733a9c622fd9c2bf244b29d9cf2c264e323ab53cf72fa759c1298f7691399`
+- Build: CPython 3.14.6, PyInstaller 6.22.3; requests 2.33.1, urllib3 2.6.3, pandas 2.3.3, numpy 2.5.3
+
+Earlier test builds also report `1.0.14` but are **not** this release: the frozen runtime used in the M2d-4 P0C/P1/P1R
+VM tests (`SortViewCollector.exe` SHA-256 `9b948e8266748c0aa2bea074575bcb7c945c46b587a988ccb8bdd88072d81040`) predates
+PR #266. Identify a 1.0.14 artifact by the hashes above, never by its version output.
+
+The setup program for this bundle is packaged with `scripts/package_installer_release.py` (see
+`docs/release-process.md`, *SortView setup program package*), which takes the two SHA-256 values above from this record.
 
 1.0.14 is the first Collector release whose guided setup can install a **new** machine directly on
 Contract v2. **Contract 2 is not yet what a newly provisioned installation gets:** Super Admin still
 creates a contract 1 installation unless an administrator selects Contract v2 explicitly. Making it the
 default is a later, separate change, made only after this bundle has been rehearsed and published.
+
+## G3 validation: real-API GUI installation
+
+Passed on 2026-10-25. The setup program package was installed with the GUI on a fresh machine against the deployed
+SortView API.
+
+- Environment: fresh Windows 10 Enterprise LTSC 2019 VM (`SortView-G3-RealAPI-Install`), VMware Workstation NAT
+- Setup program package: built from `de858df`; package ZIP SHA-256
+  `e932200f63c2f3179cc2b19e7dd9cbe69836cb5d54002de7553db41be27b7659`; Collector `1.0.14`
+- API: the deployed SortView API over publicly trusted HTTPS
+- Test organization: `SortView G3 Installer Test`, branch `G3 Test Branch`, installation ID `7`, Contract v2
+- GUI prerequisite checks passed; bundle verification passed for all 1,392 manifest files
+- GUI installation completed all seven stages, exit code 0
+- Scheduled Task `SortView Collector` (SYSTEM) enabled; its SYSTEM run ended with LastTaskResult 0
+- Collector health: healthy, no errors
+- Synthetic Tech Logic data (7 ACS events, 3 check-ins, 1 reject) reached the real API: 11 events inserted in 3
+  batches, 3 chunks committed, 0 server duplicates, 0 quarantined events
+- Backend: installation active, onboarding Ready, pipeline OK
+- Cleanup: the Scheduled Task was disabled after testing; the test installation and its evidence are preserved
 
 ## What changed
 
@@ -122,7 +160,7 @@ path, and grew without bound); its `collector.log` is unchanged. Contract v2 par
 
 To be performed on a real Windows machine with the frozen 1.0.14 bundle, and recorded here:
 
-- a clean install against the real API with a Contract v2 test organization;
+- a clean install against the real API with a Contract v2 test organization -- **passed in G3** (2026-10-25);
 - the SYSTEM-context preflight, with the secrets folder restricted to Administrators and SYSTEM;
 - bootstrap against Tech Logic files that are being written;
 - the automatic task enable, and a first scheduled run that uploads only records written after bootstrap;

@@ -71,6 +71,31 @@ Time-sensitive tests read one controlled clock (`tests/controlled_clock.py`), ge
 "expired" by advancing it -- never by picking a fixed "long ago" date -- so they cannot start failing as real time
 passes.
 
+### SortView setup program package
+
+The repository's setup program (`installer/SortView.Setup`) always builds as one that cannot install anything:
+`installer/installation-gate.props` stays `false` and `installer/bundle-pin.props` stays empty. The distributable,
+installation-enabled package is made from a canonical Collector release by:
+
+```
+python scripts/package_installer_release.py --version <X.Y.Z> --bundle-zip <SortViewCollector-X.Y.Z.zip> --output <new folder>
+```
+
+1. Record the release first: `docs/releases/collector-<X.Y.Z>.md` must hold exactly one `- Release ZIP SHA-256:` and one
+   ``- Bundle `MANIFEST.json` SHA-256:`` line, and be committed -- the script reads that record from `HEAD`, never the
+   hashes from the bundle or the command line (`--release-record-file` reads an uncommitted record, and the package
+   record then says so).
+2. The script checks the ZIP and the bundle against those hashes and the bundle against its manifest, builds the setup
+   program from a temporary `git archive HEAD installer` copy with the gate on and the pin set to the bundle, reads the
+   built program back (gate Enabled, pin = the recorded hash and version, its own `BundleVerifier` accepts the packaged
+   bundle, .NET Framework 4.7.2), and only then writes `<output>`: `SortView-Setup-<X.Y.Z>\` (the program, its three
+   libraries and `bundle\`), its ZIP, `PACKAGE-SHA256.txt` and `PACKAGE-RECORD.json`.
+3. It needs MSBuild (`--msbuild`, `SORTVIEW_MSBUILD` or vswhere) and the .NET Framework 4.7.2 reference assemblies:
+   the targeting pack, or `--framework-root` / `TargetFrameworkRootPath` pointing at the
+   `Microsoft.NETFramework.ReferenceAssemblies.net472` package's `build` folder.
+
+The package is unsigned until code signing (C1) exists.
+
 ---
 
 ## part 1: database migration
