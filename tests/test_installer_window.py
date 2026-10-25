@@ -98,8 +98,13 @@ def test_the_window_never_handles_the_code_as_text_or_writes_secrets_anywhere():
     window, workspace, wizard = _code(WINDOW_CODE), _code(WORKSPACE_CODE), _code(WIZARD_CODE)
     for source in (window, wizard):
         for forbidden in ("CodeBox.Password", "Marshal", "BSTR", "NetworkCredential", "Console.", "Debug.", "Trace.", "File.",
-                          "SetEnvironmentVariable", "Clipboard"):
+                          "SetEnvironmentVariable"):
             assert forbidden not in source, forbidden
+    # The clipboard is reached once, by Copy details, with StopGuidance's own summary only (fixed text and checked values:
+    # see test_installer_stop_guidance.py) -- never a typed answer, the engine's words or the setup log.
+    assert "Clipboard" not in window
+    assert re.findall(r"Clipboard\.\w+\([^;]*;", wizard) == ["Clipboard.SetText(guidance.DiagnosticSummary(endedAt));"]
+    assert wizard.count("Clipboard") == 1
     # The code goes from the wizard's PasswordBox to the run as a read-only SecureString copy; the box is cleared at once.
     assert "SecureString code = CodeBox.SecurePassword;" in wizard and "code.MakeReadOnly();" in wizard and "CodeBox.Clear();" in wizard
     # The only environment the workspace sets: the fakes' fixed switches and the scratch record folder.
@@ -133,8 +138,8 @@ def window_exe() -> Path:
     return SPIKE_DIR / "bin" / "Release" / "SortView.Setup.Spike.exe"
 
 
-# Steps: select/toggle/click/text (by AutomationId), wait_prompt, wait_status, wait_text, wait_disabled, snapshot, close, wait_exit,
-# sleep. "{workspace}" in a value is the simulated machine the window shows. While waiting, the driver measures how fast
+# Steps: select/toggle/click/text (by AutomationId), wait_prompt, wait_status, wait_text, wait_disabled, snapshot, read_clipboard,
+# close, wait_exit, sleep. "{workspace}" in a value is the simulated machine the window shows. While waiting, the driver measures how fast
 # the UI thread answers, and counts the window's child processes and visible console windows.
 _UIA_DRIVER = r"""
 param([string]$ExePath, [string]$StepsPath, [string]$OutPath)
@@ -162,7 +167,7 @@ $AE = [System.Windows.Automation.AutomationElement]
 $TS = [System.Windows.Automation.TreeScope]
 $steps = @(Get-Content -LiteralPath $StepsPath -Raw | ConvertFrom-Json | ForEach-Object { $_ })
 $out = [ordered]@{ error = $null; error_stack = $null; snapshots = @(); prompts_seen = @(); prompt_history = @(); max_children = 0; max_console_windows = 0
-                   latencies = @(); exited = $false; workspace = $null; command_line = $null; second_clicks = @() }
+                   latencies = @(); exited = $false; workspace = $null; command_line = $null; second_clicks = @(); clipboard = @() }
 $proc = Start-Process -FilePath $ExePath -PassThru
 $window = $null
 for ($i = 0; $i -lt 300 -and $null -eq $window; $i++) {
@@ -241,6 +246,7 @@ function Snapshot([string]$label) {
         busy = ($null -ne (Shown 'BusyIndicator'))
         current_step = $(if ($null -ne (Shown 'CurrentStepText')) { (Shown 'CurrentStepText').Current.Name } else { $null })
         resume_notice = $(if ($null -ne (Shown 'ResumeText')) { (Shown 'ResumeText').Current.Name } else { $null })
+        details_expanded = ((Find 'DetailsExpander').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Current.ExpandCollapseState -eq 'Expanded')
         all_text = (@(OnScreen $window.FindAll($TS::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name }) -join "`n")
         offscreen = @(Offscreen)
     }
@@ -306,6 +312,7 @@ try {
             }
             'wait_disabled' { Wait-Until { -not (Find $step.id).Current.IsEnabled } 30 "$($step.id) disabled" }
             'snapshot' { $out.snapshots += Snapshot $step.label }
+            'read_clipboard' { $out.clipboard += [string](Get-Clipboard -Raw) }
             'close' { $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close() }
             'wait_exit' {
                 $watch = [Diagnostics.Stopwatch]::StartNew()
@@ -573,6 +580,11 @@ def test_a_missing_source_file_is_asked_for_three_times_then_setup_stops_before_
     assert "exit code 1" in done["status"]
     assert "Setup stopped before it finished" in done["outcome"] and "The checkins source file was not found" in done["outcome"]
     assert _stop_text(done) in done["outcome"]
+    # What to do, in the window's own words and its own step numbers; the engine's step stays among the details.
+    assert "What to do now: You can try again" in done["outcome"]
+    assert "Make sure the Tech Logic files are on this computer" in done["outcome"]
+    assert "Setup stopped at Step 2 of 7: Find Tech Logic files." in done["outcome"]
+    assert "Setup step: step 3 (source files)" in done["outcome"]
     assert "enrollment_code" not in result["prompt_history"]
     assert "http:POST" not in workspace_tools(result)  # no enrollment request
     assert_window_invariants(result)
@@ -598,6 +610,8 @@ def test_declining_to_resume_stops_with_the_engines_advice_and_no_new_code(tmp_p
     assert "exit code 2" in declined["status"]
     assert "Resuming the unfinished setup was declined." in declined["outcome"] and _stop_text(declined) in declined["outcome"]
     assert declined["steps"] == progress("Stopped here", *["Not reached"] * 6)
+    assert "select Install and choose Resume setup" in declined["outcome"]
+    assert "Setup stopped at Step 1 of 7: Check the computer and installation package." in declined["outcome"]
     assert declined["resume_notice"] == "An unfinished earlier setup was found on this computer."  # never "Resuming"
     assert result["prompt_history"] == ["sources_confirm", "enrollment_code", "resume_confirm"]  # the code was asked for once
     assert workspace_tools(result).count("http:POST") == 2  # the first run's only (the v2 refusal, then the legacy request)
@@ -621,6 +635,8 @@ def test_an_interrupted_setup_resumes_on_the_next_start_with_no_option_changed(t
         {"op": "click", "id": "UseStandardFilesButton"},
         *_answer_code(),
         {"op": "wait_status", "contains": "Finished"}, {"op": "snapshot", "label": "interrupted"},
+        {"op": "click", "id": "CopyDetailsButton"}, {"op": "wait_text", "id": "CopyStatus", "contains": "Copied"},
+        {"op": "read_clipboard"},
         {"op": "click", "id": "StartButton"},  # no option touched
         {"op": "wait_prompt", "prompt": "resume_confirm"}, {"op": "snapshot", "label": "resume"},
         {"op": "click", "id": "ResumeButton"},
@@ -644,6 +660,21 @@ def test_an_interrupted_setup_resumes_on_the_next_start_with_no_option_changed(t
     assert "Setup stopped before it finished. The saved enrollment was kept." in interrupted["outcome"]
     assert interrupted["steps"] == progress(*["Done"] * 4, "Stopped here", "Not reached", "Not reached")
     assert _stop_text(interrupted) in interrupted["outcome"]  # the engine's own advice, word for word
+    # ...below the window's own guidance: Install again is safe here (saved enrollment and stored token). (The cause is in the
+    # setup log, which the guidance opens; this window always has it open -- test_installer_stop_guidance.py covers that.)
+    assert "What to do now: You can try again" in interrupted["outcome"]
+    assert "Select Install to try again: setup continues from where it stopped" in interrupted["outcome"]
+    assert "Setup stopped at Step 5 of 7: Install SortView Collector." in interrupted["outcome"]
+    assert "Technical details from setup (for your IT staff or SortView support):" in interrupted["outcome"]
+    assert "Setup step: step 7 (install)" in interrupted["outcome"]
+    # Copy details: the guidance's own summary -- no engine words, setup log, path, code or token.
+    [copied] = result["clipboard"]
+    assert copied.startswith("SortView Setup: diagnostic summary")
+    assert "Stopped at: Step 5 of 7: Install SortView Collector" in copied and "What to do: You can try again" in copied
+    assert "Setup stage: install" in copied and "Exit code: 3" in copied and "Installation: 41" in copied
+    assert "Saved enrollment on this computer: yes" in copied and "API token stored: yes" in copied
+    for unsafe in (DUMMY_CODE, "SimulatedToken", result["workspace"], "What went wrong", "setup.ps1", "install.ps1", "\\"):
+        assert unsafe not in copied, unsafe
     # The second run, started with nothing changed, recognises the saved installation and resumes it.
     resume = snapshot(result, "resume")["details"]
     assert "Installation 41" in resume and "No new enrollment code is needed" in resume
@@ -691,6 +722,7 @@ def test_cancel_before_enrollment_stops_safely_without_sending_the_code(tmp_path
     assert any("The enrollment code was NOT used." in line for line in done["events"])
     assert "Entering the enrollment code was cancelled." in done["outcome"] and _stop_text(done) in done["outcome"]
     assert "Setup was cancelled" in done["outcome"]
+    assert "select Install to run setup again" in done["outcome"]
     assert done["steps"] == progress("Done", "Done", "Done", "Stopped here", "Not reached", "Not reached", "Not reached")
     assert workspace_tools(result) == ["install-verify", "runtime-version", "http:GET"]  # no enrollment request
     assert_window_invariants(result)
