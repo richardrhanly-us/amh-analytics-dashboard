@@ -4,9 +4,27 @@
 
 - Release: `1.0.14`
 - `collector.__version__`: `1.0.14`
-- Canonical release artifact: **not built yet**. The fingerprint, the frozen-runtime record and the
-  installation validation are added to this document when the release is built and rehearsed (see
-  *Before this release is published*). Nothing here has been validated on a Windows machine yet.
+- Canonical release artifact: **built 2026-10-24, not yet published** (see *Canonical release artifact* below). The
+  remaining checks in *Before this release is published* are still to be performed and recorded.
+
+## Canonical release artifact
+
+Built from `62a4ae8f96728c281ce0575589850959c9886efc` (PRs #265 and #266) with `collector/freeze/build_frozen.ps1` and
+`python -m collector.build_release`, then compressed and verified as an extracted copy:
+
+- Release ZIP: `SortViewCollector-1.0.14.zip` (36,543,962 bytes)
+- Release ZIP SHA-256: `75e7830affaad61cc1c5716996287b9d8115a802087d6e25b63da9c132e501f5`
+- Bundle `MANIFEST.json` SHA-256: `8758e0f6dc86f288d94e013ad1540b8f95ea9675efb5514899c5898463339bb4`
+- Manifest entries: `1392`; frozen runtime files: `1378`
+- `runtime\SortViewCollector.exe` SHA-256: `e7c733a9c622fd9c2bf244b29d9cf2c264e323ab53cf72fa759c1298f7691399`
+- Build: CPython 3.14.6, PyInstaller 6.22.3; requests 2.33.1, urllib3 2.6.3, pandas 2.3.3, numpy 2.5.3
+
+Earlier test builds also report `1.0.14` but are **not** this release: the frozen runtime used in the M2d-4 P0C/P1/P1R
+VM tests (`SortViewCollector.exe` SHA-256 `9b948e8266748c0aa2bea074575bcb7c945c46b587a988ccb8bdd88072d81040`) predates
+PR #266. Identify a 1.0.14 artifact by the hashes above, never by its version output.
+
+The setup program for this bundle is packaged with `scripts/package_installer_release.py` (see
+`docs/release-process.md`, *SortView setup program package*), which takes the two SHA-256 values above from this record.
 
 1.0.14 is the first Collector release whose guided setup can install a **new** machine directly on
 Contract v2. **Contract 2 is not yet what a newly provisioned installation gets:** Super Admin still
