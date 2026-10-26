@@ -688,8 +688,172 @@ def test_after_an_owners_account_is_switched_off_the_remaining_owner_is_the_last
 def test_every_refusal_has_fixed_text_and_a_stable_code():
     codes = {"not_permitted", "owner_required", "invalid_role", "organization_not_found", "organization_not_editable",
              "member_not_found", "already_member", "last_owner", "invalid_member_details", "member_not_added",
-             "platform_admin_required", "user_not_found", "platform_admin_account", "concurrent_change"}
+             "platform_admin_required", "user_not_found", "platform_admin_account", "concurrent_change",
+             "owner_exists", "account_inactive"}
 
     assert set(user_admin_service._MESSAGES) == codes
     assert all(isinstance(m, str) and m for m in user_admin_service._MESSAGES.values())
     assert user_admin_service.ALLOWED_MEMBERSHIP_ROLES == ["owner", "admin", "manager", "viewer"]
+
+
+# =====================================================================================================================
+# An organization's first owner: a platform operation
+# =====================================================================================================================
+
+FRESH = 5
+OWNER_PASSWORD = "synthetic-Random-Owner-Password-1"
+
+
+@pytest.fixture
+def fresh(db):
+    """A newly provisioned organization: trial, no member at all."""
+    db.organization(FRESH, "fresh", "trial")
+    return db
+
+
+def _first_owner(email, actor=PLATFORM, org_slug="fresh", password=OWNER_PASSWORD):
+    return user_admin_service.assign_first_owner(org_slug, email, password, "Olive Owner", actor_user_id=actor)
+
+
+def test_a_new_address_becomes_the_first_owner_with_one_record_naming_the_platform_administrator(fresh):
+    result = _first_owner("  Olive.Owner@Example.invalid ")
+
+    assert result == {"ok": True, "message": "The first owner was assigned. If they already had a SortView account, "
+                                             "their existing password is unchanged."}
+    assert fresh.created == [{"email": "olive.owner@example.invalid", "password": OWNER_PASSWORD, "full_name": "Olive Owner"}]
+    account = _account(fresh, "olive.owner@example.invalid")
+    assert fresh.active_role(FRESH, account["id"]) == "owner"
+    created, added = fresh.audit()
+    assert created["event_type"] == "user_create_success"
+    assert (added["event_type"], added["user_id"], added["email"]) == ("membership_added", account["id"], "olive.owner@example.invalid")
+    assert added["metadata"] == {"org_slug": "fresh", "previous_role": None, "role": "owner", "scope": "platform_first_owner",
+                                 "actor_user_id": PLATFORM, "actor_email": _email(PLATFORM)}
+    assert OWNER_PASSWORD not in repr(fresh.audit()) and account["password_hash"] not in repr(fresh.audit())
+    # The library's own owners see it among their members' activity.
+    assert [e["event_type"] for e in list_recent_org_auth_events("fresh")] == ["membership_added"]
+    assert user_admin_service.has_active_owner("fresh")
+
+
+def test_an_existing_account_becomes_the_first_owner_exactly_as_it_is(fresh):
+    account = fresh.rows("SELECT * FROM app_users WHERE id = :u", u=BETA_OWNER)
+
+    result = _first_owner(_email(BETA_OWNER).upper(), password="a-password-that-must-be-ignored")
+
+    assert result["ok"] and fresh.created == []
+    assert fresh.rows("SELECT * FROM app_users WHERE id = :u", u=BETA_OWNER) == account  # hash, name, active: untouched
+    assert (fresh.active_role(FRESH, BETA_OWNER), fresh.active_role(BETA, BETA_OWNER)) == ("owner", "owner")
+    assert [e["event_type"] for e in fresh.audit()] == ["membership_added"]
+
+
+@pytest.mark.parametrize("actor", [OWNER, BETA_OWNER, STRANGER, 424242], ids=["an-owner", "another-owner", "stranger", "nobody"])
+def test_only_a_platform_administrator_may_assign_a_first_owner(fresh, actor):
+    before = fresh.snapshot()
+
+    assert _first_owner("olive@example.invalid", actor=actor)["code"] == "platform_admin_required"
+    assert fresh.snapshot() == before and fresh.created == []
+
+
+def test_a_platform_administrator_whose_own_account_is_off_may_not(fresh):
+    fresh.run("UPDATE app_users SET is_active = 0 WHERE id = :u", u=PLATFORM)
+    before = fresh.snapshot()
+
+    assert _first_owner("olive@example.invalid")["code"] == "platform_admin_required"
+    assert fresh.snapshot() == before
+
+
+@pytest.mark.parametrize("slug", ["acme", "beta"])
+def test_an_organization_that_already_has_an_owner_cannot_be_given_another_this_way(fresh, slug):
+    before = fresh.snapshot()
+
+    assert _first_owner(_email(STRANGER), org_slug=slug)["code"] == "owner_exists"
+    assert fresh.snapshot() == before and fresh.created == []
+
+
+def test_a_second_first_owner_is_refused(fresh):
+    assert _first_owner("olive@example.invalid")["ok"]
+    before = fresh.snapshot()
+
+    assert _first_owner(_email(STRANGER))["code"] == "owner_exists"
+    assert fresh.snapshot() == before
+
+
+@pytest.mark.parametrize("how", ["account-switched-off", "membership-removed"])
+def test_an_owner_who_is_not_active_does_not_count_as_one(fresh, how):
+    fresh.member(FRESH, VIEWER, "owner", removed=how == "membership-removed")
+    if how == "account-switched-off":
+        fresh.run("UPDATE app_users SET is_active = 0 WHERE id = :u", u=VIEWER)
+    assert not user_admin_service.has_active_owner("fresh")
+
+    assert _first_owner(_email(STRANGER))["ok"]
+    assert fresh.active_role(FRESH, STRANGER) == "owner"
+
+
+@pytest.mark.parametrize(("slug", "code"), [("paused", "organization_not_editable"), ("closed", "organization_not_editable"),
+                                            ("nowhere", "organization_not_found")])
+def test_a_suspended_cancelled_or_unknown_organization_gets_no_owner(fresh, slug, code):
+    # Their owners removed, so it is the organization's state -- not an owner -- that refuses.
+    fresh.run("UPDATE memberships SET removed_at = '2026-10-01' WHERE organization_id IN (:p, :c)", p=PAUSED, c=CLOSED)
+    before = fresh.snapshot()
+
+    assert _first_owner(_email(STRANGER), org_slug=slug)["code"] == code
+    assert fresh.snapshot() == before
+
+
+def test_a_platform_administrators_account_cannot_be_the_owner(fresh):
+    before = fresh.snapshot()
+
+    assert _first_owner(_email(PLATFORM))["code"] == "platform_admin_account"
+    assert fresh.snapshot() == before
+
+
+def test_a_switched_off_account_cannot_be_the_owner(fresh):
+    fresh.run("UPDATE app_users SET is_active = 0 WHERE id = :u", u=STRANGER)
+    before = fresh.snapshot()
+
+    assert _first_owner(_email(STRANGER))["code"] == "account_inactive"
+    assert fresh.snapshot() == before
+
+
+def test_someone_already_a_member_is_not_made_owner_by_the_back_door(fresh):
+    fresh.member(FRESH, STRANGER, "viewer")
+    before = fresh.snapshot()
+
+    assert _first_owner(_email(STRANGER))["code"] == "already_member"
+    assert fresh.snapshot() == before
+
+
+def test_someone_removed_earlier_gets_their_one_membership_row_back_as_owner(fresh):
+    fresh.member(FRESH, STRANGER, "viewer", removed=True)
+
+    assert _first_owner(_email(STRANGER))["ok"]
+
+    assert fresh.membership(FRESH, STRANGER) == {"role": "owner", "removed_at": None}
+
+
+@pytest.mark.parametrize(("email", "password"), [("", OWNER_PASSWORD), ("   ", OWNER_PASSWORD), ("not-an-address", OWNER_PASSWORD),
+                                                 (None, OWNER_PASSWORD), ("olive@example.invalid", ""), ("olive@example.invalid", None)])
+def test_a_first_owner_without_an_address_and_a_password_is_refused_before_anything_is_read(fresh, monkeypatch, email, password):
+    monkeypatch.setattr(user_admin_service, "get_engine", lambda: pytest.fail("nothing may be read"))
+
+    assert _first_owner(email, password=password)["code"] == "invalid_member_details"
+
+
+def test_a_new_first_owner_account_never_outlives_a_membership_that_could_not_be_completed(fresh, monkeypatch):
+    def fail_on_the_membership(conn, event_type, *args, **kwargs):
+        if event_type == "membership_added":
+            raise RuntimeError("the membership could not be completed")
+        record_audit(conn, event_type, *args, **kwargs)
+
+    monkeypatch.setattr(auth_service, "log_auth_event_with_connection", fail_on_the_membership)
+    before = fresh.snapshot()
+
+    with pytest.raises(RuntimeError):
+        _first_owner("olive@example.invalid")
+
+    assert len(fresh.created) == 1 and _account(fresh, "olive@example.invalid") is None
+    assert fresh.snapshot() == before
+
+
+def test_has_active_owner_is_false_for_an_organization_that_does_not_exist(fresh):
+    assert user_admin_service.has_active_owner("acme") and not user_admin_service.has_active_owner("fresh")
+    assert not user_admin_service.has_active_owner("nowhere")

@@ -15,6 +15,8 @@
                                            a library's lifecycle (admin_api.lifecycle_routes)
     GET /api/admin/plans, POST /api/admin/libraries, POST /api/admin/libraries/{org_slug}/operational-identity
                                            provisioning a library (admin_api.provisioning_routes)
+    POST /api/admin/libraries/{org_slug}/first-owner
+                                           a library's first owner, while it has none (admin_api.owner_routes)
 
 WHO. Platform administrators only, decided on every request by the router's own dependencies (so a route added
 later cannot leave them out):
@@ -40,6 +42,7 @@ from admin_api.diagnostics_routes import create_diagnostics_router
 from admin_api.installation_routes import create_installation_router
 from admin_api.library_routes import create_library_router
 from admin_api.lifecycle_routes import create_lifecycle_router
+from admin_api.owner_routes import create_owner_router
 from admin_api.provisioning_routes import create_provisioning_router
 from customer_api.auth_schemas import CurrentUserResponse
 from customer_api.errors import NO_STORE_HEADERS, CustomerApiRoute
@@ -72,5 +75,6 @@ def create_admin_router() -> APIRouter:
     router.include_router(create_installation_router())
     router.include_router(create_lifecycle_router())
     router.include_router(create_provisioning_router())
+    router.include_router(create_owner_router())
 
     return router

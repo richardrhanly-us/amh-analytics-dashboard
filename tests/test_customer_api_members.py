@@ -487,7 +487,9 @@ def test_every_service_code_is_mapped_and_the_services_own_message_is_never_rela
 
 def test_the_mapping_covers_exactly_the_organization_level_codes_the_service_has():
     organization_level = set(user_admin_service._MESSAGES) - {"platform_admin_required", "user_not_found", "platform_admin_account",
-                                                             "concurrent_change", "member_not_added"}
+                                                             "concurrent_change", "member_not_added",
+                                                             # the platform's first-owner refusals (admin_api.owner_routes)
+                                                             "owner_exists", "account_inactive"}
 
     assert set(member_routes._REFUSALS) | set(member_routes._PROBLEMS) == organization_level
 

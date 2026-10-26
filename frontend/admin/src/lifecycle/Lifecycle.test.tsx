@@ -35,6 +35,7 @@ function detail(status: string) {
     primary_branch: { slug: 'main', name: 'Main Branch', status: 'active' },
     operational_identity: 'assigned',
     subscription: { plan_code: 'starter', plan_name: 'Starter', status: 'trial' },
+    has_active_owner: true,
     sorters: [],
   }
 }

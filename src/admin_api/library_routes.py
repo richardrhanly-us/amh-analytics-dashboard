@@ -43,6 +43,7 @@ from services import (
     admin_library_service,
     pipeline_status_service,
     sorter_inventory_service,
+    user_admin_service,
 )
 from services.admin_library_service import LibraryRow
 from services.sorter_inventory_service import SorterSite
@@ -134,6 +135,7 @@ def create_library_router() -> APIRouter:
             primary_branch=_primary_branch(row),
             operational_identity=row.operational_identity,
             subscription=_subscription(row),
+            has_active_owner=user_admin_service.has_active_owner(row.slug),
             sorters=[_sorter_site(row.slug, site, now) for site in sorter_inventory_service.list_sorter_sites(row.slug)],
         )
         return JSONResponse(content=body.model_dump(mode="json"), headers=NO_STORE_HEADERS)

@@ -170,6 +170,8 @@ ADMIN_ROUTES = {
     ("GET", "/api/admin/plans"),
     ("POST", "/api/admin/libraries"),
     ("POST", "/api/admin/libraries/{org_slug}/operational-identity"),
+    # G6.
+    ("POST", "/api/admin/libraries/{org_slug}/first-owner"),
 }
 
 _PROBE = """

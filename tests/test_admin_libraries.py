@@ -26,6 +26,7 @@ from services import (
     platform_admin_service,
     session_service,
     sorter_inventory_service,
+    user_admin_service,
 )
 from services.admin_library_service import LibraryRow
 from services.pipeline_status_service import PipelineStatus
@@ -100,6 +101,8 @@ class World:
         self.statuses = {(NBPL_CUSTOMER, NBPL_BRANCH): PipelineStatus(state="degraded", last_reported_at=HEARD_AT)}
         self.status_reads: list[tuple[int, int]] = []
         self.open_scopes: list[tuple[int, int]] = []
+        self.owned = {"nbpl"}
+        monkeypatch.setattr(user_admin_service, "has_active_owner", lambda slug: slug in self.owned)
         monkeypatch.setattr(session_service, "validate_session", lambda token: dict(USER))
         monkeypatch.setattr(platform_admin_service, "is_platform_admin", lambda user_id: admin)
         monkeypatch.setattr(admin_library_service, "list_library_rows", lambda: list(self.rows))
@@ -299,6 +302,7 @@ def test_the_overview_lists_every_site_with_its_own_state(api, monkeypatch):
         "primary_branch": {"slug": "main", "name": "Main Branch", "status": "active"},
         "operational_identity": "assigned",
         "subscription": {"plan_code": "enterprise", "plan_name": "Enterprise", "status": "trial"},
+        "has_active_owner": True,
         "sorters": [
             {
                 "slug": "main",
@@ -343,6 +347,17 @@ def test_the_overview_says_a_missing_operational_identity_in_words(api, monkeypa
 
     assert body["operational_identity"] == "missing"
     assert body["sorters"] == []
+
+
+def test_the_overview_says_whether_the_library_has_an_owner_and_never_who(api, monkeypatch):
+    world = World(monkeypatch)
+    world.rows = [NBPL, PENDING]
+
+    owned = api.get("/api/admin/libraries/nbpl", headers=COOKIE).json()
+    unowned = api.get("/api/admin/libraries/pending", headers=COOKIE).json()
+
+    assert (owned["has_active_owner"], unowned["has_active_owner"]) == (True, False)
+    assert not {"owner", "owners", "owner_email", "email"} & _keys(owned)
 
 
 def test_a_failing_status_read_is_the_generic_server_error(api, monkeypatch):

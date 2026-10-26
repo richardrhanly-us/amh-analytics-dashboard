@@ -3,7 +3,16 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { describe, expect, it } from 'vitest'
 
-import { ALICE, deferred, jsonResponse, requestedUrls, serveApi, type ApiRoutes } from '../../../src/test/http.ts'
+import {
+  ALICE,
+  deferred,
+  jsonResponse,
+  noContent,
+  requestedUrls,
+  serveApi,
+  type ApiRoutes,
+  type FetchMock,
+} from '../../../src/test/http.ts'
 import { axeViolations } from '../../../src/test/axe.ts'
 import { AdminApp } from '../AdminApp.tsx'
 
@@ -47,6 +56,7 @@ const NBPL_DETAIL = {
   primary_branch: { slug: 'main', name: 'Main Branch', status: 'active' },
   operational_identity: 'assigned',
   subscription: { plan_code: 'enterprise', plan_name: 'Enterprise', status: 'trial' },
+  has_active_owner: true,
   sorters: [
     {
       slug: 'main',
@@ -179,6 +189,7 @@ describe('Library overview', () => {
       'Subscription',
       'Primary branch',
       'Operational identity',
+      'First owner',
       'Collector',
       'Sorters',
     ])
@@ -317,6 +328,144 @@ describe('Breadcrumb', () => {
     renderAt('/libraries', { 'GET /api/admin/libraries': () => jsonResponse(200, LIST) })
     await screen.findByRole('rowheader', { name: 'New Braunfels Public Library' })
     expect(screen.queryByRole('navigation', { name: 'Breadcrumb' })).not.toBeInTheDocument()
+  })
+})
+
+describe('First owner', () => {
+  const UNOWNED = { ...NBPL_DETAIL, slug: 'fresh', name: 'Fresh Library', status: 'trial', has_active_owner: false, sorters: [] }
+  const FIRST_OWNER = 'POST /api/admin/libraries/fresh/first-owner'
+
+  function posted(mock: FetchMock): { url: string; body: unknown }[] {
+    return mock.mock.calls
+      .filter(([, init]) => init?.method === 'POST')
+      .map(([url, init]) => ({ url: String(url), body: JSON.parse(String(init?.body)) as unknown }))
+  }
+
+  async function ownerSection() {
+    await screen.findByRole('heading', { level: 2, name: 'Fresh Library' })
+    return screen.getByRole('region', { name: 'First owner' })
+  }
+
+  async function fill(person: ReturnType<typeof userEvent.setup>, email: string, again: string) {
+    await person.type(screen.getByLabelText("Owner's email address"), email)
+    await person.type(screen.getByLabelText('Type the email address again'), again)
+    await person.type(screen.getByLabelText("Owner's name (optional)"), 'Olive Owner')
+  }
+
+  it('asks for the address twice, confirms the library and the address, then assigns and says how to sign in', async () => {
+    let owned = false
+    const fetchMock = renderAt('/libraries/fresh', {
+      'GET /api/admin/libraries/fresh': () => jsonResponse(200, { ...UNOWNED, has_active_owner: owned }),
+      [FIRST_OWNER]: () => {
+        owned = true
+        return noContent()
+      },
+    })
+    const person = userEvent.setup()
+    const section = await ownerSection()
+    expect(within(section).getByText('No one can sign in to this library yet. Assign its first owner on this page.')).toBeInTheDocument()
+    expect(document.querySelectorAll('input[type="password"]')).toHaveLength(0)
+
+    await fill(person, 'Olive.Owner@Example.test', 'olive.owner@example.test ')
+    await person.click(within(section).getByRole('button', { name: 'Review' }))
+
+    const heading = within(section).getByRole('heading', { name: 'Confirm the first owner' })
+    expect(heading).toHaveFocus()
+    expect(section.textContent).toMatch(/Make olive\.owner@example\.test the first owner of Fresh Library\?/)
+    expect(posted(fetchMock)).toEqual([])
+
+    await person.click(within(section).getByRole('button', { name: 'Assign first owner' }))
+
+    expect(await within(section).findByText('This library has an owner. Its owners add everyone else from the Members page in the SortView app.')).toBeInTheDocument()
+    expect(within(section).getByRole('status')).toHaveTextContent(
+      /^First owner assigned\. Ask olive\.owner@example\.test to open the SortView app, choose .Forgot password\?. on the sign-in page, and set a password with this address\.$/,
+    )
+    expect(posted(fetchMock)).toEqual([
+      {
+        url: '/api/admin/libraries/fresh/first-owner',
+        body: { email: 'Olive.Owner@Example.test', email_confirmation: 'olive.owner@example.test', full_name: 'Olive Owner' },
+      },
+    ])
+    expect(within(section).queryByRole('form')).toBeNull()
+  })
+
+  it('sends nothing while the two addresses differ, or there is no address', async () => {
+    const fetchMock = renderAt('/libraries/fresh', { 'GET /api/admin/libraries/fresh': () => jsonResponse(200, UNOWNED) })
+    const person = userEvent.setup()
+    const section = await ownerSection()
+
+    await person.click(within(section).getByRole('button', { name: 'Review' }))
+    expect(screen.getByLabelText("Owner's email address")).toHaveAccessibleDescription("Enter the owner's email address.")
+
+    await fill(person, 'olive@example.test', 'oliver@example.test')
+    await person.click(within(section).getByRole('button', { name: 'Review' }))
+    expect(screen.getByLabelText('Type the email address again')).toHaveAccessibleDescription('The two email addresses are not the same.')
+    expect(within(section).queryByRole('heading', { name: 'Confirm the first owner' })).toBeNull()
+    expect(posted(fetchMock)).toEqual([])
+  })
+
+  it('goes back to the details, as they were, from the confirmation', async () => {
+    const fetchMock = renderAt('/libraries/fresh', { 'GET /api/admin/libraries/fresh': () => jsonResponse(200, UNOWNED) })
+    const person = userEvent.setup()
+    const section = await ownerSection()
+    await fill(person, 'olive@example.test', 'olive@example.test')
+    await person.click(within(section).getByRole('button', { name: 'Review' }))
+
+    await person.click(within(section).getByRole('button', { name: 'Change details' }))
+
+    expect(screen.getByLabelText("Owner's email address")).toHaveValue('olive@example.test')
+    expect(posted(fetchMock)).toEqual([])
+  })
+
+  it('says nothing was changed when the server refuses, in its own words', async () => {
+    renderAt('/libraries/fresh', {
+      'GET /api/admin/libraries/fresh': () => jsonResponse(200, UNOWNED),
+      [FIRST_OWNER]: () => jsonResponse(409, { code: 'owner_exists', message: 'This library already has an owner. Its owners add everyone else.' }),
+    })
+    const person = userEvent.setup()
+    const section = await ownerSection()
+    await fill(person, 'olive@example.test', 'olive@example.test')
+    await person.click(within(section).getByRole('button', { name: 'Review' }))
+
+    await person.click(within(section).getByRole('button', { name: 'Assign first owner' }))
+
+    expect(await within(section).findByRole('alert')).toHaveTextContent(
+      'Nothing was changed. This library already has an owner. Its owners add everyone else.',
+    )
+    expect(screen.getByLabelText("Owner's email address")).toBeInTheDocument()
+    expect(within(section).queryByRole('status')).toBeNull()
+  })
+
+  it('offers nothing for a library that already has an owner, or cannot be changed', async () => {
+    renderAt('/libraries/nbpl', { 'GET /api/admin/libraries/nbpl': () => jsonResponse(200, NBPL_DETAIL) })
+    await screen.findByRole('heading', { level: 2, name: 'New Braunfels Public Library' })
+    expect(screen.getByRole('region', { name: 'First owner' })).toHaveTextContent('This library has an owner.')
+    assertReadOnly()
+  })
+
+  it('explains that a suspended library with no owner cannot be given one', async () => {
+    renderAt('/libraries/fresh', { 'GET /api/admin/libraries/fresh': () => jsonResponse(200, { ...UNOWNED, status: 'suspended' }) })
+    const section = await ownerSection()
+    expect(section).toHaveTextContent('No one can sign in to this library. An owner can be assigned only while the library is active.')
+    expect(within(section).queryByRole('textbox')).toBeNull()
+  })
+
+  it('treats an overview without the owner flag as a failure', async () => {
+    const withoutFlag: Record<string, unknown> = { ...UNOWNED }
+    delete withoutFlag.has_active_owner
+    renderAt('/libraries/fresh', { 'GET /api/admin/libraries/fresh': () => jsonResponse(200, withoutFlag) })
+    expect(await screen.findByRole('alert')).toHaveTextContent('This library could not be loaded. Please try again.')
+  })
+
+  it('axe finds no violation on the details or the confirmation', async () => {
+    renderAt('/libraries/fresh', { 'GET /api/admin/libraries/fresh': () => jsonResponse(200, UNOWNED) })
+    const person = userEvent.setup()
+    const section = await ownerSection()
+    expect(await axeViolations()).toEqual([])
+
+    await fill(person, 'olive@example.test', 'olive@example.test')
+    await person.click(within(section).getByRole('button', { name: 'Review' }))
+    expect(await axeViolations()).toEqual([])
   })
 })
 

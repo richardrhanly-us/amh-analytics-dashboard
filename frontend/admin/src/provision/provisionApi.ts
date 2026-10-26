@@ -72,6 +72,20 @@ export async function provisionLibrary(request: ProvisionRequest): Promise<Provi
   }
 }
 
+export interface FirstOwnerRequest {
+  email: string
+  email_confirmation: string
+  full_name: string
+}
+
+/**
+ * POST /api/admin/libraries/{org_slug}/first-owner: makes this person the library's first owner, only while it has
+ * none. 204 with no body. No password is sent: the owner sets their own with "Forgot password?" in the SortView app.
+ */
+export async function assignFirstOwner(orgSlug: string, request: FirstOwnerRequest): Promise<void> {
+  await apiRequest(`/api/admin/libraries/${encodeURIComponent(orgSlug)}/first-owner`, { method: 'POST', body: request })
+}
+
 /** POST /api/admin/libraries/{org_slug}/operational-identity: the identity is assigned, and whether anything changed. */
 export async function assignOperationalIdentity(orgSlug: string): Promise<{ operational_identity: 'assigned'; changed: boolean }> {
   const body = record(await apiRequest(`/api/admin/libraries/${encodeURIComponent(orgSlug)}/operational-identity`, { method: 'POST' }))
