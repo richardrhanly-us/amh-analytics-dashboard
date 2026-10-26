@@ -336,6 +336,7 @@ describe('Collector configuration', () => {
           primary_branch: null,
           operational_identity: 'missing',
           subscription: null,
+          has_active_owner: true,
           sorters: [],
         }),
     })

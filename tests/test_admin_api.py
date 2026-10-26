@@ -226,6 +226,8 @@ def test_every_admin_route_requires_a_platform_admin_and_the_admin_origin_guard(
         ("GET", f"{ADMIN_API_PREFIX}/plans"),
         ("POST", f"{ADMIN_API_PREFIX}/libraries"),
         ("POST", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/operational-identity"),
+        # G6: a library's first owner (admin_api.owner_routes).
+        ("POST", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/first-owner"),
     }
     for route in admin_routes:
         router_level = {dependency.dependency for dependency in route.dependencies}

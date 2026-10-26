@@ -209,6 +209,7 @@ describe('Sorter diagnostics', () => {
           primary_branch: { slug: 'main', name: 'Main Branch', status: 'active' },
           operational_identity: 'assigned',
           subscription: null,
+          has_active_owner: true,
           sorters: [{ ...BASE.sorter, pipeline: BASE.pipeline }],
         }),
       [`GET ${PATH}`]: () => jsonResponse(200, V2),

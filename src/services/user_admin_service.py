@@ -9,6 +9,10 @@ an account can be used at all.
     list_recent_org_auth_events(org_slug, limit)                          what happened IN this organization
 
     set_global_account_active(user_id, is_active, actor_user_id=...)      platform administrators only
+    has_active_owner(org_slug)                                            whether the organization has an owner
+    assign_first_owner(org_slug, email, password, full_name, actor_user_id=...)
+                                                                          platform administrators only, and only
+                                                                          while the organization has no owner
 
 TWO DIFFERENT THINGS, KEPT APART.
 
@@ -81,6 +85,8 @@ PLATFORM_ADMIN_REQUIRED = "platform_admin_required"
 USER_NOT_FOUND = "user_not_found"
 PLATFORM_ADMIN_ACCOUNT = "platform_admin_account"
 CONCURRENT_CHANGE = "concurrent_change"
+OWNER_EXISTS = "owner_exists"
+ACCOUNT_INACTIVE = "account_inactive"
 
 # Shown by the admin Users page; fixed text, never an exception's own message.
 USER_CREATE_FAILED_MESSAGE = (
@@ -101,6 +107,8 @@ _MESSAGES: dict[str, str] = {
     USER_NOT_FOUND: "User not found.",
     PLATFORM_ADMIN_ACCOUNT: "Platform administrator accounts cannot be changed here.",
     CONCURRENT_CHANGE: "This account's organizations changed while it was being updated. Nothing was changed; try again.",
+    OWNER_EXISTS: "This organization already has an active owner. Its owners add everyone else.",
+    ACCOUNT_INACTIVE: "That account is switched off, so it cannot be made an owner.",
 }
 
 # The organization statuses under which its members may be administered: the ones access_service.get_org_access_mode
@@ -388,6 +396,114 @@ def add_organization_member(
     return {
         "ok": True,
         "message": "The user was added to this organization. If they already had a SortView account, their existing password is unchanged.",
+    }
+
+
+# =====================================================================================================================
+# An organization's first owner: a platform operation
+# =====================================================================================================================
+
+_ACCOUNT_BY_EMAIL_SQL = """
+    SELECT id, email, is_active, is_platform_admin
+    FROM app_users
+    WHERE lower(email) = :email
+    LIMIT 1
+"""
+
+
+def has_active_owner(org_slug: str) -> bool:
+    """Whether the organization has an active owner now. False for an organization that does not exist."""
+    sql = text(_ORGANIZATION_BY_SLUG_SQL)
+    engine = get_engine()
+    with engine.connect() as conn:
+        organization = conn.execute(sql, {"org_slug": org_slug}).mappings().first()
+        if organization is None:
+            return False
+        owners = conn.execute(text(_ACTIVE_OWNER_COUNT_SQL), {"organization_id": organization["id"]}).scalar_one()
+        return int(owners) > 0
+
+
+def assign_first_owner(
+    org_slug: str,
+    email: str,
+    password: str,
+    full_name: str,
+    *,
+    actor_user_id: int,
+) -> dict[str, Any]:
+    """Makes the person with this e-mail address the organization's first owner, so that a newly provisioned library
+    has someone who can sign in and add everyone else.
+
+    A PLATFORM operation, and the one place a platform administrator acts on an organization's members. It is bounded
+    so that it cannot be used to take over an organization that already has one: it is refused unless the
+    organization has NO active owner, counted with its row locked (as every owner-sensitive change here is), so two of
+    these at once give it exactly one owner. The actor must be an active platform administrator -- read here, from
+    the database, in the same transaction.
+
+    The account is found or created exactly as add_organization_member does it: a new address gets an account with
+    `password` (the caller generates a random one nobody is told; the person sets their own through password reset),
+    in this same transaction; an existing account is left exactly as it is and only gains the membership. A platform
+    administrator's account, a switched-off account, and someone already an active member are refused. The record is
+    written in the same transaction, naming the platform administrator who acted.
+    """
+    normalized_email = email.strip().lower() if isinstance(email, str) else ""
+    if "@" not in normalized_email or not isinstance(password, str) or not password:
+        return _refused(INVALID_MEMBER_DETAILS)
+
+    engine = get_engine()
+    try:
+        with engine.begin() as conn:
+            actor = conn.execute(text(_ACCOUNT_SQL), {"user_id": actor_user_id}).mappings().first()
+            if actor is None or not actor["is_active"] or not actor["is_platform_admin"]:
+                raise _Refused(PLATFORM_ADMIN_REQUIRED)
+
+            organization = _lock_organization(conn, org_slug)
+            owners = conn.execute(text(_ACTIVE_OWNER_COUNT_SQL), {"organization_id": organization["id"]}).scalar_one()
+            if int(owners) > 0:
+                raise _Refused(OWNER_EXISTS)
+
+            account = conn.execute(text(_ACCOUNT_BY_EMAIL_SQL), {"email": normalized_email}).mappings().first()
+            if account is None:
+                try:
+                    created = auth_service.create_user_with_connection(
+                        conn, email=normalized_email, password=password, full_name=full_name or ""
+                    )
+                except ValueError as exc:
+                    log_safe_exception(logger, "User creation refused", exc)
+                    raise _Refused(MEMBER_NOT_ADDED) from None
+                if created is None:
+                    # Created by someone else in this same instant: an existing account like any other.
+                    account = conn.execute(text(_ACCOUNT_BY_EMAIL_SQL), {"email": normalized_email}).mappings().first()
+                    if account is None:
+                        raise _Refused(MEMBER_NOT_ADDED)
+                else:
+                    account = {"id": created["id"], "email": created["email"], "is_active": True, "is_platform_admin": False}
+            if account["is_platform_admin"]:
+                raise _Refused(PLATFORM_ADMIN_ACCOUNT)
+            if not account["is_active"]:
+                raise _Refused(ACCOUNT_INACTIVE)
+
+            parameters = {"organization_id": organization["id"], "user_id": account["id"], "role": membership_policy.OWNER}
+            existing = _membership(conn, organization["id"], account["id"])
+            if existing is None:
+                conn.execute(text(_INSERT_MEMBERSHIP_SQL), parameters)
+            elif existing["removed_at"] is None:
+                raise _Refused(ALREADY_MEMBER)
+            else:
+                conn.execute(text(_RESTORE_MEMBERSHIP_SQL), {**parameters, "membership_id": existing["membership_id"]})
+
+            _record(
+                conn, "membership_added", "First owner assigned to organization.",
+                org_slug=organization["slug"], actor={"user_id": actor_user_id, "email": actor["email"]},
+                user_id=account["id"], email=account["email"],
+                previous_role=None, role=membership_policy.OWNER, scope="platform_first_owner",
+            )
+    except _Refused as refused:
+        return _refused(refused.code)
+
+    return {
+        "ok": True,
+        "message": "The first owner was assigned. If they already had a SortView account, their existing password is unchanged.",
     }
 
 

@@ -86,4 +86,6 @@ class LibraryDetailResponse(_ResponseModel):
     primary_branch: BranchSummary | None
     operational_identity: OperationalIdentity
     subscription: SubscriptionSummary | None
+    # Whether anyone can sign in to administer it: never who.
+    has_active_owner: bool
     sorters: list[SorterSiteSummary]

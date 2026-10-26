@@ -753,3 +753,43 @@ def test_two_deactivations_across_the_same_organizations_neither_deadlock_nor_or
 def test_the_service_locks_only_on_postgresql_and_this_is_postgresql(db):
     with db.connect() as conn:
         assert user_admin_service._is_postgresql(conn) is True
+
+
+# =====================================================================================================================
+# An organization's first owner (G6)
+# =====================================================================================================================
+
+def test_a_first_owner_is_a_real_account_membership_and_jsonb_record_in_one_transaction(db):
+    result = user_admin_service.assign_first_owner("gamma", "olive@example.invalid", PASSWORD, "Olive Owner", actor_user_id=PLATFORM)
+
+    assert result["ok"]
+    [(account_id, password_hash)] = rows(db, "SELECT id, password_hash FROM app_users WHERE email = 'olive@example.invalid'")
+    assert check_password_hash(password_hash, PASSWORD)
+    assert _active_owners(db, GAMMA) == [account_id]
+    assert _audit(db)[-1] == ("membership_added", account_id, "olive@example.invalid", True,
+                              {"org_slug": "gamma", "previous_role": None, "role": "owner", "scope": "platform_first_owner",
+                               "actor_user_id": PLATFORM, "actor_email": _email(PLATFORM)})
+    assert [e["event_type"] for e in list_recent_org_auth_events("gamma")] == ["membership_added"]
+
+
+def test_two_first_owners_at_once_leave_exactly_one(db):
+    for _ in range(ROUNDS):
+        run(db, "DELETE FROM memberships WHERE organization_id = :o", o=GAMMA)
+
+        results = _race(
+            lambda: user_admin_service.assign_first_owner("gamma", _email(STRANGER), PASSWORD, "", actor_user_id=PLATFORM),
+            lambda: user_admin_service.assign_first_owner("gamma", _email(BETA_OWNER), PASSWORD, "", actor_user_id=PLATFORM),
+        )
+
+        assert len(_active_owners(db, GAMMA)) == 1, results
+        assert sorted(r["ok"] for r in results) == [False, True], results
+        assert next(r for r in results if not r["ok"])["code"] == "owner_exists"
+
+
+def test_a_refused_first_owner_writes_nothing_at_all(db):
+    before = (rows(db, "SELECT * FROM memberships ORDER BY id"), rows(db, "SELECT id, email FROM app_users ORDER BY id"), _audit(db))
+
+    assert user_admin_service.assign_first_owner("acme", "olive@example.invalid", PASSWORD, "", actor_user_id=PLATFORM)["code"] == "owner_exists"
+    assert user_admin_service.assign_first_owner("gamma", "olive@example.invalid", PASSWORD, "", actor_user_id=OWNER)["code"] == "platform_admin_required"
+
+    assert (rows(db, "SELECT * FROM memberships ORDER BY id"), rows(db, "SELECT id, email FROM app_users ORDER BY id"), _audit(db)) == before

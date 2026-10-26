@@ -10,7 +10,7 @@ import { slugify } from './provisionApi.ts'
 
 const SESSION = { 'GET /api/admin/session': () => jsonResponse(200, ALICE) }
 const PLANS = { 'GET /api/admin/plans': () => jsonResponse(200, { plans: [{ code: 'starter', name: 'Starter' }, { code: 'pro', name: 'Pro' }] }) }
-const NO_OWNER = 'No one can sign in to this library yet. Creating its first owner is not available in SortView administration yet.'
+const NO_OWNER = 'No one can sign in to this library yet. Assign its first owner on this page.'
 
 function detail(slug: string, identity: string) {
   return {
@@ -21,6 +21,8 @@ function detail(slug: string, identity: string) {
     primary_branch: { slug: 'main', name: 'Main Branch', status: 'active' },
     operational_identity: identity,
     subscription: { plan_code: 'pro', plan_name: 'Pro', status: 'trial' },
+    // Newly provisioned: nobody can sign in yet.
+    has_active_owner: false,
     sorters: [],
   }
 }

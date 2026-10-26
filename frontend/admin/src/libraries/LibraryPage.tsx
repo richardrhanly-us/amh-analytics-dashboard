@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router'
 
 import { isApiError } from '../../../src/api/client.ts'
@@ -13,7 +13,7 @@ import {
   pipelineStateLabel,
   subscriptionStatusLabel,
 } from './labels.ts'
-import { assignOperationalIdentity } from '../provision/provisionApi.ts'
+import { assignFirstOwner, assignOperationalIdentity } from '../provision/provisionApi.ts'
 import { getLibrary, type LibraryDetail } from './librariesApi.ts'
 import { AdminBreadcrumb } from '../AdminBreadcrumb.tsx'
 import { AdminPageHeading } from '../AdminPageHeading.tsx'
@@ -29,8 +29,7 @@ function Fact({ term, children }: { term: string; children: ReactNode }) {
   )
 }
 
-export const NO_OWNER_YET =
-  'No one can sign in to this library yet. Creating its first owner is not available in SortView administration yet.'
+export const NO_OWNER_YET = 'No one can sign in to this library yet. Assign its first owner on this page.'
 
 /** Shown once, right after provisioning: what is left to do, on which page. */
 function NextSteps({ orgSlug }: { orgSlug: string }) {
@@ -100,6 +99,173 @@ function OperationalIdentity({ library }: { library: LibraryDetail }) {
   )
 }
 
+interface OwnerProblems {
+  email?: string
+  confirmation?: string
+}
+
+function sameAddress(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase()
+}
+
+/**
+ * The library's first owner: shown as a fact once it has one, and -- while it has none and can be changed -- a form
+ * that asks for the address twice, then a confirmation naming the library and the address before anything is sent.
+ * The server decides: it refuses unless the library still has no owner.
+ */
+function FirstOwner({ library }: { library: LibraryDetail }) {
+  const queryClient = useQueryClient()
+  const [email, setEmail] = useState('')
+  const [confirmation, setConfirmation] = useState('')
+  const [fullName, setFullName] = useState('')
+  const [problems, setProblems] = useState<OwnerProblems>({})
+  const [confirming, setConfirming] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [failure, setFailure] = useState<string | null>(null)
+  const [assigned, setAssigned] = useState<string | null>(null)
+  const confirmHeading = useRef<HTMLHeadingElement>(null)
+
+  useEffect(() => {
+    if (confirming) {
+      confirmHeading.current?.focus()
+    }
+  }, [confirming])
+
+  function review(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const found: OwnerProblems = {}
+    if (!email.includes('@')) {
+      found.email = "Enter the owner's email address."
+    } else if (!sameAddress(email, confirmation)) {
+      found.confirmation = 'The two email addresses are not the same.'
+    }
+    setProblems(found)
+    setFailure(null)
+    setConfirming(Object.keys(found).length === 0)
+  }
+
+  async function assign() {
+    if (sending) {
+      return
+    }
+    setSending(true)
+    setFailure(null)
+    try {
+      await assignFirstOwner(library.slug, { email: email.trim(), email_confirmation: confirmation.trim(), full_name: fullName.trim() })
+      setAssigned(email.trim().toLowerCase())
+    } catch (caught) {
+      // Only a refusal (4xx) says nothing changed. Anything else may have followed an assignment that did happen; the
+      // refetch below shows whether the library now has an owner.
+      const refused = isApiError(caught) && caught.status !== null && caught.status >= 400 && caught.status < 500
+      setFailure(refused ? `Nothing was changed. ${caught.message}` : 'The result could not be confirmed. The library has been refreshed.')
+      setConfirming(false)
+    } finally {
+      setSending(false)
+      void queryClient.invalidateQueries({ queryKey: ['admin', 'library', library.slug] })
+    }
+  }
+
+  const changeable = library.status === 'active' || library.status === 'trial'
+
+  return (
+    <section aria-labelledby="owner-heading">
+      <h3 id="owner-heading">First owner</h3>
+      {assigned !== null && (
+        <p role="status">
+          First owner assigned. Ask {assigned} to open the SortView app, choose &lsquo;Forgot password?&rsquo; on the sign-in
+          page, and set a password with this address.
+        </p>
+      )}
+      {library.has_active_owner ? (
+        <p>This library has an owner. Its owners add everyone else from the Members page in the SortView app.</p>
+      ) : !changeable ? (
+        <p>No one can sign in to this library. An owner can be assigned only while the library is active.</p>
+      ) : (
+        <>
+          <p>{NO_OWNER_YET}</p>
+          {failure !== null && (
+            <p className="error-message" role="alert">
+              {failure}
+            </p>
+          )}
+          {confirming ? (
+            <div className="notice">
+              <h4 id="owner-confirm-heading" ref={confirmHeading} tabIndex={-1}>
+                Confirm the first owner
+              </h4>
+              <p>
+                Make <strong>{email.trim().toLowerCase()}</strong> the first owner of <strong>{library.name}</strong>? They will be
+                able to sign in, see all of this library&apos;s SortView data, and add other people. After this, only the
+                library&apos;s owners can change who its owners are.
+              </p>
+              <div className="form-actions">
+                <button type="button" disabled={sending} aria-disabled={sending} onClick={() => void assign()}>
+                  {sending ? 'Assigning…' : 'Assign first owner'}
+                </button>
+                <button type="button" disabled={sending} onClick={() => setConfirming(false)}>
+                  Change details
+                </button>
+              </div>
+            </div>
+          ) : (
+            <form onSubmit={review} noValidate aria-labelledby="owner-heading">
+              <div className="field">
+                <label htmlFor="owner-email">Owner&apos;s email address</label>
+                <input
+                  id="owner-email"
+                  type="email"
+                  autoComplete="off"
+                  spellCheck={false}
+                  required
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  aria-invalid={problems.email !== undefined}
+                  aria-describedby={problems.email === undefined ? undefined : 'owner-email-problem'}
+                />
+                {problems.email !== undefined && (
+                  <p className="field-problem" id="owner-email-problem">
+                    {problems.email}
+                  </p>
+                )}
+              </div>
+              <div className="field">
+                <label htmlFor="owner-email-confirmation">Type the email address again</label>
+                <input
+                  id="owner-email-confirmation"
+                  type="email"
+                  autoComplete="off"
+                  spellCheck={false}
+                  required
+                  value={confirmation}
+                  onChange={(event) => setConfirmation(event.target.value)}
+                  aria-invalid={problems.confirmation !== undefined}
+                  aria-describedby={problems.confirmation === undefined ? undefined : 'owner-email-confirmation-problem'}
+                />
+                {problems.confirmation !== undefined && (
+                  <p className="field-problem" id="owner-email-confirmation-problem">
+                    {problems.confirmation}
+                  </p>
+                )}
+              </div>
+              <div className="field">
+                <label htmlFor="owner-name">Owner&apos;s name (optional)</label>
+                <input id="owner-name" type="text" autoComplete="off" value={fullName} onChange={(event) => setFullName(event.target.value)} />
+              </div>
+              <p className="field-help">
+                No password is set here. The owner sets their own with &lsquo;Forgot password?&rsquo; in the SortView app. If the
+                address already has a SortView account, its password stays as it is.
+              </p>
+              <div className="form-actions">
+                <button type="submit">Review</button>
+              </div>
+            </form>
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
 function Overview({ library }: { library: LibraryDetail }) {
   const { primary_branch: branch, subscription } = library
   return (
@@ -145,6 +311,8 @@ function Overview({ library }: { library: LibraryDetail }) {
       </section>
 
       <OperationalIdentity library={library} />
+
+      <FirstOwner library={library} />
 
       <section aria-labelledby="collector-heading">
         <h3 id="collector-heading">Collector</h3>
@@ -210,7 +378,7 @@ function Overview({ library }: { library: LibraryDetail }) {
   )
 }
 
-/** /libraries/:orgSlug -- one library. Its one action here completes a missing operational identity. */
+/** /libraries/:orgSlug -- one library. Its actions here complete a missing operational identity and assign a first owner. */
 export function LibraryPage() {
   const { orgSlug = '' } = useParams()
   // Set by the provisioning page's navigation only: a reload or a link here shows no next steps.

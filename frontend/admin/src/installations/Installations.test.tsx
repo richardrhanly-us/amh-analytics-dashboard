@@ -248,7 +248,7 @@ describe('Installations', () => {
       'GET /api/admin/libraries/acme': () =>
         jsonResponse(200, {
           timezone: 'America/Chicago', slug: 'acme', name: 'Acme Library', status: 'active', primary_branch: null,
-          operational_identity: 'assigned', subscription: null, sorters: [],
+          operational_identity: 'assigned', subscription: null, has_active_owner: true, sorters: [],
         }),
     })
     const person = userEvent.setup()
@@ -366,7 +366,7 @@ describe('Installations', () => {
       'GET /api/admin/libraries/acme': () =>
         jsonResponse(200, {
           timezone: 'America/Chicago', slug: 'acme', name: 'Acme Library', status: 'active', primary_branch: null,
-          operational_identity: 'assigned', subscription: null, sorters: [],
+          operational_identity: 'assigned', subscription: null, has_active_owner: true, sorters: [],
         }),
     })
     const person = userEvent.setup()
@@ -382,7 +382,7 @@ describe('Installations', () => {
       'GET /api/admin/libraries/acme': () =>
         jsonResponse(200, {
           timezone: 'America/Chicago', slug: 'acme', name: 'Acme Library', status: 'active', primary_branch: null,
-          operational_identity: 'assigned', subscription: null, sorters: [],
+          operational_identity: 'assigned', subscription: null, has_active_owner: true, sorters: [],
         }),
     })
     await loaded()

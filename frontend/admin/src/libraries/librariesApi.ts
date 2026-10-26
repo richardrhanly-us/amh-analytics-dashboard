@@ -66,6 +66,8 @@ export interface LibraryDetail {
   primary_branch: Branch | null
   operational_identity: OperationalIdentity
   subscription: Subscription | null
+  /** Whether anyone can sign in to administer the library: never who. */
+  has_active_owner: boolean
   sorters: SorterSite[]
 }
 
@@ -178,6 +180,14 @@ export async function getLibrary(orgSlug: string, signal?: AbortSignal): Promise
     primary_branch: orNull(body.primary_branch, branch),
     operational_identity: oneOf(body.operational_identity, IDENTITIES),
     subscription: orNull(body.subscription, subscription),
+    has_active_owner: flag(body.has_active_owner),
     sorters: list(body.sorters).map(sorterSite),
   }
+}
+
+function flag(value: unknown): boolean {
+  if (typeof value !== 'boolean') {
+    throw unexpectedResponse(200)
+  }
+  return value
 }
