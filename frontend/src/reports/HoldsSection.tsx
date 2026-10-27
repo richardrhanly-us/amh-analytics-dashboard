@@ -6,6 +6,10 @@ import { useHoldsReport } from './useSorterReports.ts'
 
 const HOLDS_RANGE_NOTE = `Holds reporting is currently available for ranges up to ${HOLDS_MAX_RANGE_DAYS} days.`
 
+/** Which holds the two counts are: the same words wherever they are shown. */
+export const HOLDS_EXPLANATION =
+  'Holds for library patrons. Holds for the library’s own service accounts and for interlibrary loans are not counted as public holds.'
+
 /**
  * A sorter's Holds report: how many public holds and how many interlibrary
  * loan holds it handled over the range. Two counts, nothing else -- no
@@ -40,10 +44,7 @@ export function HoldsSection({ orgSlug, branchSlug, range }: { orgSlug: string; 
     <ReportSection name="report-holds" heading="Holds" read={read}>
       {(report) => (
         <>
-          <p className="section-intro">
-            Holds for library patrons. Holds for the library&rsquo;s own service accounts and for interlibrary loans are
-            not counted as public holds.
-          </p>
+          <p className="section-intro">{HOLDS_EXPLANATION}</p>
           <dl className="metrics">
             <MetricCard label="Public holds" {...count(report.public_hold_count)} />
             <MetricCard label="Interlibrary loan (ILL) holds" {...count(report.ill_hold_count)} />

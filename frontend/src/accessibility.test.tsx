@@ -93,6 +93,8 @@ describe('the structure of a page', () => {
       'H4 Rejects',
       'H3 Hourly check-ins',
       'H3 Top reject reasons',
+      'H3 Bin volume today',
+      'H4 Check-ins by bin today',
     ])
   })
 
@@ -119,14 +121,16 @@ describe('the structure of a page', () => {
     expect(screen.getAllByRole('main')).toHaveLength(1)
     // The header's two account actions, the breadcrumb, and the sorter's own two views.
     expect(screen.getAllByRole('navigation').map((nav) => nav.getAttribute('aria-label'))).toEqual(['Account', 'Breadcrumb', 'Sorter views'])
-    // The dashboard's four parts are the only named regions; the page itself is <main>.
+    // The dashboard's five parts are the only named regions; the page itself is <main>. (Holds today is a sixth
+    // where the plan includes holds; Northbridge's does not.)
     expect(screen.getAllByRole('region').map((region) => region.getAttribute('aria-labelledby'))).toEqual([
       'pipeline-heading',
       'today-heading',
       'hourly-heading',
       'reasons-heading',
+      'today-bins-heading',
     ])
-    expect(within(main()).getAllByRole('region')).toHaveLength(4)
+    expect(within(main()).getAllByRole('region')).toHaveLength(5)
   })
 
   it('gives the breadcrumb a name, links for the pages above and the current page marked as such', async () => {
@@ -184,6 +188,7 @@ describe('controls', () => {
       'Refresh',
       'Pause automatic refresh',
       'Show hourly table',
+      'Show table: Check-ins by bin today',
     ])
     for (const button of within(app).getAllByRole('button')) {
       expect(button.tagName).toBe('BUTTON')
@@ -217,6 +222,7 @@ describe('controls', () => {
       'button: Refresh',
       'button: Pause automatic refresh',
       'button: Show hourly table',
+      'button: Show table: Check-ins by bin today',
     ])
   })
 

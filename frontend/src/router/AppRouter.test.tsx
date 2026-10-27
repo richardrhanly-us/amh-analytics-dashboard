@@ -475,7 +475,8 @@ describe('an organization page', () => {
     )
     await user.click(link('Riverside Main AMH'))
     await heading('Riverside Main AMH')
-    expect(screen.getByRole('note')).toHaveTextContent('currently suspended')
+    // Found by its words: the dashboard below it may have a note of its own (a bin count with no recognized bin).
+    expect(screen.getByText(/currently suspended/)).toHaveRole('note')
   })
 
   it('shows no suspension notice for an organization with full access', async () => {
@@ -618,7 +619,7 @@ describe('a branch page', () => {
     await heading('Central Library AMH')
     await screen.findByRole('heading', { level: 3, name: 'Top reject reasons' })
 
-    expect(liveRequests(fetchMock)).toHaveLength(6)
+    expect(liveRequests(fetchMock)).toHaveLength(7)
     expect(liveRequests(fetchMock).every((url) => url.startsWith('/api/organizations/northbridge/branches/central/'))).toBe(true)
     // The hourly chart is the one image; there is still no picker, tab strip or gauge.
     for (const role of ['combobox', 'tab', 'tablist', 'progressbar', 'meter']) {
@@ -912,7 +913,7 @@ describe('a sorter page', () => {
     expect(main()).toHaveTextContent('Live activity for this sorter, at Central Library')
     expect(main()).not.toHaveTextContent(/branch/i)
     expect(liveRequests(fetchMock).every((url) => url.startsWith('/api/organizations/metro/branches/central/'))).toBe(true)
-    expect(liveRequests(fetchMock)).toHaveLength(6)
+    expect(liveRequests(fetchMock)).toHaveLength(7)
     expect(screen.queryByRole('note')).not.toBeInTheDocument()
   })
 
@@ -949,8 +950,8 @@ describe('a sorter page', () => {
     expect(main()).toHaveTextContent('Kept at Westside: 28.')
     expect(screen.queryByText('North', { selector: 'dt' })).not.toBeInTheDocument()
 
-    expect(liveRequests(fetchMock).filter((url) => url.includes('/branches/central/'))).toHaveLength(6)
-    expect(liveRequests(fetchMock).filter((url) => url.includes('/branches/westside/'))).toHaveLength(6)
+    expect(liveRequests(fetchMock).filter((url) => url.includes('/branches/central/'))).toHaveLength(7)
+    expect(liveRequests(fetchMock).filter((url) => url.includes('/branches/westside/'))).toHaveLength(7)
     // The organization was read once: moving between its sorters asks nothing new about it.
     expect(organizationRequests(fetchMock)).toEqual(['/api/organizations/metro'])
   })
@@ -1225,7 +1226,7 @@ describe('the address a sorter used to have', () => {
     await heading('Central Library AMH')
     expect(address()).toBe('/organizations/metro/sorters/central')
     await waitFor(() => expect(figure('Check-ins today')).toHaveTextContent(/^100$/))
-    expect(liveRequests(fetchMock)).toHaveLength(6)
+    expect(liveRequests(fetchMock)).toHaveLength(7)
     // The redirect took no focus: nobody asked to be moved.
     expect(document.body).toHaveFocus()
   })

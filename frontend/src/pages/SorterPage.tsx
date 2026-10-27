@@ -1,7 +1,7 @@
 import { useOutletContext } from 'react-router'
 
 import { LiveToday } from '../liveToday/LiveToday.tsx'
-import { hasTransits } from './capabilities.ts'
+import { hasHolds, hasTransits } from './capabilities.ts'
 import { FirstDataNotice } from './FirstDataNotice.tsx'
 import { isWaitingForFirstData, sorterStatusLabel } from './labels.ts'
 import type { SorterContext } from './SorterLayout.tsx'
@@ -41,6 +41,7 @@ export function SorterPage() {
           orgSlug={organization.slug}
           branchSlug={sorter.host_branch.slug}
           transits={hasTransits(organization)}
+          holds={hasHolds(organization)}
         />
       )}
     </>

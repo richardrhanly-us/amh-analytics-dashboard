@@ -145,6 +145,27 @@ describe('axe finds no violation on', () => {
     expect(await axeViolations()).toEqual([])
   })
 
+  it("a sorter's Live Today with today's holds, and the bin table open", async () => {
+    serve({
+      'GET /api/organizations/northbridge': () =>
+        jsonResponse(200, {
+          ...NORTHBRIDGE_DETAIL,
+          role: 'owner',
+          entitlements: { ...NORTHBRIDGE_DETAIL.entitlements, internal_workflow: { enabled: true, limit_value: null } },
+        }),
+    })
+    renderApp(LIVE_PAGE)
+    await screen.findByText('Public holds today')
+    await waitFor(() => expect(main()).not.toHaveTextContent('Loading'))
+    await userEvent
+      .setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) })
+      .click(screen.getByRole('button', { name: 'Show table: Check-ins by bin today' }))
+    await screen.findByRole('table', { name: 'Check-ins by bin today' })
+    await settle()
+
+    expect(await axeViolations()).toEqual([])
+  })
+
   it("a sorter's reports", async () => {
     serve()
     renderApp(`${LIVE_PAGE}/reports`)

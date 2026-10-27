@@ -16,6 +16,7 @@ import {
   type RejectCount,
   type RejectsByReason,
 } from '../api/liveToday.ts'
+import { getBinVolumeReport, getHoldsReport, type BinVolumeReport, type HoldsReport } from '../api/reports.ts'
 import { messageFor } from '../components/errorText.ts'
 import { productDate, productHour } from '../time/productTime.ts'
 
@@ -58,6 +59,10 @@ export interface LiveToday {
   checkinsByDestination: Section<CheckinsByDestination>
   rejectCount: Section<RejectCount>
   rejectsByReason: Section<RejectsByReason>
+  /** Today's holds: the Operations report's Holds over today alone. Never asked for without the plan's holds feature. */
+  holds: Section<HoldsReport>
+  /** Today's check-ins by sort bin: the Operations report's Bin volume over today alone. */
+  binVolume: Section<BinVolumeReport>
   /** The API answered 404 for a branch the user can see: it has no live data to show. */
   unavailable: boolean
   /** A request is in flight. */
@@ -73,12 +78,12 @@ export interface LiveToday {
  *
  * ORDER. Pipeline status is asked first, because it names the product's time
  * zone. "Today" is the calendar date in that zone at the moment that answer
- * arrived -- never the browser's date -- and only then are the five dated
+ * arrived -- never the browser's date -- and only then are the dated
  * reads made, all for that one date. If pipeline status cannot be read, no
  * date is guessed and no dated read is made.
  *
  * REFRESH. One timer, on pipeline status. Each time a new pipeline status
- * arrives the five dated reads are refreshed after it, so a refresh -- timed
+ * arrives the dated reads are refreshed after it, so a refresh -- timed
  * or from the button -- is always the whole set, in the same order as the
  * first load. Pausing stops the timer and nothing else.
  *
@@ -91,9 +96,15 @@ export interface LiveToday {
  *
  * TRANSIT ROUTING. `transits` false (the organization's plan does not include
  * it): the day's check-ins by destination are never asked for, on the first
- * load or on any refresh.
+ * load or on any refresh. HOLDS likewise: `holds` false, today's holds are
+ * never asked for.
+ *
+ * HOLDS AND BINS are the Operations report's own Holds and Bin volume reports,
+ * asked for the range from today to today -- the same endpoints, rules and
+ * figures as that report for this one date. They are dated reads like the
+ * others, so they refresh with the set and start clean at midnight.
  */
-export function useLiveToday(orgSlug: string, branchSlug: string, transits: boolean): LiveToday {
+export function useLiveToday(orgSlug: string, branchSlug: string, transits: boolean, holds: boolean): LiveToday {
   const queryClient = useQueryClient()
   const [paused, setPaused] = useState(false)
 
@@ -125,8 +136,11 @@ export function useLiveToday(orgSlug: string, branchSlug: string, transits: bool
   const checkinsByDestinationQuery = useQuery(dated('checkins/by-destination', getCheckinsByDestination, transits))
   const rejectCountQuery = useQuery(dated('rejects/count', getRejectCount))
   const rejectsByReasonQuery = useQuery(dated('rejects/by-reason', getRejectsByReason))
+  // A one-day range: today, from and to.
+  const holdsQuery = useQuery(dated('reports/holds', (org, branch, day, signal) => getHoldsReport(org, branch, day, day, signal), holds))
+  const binVolumeQuery = useQuery(dated('reports/bins', (org, branch, day, signal) => getBinVolumeReport(org, branch, day, day, signal)))
 
-  // A new pipeline status (`asOf` moved) is followed by the day's five reads. One already in flight -- the first
+  // A new pipeline status (`asOf` moved) is followed by the day's dated reads. One already in flight -- the first
   // load, or a new date's -- is left alone rather than started again.
   useEffect(() => {
     if (date !== null) {
@@ -144,6 +158,8 @@ export function useLiveToday(orgSlug: string, branchSlug: string, transits: bool
     checkinsByDestinationQuery,
     rejectCountQuery,
     rejectsByReasonQuery,
+    holdsQuery,
+    binVolumeQuery,
   ]
   const refreshing = queries.some((query) => query.isFetching)
   const refetchPipeline = pipelineQuery.refetch
@@ -165,6 +181,8 @@ export function useLiveToday(orgSlug: string, branchSlug: string, transits: bool
     checkinsByDestination: section(checkinsByDestinationQuery),
     rejectCount: section(rejectCountQuery),
     rejectsByReason: section(rejectsByReasonQuery),
+    holds: section(holdsQuery),
+    binVolume: section(binVolumeQuery),
     unavailable: queries.some((query) => isApiError(query.error) && query.error.status === 404),
     refreshing,
     paused,

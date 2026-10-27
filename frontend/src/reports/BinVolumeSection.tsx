@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react'
 import type { BinVolumeBin, BinVolumeReport } from '../api/reports.ts'
 import { MetricCard } from '../liveToday/MetricCard.tsx'
 import { formatHour } from '../time/productTime.ts'
+import { binLabel, checkIns } from './binText.ts'
 import { Figure } from './ChartFigure.tsx'
 import { rounded } from './csv.ts'
 import { formatCount, formatPercent, percentOf } from './derive.ts'
@@ -15,10 +16,6 @@ const HOURS = Array.from({ length: 24 }, (_, hour) => hour)
 // Above this many bins the bars are set in two columns where there is room, so the chart is not a page tall.
 const ONE_COLUMN_OF_BARS = 10
 
-/** What a bin is called: its number, and nothing else. No bin has a name or a meaning of its own. */
-const binLabel = (bin: BinVolumeBin) => `Bin ${bin.key}`
-const checkIns = (value: number) => `${formatCount(value)} ${value === 1 ? 'check-in' : 'check-ins'}`
-
 /**
  * A bar for each observed bin, in the order given, each beside its name and
  * its count. Bars run sideways: every bin keeps its label however many there
@@ -29,7 +26,7 @@ const checkIns = (value: number) => `${formatCount(value)} ${value === 1 ? 'chec
  * accompanies it. Nothing in it takes focus or needs a pointer, and it has
  * one series in one colour.
  */
-function BinBars({ label, describedBy, bins, known }: { label: string; describedBy: string; bins: readonly BinVolumeBin[]; known: number }) {
+export function BinBars({ label, describedBy, bins, known }: { label: string; describedBy: string; bins: readonly BinVolumeBin[]; known: number }) {
   const most = Math.max(...bins.map((bin) => bin.checkin_count))
 
   return (

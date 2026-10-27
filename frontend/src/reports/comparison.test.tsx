@@ -688,6 +688,9 @@ describe('a card that is not being compared', () => {
     expect(changeLines()).toEqual([])
     expect(main()).not.toHaveTextContent(/previous period|Comparing/i)
     expect(screen.queryByRole('button', { name: COMPARE })).not.toBeInTheDocument()
-    expect(requestedUrls(fetchMock).filter((url) => url.includes('/reports/'))).toEqual([])
+    // Its one report read is today's bins, for today alone: nothing for a previous period.
+    expect(requestedUrls(fetchMock).filter((url) => url.includes('/reports/'))).toEqual([
+      `${livePath('northbridge', 'central')}/reports/bins?from=${REPORT.today}&to=${REPORT.today}`,
+    ])
   })
 })

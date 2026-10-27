@@ -154,6 +154,14 @@ export interface LiveFixture {
   hours: number[]
   reasons: number[]
   routing?: { home?: string; transit: RoutedTo[]; other?: number }
+  /**
+   * The day's check-ins by sort bin, as [bin, count] in numeric order; whatever the hours add up to beyond these
+   * has no recognized bin. Left out, every check-in has one: bins 1 and 2 take a half and three tenths (rounded
+   * down), and bin 7 the rest.
+   */
+  bins?: Array<[key: string, checkinCount: number]>
+  /** The day's holds. Left out, 9 public and 2 interlibrary loan. */
+  holds?: { public: number; ill: number }
 }
 
 const hoursWith = (counts: Record<number, number>) => Array.from({ length: 24 }, (_, hour) => counts[hour] ?? 0)
@@ -205,17 +213,53 @@ export const liveBody = {
     timezone: live.timezone,
     reasons: live.reasons.map((reject_count, index) => ({ reason: REASON_CODES[index], reject_count })),
   }),
+  /** The Bin volume report over the one day `from`..`to` (the dashboard asks for today alone). */
+  binVolume: (live: LiveFixture, from: string, to: string) => {
+    const total = sum(live.hours)
+    const half = Math.floor(total * 0.5)
+    const tenths = Math.floor(total * 0.3)
+    const bins = (live.bins ?? [
+      ['1', half],
+      ['2', tenths],
+      ['7', total - half - tenths],
+    ])
+      // Only bins that were observed; each bin's check-ins all in the busiest hour, which is all the dashboard reads.
+      .filter(([, checkinCount]) => checkinCount > 0)
+      .map(([key, checkin_count]) => ({ key, checkin_count, hours: Array.from({ length: 24 }, (_, hour) => (hour === 11 ? checkin_count : 0)) }))
+    const known = sum(bins.map((bin) => bin.checkin_count))
+    return {
+      range: { from, to, days: 1, timezone: live.timezone, includes_today: true },
+      checkin_count: total,
+      known_bin_count: known,
+      unknown_bin_count: total - known,
+      bins,
+    }
+  },
+  holds: (live: LiveFixture, from: string, to: string) => ({
+    range: { from, to, days: 1, timezone: live.timezone, includes_today: true },
+    public_hold_count: live.holds?.public ?? 9,
+    ill_hold_count: live.holds?.ill ?? 2,
+  }),
 }
 
 export function livePath(orgSlug: string, branchSlug: string): string {
   return `/api/organizations/${orgSlug}/branches/${branchSlug}`
 }
 
-/** Routes for one branch's six Live Today reads. `live` may be a function, to answer differently over time. */
+/**
+ * Routes for one branch's Live Today reads: the six single-day reads, and today's Bin volume and Holds reports.
+ * `live` may be a function, to answer differently over time.
+ */
 export function liveRoutes(orgSlug: string, branchSlug: string, live: LiveFixture | (() => LiveFixture) = LIVE): ApiRoutes {
   const base = `GET ${livePath(orgSlug, branchSlug)}`
   const now = () => (typeof live === 'function' ? live() : live)
+  const range = (url: string): [string, string] => {
+    const params = new URL(url, 'http://test.invalid').searchParams
+    return [params.get('from') ?? '', params.get('to') ?? '']
+  }
   return {
+    [`${base}/reports/bins?from=*&to=*`]: (url) => jsonResponse(200, liveBody.binVolume(now(), ...range(url))),
+    [`${base}/reports/holds?from=*&to=*`]: (url) => jsonResponse(200, liveBody.holds(now(), ...range(url))),
     [`${base}/pipeline-status`]: () => jsonResponse(200, liveBody.pipeline(now())),
     [`${base}/checkins/count?date=*`]: (url) => jsonResponse(200, liveBody.checkinCount(now(), dateOf(url))),
     [`${base}/checkins/by-hour?date=*`]: (url) => jsonResponse(200, liveBody.checkinsByHour(now(), dateOf(url))),
