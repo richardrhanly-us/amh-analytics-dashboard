@@ -403,8 +403,9 @@ accessibility and finalizing the VPAT before those changes would mean rework and
 
 **To resume B (priority 4, after installer and UI changes stabilize):**
 
-1. Update customer installation and support documentation to match the released product (the current customer
-   install guide is for Collector 1.0.2; C4).
+1. Update customer installation and support documentation to match the released product. The 1.0.14 guide now
+   exists as a Markdown source (`docs/collector-1.0.14-customer-installation-guide.md`, C4); the customer copy in its
+   delivered format, and support documentation, are still to do.
 2. Complete §602.3 verification of customer-facing electronic documentation, including the DOCX/PDF deliverables.
 3. Reassess the Chapter 6 support documentation and services findings (602.2–602.4, 603).
 4. Resolve the outstanding VPAT WCAG rows and Chapter 3 classifications from actual evidence.
@@ -711,11 +712,20 @@ deployment, not a fresh install. What remains unverified above must not be assum
 
 - [ ] **C1. Code signing** for the Collector executable and scripts (needs a certificate — section 6).
 - [ ] **C2. One signed download** a library can run, replacing hand-copied bundles.
-- [ ] **C3. First-owner account at provisioning** — today no code path creates a new library's first login
-      (memberships can only be added by an existing admin).
-- [ ] **C4. Current customer install guide** — the published guide is for Collector 1.0.2. So is the internal
-      `docs/SortView_Internal_Customer_Provisioning_Checklist.docx` (assisted 1.0.2 onboarding: manual token,
-      `install.ps1`): update or retire it with the guide (A1b finding, 2026-10-14).
+- [ ] **C3. First-owner account at provisioning** — **implementation merged** (G6A, PR #269, `7f7cf3e`): a platform
+      administrator assigns a library's first owner in React admin, only while it has no active owner, in one locked
+      transaction with its audit record; the owner sets a password through "Forgot password?". Its PostgreSQL
+      concurrency test (two simultaneous assignments leave exactly one owner) passed against a local disposable
+      database on 2026-10-25. **Not yet verified:** a real owner activation in production -- the reset email
+      delivered by production SES to an outside address, and that owner signing in.
+- [x] **C4. Current customer install guide** — written 2026-10-26 (G6B) as Markdown sources, not yet distributed to a
+      library or accessibility-reviewed:
+      `docs/collector-1.0.14-customer-installation-guide.md` (customer, SortView Setup GUI) and
+      `docs/customer-onboarding-checklist.md` (internal). They supersede the 1.0.2 guide
+      (`docs/SortView_Collector_1.0.2_Customer_Installation_Guide.docx`/`.pdf`) and
+      `docs/SortView_Internal_Customer_Provisioning_Checklist.docx`, which are kept unchanged as historical records.
+      Still open: a customer copy in the delivered format and its §602.3 review (B, "To resume B" item 1-2), and a
+      first production onboarding with them.
 - [ ] **C5. Decide the legacy contract's future** — React admin still offers Contract 1 for new installs (as Super
       Admin did).
 - [ ] **C6. Deferred Collector work** from `docs/collector-v2.md`: replacement-machine workflow, key rotation,
@@ -732,6 +742,12 @@ deployment, not a fresh install. What remains unverified above must not be assum
 
 ## 5. Done recently (newest first)
 
+- 2026-10-26 — G6B: customer installation guide for Collector 1.0.14 (SortView Setup GUI, enrollment code, recovery
+  guidance and Copy details, first-owner sign-in, first data) and the internal onboarding checklist (provision →
+  Collector settings → first owner → Contract 2 installation → package and fingerprint → code issued in the session →
+  verify Active / Ready / OK), with tenant, owner-email and wrong-library safety checks (C4). The 1.0.2 guide and
+  provisioning checklist are kept as superseded historical files. Not verified: production reset-email delivery, a
+  production onboarding, code signing.
 - 2026-10-22 — M2d-1 Stage 3B expected-stop validation passed on an isolated Windows 10 Enterprise LTSC 2019 VM
   (build 17763, .NET Framework 4.7.2, network disconnected). The test used a disposable installation-enabled build,
   a 15-file harmless fixture (`0.0.0-m2d1vm`) and a stand-in Collector executable.

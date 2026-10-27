@@ -7,6 +7,9 @@
 - Canonical release artifact: **built 2026-10-24, not yet published** (see *Canonical release artifact* below). The
   remaining checks in *Before this release is published* are still to be performed and recorded.
 - G3 real-API GUI installation: **passed 2026-10-25** (see *G3 validation: real-API GUI installation* below).
+- Customer documentation: **written 2026-10-26** (G6B) -- `docs/collector-1.0.14-customer-installation-guide.md` and the
+  internal `docs/customer-onboarding-checklist.md`, replacing the 1.0.2 guide and checklist. Not yet used for a
+  production onboarding.
 
 ## Canonical release artifact
 
