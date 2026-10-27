@@ -21,6 +21,11 @@ export function hasTransits(organization: WithEntitlements): boolean {
   return organization.entitlements.transits?.enabled === true
 }
 
+/** Holds: public and interlibrary loan holds (the API's `internal_workflow` feature). */
+export function hasHolds(organization: WithEntitlements): boolean {
+  return organization.entitlements.internal_workflow?.enabled === true
+}
+
 /** Taking a report out of the app: a table as a CSV file, and the "Print report" action. */
 export function hasExports(organization: WithEntitlements): boolean {
   return organization.entitlements.exports?.enabled === true

@@ -8,6 +8,8 @@ import { MetricCard, type Figure } from './MetricCard.tsx'
 import { busiestHour, checkinsInHour, formatRate, rejectRate } from './metrics.ts'
 import { PipelinePanel } from './PipelinePanel.tsx'
 import { RejectReasons } from './RejectReasons.tsx'
+import { TodayBinVolume } from './TodayBinVolume.tsx'
+import { TodayHolds } from './TodayHolds.tsx'
 import { REFRESH_INTERVAL_MS, useLiveToday, type LiveToday as LiveTodayData, type Section } from './useLiveToday.ts'
 
 const UNAVAILABLE = 'Live dashboard data is not available for this sorter yet.'
@@ -254,6 +256,8 @@ function problem(live: LiveTodayData): string | null {
     live.checkinsByDestination,
     live.rejectCount,
     live.rejectsByReason,
+    live.holds,
+    live.binVolume,
   ]
   if (sections.some((part) => part.status === 'error')) {
     return 'Some live data could not be loaded. Use Refresh to try again.'
@@ -266,10 +270,20 @@ function problem(live: LiveTodayData): string | null {
 
 /**
  * The Live Today dashboard for one sorter the user can see. `branchSlug` is the sorter's host branch: the scope
- * the operational API reads by.
+ * the operational API reads by. `holds`: the organization's plan includes holds, so today's are shown.
  */
-export function LiveToday({ orgSlug, branchSlug, transits }: { orgSlug: string; branchSlug: string; transits: boolean }) {
-  const live = useLiveToday(orgSlug, branchSlug, transits)
+export function LiveToday({
+  orgSlug,
+  branchSlug,
+  transits,
+  holds,
+}: {
+  orgSlug: string
+  branchSlug: string
+  transits: boolean
+  holds: boolean
+}) {
+  const live = useLiveToday(orgSlug, branchSlug, transits, holds)
 
   if (live.unavailable) {
     // The sorter exists -- the organization lists it -- but has no live data. That is not "not found".
@@ -335,6 +349,11 @@ export function LiveToday({ orgSlug, branchSlug, transits }: { orgSlug: string; 
       <div className="live-detail">
         <HourlyCheckins checkinsByHour={live.checkinsByHour} currentHour={live.currentHour} timeZone={live.timeZone} />
         <RejectReasons rejectsByReason={live.rejectsByReason} />
+      </div>
+      {/* Below the day's volume: today's holds (when the plan has them), then where today's check-ins were binned. */}
+      <div className="live-today-more">
+        {holds && <TodayHolds holds={live.holds} />}
+        <TodayBinVolume binVolume={live.binVolume} />
       </div>
     </div>
   )

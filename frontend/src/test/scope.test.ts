@@ -306,21 +306,29 @@ describe('scope of this block', () => {
     // Bin volume (Reports R7B) counts check-ins by bin and says nothing more about a bin: it is not called
     // utilization or routing, and no bin is an overflow, an exception or a place for holds.
     expect(offenders(/bin utili[sz]ation|bin routing|bin_utili|overflow bin|estimated hold|hold shelf/i)).toEqual([])
-    const binVolume = shipped.find(([path]) => path === '../reports/BinVolumeSection.tsx')?.[1] ?? ''
-    expect(binVolume).toMatch(/heading="Bin volume"/)
-    // A bin's label is made in one place, from its key alone; no bin number is written into the section.
-    expect(binVolume).toMatch(/const binLabel = \(bin: BinVolumeBin\) => `Bin \$\{bin\.key\}`/)
+    const source = (path: string) => shipped.find(([shippedPath]) => shippedPath === path)?.[1] ?? ''
+    expect(source('../reports/BinVolumeSection.tsx')).toMatch(/heading="Bin volume"/)
+    // A bin's label is made in one place, from its key alone -- for the report and for Live Today's bins today --
+    // and no bin number is written into either section.
+    expect(source('../reports/binText.ts')).toMatch(/const binLabel = \(bin: BinVolumeBin\) => `Bin \$\{bin\.key\}`/)
+    expect(offenders(/`Bin \$\{/)).toEqual(['../reports/binText.ts'])
+    const binVolume = ['../reports/BinVolumeSection.tsx', '../reports/binText.ts', '../liveToday/TodayBinVolume.tsx'].map(source).join('\n')
     expect(binVolume).not.toMatch(/key === ['"]\d|=== 7\b|length === 7|Bin [0-9]/)
     // It is every member's report, and a bin is not a destination or a measure of fullness.
     expect(binVolume).not.toMatch(/admin|owner|capacity|destination|exception|overflow/i)
-    // Holds (R8K) is two counts, read in one module and shown in one section, only where the plan has it: the
-    // plan's feature is looked at in one place, and no hold is shown by patron, item or destination.
-    expect(offenders(/public_hold_count|ill_hold_count/).sort()).toEqual(['../api/reports.ts', '../reports/HoldsSection.tsx'])
-    expect(offenders(/internal_workflow/)).toEqual(['../pages/SorterReportsPage.tsx'])
+    // Holds (R8K) is two counts, read in one module and shown in the report's section and -- for today alone -- on
+    // Live Today, only where the plan has it: the plan's feature is looked at in one place, and no hold is shown by
+    // patron, item or destination.
+    expect(offenders(/public_hold_count|ill_hold_count/).sort()).toEqual([
+      '../api/reports.ts',
+      '../liveToday/TodayHolds.tsx',
+      '../reports/HoldsSection.tsx',
+    ])
+    expect(offenders(/internal_workflow/)).toEqual(['../pages/capabilities.ts'])
     // R9C: transit routing and the history window are read from the plan in one module, by feature key and never
     // by the plan's name, and nothing else reads an organization's entitlements directly.
     expect(offenders(/history_days|entitlements\.transits/)).toEqual(['../pages/capabilities.ts'])
-    expect(offenders(/entitlements\.\w/).sort()).toEqual(['../pages/SorterReportsPage.tsx', '../pages/capabilities.ts'])
+    expect(offenders(/entitlements\.\w/).sort()).toEqual(['../pages/capabilities.ts'])
     expect(offenders(/\bstarter\b|\benterprise\b|plan_code\s*===|plan_name\s*===/i)).toEqual([])
     const holds = shipped.find(([path]) => path === '../reports/HoldsSection.tsx')?.[1] ?? ''
     expect(holds).toMatch(/heading="Holds"/)

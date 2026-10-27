@@ -4,7 +4,7 @@ import { ReportNav } from '../reports/ReportNav.tsx'
 import { SorterReports } from '../reports/SorterReports.tsx'
 import { canSeeEfficiency, EFFICIENCY_FOR_ADMINS } from '../reports/useEfficiency.ts'
 import { sorterReportViewPath, type SorterReportView } from '../router/paths.ts'
-import { hasExports, hasTransits, historyDays } from './capabilities.ts'
+import { hasExports, hasHolds, hasTransits, historyDays } from './capabilities.ts'
 import { FirstDataNotice } from './FirstDataNotice.tsx'
 import { isWaitingForFirstData, sorterStatusLabel } from './labels.ts'
 import type { SorterContext } from './SorterLayout.tsx'
@@ -64,7 +64,7 @@ export function SorterReportsPage({ view }: { view: SorterReportView }) {
           branchSlug={sorter.host_branch.slug}
           view={view}
           // The API decides (403 without it); this only keeps the app from asking for what the plan does not include.
-          holds={organization.entitlements.internal_workflow?.enabled === true}
+          holds={hasHolds(organization)}
           transits={hasTransits(organization)}
           historyDays={historyDays(organization)}
           // What the app offers, not a lock: the figures a file or a printout holds are the ones already shown.

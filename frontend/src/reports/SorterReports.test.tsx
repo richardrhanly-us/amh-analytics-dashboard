@@ -66,12 +66,13 @@ function serve(overrides: ApiRoutes = {}, fixture: ReportFixture | (() => Report
     // is for owners and admins only and is tested in EfficiencySection.test.tsx.
     'GET /api/organizations/northbridge': () => jsonResponse(200, { ...NORTHBRIDGE_DETAIL, role: 'manager' }),
     'GET /api/organizations/riverside': () => jsonResponse(200, RIVERSIDE_DETAIL),
+    // Live Today's own reads, for the tests that arrive from it. Listed first, so the report fixtures below answer
+    // every report read -- Live Today's one-day bins and holds included -- and their pipeline status is used.
+    ...liveRoutes('northbridge', 'central'),
+    ...liveRoutes('northbridge', 'east-side'),
     ...reportRoutes('northbridge', 'central', fixture),
     ...reportRoutes('northbridge', 'east-side', EAST),
     ...reportRoutes('riverside', 'main', fixture),
-    // Live Today's own reads, for the tests that arrive from it. Its pipeline status is the fuller one.
-    ...liveRoutes('northbridge', 'central'),
-    ...liveRoutes('northbridge', 'east-side'),
     ...overrides,
   })
 }
@@ -1011,7 +1012,11 @@ describe('nothing from one question is shown under another', () => {
     expect(shown()).toContain('Sep 6, 2026 to Oct 5, 2026: 30 days')
     expect(within(section('Overview')).getByText('Loading…')).toBeInTheDocument()
     expect(main()).not.toHaveTextContent(/3,140|760|Westside|Library Express|Central/)
-    expect(requestedUrls(fetchMock).filter((url) => url.includes('east-side/reports/')).every((url) => url.endsWith(DEFAULT_RANGE))).toBe(true)
+    // Every East Side report read is for the default range -- apart from the one its Live Today page, passed on the
+    // way, makes for today's bins alone.
+    const todayOnly = `${eastApi}/reports/bins?from=${REPORT.today}&to=${REPORT.today}`
+    const eastReports = requestedUrls(fetchMock).filter((url) => url.includes('east-side/reports/') && url !== todayOnly)
+    expect(eastReports.every((url) => url.endsWith(DEFAULT_RANGE))).toBe(true)
 
     east.resolve(jsonResponse(200, reportBody.overview(EAST, FROM, TO)))
     await waitFor(() => expect(metric('Overview', 'Check-ins')).toHaveTextContent(/^210$/))

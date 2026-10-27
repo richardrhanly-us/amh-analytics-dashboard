@@ -72,6 +72,7 @@ export function Figure({
   columns,
   rows,
   csv,
+  headingLevel = 5,
   children,
 }: {
   name: string
@@ -80,8 +81,11 @@ export function Figure({
   columns: readonly string[]
   rows: ReadonlyArray<readonly string[]>
   csv?: FigureCsv
+  /** The heading's level: 5 under a report section's h4 (the default), 4 directly under a dashboard panel's h3. */
+  headingLevel?: 4 | 5
   children: (summaryName: string) => ReactNode
 }) {
+  const Heading = headingLevel === 4 ? 'h4' : 'h5'
   const [tableShown, setTableShown] = useState(false)
   const printing = usePrinting()
   const tableThere = tableShown || printing
@@ -91,7 +95,7 @@ export function Figure({
 
   return (
     <div className="chart-figure">
-      <h5 id={headingName}>{heading}</h5>
+      <Heading id={headingName}>{heading}</Heading>
       <p className="chart-summary" id={summaryName}>
         {summary}
       </p>

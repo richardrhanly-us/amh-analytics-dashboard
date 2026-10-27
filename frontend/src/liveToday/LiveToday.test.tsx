@@ -34,11 +34,15 @@ const BY_HOUR = `GET ${API}/checkins/by-hour?date=*`
 const BY_DESTINATION = `GET ${API}/checkins/by-destination?date=*`
 const REJECT_COUNT = `GET ${API}/rejects/count?date=*`
 const BY_REASON = `GET ${API}/rejects/by-reason?date=*`
+const BINS = `GET ${API}/reports/bins?from=*&to=*`
+const HOLDS = `GET ${API}/reports/holds?from=*&to=*`
 
 // 1:50 PM on Monday 5 October 2026 in Chicago (CDT, UTC-5).
 const NOW = '2026-10-05T18:50:00Z'
 const TODAY = '2026-10-05'
 
+/** The requests one full refresh makes: pipeline status, then every dated read (Northbridge's plan has no holds). */
+const PER_REFRESH = 7
 const SERVER_ERROR = () => jsonResponse(500, { code: 'internal_error', message: 'Internal server error.' })
 const UNAVAILABLE = 'Live dashboard data is not available for this sorter yet.'
 
@@ -83,7 +87,9 @@ function metric(label: string | RegExp): HTMLElement {
 function note(label: string): string | null {
   return metric(label).nextElementSibling?.textContent ?? null
 }
-const chart = () => screen.getByRole('img', { name: 'Bar chart of check-ins in each hour of the day' })
+const HOURLY_CHART = 'Bar chart of check-ins in each hour of the day'
+const chart = () => screen.getByRole('img', { name: HOURLY_CHART })
+const binChart = () => screen.getByRole('img', { name: "Bar chart of today's check-ins in each observed bin" })
 /** The drawn height of each hour's bar, in the chart's own units (0 to 100). */
 const barHeights = () =>
   Array.from(chart().querySelectorAll('rect[data-hour]')).map((bar) => Number(bar.getAttribute('height')))
@@ -144,6 +150,7 @@ describe('the order things are asked in', () => {
       'pipeline-status',
       'rejects/by-reason',
       'rejects/count',
+      'reports/bins',
     ])
     expect(liveRequests(fetchMock)[0]).toBe(`${API}/pipeline-status`)
   })
@@ -154,7 +161,7 @@ describe('the order things are asked in', () => {
     renderApp(CENTRAL)
     await loaded()
 
-    expect(liveRequests(fetchMock)).toHaveLength(6)
+    expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH)
     expect(datesAsked(fetchMock)).toEqual([TODAY, TODAY, TODAY, TODAY, TODAY])
     expect(liveRequests(fetchMock).slice(1).sort()).toEqual([
       `${API}/checkins/by-destination?date=${TODAY}`,
@@ -162,6 +169,8 @@ describe('the order things are asked in', () => {
       `${API}/checkins/count?date=${TODAY}`,
       `${API}/rejects/by-reason?date=${TODAY}`,
       `${API}/rejects/count?date=${TODAY}`,
+      // Today's bins: the Operations report's own read, over today alone.
+      `${API}/reports/bins?from=${TODAY}&to=${TODAY}`,
     ])
   })
 
@@ -270,6 +279,10 @@ describe('the figures', () => {
       'Library Express',
       'Rejects today',
       'Reject rate',
+      // Bin volume today, below the hourly chart and the reject reasons.
+      'Known-bin check-ins',
+      'Bins observed',
+      'Bin coverage',
     ])
     expect(metric('Rejects today')).toHaveTextContent(/^6$/)
     expect(metric('Reject rate')).toHaveTextContent(/^5\.0%$/)
@@ -376,15 +389,22 @@ describe('refreshing', () => {
     expect(main()).toHaveTextContent('Refreshes automatically every 3 minutes.')
 
     await pass(REFRESH_INTERVAL_MS - 5000)
-    expect(liveRequests(fetchMock)).toHaveLength(6)
+    expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH)
 
     fixture = live({ state: 'degraded', hours: hoursWith({ 9: 20, 10: 25, 11: 40, 12: 18, 13: 30 }), reasons: [3, 0, 1, 0, 0, 2, 0, 4] })
     await pass(10_000)
-    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(12))
+    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH * 2))
 
-    const second = liveRequests(fetchMock).slice(6)
+    const second = liveRequests(fetchMock).slice(PER_REFRESH)
     expect(second[0]).toBe(`${API}/pipeline-status`)
-    expect(endpoints(second.slice(1)).sort()).toEqual(['checkins/by-destination', 'checkins/by-hour', 'checkins/count', 'rejects/by-reason', 'rejects/count'])
+    expect(endpoints(second.slice(1)).sort()).toEqual([
+      'checkins/by-destination',
+      'checkins/by-hour',
+      'checkins/count',
+      'rejects/by-reason',
+      'rejects/count',
+      'reports/bins',
+    ])
     await waitFor(() => expect(metric('Check-ins today')).toHaveTextContent(/^133$/))
     expect(metric('Status')).toHaveTextContent(/^Degraded$/)
     expect(metric('Current hour')).toHaveTextContent(/^30$/)
@@ -399,7 +419,7 @@ describe('refreshing', () => {
     await loaded()
     await pass(REFRESH_INTERVAL_MS * 3 + 5000)
 
-    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(24))
+    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH * 4))
   })
 
   it('stops refreshing by itself while paused, and says so', async () => {
@@ -413,7 +433,7 @@ describe('refreshing', () => {
     expect(main()).toHaveTextContent('Automatic refresh is paused.')
     expect(screen.getByRole('button', { name: 'Resume automatic refresh' })).toBeInTheDocument()
     await pass(REFRESH_INTERVAL_MS * 3)
-    expect(liveRequests(fetchMock)).toHaveLength(6)
+    expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH)
     expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
   })
 
@@ -429,13 +449,21 @@ describe('refreshing', () => {
     await person.click(refreshButton())
 
     await waitFor(() => expect(metric('Check-ins today')).toHaveTextContent(/^200$/))
-    const second = liveRequests(fetchMock).slice(6)
+    const second = liveRequests(fetchMock).slice(PER_REFRESH)
     expect(second[0]).toBe(`${API}/pipeline-status`)
-    expect(endpoints(second).sort()).toEqual(['checkins/by-destination', 'checkins/by-hour', 'checkins/count', 'pipeline-status', 'rejects/by-reason', 'rejects/count'])
+    expect(endpoints(second).sort()).toEqual([
+      'checkins/by-destination',
+      'checkins/by-hour',
+      'checkins/count',
+      'pipeline-status',
+      'rejects/by-reason',
+      'rejects/count',
+      'reports/bins',
+    ])
     expect(main()).toHaveTextContent('Automatic refresh is paused.')
 
     await pass(REFRESH_INTERVAL_MS * 2)
-    expect(liveRequests(fetchMock)).toHaveLength(12)
+    expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH * 2)
   })
 
   it('refreshes from the button while running too', async () => {
@@ -446,7 +474,7 @@ describe('refreshing', () => {
     await loaded()
     await person.click(refreshButton())
 
-    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(12))
+    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH * 2))
     expect(main()).toHaveTextContent('Refreshes automatically every 3 minutes.')
   })
 
@@ -458,13 +486,13 @@ describe('refreshing', () => {
     await loaded()
     await person.click(screen.getByRole('button', { name: 'Pause automatic refresh' }))
     await pass(REFRESH_INTERVAL_MS * 2)
-    expect(liveRequests(fetchMock)).toHaveLength(6)
+    expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH)
 
     await person.click(screen.getByRole('button', { name: 'Resume automatic refresh' }))
     expect(main()).toHaveTextContent('Refreshes automatically every 3 minutes.')
     await pass(REFRESH_INTERVAL_MS + 5000)
 
-    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(12))
+    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH * 2))
   })
 
   it('shows that it is refreshing and starts no second refresh on top of the first', async () => {
@@ -481,12 +509,12 @@ describe('refreshing', () => {
     await person.click(busy)
     await person.click(busy)
     await pass(1000)
-    expect(liveRequests(fetchMock)).toHaveLength(7)
+    expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH + 1)
     // What was already loaded stays on screen while the refresh runs.
     expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
 
     slow.resolve(jsonResponse(200, liveBody.pipeline(LIVE)))
-    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(12))
+    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH * 2))
     await waitFor(() => expect(refreshButton()).not.toHaveAttribute('aria-disabled', 'true'))
   })
 
@@ -512,7 +540,7 @@ describe('refreshing', () => {
 
     await pass(REFRESH_INTERVAL_MS + 5000)
 
-    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(12))
+    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH * 2))
     expect(datesAsked(fetchMock).slice(5)).toEqual(['2026-10-06', '2026-10-06', '2026-10-06', '2026-10-06', '2026-10-06'])
     await waitFor(() => expect(main()).toHaveTextContent('Tuesday, October 6, 2026'))
     expect(main()).not.toHaveTextContent('Monday, October 5, 2026')
@@ -556,8 +584,8 @@ describe('changing branch', () => {
     expect(metric('Busiest hour')).toHaveTextContent(/^7$/)
     expect(note('Busiest hour')).toBe('8–9 AM')
     const east = liveRequests(fetchMock).filter((url) => url.includes('/east-side/'))
-    expect(east).toHaveLength(6)
-    expect(liveRequests(fetchMock).filter((url) => url.includes('/central/'))).toHaveLength(6)
+    expect(east).toHaveLength(PER_REFRESH)
+    expect(liveRequests(fetchMock).filter((url) => url.includes('/central/'))).toHaveLength(PER_REFRESH)
   })
 
   it('starts the other branch running even if the first was paused', async () => {
@@ -585,7 +613,7 @@ describe('changing branch', () => {
     await screen.findByRole('heading', { level: 3, name: 'Sorting machines' })
     await pass(REFRESH_INTERVAL_MS * 2)
 
-    expect(liveRequests(fetchMock)).toHaveLength(6)
+    expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH)
   })
 
   it('loads a branch afresh when its page is opened again', async () => {
@@ -601,7 +629,7 @@ describe('changing branch', () => {
     await loaded()
 
     expect(metric('Check-ins today')).toHaveTextContent(/^300$/)
-    expect(liveRequests(fetchMock)).toHaveLength(12)
+    expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH * 2)
   })
 })
 
@@ -617,7 +645,7 @@ describe('a suspended organization', () => {
     expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
     expect(screen.getByRole('button', { name: 'Pause automatic refresh' })).not.toHaveAttribute('aria-disabled', 'true')
     await person.click(refreshButton())
-    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(12))
+    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH * 2))
   })
 })
 
@@ -687,7 +715,7 @@ describe('an expired session (401)', () => {
     const asked = liveRequests(fetchMock).length
     await pass(REFRESH_INTERVAL_MS * 2)
     expect(liveRequests(fetchMock)).toHaveLength(asked)
-    expect(asked).toBeLessThanOrEqual(6)
+    expect(asked).toBeLessThanOrEqual(PER_REFRESH)
   })
 
   it('returns to the sign-in form when a later refresh is answered 401', async () => {
@@ -749,7 +777,7 @@ describe('failures', () => {
     await loaded()
     expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(liveRequests(fetchMock)).toHaveLength(7)
+    expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH + 1)
   })
 
   it('keeps the sections that loaded when one read fails, and says which could not load', async () => {
@@ -784,7 +812,7 @@ describe('failures', () => {
     expect(metric('Reject rate')).toHaveTextContent('Could not load')
     expect(metric('Reject rate')).not.toHaveTextContent('%')
     expect(main()).not.toHaveTextContent(/NaN|Infinity/)
-    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: HOURLY_CHART })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Show hourly table' })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 3, name: 'Hourly check-ins' }).parentElement).toHaveTextContent('Could not load.')
     expect(rows('Top reject reasons')).toHaveLength(3)
@@ -842,7 +870,7 @@ describe('retries', () => {
     await loaded()
 
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(liveRequests(fetchMock)).toHaveLength(7)
+    expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH + 1)
   })
 
   it.each([
@@ -883,7 +911,8 @@ describe('the hourly chart', () => {
     renderApp(CENTRAL)
     await loaded()
 
-    expect(screen.getAllByRole('img')).toEqual([chart()])
+    // The page's two charts: this one, and today's bins further down.
+    expect(screen.getAllByRole('img')).toEqual([chart(), binChart()])
     expect(chart()).toHaveAccessibleDescription(
       'Busiest hour: 11 AM–12 PM, 40 check-ins. Current hour: 1–2 PM, 17 check-ins. Hours are in America/Chicago time.',
     )
@@ -1091,7 +1120,7 @@ describe('the first load', () => {
     expect(metric('Current hour')).toHaveTextContent(/^Loading…$/)
     expect(metric('Busiest hour')).toHaveTextContent(/^Loading…$/)
     expect(note('Current hour')).toBeNull()
-    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: HOURLY_CHART })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 3, name: 'Hourly check-ins' }).parentElement).toHaveTextContent(/Loading…$/)
 
     byHour.resolve(jsonResponse(200, liveBody.checkinsByHour(LIVE, TODAY)))
@@ -1167,7 +1196,7 @@ describe('what is said aloud', () => {
     await pass(REFRESH_INTERVAL_MS + 5000)
     await waitFor(() => expect(metric('Check-ins today')).toHaveTextContent(/^300$/))
     await pass(REFRESH_INTERVAL_MS)
-    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(18))
+    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH * 3))
 
     expect(announcer()).toBeEmptyDOMElement()
     // Nothing that changes with a refresh sits in a live region: not the figures, not the time of the update.
@@ -1244,7 +1273,7 @@ describe('trying again after pipeline status could not be read', () => {
     slow.resolve(jsonResponse(200, liveBody.pipeline(LIVE)))
     await loaded()
     expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
-    expect(liveRequests(fetchMock)).toHaveLength(7)
+    expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH + 1)
   })
 
   it('starts one retry from the keyboard, however often the key is pressed', async () => {
@@ -1264,7 +1293,7 @@ describe('trying again after pipeline status could not be read', () => {
 
     slow.resolve(jsonResponse(200, liveBody.pipeline(LIVE)))
     await loaded()
-    expect(liveRequests(fetchMock)).toHaveLength(7)
+    expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH + 1)
   })
 
   it('offers Try again once more, and asks once more, when the retry fails too', async () => {
@@ -1524,7 +1553,7 @@ describe('routing', () => {
     await pass(REFRESH_INTERVAL_MS + 5000)
     await waitFor(() => expect(metric('Westside')).toHaveTextContent(/^40$/))
 
-    expect(liveRequests(fetchMock)).toHaveLength(12)
+    expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH * 2)
     expect(routing().closest('[role="status"], [role="alert"], [aria-live]')).toBeNull()
     expect(routing().querySelector('[role="status"], [role="alert"], [aria-live]')).toBeNull()
     expect(screen.getByRole('status')).toBeEmptyDOMElement()
@@ -1603,7 +1632,7 @@ describe('the routing read', () => {
     await person.click(refreshButton())
     await waitFor(() => expect(asked()).toBe(4))
     // Six reads each time: the first load and three refreshes.
-    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(24))
+    await waitFor(() => expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH * 4))
   })
 
   it('moves to the new day with the rest on the first refresh after midnight', async () => {
@@ -1746,7 +1775,7 @@ describe('the routing read', () => {
     await waitFor(() => expect(metric('Westside')).toHaveTextContent(/^12$/))
 
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(liveRequests(fetchMock)).toHaveLength(7)
+    expect(liveRequests(fetchMock)).toHaveLength(PER_REFRESH + 1)
   })
 
   it('treats a 404 from routing as it treats one from any read: live data is not available for this branch', async () => {
@@ -1844,5 +1873,224 @@ describe('the dashboard at a glance', () => {
     const heading = document.querySelector('.today-heading') as HTMLElement
     expect(within(heading).getByRole('heading', { level: 3, name: 'Today' })).toBeInTheDocument()
     expect(heading).toHaveTextContent('Monday, October 5, 2026 (America/Chicago)')
+  })
+})
+
+describe('holds and bin volume today', () => {
+  /** Northbridge with the plan's holds feature on. */
+  const WITH_HOLDS = {
+    'GET /api/organizations/northbridge': () =>
+      jsonResponse(200, { ...NORTHBRIDGE_DETAIL, entitlements: { ...NORTHBRIDGE_DETAIL.entitlements, internal_workflow: { enabled: true, limit_value: null } } }),
+  }
+  const heading = (name: string) => screen.getByRole('heading', { level: 3, name })
+  const panel = (name: string) => heading(name).parentElement as HTMLElement
+  const asked = (fetchMock: FetchMock, endpoint: string) => liveRequests(fetchMock).filter((url) => url.includes(`/${endpoint}?`))
+  /** The "Check-ins by bin today" table's rows, opening it first. */
+  function binRows(): string[][] {
+    fireEvent.click(screen.getByRole('button', { name: 'Show table: Check-ins by bin today' }))
+    return rows('Check-ins by bin today')
+  }
+
+  it('comes after the hourly check-ins and the reject reasons: holds, then bin volume', async () => {
+    serve(WITH_HOLDS)
+
+    renderApp(CENTRAL)
+    await loaded()
+    await screen.findByText('Public holds today')
+
+    const order = ['Today', 'Hourly check-ins', 'Top reject reasons', 'Holds today', 'Bin volume today'].map(heading)
+    order.slice(1).forEach((later, index) => {
+      expect(order[index].compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    })
+  })
+
+  it("asks for today's holds and bins as the Operations report does, for today alone, with the other reads' date", async () => {
+    const fetchMock = serve(WITH_HOLDS)
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    expect(asked(fetchMock, 'reports/holds')).toEqual([`${API}/reports/holds?from=${TODAY}&to=${TODAY}`])
+    expect(asked(fetchMock, 'reports/bins')).toEqual([`${API}/reports/bins?from=${TODAY}&to=${TODAY}`])
+    expect(new Set(datesAsked(fetchMock))).toEqual(new Set([TODAY]))
+  })
+
+  it('never asks for holds, and shows no holds section, when the plan does not include them', async () => {
+    const fetchMock = serve()
+
+    renderApp(CENTRAL)
+    await loaded()
+    await pass(REFRESH_INTERVAL_MS)
+
+    expect(asked(fetchMock, 'reports/holds')).toEqual([])
+    expect(screen.queryByRole('heading', { name: 'Holds today' })).not.toBeInTheDocument()
+    expect(heading('Bin volume today')).toBeInTheDocument()
+  })
+
+  it("shows today's public and interlibrary loan holds, with which holds they are", async () => {
+    serve(WITH_HOLDS, live({ holds: { public: 14, ill: 3 } }))
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    await waitFor(() => expect(metric('Public holds today')).toHaveTextContent(/^14$/))
+    expect(metric('Interlibrary loan (ILL) holds today')).toHaveTextContent(/^3$/)
+    expect(panel('Holds today')).toHaveTextContent('Holds for library patrons.')
+  })
+
+  it('shows the bin summary, and each bin as a share of the known-bin check-ins', async () => {
+    // 120 check-ins: bins 1, 2 and 7 take 60, 36 and 18; 6 have no recognized bin.
+    serve({}, live({ bins: [['1', 60], ['2', 36], ['7', 18]] }))
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    expect(metric('Known-bin check-ins')).toHaveTextContent(/^114$/)
+    expect(note('Known-bin check-ins')).toBe('Of 120 check-ins')
+    expect(metric('Bins observed')).toHaveTextContent(/^3$/)
+    expect(metric('Unknown-bin check-ins')).toHaveTextContent(/^6$/)
+    expect(metric('Bin coverage')).toHaveTextContent(/^95\.0%$/)
+    expect(panel('Bin volume today')).toHaveTextContent('6 check-ins did not have a recognized bin value.')
+    expect(binRows()).toEqual([
+      ['Bin 1', '60', '52.6%'],
+      ['Bin 2', '36', '31.6%'],
+      ['Bin 7', '18', '15.8%'],
+    ])
+  })
+
+  it('draws the bins as one named image described in words, with the same figures as a table', async () => {
+    serve()
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    // 120 check-ins, every one in a bin: 60, 36 and 24.
+    expect(binChart()).toHaveAccessibleDescription(
+      '120 check-ins across 3 observed bins. Most in one bin: 60, in Bin 1. Shares are of known-bin check-ins.',
+    )
+    expect(screen.queryByText('Unknown-bin check-ins')).not.toBeInTheDocument()
+    expect(screen.queryByRole('note')).not.toBeInTheDocument()
+    expect(binChart().querySelectorAll('a, button, input, [tabindex]')).toHaveLength(0)
+    expect(screen.getByRole('heading', { level: 4, name: 'Check-ins by bin today' })).toBeInTheDocument()
+    expect(binRows()).toHaveLength(3)
+  })
+
+  it('lists however many bins were observed, in the order given, and leaves out no-recognized-bin counts', async () => {
+    const bins = Array.from({ length: 12 }, (_, index): [string, number] => [String(index + 1), 10])
+    serve({}, live({ bins }))
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    expect(metric('Bins observed')).toHaveTextContent(/^12$/)
+    expect(metric('Bin coverage')).toHaveTextContent(/^100\.0%$/)
+    expect(screen.queryByText('Unknown-bin check-ins')).not.toBeInTheDocument()
+    expect(binRows().map(([bin]) => bin)).toEqual(bins.map(([key]) => `Bin ${key}`))
+    expect(binChart().querySelectorAll('[data-bin]')).toHaveLength(12)
+  })
+
+  it('says there were no check-ins yet, with no bins and no shares, on a day with none', async () => {
+    serve(WITH_HOLDS, live({ hours: hoursWith({}), reasons: [0, 0, 0, 0, 0, 0, 0, 0], holds: { public: 0, ill: 0 } }))
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    await waitFor(() => expect(panel('Bin volume today')).toHaveTextContent('No check-ins yet today.'))
+    expect(screen.queryByText('Bin coverage')).not.toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: /observed bin/ })).not.toBeInTheDocument()
+    expect(metric('Public holds today')).toHaveTextContent(/^0$/)
+    expect(main()).not.toHaveTextContent(/NaN|Infinity/)
+  })
+
+  it('says so when check-ins were recorded but none had a recognized bin', async () => {
+    serve({}, live({ bins: [] }))
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    expect(metric('Known-bin check-ins')).toHaveTextContent(/^0$/)
+    expect(metric('Unknown-bin check-ins')).toHaveTextContent(/^120$/)
+    expect(metric('Bin coverage')).toHaveTextContent(/^0\.0%$/)
+    expect(panel('Bin volume today')).toHaveTextContent('Check-ins were recorded today, but none had a recognized bin value.')
+    expect(screen.queryByRole('img', { name: /observed bin/ })).not.toBeInTheDocument()
+  })
+
+  it('says each section is loading on its own, and shows no figure for it until it answers', async () => {
+    const bins = deferred<Response>()
+    serve({ ...WITH_HOLDS, [BINS]: () => bins.promise })
+
+    renderApp(CENTRAL)
+    await waitFor(() => expect(metric('Public holds today')).toHaveTextContent(/^9$/))
+
+    expect(panel('Bin volume today')).toHaveTextContent(/^Bin volume todayLoading…$/)
+    bins.resolve(jsonResponse(200, liveBody.binVolume(LIVE, TODAY, TODAY)))
+    await waitFor(() => expect(metric('Bins observed')).toHaveTextContent(/^3$/))
+  })
+
+  it.each([
+    ['bin volume', BINS, 'Bin volume today', 'Holds today'],
+    ['holds', HOLDS, 'Holds today', 'Bin volume today'],
+  ])('shows a %s failure in that section alone, and says so above the figures', async (_, route, failed, fine) => {
+    serve({ ...WITH_HOLDS, [route]: SERVER_ERROR })
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    await waitFor(() => expect(panel(failed)).toHaveTextContent('Could not load.'))
+    expect(panel(fine)).not.toHaveTextContent('Could not load.')
+    expect(screen.getByRole('alert')).toHaveTextContent('Some live data could not be loaded. Use Refresh to try again.')
+    expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
+    expect(barHeights()).toHaveLength(24)
+  })
+
+  it('keeps the last good bins and holds, and says so, when their refresh fails', async () => {
+    serve({
+      ...WITH_HOLDS,
+      [BINS]: inTurn(() => jsonResponse(200, liveBody.binVolume(LIVE, TODAY, TODAY)), SERVER_ERROR),
+      [HOLDS]: inTurn(() => jsonResponse(200, liveBody.holds(LIVE, TODAY, TODAY)), SERVER_ERROR),
+    })
+    const person = user()
+
+    renderApp(CENTRAL)
+    await loaded()
+    await screen.findByText('Public holds today')
+    await person.click(refreshButton())
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/latest refresh failed/))
+    expect(metric('Bins observed')).toHaveTextContent(/^3$/)
+    expect(metric('Public holds today')).toHaveTextContent(/^9$/)
+  })
+
+  it('refreshes holds and bins with the rest, by the timer and by the button, and starts no timer of its own', async () => {
+    const fetchMock = serve(WITH_HOLDS)
+    const person = user()
+
+    renderApp(CENTRAL)
+    await loaded()
+    await pass(REFRESH_INTERVAL_MS)
+    await waitFor(() => expect(asked(fetchMock, 'reports/bins')).toHaveLength(2))
+    await person.click(screen.getByRole('button', { name: 'Pause automatic refresh' }))
+    await person.click(refreshButton())
+    await waitFor(() => expect(asked(fetchMock, 'reports/holds')).toHaveLength(3))
+    await pass(REFRESH_INTERVAL_MS * 2)
+
+    // Paused: nothing more, from any timer. Each read was asked once per pipeline status, never on its own.
+    expect(asked(fetchMock, 'reports/bins')).toHaveLength(3)
+    expect(asked(fetchMock, 'reports/holds')).toHaveLength(3)
+    expect(liveRequests(fetchMock).filter((url) => url.endsWith('/pipeline-status'))).toHaveLength(3)
+  })
+
+  it('moves holds and bins to the new day on the first refresh after midnight in the product zone', async () => {
+    vi.setSystemTime(new Date('2026-10-06T04:58:00Z')) // 11:58 PM in Chicago
+    const fetchMock = serve(WITH_HOLDS)
+
+    renderApp(CENTRAL)
+    await loaded()
+    await pass(REFRESH_INTERVAL_MS)
+
+    await waitFor(() => expect(asked(fetchMock, 'reports/bins')).toHaveLength(2))
+    expect(asked(fetchMock, 'reports/bins')[1]).toBe(`${API}/reports/bins?from=2026-10-06&to=2026-10-06`)
+    await waitFor(() => expect(asked(fetchMock, 'reports/holds')).toHaveLength(2))
+    expect(asked(fetchMock, 'reports/holds')[1]).toBe(`${API}/reports/holds?from=2026-10-06&to=2026-10-06`)
   })
 })

@@ -777,6 +777,14 @@ button[aria-disabled='true'] {
   }
 }
 
+/* Below the day's volume: today's holds, then bin volume, each full width at every size. */
+.live-today-more {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
 /*
  * Hourly chart. A gutter for the scale, then the plot; above the plot a row for the "Now" marker and below it
  * a row for the hour labels, each divided into the same 24 columns as the bars.
