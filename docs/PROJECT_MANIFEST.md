@@ -3,7 +3,7 @@
 The big picture, kept in one place so a single task does not swallow the plan. Read this before starting any
 non-trivial task, and check the task against it before widening scope.
 
-Last reviewed: 2026-10-22. Facts marked **(verify)** were not confirmed against production or the person who
+Last reviewed: 2026-10-28. Facts marked **(verify)** were not confirmed against production or the person who
 knows; everything else was checked in the repository on that date.
 
 ---
@@ -73,8 +73,9 @@ installer and UI changes before the remaining B paperwork.
 ## 3. Current focus
 
 **Workstream A is complete (A5 completed 2026-10-17). Workstream B is paused at Section 508 §602.3 (2026-10-19)
-after the B2 accessibility baseline. Next: Priority 1, installer improvements — starting with discovery/planning, scope
-not yet defined (section 2, order revised 2026-10-19).** Then UI redesign and polish, targeted accessibility regression
+after the B2 accessibility baseline. Now: Priority 1, installer commercialization -- the SortView Setup GUI installer
+and its supervised-pilot package for Collector 1.0.14, first-owner activation (C3) and customer onboarding (C4); status
+and open items in section 4, C.** Then UI redesign and polish, targeted accessibility regression
 verification, and resuming B. The VPAT and support-guide drafts stay internal until B resumes and completes.
 
 Workstream A history:
@@ -463,6 +464,23 @@ planning come first and decide which C milestones they cover. Nothing below is r
   Contract v2 installation (A3a), Contract v2 as the provisioning default (A3b).
 - Install, update, uninstall, repair and verify scripts in `collector/deploy/`; guided `setup-collector.ps1`.
 - First ingest moves a branch from `pending` to `ready`, on both contracts (PRs #183, #190).
+- **Release record:** `docs/releases/collector-1.0.14.md`. The canonical Collector 1.0.14 bundle was built
+  2026-10-24 and is **not yet published**; that record's "Before this release is published" checks are still open.
+- **G3, real-API GUI installation, passed 2026-10-25** on a fresh Windows 10 LTSC 2019 VM: all seven stages, SYSTEM
+  task run with result 0, synthetic data reached the real API. It used the setup program package built from
+  `de858df` (ZIP SHA-256 `e932200f…`), which is **not** the customer package.
+- **Approved customer package: G2** -- `SortView-Setup-1.0.14.zip` built from `bef28bc` (PR #268, recovery guidance
+  and Copy details), ZIP SHA-256 `6f91da7da2253a4cdef85e4fa6f25789dd8a48a932bc4ae884eac1465ece3193`, as recorded in
+  `docs/customer-onboarding-checklist.md` section 6. **Not yet in the release record**, and no installation of this
+  exact package is recorded. It is an unsigned supervised-pilot package; how Windows warns on downloading and running
+  it has not been validated.
+- **G2 ZIP and canonical 1.0.14 bundle: location unknown (2026-10-28).** Neither is on LIB-L26 or the NBPL AMH
+  computer, and no reachable session record or shell history shows where either was built. The search has stopped. A
+  **successor pilot package** (its own identity and validation; the G2 hash is not a requirement for it) can be built
+  from `HEAD` with `scripts/package_installer_release.py` (no installer change since `bef28bc`). Every prerequisite
+  is present except the canonical 1.0.14 bundle ZIP (`75e7830a…`, 36,543,962 bytes), which must be found on its build
+  machine and placed, hash-checked, at `C:\SortView\ReleaseBuilds\1.0.14\` on LIB-L26. Rebuilding it would create a
+  new release identity, which is a separate decision.
 
 **Target machine baseline — NBPL's AMH PC, `NEWBRAUNFELSSOR`** (the real Tech Logic sorter computer at New Braunfels
 Public Library, where the SortView Collector runs). Build and test installer work against this, not a developer PC.
@@ -590,7 +608,7 @@ existing conditions: nothing here is an instruction to change the production mac
 
 | Property | Verified value |
 |---|---|
-| Computer | `NEWBRAUNFELSSOR` |
+| Computer | `NEWBRAUNFELSSOR` (older records call the same computer `NewBraunfelsSorterPC`) |
 | Windows | Windows 10 **Enterprise LTSC**, version 10.0.17763, build **17763**, **64-bit** |
 | Last boot | 2026-10-19 08:16:12 |
 | .NET Framework | **4.7.2**, registry `Release` = **461814** |
@@ -621,9 +639,19 @@ existing conditions: nothing here is an instruction to change the production mac
 
 - `C:\SortView\Collector` holds `SortViewCollector.exe`, `_internal\`, `logs\`, `MANIFEST.json` and
   `MANIFEST.installed.json`. Both manifests are present; their purpose, structure and origin are not established.
-- `C:\SortViewAgent` does not exist. Version-labelled staging folders for 1.0.10 through 1.0.13
-  (`C:\SortView-1.0.1x-Staging`) and SortView Collector ZIP archives sit at the root of C:.
-- Nothing shows that the new WPF installer has ever been deployed to this computer; do not assume it has.
+- `C:\SortViewAgent` does not exist.
+- **Active Collector: 1.0.13** (verified 2026-10-28; **not** 1.0.14). The running `SortViewCollector.exe` has SHA-256
+  `BFCBBFE7D982CE2654C2CC9A069DCF1ABFDD00076A41C5A782149A74BAC66882`, the 1.0.13 release's executable
+  (`docs/releases/collector-1.0.13.md`).
+- **Recovery ZIP:** `C:\SortViewCollector-1.0.13.zip` is the canonical 1.0.13 release ZIP; it and the running program
+  were checked against the release record on 2026-10-28 (that record, *Production status*).
+- **Cleanup, 2026-10-28:** nine historical backup folders, four staging folders (the `C:\SortView-1.0.1x-Staging`
+  folders), three pilot folders, two old release-build folders and the 1.0.11 release ZIP were **moved** to
+  `C:\SortViewCleanup-20261028`. The empty `C:\SortViewPilot` and `C:\SortView\ReleaseBuilds` were removed. The
+  2026-10-02 backup (`C:\SortView\Collector.backup-20261002-081805`) stays in place. Nothing historical was deleted, and
+  the production configuration, state and Tech Logic files were not touched.
+- Nothing shows that the new WPF installer has ever been deployed to this computer; do not assume it has. Neither the
+  canonical 1.0.14 bundle nor the G2 package was found on it.
 
 Scheduled Task:
 
@@ -632,12 +660,13 @@ Scheduled Task:
 | Name and path | `SortView Collector`, `\` |
 | State when inspected | Ready |
 | Runs as | SYSTEM |
-| Action | `C:\SortView\Collector\SortViewCollector.exe`, working directory `C:\SortView\Collector` |
+| Action | `C:\SortView\Collector\SortViewCollector.exe run` with the configuration `C:\ProgramData\SortViewCollector\config\collector_config.json`, working directory `C:\SortView\Collector` |
 | Trigger | Time trigger from 2026-09-18 08:42:40, repeating every 15 minutes (`PT15M`), no repetition duration |
 | Settings | MultipleInstances IgnoreNew; execution time limit 1 hour; restart 3 times at 5-minute intervals; StartWhenAvailable True; DisallowStartIfOnBatteries False; StopIfGoingOnBatteries False |
-| Last run | 2026-10-22 09:27:27, result `0`; next run 09:42:42; missed runs 0 |
+| Last run | 2026-10-28 09:27:27, result `0` (2026-10-22: 09:27:27, result `0`, missed runs 0) |
 
-A last result of 0 shows the task ran. It does not show that uploads to the API succeeded.
+A last result of 0 shows the task ran and the program exited cleanly. It does not show that uploads to the API
+succeeded; the 2026-10-28 checks did not establish data delivery.
 
 *SortView folder ownership and permissions*
 
@@ -666,9 +695,8 @@ design must account for this existing condition. The ACL of `C:\SortView\Collect
 
 **Still unverified** (no further machine profiling is planned for now; nothing here may be assumed):
 
-- The installed Collector's exact version (believed 1.0.10 earlier; not established).
-- The Collector configuration file's path and structure (the scripts' default is
-  `C:\ProgramData\SortViewCollector\config\collector_config.json`).
+- The Collector configuration file's structure (its path, `C:\ProgramData\SortViewCollector\config\collector_config.json`,
+  is the one the task passes; its contents were not inspected).
 - Whether the existing Collector uses any direct database connection.
 - Permissions on the individual Tech Logic log files, and on `C:\SortView\Collector`.
 - Python runtime dependencies, if any (the 2026-08-31 per-user Python 3.14.3 was not re-checked).
@@ -711,15 +739,17 @@ deployment, not a fresh install. What remains unverified above must not be assum
 **Milestones:**
 
 - [ ] **C1. Code signing** for the Collector executable and scripts (needs a certificate — section 6).
-- [ ] **C2. One signed download** a library can run, replacing hand-copied bundles.
+- [ ] **C2. One signed download** a library can run, replacing hand-copied bundles. Interim: the unsigned G2
+      supervised-pilot package (above), sent with its fingerprint by separate channels. It does not satisfy C2.
 - [ ] **C3. First-owner account at provisioning** — **implementation merged** (G6A, PR #269, `7f7cf3e`): a platform
       administrator assigns a library's first owner in React admin, only while it has no active owner, in one locked
       transaction with its audit record; the owner sets a password through "Forgot password?". Its PostgreSQL
       concurrency test (two simultaneous assignments leave exactly one owner) passed against a local disposable
       database on 2026-10-25. **Not yet verified:** a real owner activation in production -- the reset email
       delivered by production SES to an outside address, and that owner signing in.
-- [x] **C4. Current customer install guide** — written 2026-10-26 (G6B) as Markdown sources, not yet distributed to a
-      library or accessibility-reviewed:
+- [ ] **C4. Current customer install guide** — **written** 2026-10-26 (G6B, PR #270, `5ce3cfc`) as Markdown sources;
+      **not delivered**: not yet distributed to a library or accessibility-reviewed. It gives the customer support
+      address `sortviewsuper@gmail.com`; that inbox has not been operationally verified (**verify**). Sources:
       `docs/collector-1.0.14-customer-installation-guide.md` (customer, SortView Setup GUI) and
       `docs/customer-onboarding-checklist.md` (internal). They supersede the 1.0.2 guide
       (`docs/SortView_Collector_1.0.2_Customer_Installation_Guide.docx`/`.pdf`) and
@@ -742,12 +772,24 @@ deployment, not a fresh install. What remains unverified above must not be assum
 
 ## 5. Done recently (newest first)
 
+- 2026-10-28 — NBPL AMH production baseline verified, and the machine cleaned up: active Collector 1.0.13 (executable
+  and recovery ZIP match the 1.0.13 release record), task result `0` at 09:27:27 (not proof of API delivery);
+  historical folders moved to `C:\SortViewCleanup-20261028`, nothing deleted, production configuration, state and
+  Tech Logic files untouched (section 4, C, target machine baseline).
+
+- 2026-10-28 — Live Today "Holds today" and "Bin volume today" (PR #271, `a8a1485`): the customer app built from
+  that commit was uploaded to the production S3 bucket and CloudFront invalidated; both sections were seen on the
+  production Live Today page. That verifies they are shown, not that their figures are correct (Priority 2 UI work).
 - 2026-10-26 — G6B: customer installation guide for Collector 1.0.14 (SortView Setup GUI, enrollment code, recovery
   guidance and Copy details, first-owner sign-in, first data) and the internal onboarding checklist (provision →
   Collector settings → first owner → Contract 2 installation → package and fingerprint → code issued in the session →
   verify Active / Ready / OK), with tenant, owner-email and wrong-library safety checks (C4). The 1.0.2 guide and
   provisioning checklist are kept as superseded historical files. Not verified: production reset-email delivery, a
   production onboarding, code signing.
+- 2026-10-25 — G3 real-API GUI installation passed with the `de858df` package (recorded in
+  `docs/releases/collector-1.0.14.md`, PR #267). G2 recovery guidance and Copy details merged (PR #268, `bef28bc`);
+  the G2 package built from it is the approved customer package (section 4, C). G6A first-owner assignment merged
+  (PR #269, `7f7cf3e`), with its PostgreSQL concurrency test passing locally (C3).
 - 2026-10-22 — M2d-1 Stage 3B expected-stop validation passed on an isolated Windows 10 Enterprise LTSC 2019 VM
   (build 17763, .NET Framework 4.7.2, network disconnected). The test used a disposable installation-enabled build,
   a 15-file harmless fixture (`0.0.0-m2d1vm`) and a stand-in Collector executable.
@@ -857,6 +899,7 @@ One line each, dated. Pick up only when a milestone needs it, or when it is prom
 - 2026-10-15 — `SORTVIEW_CUSTOMER_ALLOWED_ORIGINS` still lists the customer React trial's CloudFront origin. Kept deliberately through the A4 soak (2026-10-16); remove it after the soak (A5). **Superseded (A5):** removing it broke customer writes from `app.sortviewapp.com` in production, so it must stay (A5). Why production needs it is not yet explained; investigate only as its own task.
 - 2026-10-19 — The tracked `docs/accessibility-conformance-report.md` (WCAG 2.1) predates the VPAT draft: it still rates 3.1.1 Partially Supports and has older 2.2.1/3.3.4 wording. Reconcile when B resumes (priority 4).
 - 2026-10-01 — `ruleset_id`: `docs/contract-v2-design.md` §5 contradicts the deliberate code behavior; fix the doc or the code.
+- 2026-10-27 — The G3 test installation (`SortView G3 Installer Test`, installation 7) is still `active` while its task is disabled, so the scheduled pipeline-health check fails on its stale heartbeat. Fix: set that installation to Inactive in React admin; no code change (**verify** whether done).
 
 ---
 
