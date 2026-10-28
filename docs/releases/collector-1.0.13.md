@@ -53,6 +53,8 @@ Validation machine:
 
 `NewBraunfelsSorterPC`
 
+(The historical name used in this record for `NEWBRAUNFELSSOR`: the same NBPL AMH computer.)
+
 Production update results:
 
 - Existing frozen runtime updated in place from the canonical 1.0.13 ZIP
@@ -94,3 +96,17 @@ SortView Collector 1.0.13 passed:
 Production installation validation completed successfully on the production AMH.
 
 The canonical ZIP fingerprint above is the release baseline for Collector 1.0.13.
+
+## Production status, 2026-10-28
+
+1.0.13 is still the active Collector on the production AMH (`NEWBRAUNFELSSOR`), installed at `C:\SortView\Collector`.
+
+- Running `SortViewCollector.exe` SHA-256: `BFCBBFE7D982CE2654C2CC9A069DCF1ABFDD00076A41C5A782149A74BAC66882`, the
+  frozen executable above.
+- Recovery copy of the canonical ZIP on that machine: `C:\SortViewCollector-1.0.13.zip`, SHA-256
+  `EB389BF6EE9C1E274CBE8B157BB6BFBBF9F240B0BBBD59629D398A8536590450`, the canonical fingerprint above. All `1350`
+  manifest-listed files passed their size and SHA-256 checks, and its executable matches the running one.
+- Scheduled Task `SortView Collector` runs `SortViewCollector.exe run` with
+  `C:\ProgramData\SortViewCollector\config\collector_config.json`. Last confirmed run: 2026-10-28 09:27:27, result `0`.
+  That is the task's exit code only; it does not establish that data reached the API.
+- The 2026-10-02 runtime backup above is still in place.
