@@ -8,6 +8,7 @@ It covers:
 - React admin app deployment
 - React customer app deployment
 - AMH agent validation and deployment
+- preserving Collector and setup program artifacts in the private artifact repository
 
 The goal is to make releases predictable, repeatable, and low risk.
 
@@ -95,6 +96,147 @@ python scripts/package_installer_release.py --version <X.Y.Z> --bundle-zip <Sort
    `Microsoft.NETFramework.ReferenceAssemblies.net472` package's `build` folder.
 
 The package is unsigned until code signing (C1) exists.
+
+### Preserving release artifacts (private artifact repository)
+
+Every canonical Collector release ZIP and every setup program package is kept in the **private** Git repository
+`richardrhanly-us/sortview-artifacts` (local clone: `C:\Users\rhanly\Projects\sortview-artifacts`). **An artifact is
+not preserved until** it has been inspected, copied, hash-verified, committed and pushed there, and its release record in
+this repository names the artifact-repository path and commit. A ZIP that exists only in a build folder is not preserved:
+that is how the canonical 1.0.14 bundle and the G2 setup package were lost (2026-10-28).
+
+**Storage is not release approval.** An artifact in `sortview-artifacts` is internal. Whether it is published, or
+approved for a customer, is recorded only in its release record in this repository (`docs/releases/`) -- never by where
+it is stored. Historical release hashes in those records are never changed.
+
+#### Layout
+
+```
+sortview-artifacts\
+  collector\<version>\
+    SortViewCollector-<version>.zip      the canonical release ZIP, unchanged
+    ARTIFACT-RECORD.md
+  installer\<version>\<build-id>\
+    SortView-Setup-<version>.zip         the setup program package ZIP, unchanged
+    PACKAGE-SHA256.txt                   as written by scripts/package_installer_release.py
+    PACKAGE-RECORD.json                  as written by scripts/package_installer_release.py
+    ARTIFACT-RECORD.md
+```
+
+- `<version>` is the Collector release version, e.g. `1.0.14`.
+- `<build-id>` is `<YYYYMMDD>-<first 7 characters of the installer source commit>`, e.g. `20261029-041500e`. A second
+  package from the same commit on the same day adds `-r2`, `-r3`, and so on.
+- A folder is created once and never overwritten or reused. A Collector version has exactly one canonical ZIP: if
+  `collector\<version>\` already holds a ZIP with a different SHA-256, **stop** -- two artifacts claim the same release.
+
+#### `ARTIFACT-RECORD.md`
+
+One per artifact folder, with every field filled in (write "unknown" rather than leave one out or guess):
+
+| Field | Collector ZIP | Setup package |
+|---|---|---|
+| Artifact | file name | file name |
+| SHA-256 | full 64 hex characters | full 64 hex characters (`zip_sha256` in `PACKAGE-RECORD.json`) |
+| Size | bytes | bytes |
+| Source commit | full 40 characters (the commit the bundle was built from) | full 40 characters (`installer_source` in `PACKAGE-RECORD.json`) |
+| Embedded bundle | -- | release ZIP and `MANIFEST.json` SHA-256 (`release_zip_sha256`, `bundle_manifest_sha256`) |
+| Original build path | full path of the ZIP as built | the `--output` folder as given |
+| Build machine | `$env:COMPUTERNAME` of the machine that built it | same |
+| Build date | UTC date and time | `created_utc` in `PACKAGE-RECORD.json` |
+| Toolchain | CPython and PyInstaller versions | MSBuild path and reference assemblies (`PACKAGE-RECORD.json`) |
+| Release record | `docs/releases/collector-<version>.md` | same |
+| Validation status | what was validated, where and when -- or `not validated` | same |
+| Inspection | the date, who inspected, and the result of the check below | same |
+| Approval | `internal artifact -- not published, not customer-approved` unless the release record says otherwise | same |
+
+#### Before copying: inspect for secrets and library data
+
+Run this against the ZIP that is about to be stored. It reads the ZIP and changes nothing:
+
+```powershell
+$zip = '<full path of the ZIP>'
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$archive = [IO.Compression.ZipFile]::OpenRead($zip)
+try {
+  $refused = '(^|/)pilot/|classification_rules\.json$|(^|/)collector_config\.json$|\.dpapi$|api_token|\.(pfx|key|env)$|(?<!/certifi/cacert)\.pem$|\.log$|(^|/)(data|logs|secrets|state)/|TLCFinalDlls|Checkins\.txt$|Rejects\.txt$|ACS Log\.txt$'
+  $archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') } | Where-Object { $_ -match $refused }
+  $archive.Entries | Where-Object { $_.Length -lt 1MB -and $_.FullName -match '\.(json|ps1|psm1|txt|md|ini|cfg|config|xml|py)$' } | ForEach-Object {
+    $reader = New-Object IO.StreamReader($_.Open())
+    try { if ($reader.ReadToEnd() -match '(?i)(bearer\s+[a-z0-9]|postgres(ql)?://|password\s*[:=]\s*\S|api[_-]?token\s*[:=]\s*\S)') { $_.FullName } }
+    finally { $reader.Dispose() }
+  }
+} finally { $archive.Dispose() }
+```
+
+**Any output stops the procedure:** the artifact is not stored until the finding has been reviewed and explained in its
+`ARTIFACT-RECORD.md`. Entries that are scripts or examples by design (for example `tools\set-api-token.ps1`, or
+`collector_config.example.json`, which the patterns above do not match) are not findings. The one `.pem` file a
+Collector bundle carries by design, `runtime\_internal\certifi\cacert.pem` (public certificate authorities), is
+excluded above. Bundles 1.0.6 to 1.0.13 contain
+`pilot\classification_rules.json`, generated from one library's settings, so they fail this check and are **not**
+stored here. 1.0.14 and later bundles do not contain it.
+
+#### Copy and verify (PowerShell, on the build machine)
+
+```powershell
+$source   = '<full path of the ZIP as built>'
+$expected = '<full SHA-256 from the release record, or zip_sha256 from PACKAGE-RECORD.json>'
+$folder   = 'C:\Users\rhanly\Projects\sortview-artifacts\collector\<version>'   # or installer\<version>\<build-id>
+
+if ((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -ne $expected.ToUpper()) { throw 'source does not match the recorded SHA-256' }
+if (Test-Path -LiteralPath $folder) { throw "$folder already exists: never overwrite" }
+New-Item -ItemType Directory -Path $folder | Out-Null
+Copy-Item -LiteralPath $source -Destination $folder
+$copy = Join-Path $folder (Split-Path -Leaf $source)
+if ((Get-FileHash -LiteralPath $copy -Algorithm SHA256).Hash -ne $expected.ToUpper()) { Remove-Item -LiteralPath $folder -Recurse; throw 'the copy does not match: removed' }
+if ((Get-Item -LiteralPath $copy).Length -ge 100MB) { throw 'GitHub refuses files of 100 MB or more: decide on Git LFS before storing' }
+```
+
+For a setup package, also copy `PACKAGE-SHA256.txt` and `PACKAGE-RECORD.json` from the `--output` folder into the same
+folder. Then write `ARTIFACT-RECORD.md`.
+
+#### Commit and push (the product owner does this)
+
+```powershell
+cd C:\Users\rhanly\Projects\sortview-artifacts
+git pull --ff-only
+git status -sb                                       # only the new folder may appear
+git add -- '<collector\<version> or installer\<version>\<build-id>>'
+git commit -m "Add <artifact file name> (SHA-256 <first 12 characters>, source <7-character commit>)"
+git push
+git rev-parse HEAD                                   # the artifact commit, for the release record
+git status -sb                                       # must show the branch in sync with origin
+```
+
+Never force-push, amend a pushed commit, rewrite history or delete a stored artifact in this repository.
+
+#### Record it in this repository
+
+In `docs/releases/collector-<version>.md`, beside that artifact's existing hashes, add one line:
+
+```
+- Stored: `sortview-artifacts` `<path of the ZIP inside that repository>`, commit `<full 40-character artifact commit>`
+```
+
+The hashes in the release record stay the source of truth. The artifact repository is storage only.
+
+#### Retrieve and verify on another machine
+
+```powershell
+# first time
+git clone https://github.com/richardrhanly-us/sortview-artifacts.git C:\Users\rhanly\Projects\sortview-artifacts
+# afterwards
+git -C C:\Users\rhanly\Projects\sortview-artifacts pull --ff-only
+
+$zip      = 'C:\Users\rhanly\Projects\sortview-artifacts\<path from the release record>'
+$expected = '<full SHA-256 from the release record in this repository>'
+git -C C:\Users\rhanly\Projects\sortview-artifacts merge-base --is-ancestor '<artifact commit from the release record>' HEAD
+if ($LASTEXITCODE -ne 0) { throw 'this clone does not contain the recorded artifact commit' }
+if ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -ne $expected.ToUpper()) { throw 'hash mismatch: do not use this file' }
+```
+
+Compare against the hash in **this** repository's release record, not only the copy in `ARTIFACT-RECORD.md` beside the
+file. A mismatch means the file must not be used.
 
 ---
 

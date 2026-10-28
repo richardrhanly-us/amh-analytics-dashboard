@@ -481,6 +481,14 @@ planning come first and decide which C milestones they cover. Nothing below is r
   is present except the canonical 1.0.14 bundle ZIP (`75e7830a…`, 36,543,962 bytes), which must be found on its build
   machine and placed, hash-checked, at `C:\SortView\ReleaseBuilds\1.0.14\` on LIB-L26. Rebuilding it would create a
   new release identity, which is a separate decision.
+- **Centralized artifact storage: procedure documented, not yet used (2026-10-28).** Canonical Collector ZIPs and setup
+  program packages are kept in the private Git repository `richardrhanly-us/sortview-artifacts` (plain Git, no GitHub
+  Releases; local clone `C:\Users\rhanly\Projects\sortview-artifacts`), as `collector\<version>\` and
+  `installer\<version>\<build-id>\`, each with an `ARTIFACT-RECORD.md`. Each artifact is inspected for secrets and
+  library data, copied, hash-verified, then committed and pushed by the product owner. Its release record names the path
+  and artifact commit (`docs/release-process.md`, *Preserving release artifacts*). Status: the repository holds only
+  its initial commit, and no artifact is stored. Bundles 1.0.6 to 1.0.13 contain one library's classification rules and
+  are not stored there. Not yet demonstrated: storing an artifact on one machine and verifying it from the other.
 
 **Target machine baseline — NBPL's AMH PC, `NEWBRAUNFELSSOR`** (the real Tech Logic sorter computer at New Braunfels
 Public Library, where the SortView Collector runs). Build and test installer work against this, not a developer PC.
@@ -772,6 +780,10 @@ deployment, not a fresh install. What remains unverified above must not be assum
 
 ## 5. Done recently (newest first)
 
+- 2026-10-28 — Artifact storage workflow documented (`docs/release-process.md`, *Preserving release artifacts*): the
+  private `sortview-artifacts` repository, its layout and record fields, the secrets and library-data inspection,
+  copy-and-verify, the owner's commit and push, and retrieval and verification on another machine. No artifact stored
+  yet (section 4, C).
 - 2026-10-28 — NBPL AMH production baseline verified, and the machine cleaned up: active Collector 1.0.13 (executable
   and recovery ZIP match the 1.0.13 release record), task result `0` at 09:27:27 (not proof of API delivery);
   historical folders moved to `C:\SortViewCleanup-20261028`, nothing deleted, production configuration, state and
