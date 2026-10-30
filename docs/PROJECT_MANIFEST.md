@@ -471,17 +471,21 @@ planning come first and decide which C milestones they cover. Nothing below is r
   `de858df` (ZIP SHA-256 `e932200f…`), which is **not** the customer package.
 - **Approved customer package: G2** -- `SortView-Setup-1.0.14.zip` built from `bef28bc` (PR #268, recovery guidance
   and Copy details), ZIP SHA-256 `6f91da7da2253a4cdef85e4fa6f25789dd8a48a932bc4ae884eac1465ece3193`, as recorded in
-  `docs/customer-onboarding-checklist.md` section 6, and now in the release record (*G2 setup program package*). No
-  installation of this exact package is recorded. It is an unsigned supervised-pilot package; how Windows warns on
-  downloading and running it has not been validated.
+  `docs/customer-onboarding-checklist.md` section 6, and now in the release record (*G2 setup program package*). It is
+  an unsigned supervised-pilot package; how Windows warns on downloading and running it has not been validated.
+- **G2 exact-package GUI installation passed 2026-10-29** on a Windows 10 LTSC 2019 VM (installation `8`, since
+  deactivated): all seven stages, exit code `0`; manual and automatic SYSTEM task runs exit code `0`. The automatic run
+  happened only **after the trigger was edited** (following a VM time-zone correction); why the original trigger
+  missed its runs is not established. Tech Logic files were empty placeholders, so ingesting realistic events through
+  G2 is not validated. Recorded in `docs/releases/collector-1.0.14.md`, *G2 validation*.
 - **G2 ZIP and canonical 1.0.14 bundle: recovered and stored (2026-10-28).** Both originals were found on
   `DESKTOP-DORG9IO` under `C:\SortView\ReleaseBuilds\`, matched their recorded SHA-256, passed the secrets and
   library-data inspection, and are stored in `sortview-artifacts` at commit
   `0bf29645868024556df4225c0a0367d42332558b`: `collector/1.0.14/SortViewCollector-1.0.14.zip` and
   `installer/1.0.14/20261025-bef28bc/SortView-Setup-1.0.14.zip`, each with its `ARTIFACT-RECORD.md`. No rebuild or
   successor package is needed. Storage is internal: the bundle is still unpublished and G2 is still an unsigned
-  supervised-pilot package. **Pending:** retrieving the exact G2 package on another machine, verifying it against the
-  release record and installing it.
+  supervised-pilot package. **Pending:** retrieving the exact G2 package from the artifact repository on another
+  machine and verifying it against the release record.
 - **Centralized artifact storage: in use (2026-10-28).** Canonical Collector ZIPs and setup
   program packages are kept in the private Git repository `richardrhanly-us/sortview-artifacts` (plain Git, no GitHub
   Releases; local clone `C:\Users\rhanly\Projects\sortview-artifacts`), as `collector\<version>\` and
@@ -780,6 +784,9 @@ deployment, not a fresh install. What remains unverified above must not be assum
 ---
 
 ## 5. Done recently (newest first)
+
+- 2026-10-29 — G2 exact-package GUI installation passed on a VM (installation `8`, deactivated afterwards); automatic
+  task run passed only after a trigger edit. Recorded in `docs/releases/collector-1.0.14.md` (section 4, C).
 
 - 2026-10-28 — Canonical Collector 1.0.14 bundle (`75e7830a…`) and G2 setup package (`6f91da7d…`) recovered and stored
   in `sortview-artifacts` at commit `0bf29645868024556df4225c0a0367d42332558b`; both recorded in
