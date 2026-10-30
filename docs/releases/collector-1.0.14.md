@@ -7,8 +7,8 @@
 - Canonical release artifact: **built 2026-10-24, not yet published** (see *Canonical release artifact* below). The
   remaining checks in *Before this release is published* are still to be performed and recorded.
 - G3 real-API GUI installation: **passed 2026-10-25** (see *G3 validation: real-API GUI installation* below).
-- G2 setup program package: **stored, not installed** -- the unsigned supervised-pilot package (see *G2 setup program
-  package* below). No installation of this exact package is recorded.
+- G2 setup program package: the unsigned supervised-pilot package (see *G2 setup program package* below).
+  Exact-package GUI installation **passed 2026-10-29** (see *G2 validation: exact-package GUI installation* below).
 - Artifact storage: the canonical release ZIP and the G2 package were recovered and stored in the private artifact
   repository on 2026-10-28. Storage is internal and is not release or customer approval.
 - Customer documentation: **written 2026-10-26** (G6B) -- `docs/collector-1.0.14-customer-installation-guide.md` and the
@@ -74,10 +74,44 @@ canonical ZIP. It is a different artifact from the G3 test package above; identi
 - Embedded bundle: the canonical release ZIP and `MANIFEST.json` above (gate Enabled, pin version `1.0.14`)
 - Stored: `sortview-artifacts` `installer/1.0.14/20261025-bef28bc/SortView-Setup-1.0.14.zip`, commit `0bf29645868024556df4225c0a0367d42332558b`
 
-Status: **unsigned** (no code signing until C1) and approved only for a **supervised pilot**. Validated only by the
-packaging script's own checks at build time. **Pending:** retrieving this exact package from the artifact repository on
-another machine, verifying it there against the hash above, and installing it; how Windows warns on downloading and
-running it has also not been validated.
+Status: **unsigned** (no code signing until C1) and approved only for a **supervised pilot**. Validated by the packaging
+script's own checks at build time and by the exact-package GUI installation below. **Pending:** retrieving this exact
+package from the artifact repository on another machine and verifying it there against the hash above; how Windows warns
+on downloading and running it has also not been validated.
+
+## G2 validation: exact-package GUI installation
+
+Passed on 2026-10-29 using the original G2 setup program package.
+
+- Environment: Windows 10 Enterprise LTSC 2019 VM in VMware Workstation.
+- Package: `SortView-Setup-1.0.14.zip`, SHA-256 `6f91da7da2253a4cdef85e4fa6f25789dd8a48a932bc4ae884eac1465ece3193`.
+- Package integrity: verified against the archived G2 package hash before installation.
+- Preflight: passed Windows prerequisites and verified all 1,392 Collector manifest entries.
+- GUI installation: all seven stages completed successfully, exit code `0`.
+- API: connected to the deployed SortView API over HTTPS.
+- Enrollment: completed using the G2 test organization, installation ID `8`.
+- Tech Logic files: empty synthetic placeholders were used for the three source paths; realistic synthetic event ingestion was not validated.
+- Scheduled Task: `SortView Collector`, running as `SYSTEM`, registered and enabled with a 15-minute repetition interval.
+- Manual task execution: passed on 2026-10-29 at approximately 9:57 PM Central, exit code `0`.
+- Automatic task execution: passed on 2026-10-29 at 10:37:37 PM Central, exit code `0`, after refreshing the trigger.
+- Cleanup: temporary diagnostic scheduled task removed; test installation ID `8` deactivated in SortView Administration.
+
+### Scheduling qualification
+
+The test VM initially used Pacific Time while the host used Central Time. After correcting the VM's time zone, the original scheduled trigger repeatedly advanced its next-run time without a recorded automatic execution.
+
+A manually initiated task run completed successfully. A separate temporary scheduled task also demonstrated that Windows could execute a newly registered task automatically.
+
+The existing Collector trigger was then edited to start at 10:37 PM Central. The Collector subsequently ran automatically at 10:37:37 PM and completed with exit code `0`.
+
+This validates automatic execution **after trigger correction**. It does not establish that the original trigger would have worked without intervention or conclusively identify the cause of the earlier missed executions.
+
+### Remaining validation
+
+- Browser-downloaded unsigned-package warnings and customer-facing installation guidance remain untested.
+- Retrieval of this exact package from the private artifact repository on another machine remains untested.
+- Ingestion of realistic synthetic Tech Logic events through this exact G2 installation remains untested.
+- Remaining release-publication checks listed below are not automatically satisfied by this installation test.
 
 ## What changed
 
