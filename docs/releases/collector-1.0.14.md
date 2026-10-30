@@ -7,6 +7,10 @@
 - Canonical release artifact: **built 2026-10-24, not yet published** (see *Canonical release artifact* below). The
   remaining checks in *Before this release is published* are still to be performed and recorded.
 - G3 real-API GUI installation: **passed 2026-10-25** (see *G3 validation: real-API GUI installation* below).
+- G2 setup program package: **stored, not installed** -- the unsigned supervised-pilot package (see *G2 setup program
+  package* below). No installation of this exact package is recorded.
+- Artifact storage: the canonical release ZIP and the G2 package were recovered and stored in the private artifact
+  repository on 2026-10-28. Storage is internal and is not release or customer approval.
 - Customer documentation: **written 2026-10-26** (G6B) -- `docs/collector-1.0.14-customer-installation-guide.md` and the
   internal `docs/customer-onboarding-checklist.md`, replacing the 1.0.2 guide and checklist. Not yet used for a
   production onboarding.
@@ -22,6 +26,7 @@ Built from `62a4ae8f96728c281ce0575589850959c9886efc` (PRs #265 and #266) with `
 - Manifest entries: `1392`; frozen runtime files: `1378`
 - `runtime\SortViewCollector.exe` SHA-256: `e7c733a9c622fd9c2bf244b29d9cf2c264e323ab53cf72fa759c1298f7691399`
 - Build: CPython 3.14.6, PyInstaller 6.22.3; requests 2.33.1, urllib3 2.6.3, pandas 2.3.3, numpy 2.5.3
+- Stored: `sortview-artifacts` `collector/1.0.14/SortViewCollector-1.0.14.zip`, commit `0bf29645868024556df4225c0a0367d42332558b`
 
 Earlier test builds also report `1.0.14` but are **not** this release: the frozen runtime used in the M2d-4 P0C/P1/P1R
 VM tests (`SortViewCollector.exe` SHA-256 `9b948e8266748c0aa2bea074575bcb7c945c46b587a988ccb8bdd88072d81040`) predates
@@ -53,6 +58,26 @@ SortView API.
   batches, 3 chunks committed, 0 server duplicates, 0 quarantined events
 - Backend: installation active, onboarding Ready, pipeline OK
 - Cleanup: the Scheduled Task was disabled after testing; the test installation and its evidence are preserved
+
+The `de858df` package (`e932200f…`) is a test package, not the G2 package below, and is not stored in the artifact
+repository.
+
+## G2 setup program package
+
+The supervised-pilot customer package, packaged with `scripts/package_installer_release.py` from this release's
+canonical ZIP. It is a different artifact from the G3 test package above; identify it by the hashes below.
+
+- Package ZIP: `SortView-Setup-1.0.14.zip` (36,447,462 bytes)
+- Package ZIP SHA-256: `6f91da7da2253a4cdef85e4fa6f25789dd8a48a932bc4ae884eac1465ece3193`
+- Installer source: `bef28bcfcc0474d70a3510b83d13e59101202dc5` (PR #268); packaged 2026-10-25T22:51:58Z
+- `SortView.Setup.exe` SHA-256: `f3aaac9c410eb9bee1f66276cc4ddd0c2820718c26c089b6476fdef9e0f8e9fc`
+- Embedded bundle: the canonical release ZIP and `MANIFEST.json` above (gate Enabled, pin version `1.0.14`)
+- Stored: `sortview-artifacts` `installer/1.0.14/20261025-bef28bc/SortView-Setup-1.0.14.zip`, commit `0bf29645868024556df4225c0a0367d42332558b`
+
+Status: **unsigned** (no code signing until C1) and approved only for a **supervised pilot**. Validated only by the
+packaging script's own checks at build time. **Pending:** retrieving this exact package from the artifact repository on
+another machine, verifying it there against the hash above, and installing it; how Windows warns on downloading and
+running it has also not been validated.
 
 ## What changed
 
