@@ -103,7 +103,8 @@ Every canonical Collector release ZIP and every setup program package is kept in
 `richardrhanly-us/sortview-artifacts` (local clone: `C:\Users\rhanly\Projects\sortview-artifacts`). **An artifact is
 not preserved until** it has been inspected, copied, hash-verified, committed and pushed there, and its release record in
 this repository names the artifact-repository path and commit. A ZIP that exists only in a build folder is not preserved:
-that is how the canonical 1.0.14 bundle and the G2 setup package were lost (2026-10-28).
+that is how the canonical 1.0.14 bundle and the G2 setup package were lost (2026-10-28). Both were later recovered and
+stored the same day (`docs/releases/collector-1.0.14.md`).
 
 **Storage is not release approval.** An artifact in `sortview-artifacts` is internal. Whether it is published, or
 approved for a customer, is recorded only in its release record in this repository (`docs/releases/`) -- never by where
