@@ -5,10 +5,13 @@ collector/v2_normalize.py directly to prove the two built-in mappings never drif
 never a runtime dependency (src/ still never imports collector/ code at runtime; see destination_mapping.py's docstring).
 """
 
+import itertools
+import random
 import sys
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from services.destination_mapping import (
     build_transit_label_to_v2_slug_map,
@@ -89,6 +92,88 @@ def test_latest_record_per_item_wins_like_v1s_barcode_dedup():
     ])
     result = build_acs_item_summary_v2(df, [])
     assert result["holds_total"] == 0  # the LATEST record for this item is not a hold
+
+
+# --- the latest record of an item is its greatest (event_time, id): docs/contract-v2-design.md section 9.4 -----------
+
+ITEM = "1" * 64
+
+
+def _in_insert_order(*records):
+    """The records with the ids the database gave them, in the order they are written here."""
+    return [{**record, "id": row_id} for row_id, record in enumerate(records, start=1)]
+
+
+def _totals(rows):
+    result = build_acs_item_summary_v2(_acs_items_df(rows), [])
+    return result["holds_total"], result["ill_total"]
+
+
+@pytest.mark.parametrize(("records", "expected"), [
+    pytest.param([_hold(ITEM), _hold(ITEM, is_ill=True)], (0, 1), id="public-corrected-to-ill"),
+    pytest.param([_hold(ITEM, is_ill=True), _hold(ITEM)], (1, 0), id="ill-corrected-to-public"),
+    pytest.param([_hold(ITEM), _hold(ITEM, is_ill=True), _hold(ITEM)], (1, 0), id="public-ill-public"),
+    pytest.param([_hold(ITEM, is_ill=True), _hold(ITEM), _hold(ITEM, is_ill=True)], (0, 1), id="ill-public-ill"),
+    pytest.param([_hold(ITEM), _non_hold(ITEM)], (0, 0), id="public-retracted-in-its-second"),
+    pytest.param([_hold(ITEM, is_ill=True), _non_hold(ITEM)], (0, 0), id="ill-retracted-in-its-second"),
+    pytest.param([_non_hold(ITEM), _hold(ITEM)], (1, 0), id="held-again-in-the-retractions-second"),
+])
+def test_a_tie_is_decided_by_the_greatest_id_whichever_way_the_rows_arrive(records, expected):
+    for arrival in itertools.permutations(_in_insert_order(*records)):
+        assert _totals(list(arrival)) == expected
+
+
+def test_a_later_event_time_outranks_a_greater_id():
+    later, earlier = _hold(ITEM, when="2026-10-05T00:00:01+00:00"), _non_hold(ITEM, when="2026-10-05T00:00:00+00:00")
+
+    assert _totals(_in_insert_order(later, earlier)) == (1, 0)
+
+
+@pytest.mark.parametrize("arrival", ["id-order", "reversed", "shuffled"])
+def test_dense_ties_across_many_items_match_a_reduction_by_event_time_and_id(arrival):
+    instants = [f"2026-10-05T00:00:0{second}+00:00" for second in range(3)]
+    records = []
+    for n in range(60):
+        item, when, is_ill = f"{n:064x}", instants[n % 3], n % 2 == 0
+        records += [_hold(item, is_ill=is_ill, when=when), _hold(item, is_ill=not is_ill, when=when)]
+        records += [_non_hold(item, when=when)] if n % 5 == 0 else []
+    rows = _in_insert_order(*records)
+
+    latest = {}
+    for row in sorted(rows, key=lambda row: (row["datetime"], row["id"])):
+        latest[row["item_key"]] = row
+    holds = [row for row in latest.values() if row["state"] == "hold"]
+    expected = (sum(not row["is_ill"] for row in holds), sum(row["is_ill"] for row in holds))
+
+    if arrival == "reversed":
+        rows.reverse()
+    elif arrival == "shuffled":
+        random.Random(20261031).shuffle(rows)  # nosec B311 - a fixed order for a test
+
+    assert expected == (24, 24)
+    assert _totals(rows) == expected
+
+
+def test_rows_without_an_id_are_still_summarized_by_their_time_and_gain_no_id():
+    # A caller without database ids gets the latest record by time. A tie has no contract order without an id, so none is asserted.
+    df = _acs_items_df([
+        _non_hold(ITEM, when="2026-10-05T00:05:00+00:00"),
+        _hold(ITEM, when="2026-10-05T00:00:00+00:00"),
+        _hold("2" * 64, is_ill=True),
+        _hold("3" * 64),
+    ])
+
+    result = build_acs_item_summary_v2(df, [])
+
+    assert (result["holds_total"], result["ill_total"]) == (1, 1)
+    assert "id" not in result["items_df"].columns
+
+
+def test_the_database_id_never_appears_in_any_returned_frame():
+    result = build_acs_item_summary_v2(_acs_items_df(_in_insert_order(_hold(ITEM), _hold("2" * 64, is_ill=True))), [])
+
+    for key in ("items_df", "holds_df", "ill_df", "programming_df", "collection_services_df"):
+        assert "id" not in result[key].columns, key
 
 
 # --- item 10/11: branch/programming and collection services parity -------------------------------------------------
