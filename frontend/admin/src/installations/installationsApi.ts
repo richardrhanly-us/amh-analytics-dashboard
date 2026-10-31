@@ -103,7 +103,7 @@ export async function renameInstallation(orgSlug: string, id: number, name: stri
   return installation(await apiRequest(`${base(orgSlug)}/${id}`, { method: 'PUT', body: { name } }))
 }
 
-/** PUT .../status: deactivate, return to provisioning, or retire. */
+/** PUT .../status: deactivate, reactivate (back to provisioning), or retire. */
 export async function changeInstallationStatus(orgSlug: string, id: number, status: StatusChange): Promise<Installation> {
   return installation(await apiRequest(`${base(orgSlug)}/${id}/status`, { method: 'PUT', body: { status } }))
 }

@@ -99,12 +99,12 @@ type Pending = { kind: 'rename' } | { kind: 'status'; to: StatusChange } | { kin
 const CONFIRM: Record<StatusChange, { action: string; text: (id: number) => string }> = {
   inactive: {
     action: 'Deactivate',
-    text: (id) => `Deactivate Installation #${id}? Its Collector's agent token stops authenticating until the installation is returned to provisioning.`,
+    text: (id) => `Deactivate Installation #${id}? Its Collector's agent token stops authenticating until the installation is reactivated.`,
   },
   provisioning: {
-    action: 'Return to provisioning',
+    action: 'Reactivate',
     text: (id) =>
-      `Return Installation #${id} to provisioning? Its Collector's agent token can authenticate again. The installation becomes active only after its next heartbeat.`,
+      `Reactivate Installation #${id}? Its existing Collector's agent token can authenticate again immediately. The installation shows as Provisioning until its next successful heartbeat, then becomes Active.`,
   },
   retired: {
     action: 'Retire',
