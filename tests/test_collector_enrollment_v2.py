@@ -962,9 +962,14 @@ def test_a_newly_enrolled_contract_2_branch_cannot_use_the_v1_upload_and_can_use
     [stored] = _table(world, "checkin_events")
     assert (stored["customer_id"], stored["branch_id"], stored["key_id"]) == (10, 1, body["key_id"])
 
-    # The heartbeat route for that key works too.
+    # The heartbeat route for that key works too, and -- the token being bound to installation 101 -- it is that
+    # installation's confirmed contact: provisioning -> active, last seen now.
+    [enrolled] = [i for i in _table(world, "collector_installations") if i["id"] == 101]
+    assert (enrolled["status"], enrolled["last_seen_at"]) == ("provisioning", None)
     status = client.post("/v2/status", json={"contract_version": 2, "key_id": body["key_id"], "status": "healthy"}, headers=auth)
     assert status.status_code == 200
+    [enrolled] = [i for i in _table(world, "collector_installations") if i["id"] == 101]
+    assert enrolled["status"] == "active" and enrolled["installed_at"] is not None and enrolled["last_seen_at"] is not None
 
 
 def test_the_issued_key_belongs_to_its_own_tenant_only(world):

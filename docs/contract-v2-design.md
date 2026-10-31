@@ -105,8 +105,17 @@ free text is accepted in either.
 
 Every heartbeat is a **full snapshot** of these fields (an omitted optional field is stored as NULL), stored on the matching
 `ingest_key_ids` row together with a server-side `last_heartbeat_at`. It requires the flag and an active matching key, like
-an upload. It never writes `pipeline_status`, `collector_installations` or any v1 table, so the v1 dashboard does not see a v2
-collector's health until the dashboard step reads it. Body limit 16 KiB.
+an upload. It never writes `pipeline_status` or any v1 table, so the v1 dashboard does not see a v2 collector's health until
+the dashboard step reads it. Body limit 16 KiB.
+
+**Installation lifecycle (C6).** When the token was issued by enrollment, and so is bound to one installation
+(`agent_tokens.installation_id`), an accepted heartbeat is also that installation's confirmed contact, exactly as a v1
+`/upload-pipeline-status` heartbeat naming it is (`main.record_installation_heartbeat`): `provisioning` becomes `active`,
+`installed_at` is stamped once, and `last_seen_at` is refreshed. The installation comes from the token alone; the payload has
+no installation field, and the stored `collector_version` is kept because the heartbeat carries none. An `inactive` or
+`retired` installation's bound token is already refused by authentication, and a deactivation that races the heartbeat is
+refused with the same generic 403, rolling back the whole heartbeat including the key snapshot. A legacy token (no
+`installation_id`) links no installation.
 
 ### 4.1 Collector run and schedule diagnostics
 

@@ -41,6 +41,7 @@ CUSTOMER, BRANCH = 10, 1
 OTHER_CUSTOMER, OTHER_BRANCH = 20, 2
 TOKEN = "CANARY-V2-BEARER-TOKEN-3001"
 OTHER_TOKEN = "CANARY-V2-OTHER-TENANT-TOKEN-3002"
+BOUND_TOKEN = "CANARY-V2-ENROLLED-TOKEN-3003"  # issued by enrollment: bound to installation 7 (Db.bind_installation)
 KEY = "3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e"            # active, this tenant
 SECOND_KEY = "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d"      # active, this tenant
 RETIRED_KEY = "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e"     # retired, this tenant
@@ -214,6 +215,19 @@ class Db:
         with self.engine.begin() as conn:
             conn.execute(text("UPDATE ingest_key_ids SET status='retired', retired_at=CURRENT_TIMESTAMP WHERE key_id=:k"), {"k": key})
 
+    def bind_installation(self, status, *, installed_at=None, last_seen_at=None, collector_version=None):
+        """Installation 7 of this tenant, and BOUND_TOKEN: a token issued by enrollment, bound to it."""
+        with self.engine.begin() as conn:
+            conn.execute(text("INSERT INTO collector_installations (id, organization_id, branch_id, status, installed_at,"
+                              " last_seen_at, collector_version) VALUES (7, 1, 1, :s, :i, :l, :v)"),
+                         {"s": status, "i": installed_at, "l": last_seen_at, "v": collector_version})
+            conn.execute(text("INSERT INTO agent_tokens (token_hash, customer_id, branch_id, description, is_active, installation_id)"
+                              " VALUES (:h, :c, :b, 'enrolled token', 1, 7)"),
+                         {"h": hashlib.sha256(BOUND_TOKEN.encode("utf-8")).hexdigest(), "c": CUSTOMER, "b": BRANCH})
+
+    def installation(self):
+        return self.rows("collector_installations", "status, installed_at, last_seen_at, collector_version", "WHERE id = 7")[0]
+
 
 @pytest.fixture
 def db(monkeypatch):
@@ -230,7 +244,8 @@ def db(monkeypatch):
         ("CREATE TABLE branches (id INTEGER PRIMARY KEY, organization_id INTEGER, status TEXT, operational_branch_id INTEGER,"
          " onboarding_status TEXT NOT NULL DEFAULT 'pending', onboarding_message TEXT,"
          f" onboarding_updated_at TEXT NOT NULL DEFAULT '{ONBOARDING_CREATED_AT}')"),
-        "CREATE TABLE collector_installations (id INTEGER PRIMARY KEY, organization_id INTEGER, branch_id INTEGER, status TEXT)",
+        ("CREATE TABLE collector_installations (id INTEGER PRIMARY KEY, organization_id INTEGER, branch_id INTEGER, status TEXT,"
+         " installed_at TEXT, last_seen_at TEXT, collector_version TEXT, updated_at TEXT)"),
         ("CREATE TABLE agent_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, token_hash TEXT, customer_id INTEGER,"
          " branch_id INTEGER, description TEXT, is_active BOOLEAN, last_used_at TEXT, installation_id INTEGER)"),
         "CREATE TABLE v2_cutovers (customer_id INTEGER, branch_id INTEGER, cutover_at TEXT, set_at TEXT)",
@@ -1035,11 +1050,80 @@ def test_the_heartbeat_needs_a_status_and_the_contract_version(db):
         assert post_status(body).status_code == 422
 
 
-def test_the_heartbeat_does_not_link_an_installation_or_change_a_v1_heartbeat_row(db):
-    post_status(status())
+def test_a_legacy_tokens_heartbeat_does_not_link_an_installation_or_change_a_v1_heartbeat_row(db):
+    # TOKEN is a legacy token (no installation_id): it names no installation, so none is touched -- not even one of its
+    # own branch that a bound token would keep alive.
+    db.bind_installation("provisioning")
+    db.sent.clear()
+
+    assert post_status(status()).status_code == 200
 
     named = {t for s in db.sent for t in re.findall(r"\b(?:INTO|UPDATE)\s+([a-z_]+)", s, re.IGNORECASE)}
     assert named <= {"agent_tokens", "ingest_key_ids"}
+    assert db.installation() == ("provisioning", None, None, None)
+
+
+# --- a token bound to an installation keeps that installation's lifecycle (C6) ---------------------------------------
+
+def test_a_bound_tokens_heartbeat_activates_its_provisioning_installation(db):
+    db.bind_installation("provisioning")
+
+    assert post_status(status(), token=BOUND_TOKEN).status_code == 200
+
+    state, installed_at, last_seen_at, version = db.installation()
+    assert state == "active" and installed_at is not None and last_seen_at is not None and version is None
+    assert _snapshot(db)[0] == "healthy"  # the heartbeat itself is stored as before
+
+
+def test_a_bound_tokens_heartbeat_refreshes_an_active_installation_and_keeps_its_install_time_and_version(db):
+    db.bind_installation("active", installed_at="2020-02-02 00:00:00", last_seen_at="2020-03-03 00:00:00",
+                         collector_version="9.9.9-canary")
+
+    assert post_status(status(), token=BOUND_TOKEN).status_code == 200
+
+    state, installed_at, last_seen_at, version = db.installation()
+    assert (state, installed_at, version) == ("active", "2020-02-02 00:00:00", "9.9.9-canary")
+    assert last_seen_at > "2020-03-03 00:00:00"
+
+
+@pytest.mark.parametrize("installation_status", ["inactive", "retired"])
+def test_a_bound_token_of_an_inactive_or_retired_installation_cannot_heartbeat_it_back_to_life(db, installation_status):
+    db.bind_installation(installation_status, last_seen_at="2020-03-03 00:00:00")
+
+    response = post_status(status(), token=BOUND_TOKEN)
+
+    assert response.status_code == 403 and response.json() == {"detail": "Agent is not currently authorized to upload data"}
+    assert db.installation() == (installation_status, None, "2020-03-03 00:00:00", None)
+    assert _snapshot(db)[0] is None
+
+
+def test_a_deactivation_racing_the_heartbeat_refuses_it_and_rolls_the_whole_heartbeat_back(db, monkeypatch):
+    db.bind_installation("active", installed_at="2020-02-02 00:00:00", last_seen_at="2020-03-03 00:00:00")
+    stored = main.record_heartbeat
+
+    def deactivated_meanwhile(conn, **kwargs):  # authentication has passed; an administrator deactivates now
+        result = stored(conn, **kwargs)
+        conn.execute(text("UPDATE collector_installations SET status = 'inactive' WHERE id = 7"))
+        return result
+
+    monkeypatch.setattr(main, "record_heartbeat", deactivated_meanwhile)
+
+    response = post_status(status(), token=BOUND_TOKEN)
+
+    assert response.status_code == 403 and response.json() == {"detail": main.INSTALLATION_NOT_AUTHORIZED_DETAIL}
+    assert _snapshot(db)[0] is None  # the key snapshot stored before the refusal is rolled back with it
+    assert db.installation() == ("active", "2020-02-02 00:00:00", "2020-03-03 00:00:00", None)
+
+
+def test_a_bound_tokens_heartbeat_still_writes_no_v1_table(db):
+    db.bind_installation("provisioning")
+    db.sent.clear()
+
+    assert post_status(status(), token=BOUND_TOKEN).status_code == 200
+
+    named = {t for s in db.sent for t in re.findall(r"\b(?:INTO|UPDATE)\s+([a-z_]+)", s, re.IGNORECASE)}
+    assert named == {"agent_tokens", "ingest_key_ids", "collector_installations"}
+    assert db.v1_statements() == []
 
 
 def test_the_status_route_is_rate_limited_like_the_upload_route(db):

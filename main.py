@@ -721,7 +721,9 @@ def _authenticate_agent(conn, authorization: str | None, expected_scope: tuple[i
 #
 # Lifecycle semantics. A "confirmed installation contact" is any successful,
 # authenticated /upload-pipeline-status request carrying the installation_id of
-# a provisioning/active installation of the authenticated customer/branch. The
+# a provisioning/active installation of the authenticated customer/branch, and
+# any successful Contract v2 /v2/status heartbeat sent with a token bound to such
+# an installation (the installation is the token's; /v2/status names none). The
 # server cannot (and does not try to) tell WHICH Collector operation sent it: a
 # scheduled run's status heartbeat and the install-time preflight probe are both
 # confirmed contact, so activation does NOT wait for the Scheduled Task's first
@@ -1322,6 +1324,12 @@ def status_v2(request: Request, data: StatusV2Request, authorization: str | None
             )
             if not stored:  # the key was retired between the check and the write
                 raise HTTPException(status_code=403, detail=V2_KEY_NOT_AUTHORIZED_DETAIL)
+            # A token issued by enrollment names its installation, so this heartbeat is a confirmed installation contact
+            # (see "Lifecycle semantics" above). The installation comes from the token only -- the payload has no such
+            # field -- and the heartbeat carries no version, so the stored one is kept. A legacy (unbound) token is not
+            # linked to any installation. Same transaction: a refusal here rolls back the snapshot stored above.
+            if token_row.get("installation_id") is not None:
+                record_installation_heartbeat(conn, token_row, int(token_row["installation_id"]), None)
 
         return {"status": "success", "contract_version": 2}
 

@@ -167,7 +167,11 @@ def _create_runtime_role(owner_engine, role_name: str) -> None:
         # sortview_app holds SELECT, INSERT and UPDATE on branches (the 2026-10-01 privilege inventory, recorded in
         # scripts/runtime_role_privileges.py); this fixture had granted SELECT alone, which was all it then needed.
         conn.execute(text(f"GRANT SELECT, UPDATE ON TABLE public.branches TO {role_name}"))
-        conn.execute(text(f"GRANT SELECT ON TABLE public.collector_installations TO {role_name}"))
+        # UPDATE as well as SELECT: a heartbeat from a token bound to an installation moves it provisioning -> active and
+        # stamps last_seen_at (main.record_installation_heartbeat), on /upload-pipeline-status and /v2/status alike, as
+        # this role. Production sortview_app holds SELECT, INSERT and UPDATE on collector_installations
+        # (scripts/runtime_role_privileges.py).
+        conn.execute(text(f"GRANT SELECT, UPDATE ON TABLE public.collector_installations TO {role_name}"))
         conn.execute(text(f"GRANT SELECT ON TABLE public.customers TO {role_name}"))
         # v1 POST /upload reads v2_cutovers on every request since commit
         # 1394b41 ("Close v1 uploads after v2 cutover":
@@ -587,6 +591,54 @@ def test_v2_status_with_collector_diagnostics_works_as_the_runtime_role_with_no_
         duration = conn.execute(text(
             "SELECT collector_run_duration_ms FROM ingest_key_ids WHERE key_id = :a"), {"a": key_a}).scalar()
     assert stored == {key_a: "healthy", key_b: None} and duration == 3240
+
+
+def test_v2_status_keeps_a_bound_installations_lifecycle_as_the_runtime_role(owner_engine, api):
+    # A token issued by enrollment is bound to its installation; each /v2/status it sends is a confirmed contact. Here
+    # the whole cycle an administrator can drive: provisioning -> active on the first heartbeat, a heartbeat refused
+    # once deactivated, and reactivation (back to provisioning) -> active again on the next one.
+    key, bound_token = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d", "CANARY-RLS-BOUND-TOKEN-9103"
+    with owner_engine.begin() as conn:
+        installation_id = conn.execute(text("""
+            INSERT INTO collector_installations (organization_id, branch_id, name, collector_version, status, required_contract)
+            VALUES (1, :b, 'Tenant A v2 Sorter', '9.9.9-canary', 'provisioning', 2) RETURNING id
+        """), {"b": BRANCH_A}).scalar()
+        conn.execute(text("""
+            INSERT INTO agent_tokens (token_hash, customer_id, branch_id, description, is_active, installation_id)
+            VALUES (:h, :c, :b, 'enrolled', TRUE, :i)
+        """), {"h": hashlib.sha256(bound_token.encode()).hexdigest(), "c": CUSTOMER_A, "b": BRANCH_A, "i": installation_id})
+        conn.execute(text("""
+            INSERT INTO ingest_key_ids (key_id, customer_id, branch_id, algorithm, status)
+            VALUES (:k, :c, :b, 'hmac-sha256-v1', 'active')
+        """), {"k": key, "c": CUSTOMER_A, "b": BRANCH_A})
+
+    def heartbeat():
+        return api.post("/v2/status", json={"contract_version": 2, "key_id": key, "status": "healthy"},
+                        headers={"Authorization": f"Bearer {bound_token}"})
+
+    def installation():
+        with owner_engine.connect() as conn:
+            return conn.execute(text(
+                "SELECT status, installed_at, last_seen_at, collector_version FROM collector_installations WHERE id = :i"
+            ), {"i": installation_id}).one()
+
+    def set_status(value):  # what the administration status change does to the row
+        with owner_engine.begin() as conn:
+            conn.execute(text("UPDATE collector_installations SET status = :s WHERE id = :i"), {"s": value, "i": installation_id})
+
+    assert heartbeat().status_code == 200
+    state, installed_at, first_seen, version = installation()
+    assert state == "active" and installed_at is not None and first_seen is not None and version == "9.9.9-canary"
+
+    set_status("inactive")
+    refused = heartbeat()
+    assert refused.status_code == 403 and refused.json() == {"detail": "Agent is not currently authorized to upload data"}
+    assert installation() == ("inactive", installed_at, first_seen, "9.9.9-canary")
+
+    set_status("provisioning")  # Reactivate
+    assert heartbeat().status_code == 200
+    state, installed_again, seen_again, version = installation()
+    assert (state, installed_again, version) == ("active", installed_at, "9.9.9-canary") and seen_again >= first_seen
 
 
 # --- trigger path -------------------------------------------------------------

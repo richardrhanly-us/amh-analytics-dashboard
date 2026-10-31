@@ -4,7 +4,9 @@ The v2 collector reads the same Tech Logic files as v1 but uploads **only privac
 (and a free-text-free heartbeat to `POST /v2/status`). Server side: [contract-v2-design.md](contract-v2-design.md).
 
 **Status.** Core collector logic only. It is off by default (`contract_mode` defaults to `v1`) and nothing here deploys, retires v1,
-or touches the dashboard. Installer/release integration and installation-status linkage are separate follow-ups (see the end).
+or touches the dashboard. Installer/release integration is a separate follow-up (see the end). Installation-status linkage is
+server-side: a heartbeat from a token bound to an installation keeps that installation's status and `last_seen_at`
+([contract-v2-design.md](contract-v2-design.md), section 4).
 
 ## What leaves the machine
 
@@ -261,9 +263,11 @@ run reports.
 * No historical replay. A **fresh** v2 install starts at the end of each file (`bootstrap`, see *Fresh-install bootstrap and v2
   preflight* below). An in-place **v1-to-v2 conversion** is different: it needs the v2 cursor carried over from the v1 cursor, there
   is no tool for that yet, and `bootstrap` refuses such a machine rather than seed it at end-of-file.
-* Deferred: `collector_installations` status linkage, retiring v1, a replacement-machine workflow, key rotation, and making
-  Contract v2 the provisioning default. (The guided setup can install a new machine on Contract v2 as of 1.0.14 -- see *Fresh
-  Contract v2 installation* below.)
+* Deferred: retiring v1, a replacement-machine workflow, key rotation, and making Contract v2 the provisioning default. (The
+  guided setup can install a new machine on Contract v2 as of 1.0.14 -- see *Fresh Contract v2 installation* below.)
+  `collector_installations` status linkage is no longer deferred: a `/v2/status` heartbeat sent with a token bound to an
+  installation keeps that installation's lifecycle on the server (C6; [contract-v2-design.md](contract-v2-design.md), section 4).
+  No Collector change was needed.
 
 ## Parser logging
 
@@ -391,9 +395,11 @@ row per check: rely on `name`, `passed` and the code, not on the prose. Prefligh
 neither the `key_id`, the secret, a rule nor a server response. It runs the same checks interactively and as SYSTEM
 (`tools\preflight-system.ps1`); because the secret's folder is Administrators + SYSTEM only, the interactive run must be elevated.
 
-**Two server probes.** `POST /upload-pipeline-status` is sent exactly as before: it is what moves a `collector_installations` row
-to `active` and stamps `installed_at` / `last_seen_at`, which `/v2/status` never touches. `POST /v2/status` follows only when that
-probe passed **and** every local v2 check passed. No event is uploaded.
+**Two server probes.** `POST /upload-pipeline-status` is sent exactly as before: it moves a `collector_installations` row to
+`active` and stamps `installed_at` / `last_seen_at`. `POST /v2/status` follows only when that probe passed **and** every local v2
+check passed. No event is uploaded. When the token is bound to the installation (every token issued by enrollment), the
+server also treats `/v2/status` as that installation's contact, so every scheduled run's heartbeat keeps it `active` and its
+`last_seen_at` current, and a reactivated installation becomes `active` on its next heartbeat without a new preflight (C6).
 
 **The v2 probe writes a heartbeat.** `/v2/status` stores a full snapshot on the ingest key, and that snapshot is what React admin's
 diagnostics shows for a branch on Contract v2. When a run has already written `status_v2.json`, preflight re-sends that run's health, error
