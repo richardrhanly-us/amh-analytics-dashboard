@@ -772,7 +772,16 @@ deployment, not a fresh install. What remains unverified above must not be assum
 - [ ] **C5. Decide the legacy contract's future** — React admin still offers Contract 1 for new installs (as Super
       Admin did).
 - [ ] **C6. Deferred Collector work** from `docs/collector-v2.md`: replacement-machine workflow, key rotation,
-      installation-status linkage.
+      installation-status linkage. **Installation-status linkage: implemented and covered by automated tests, not yet
+      merged, deployed or verified against the deployed API** (branch `feature/v2-installation-heartbeat-linkage`). It
+      fixes what the G2 test showed: a reactivated Contract v2 installation stayed Provisioning, with a stale `last_seen_at`,
+      because only preflight's `/upload-pipeline-status` probe updated it. A `/v2/status` heartbeat sent with a token bound
+      to an installation now moves it provisioning -> active and refreshes `last_seen_at` (server only; no Collector,
+      payload, token or schema change). The focused PostgreSQL lifecycle test
+      (`tests/test_rls_phase1_postgres.py::test_v2_status_keeps_a_bound_installations_lifecycle_as_the_runtime_role`)
+      passed locally on 2026-10-31 on PostgreSQL 18, as a runtime role with production-like grants under row level
+      security. The remaining PostgreSQL opt-in tests were not run for this change. Legacy
+      (unbound) tokens are unchanged. Replacement-machine workflow and key rotation are still open.
 - [ ] **C7. Self-serve commercial flow** (Stripe against the existing plans/subscriptions schema; guided signup) —
       last, and only once a second customer is real. Includes deciding customer-visible plan/subscription display
       (deferred here by D8).

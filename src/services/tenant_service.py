@@ -453,9 +453,10 @@ def format_collector_install_parameters(
 # health. None of these functions populates last_seen_at: it is set only by
 # the API's handling of a confirmed installation contact
 # (main.record_installation_heartbeat -- a scheduled-run heartbeat or an
-# install-time preflight probe carrying the installation_id), which also moves
-# provisioning -> active, stamps installed_at at the first such contact, and
-# records the running Collector version.
+# install-time preflight probe carrying the installation_id, or a Contract v2
+# /v2/status heartbeat sent with a token bound to the installation), which also
+# moves provisioning -> active, stamps installed_at at the first such contact,
+# and records the running Collector version when the heartbeat reports one.
 
 COLLECTOR_INSTALLATION_STATUSES = ("provisioning", "active", "inactive", "retired")
 

@@ -69,11 +69,13 @@ here prints the key_id, the secret, a rule or a response body, and preflight
 never creates or replaces a secret.
 
 TWO SERVER PROBES. The POST /upload-pipeline-status probe stays exactly as it
-is -- it is what activates the installation and stamps installed_at /
-last_seen_at, which /v2/status never touches. POST /v2/status follows ONLY when
-that probe passed and every local v2 check passed, and proves what nothing
-else can: v2 ingest is enabled and the configured key is active for the
-token's tenant.
+is -- it activates the installation and stamps installed_at / last_seen_at.
+POST /v2/status follows ONLY when that probe passed and every local v2 check
+passed, and proves what nothing else can: v2 ingest is enabled and the
+configured key is active for the token's tenant. With a token bound to the
+installation (every token issued by enrollment), the server also counts that
+/v2/status as the installation's contact, as it does every scheduled run's
+heartbeat (docs/contract-v2-design.md, section 4).
 
 A SECOND SERVER-SIDE EFFECT, v2 only: /v2/status stores a full heartbeat
 snapshot on the ingest key, which is what the dashboard shows for a branch on
