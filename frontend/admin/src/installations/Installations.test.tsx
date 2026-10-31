@@ -113,14 +113,14 @@ describe('Installations', () => {
     expect(await screen.findByText('No installations are registered for this library.')).toBeInTheDocument()
   })
 
-  it('offers each status only its own actions: Return to provisioning for inactive, nothing for retired', async () => {
+  it('offers each status only its own actions: Reactivate for inactive, nothing for retired', async () => {
     renderAt('/libraries/acme/installations', { [`GET ${BASE}`]: () => jsonResponse(200, LIST) })
     await loaded()
 
     expect(buttons(card(123))).toEqual(['Rename', 'Deactivate', 'Retire', 'Issue enrollment code'])
-    expect(buttons(card(124))).toEqual(['Rename', 'Return to provisioning', 'Retire'])
+    expect(buttons(card(124))).toEqual(['Rename', 'Reactivate', 'Retire'])
     expect(buttons(card(125))).toEqual(['Rename'])
-    expect(document.body.textContent).not.toMatch(/Reactivate|Suspend|Offboard|Provision library/)
+    expect(document.body.textContent).not.toMatch(/Return to provisioning|Suspend|Offboard|Provision library/)
   })
 
   it('adds a Contract 2 installation at the primary branch by default', async () => {
@@ -198,14 +198,14 @@ describe('Installations', () => {
     await loaded()
 
     await person.click(within(card(123)).getByRole('button', { name: 'Deactivate' }))
-    expect(within(card(123)).getByText(/agent token stops authenticating until the installation is returned to provisioning/)).toBeInTheDocument()
+    expect(within(card(123)).getByText(/agent token stops authenticating until the installation is reactivated/)).toBeInTheDocument()
     expect(bodies(fetchMock, 'PUT', `${BASE}/123/status`)).toEqual([])
     await person.click(within(card(123)).getByRole('button', { name: 'Confirm: Deactivate' }))
 
     await waitFor(() => expect(bodies(fetchMock, 'PUT', `${BASE}/123/status`)).toEqual([{ status: 'inactive' }]))
   })
 
-  it('returns an inactive installation to provisioning, saying it becomes active only after a heartbeat', async () => {
+  it('reactivates an inactive installation through provisioning, saying it becomes Active only after a successful heartbeat', async () => {
     const fetchMock = renderAt('/libraries/acme/installations', {
       [`GET ${BASE}`]: () => jsonResponse(200, LIST),
       [`PUT ${BASE}/124/status`]: () => jsonResponse(200, { ...INACTIVE, status: 'provisioning' }),
@@ -213,9 +213,12 @@ describe('Installations', () => {
     const person = userEvent.setup()
     await loaded()
 
-    await person.click(within(card(124)).getByRole('button', { name: 'Return to provisioning' }))
-    expect(within(card(124)).getByText(/can authenticate again\. The installation becomes active only after its next heartbeat/)).toBeInTheDocument()
-    await person.click(within(card(124)).getByRole('button', { name: 'Confirm: Return to provisioning' }))
+    await person.click(within(card(124)).getByRole('button', { name: 'Reactivate' }))
+    expect(
+      within(card(124)).getByText(/can authenticate again immediately\. The installation shows as Provisioning until its next successful heartbeat, then becomes Active/),
+    ).toBeInTheDocument()
+    expect(bodies(fetchMock, 'PUT', `${BASE}/124/status`)).toEqual([])
+    await person.click(within(card(124)).getByRole('button', { name: 'Confirm: Reactivate' }))
 
     await waitFor(() => expect(bodies(fetchMock, 'PUT', `${BASE}/124/status`)).toEqual([{ status: 'provisioning' }]))
   })
