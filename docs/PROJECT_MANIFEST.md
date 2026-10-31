@@ -772,16 +772,27 @@ deployment, not a fresh install. What remains unverified above must not be assum
 - [ ] **C5. Decide the legacy contract's future** — React admin still offers Contract 1 for new installs (as Super
       Admin did).
 - [ ] **C6. Deferred Collector work** from `docs/collector-v2.md`: replacement-machine workflow, key rotation,
-      installation-status linkage. **Installation-status linkage: implemented and covered by automated tests, not yet
-      merged, deployed or verified against the deployed API** (branch `feature/v2-installation-heartbeat-linkage`). It
-      fixes what the G2 test showed: a reactivated Contract v2 installation stayed Provisioning, with a stale `last_seen_at`,
-      because only preflight's `/upload-pipeline-status` probe updated it. A `/v2/status` heartbeat sent with a token bound
-      to an installation now moves it provisioning -> active and refreshes `last_seen_at` (server only; no Collector,
-      payload, token or schema change). The focused PostgreSQL lifecycle test
-      (`tests/test_rls_phase1_postgres.py::test_v2_status_keeps_a_bound_installations_lifecycle_as_the_runtime_role`)
-      passed locally on 2026-10-31 on PostgreSQL 18, as a runtime role with production-like grants under row level
-      security. The remaining PostgreSQL opt-in tests were not run for this change. Legacy
-      (unbound) tokens are unchanged. Replacement-machine workflow and key rotation are still open.
+      installation-status linkage. **Installation-status linkage: implemented, merged, deployed, and live-verified
+      2026-10-31** (PR #277, merge commit `cc3f1eb`). The backend deployment went live on DigitalOcean at
+      12:19:23 PM CDT.
+
+      Contract v2 `/v2/status` heartbeats from installation-bound tokens now update `collector_installations`:
+      Provisioning transitions to Active, and `last_seen_at` is refreshed. The implementation preserves existing
+      installation authorization, legacy unbound-token behavior, and inactive/retired safeguards. No Collector,
+      payload, token, or database schema changes were required.
+
+      **Live validation:** G2 Installation #8 (Contract v2) transitioned from Provisioning to Active following
+      a successful Collector run at 12:20 PM CDT on 2026-10-31 (`LastTaskResult: 0`). SortView Administration
+      confirmed `last_seen_at` updated to 2026-10-31 12:20 PM CDT while preserving the original installation
+      date of 2026-10-29. After validation, the Windows scheduled task was disabled and Installation #8
+      deactivated; both cleanup actions were verified.
+
+      **Automated validation:** Targeted and regression tests passed (1,074 passed). The focused PostgreSQL
+      lifecycle test (`tests/test_rls_phase1_postgres.py::test_v2_status_keeps_a_bound_installations_lifecycle_as_the_runtime_role`)
+      passed locally on PostgreSQL 18 using production-like runtime grants and row-level security. Remaining
+      PostgreSQL opt-in tests were not run.
+
+      **Remaining C6 work:** Replacement-machine workflow and key rotation. C6 remains open.
 - [ ] **C7. Self-serve commercial flow** (Stripe against the existing plans/subscriptions schema; guided signup) —
       last, and only once a second customer is real. Includes deciding customer-visible plan/subscription display
       (deferred here by D8).
