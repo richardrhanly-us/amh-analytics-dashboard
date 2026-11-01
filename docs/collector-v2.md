@@ -308,8 +308,9 @@ for. A `409` is reached only with a valid code, carries a fixed `code` and sente
 **A Contract v2 enrollment** returns the four legacy fields plus `contract_version` (2), `contract_mode` (`"v2"`), `key_id`,
 `timezone` and `classification_rules`, and in the same transaction:
 
-* issues the branch's ingest key (`ingest_key_ids`; the same `issue_ingest_key` the script uses). Only the non-secret `key_id` exists
-  on the server: the HMAC secret is still generated on the Collector's machine and is never created, returned or stored here;
+* issues the branch's ingest key (`ingest_key_ids`; the same `issue_ingest_key` the script uses), owned by the enrolling installation,
+  so only that installation's bound token can use it. Only the non-secret `key_id` exists on the server: the HMAC secret is still
+  generated on the Collector's machine and is never created, returned or stored here;
 * records the branch's **initial cutover** (`v2_cutovers`, `set_by = collector-enrollment`) at the moment its **organization** was
   created -- before any event the Collector can send. That row is also what closes the v1 `/upload` route for the branch, so a
   newly enrolled branch cannot upload raw rows even with a hand-edited config.
@@ -494,9 +495,22 @@ rule. A legacy enrollment's record is unchanged.
 **What still needs SortView support** (a new enrollment code is not a recovery path for any of these):
 
 * the enrollment succeeded on the server but its response never reached the machine;
-* the API token could not be stored after enrollment -- support issues a replacement token for the installation, it is
-  stored with `tools\set-api-token.ps1`, and setup resumes;
+* the API token could not be stored after enrollment -- a platform administrator issues a replacement token for the installation
+  (SortView administration, the installation's **Issue recovery token**), it is stored with `tools\set-api-token.ps1`, and setup
+  resumes. `scripts/create_agent_token.py` does not work here: it makes an unbound token, which an owned key refuses;
 * the enrolled machine is lost or replaced.
+
+**Recovery token.** Available for a Provisioning or Active Contract 2 installation that owns its branch's only active key. In one
+audited transaction it deactivates the installation's earlier tokens and issues one new bound token, shown once. It replaces a
+credential and is not an upload fence: a request already past the token check may still finish.
+
+**Retiring an owner.** An installation that owns an active key cannot be retired in SortView administration (`409
+installation_owns_active_key`), because that would strand the key: deactivate it instead, which stops its token at once. Offboarding
+the library retires installations and keys together. `scripts/issue_ingest_key.py issue` likewise refuses a branch with an active owned
+key.
+
+**Legacy unbound tokens.** SortView administration lists a library's active unbound tokens and revokes them one at a time, audited.
+Deactivating an installation does not stop these. Revoking is not an upload fence either.
 
 ### Provisioning
 
@@ -510,7 +524,7 @@ has already enrolled on Contract v2 is not supported yet.
 SortView administration's *Installations* page (A2 item 5, platform administrators only) is the React path for an
 existing library: it adds an installation at the library's active primary branch on Contract 2 (the default, which needs
 the library's *Collector configuration*) or Contract 1, renames, deactivates, returns an inactive installation to
-provisioning, and retires (final there). It issues a one-time enrollment code -- shown once, never stored -- and refuses
+provisioning, and retires (final there, and refused for an installation that owns an active key). It issues a one-time enrollment code -- shown once, never stored -- and refuses
 one for a Contract 2 installation whose branch already has an active ingest key or any v2 cutover
 (`branch_already_enrolled`), since such a code could never be redeemed.
 

@@ -68,7 +68,7 @@ _DDL = [
         created_by_user_id INTEGER, required_contract INTEGER NOT NULL DEFAULT 1)""",
     """CREATE TABLE ingest_key_ids (
         id INTEGER PRIMARY KEY AUTOINCREMENT, key_id TEXT NOT NULL UNIQUE, customer_id INTEGER NOT NULL,
-        branch_id INTEGER NOT NULL, algorithm TEXT NOT NULL, status TEXT NOT NULL, retired_at TEXT)""",
+        branch_id INTEGER NOT NULL, algorithm TEXT NOT NULL, status TEXT NOT NULL, retired_at TEXT, installation_id INTEGER)""",
     """CREATE TABLE v2_cutovers (
         id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER, branch_id INTEGER, cutover_at TEXT, set_by TEXT,
         set_at TEXT DEFAULT CURRENT_TIMESTAMP, note TEXT)""",
@@ -636,7 +636,7 @@ def test_a_cancelled_tenant_cannot_be_issued_an_ingest_key(world):
     before = _rows(world, "ingest_key_ids")
 
     with pytest.raises(ValueError, match="cancelled"), world.begin() as conn:
-        ingest_v2_service.issue_ingest_key(conn, 10, 1)
+        ingest_v2_service.issue_ingest_key(conn, 10, 1, installation_id=None)
 
     assert _rows(world, "ingest_key_ids") == before
 
@@ -659,7 +659,7 @@ def test_the_guards_do_not_get_in_the_way_of_a_live_or_suspended_tenant(world):
         installation_id=201, organization_id=2, name="Renamed", hostname=None, collector_version=None, status="inactive",
     )
     with world.begin() as conn:
-        key_id = ingest_v2_service.issue_ingest_key(conn, 20, 2)
+        key_id = ingest_v2_service.issue_ingest_key(conn, 20, 2, installation_id=None)
         cutover_id = ingest_v2_service.record_v2_cutover(conn, 20, 2, None, "operator")
 
     assert created["name"] == "Second Sorter" and updated["status"] == "inactive" and key_id and cutover_id

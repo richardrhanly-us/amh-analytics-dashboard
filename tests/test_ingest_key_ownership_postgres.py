@@ -367,13 +367,13 @@ def test_the_runtime_role_cannot_move_a_key_to_another_branch(owner, runtime):
 
 def test_issuing_a_key_still_needs_the_tenant_context(owner, runtime):
     with pytest.raises(DBAPIError, match="row-level security"), runtime.begin() as conn:
-        service.issue_ingest_key(conn, CUSTOMER, BRANCH)
+        service.issue_ingest_key(conn, CUSTOMER, BRANCH, installation_id=None)
 
 
-def test_a_key_issued_through_the_service_has_no_owner(owner, runtime):
+def test_a_key_issued_through_the_service_with_no_installation_has_no_owner(owner, runtime):
     with runtime.begin() as conn:
-        _tenant_context(conn, CUSTOMER, BRANCH)
-        key = service.issue_ingest_key(conn, CUSTOMER, BRANCH)
+        _tenant_context(conn, CUSTOMER, OTHER_BRANCH)
+        key = service.issue_ingest_key(conn, CUSTOMER, OTHER_BRANCH, installation_id=None)
 
     assert _rows(owner, "SELECT installation_id FROM ingest_key_ids WHERE key_id = :k", k=key) == [(None,)]
 

@@ -477,11 +477,11 @@ def test_a_cancelled_tenant_cannot_be_re_provisioned_on_the_real_schema(seeded, 
     _offboard(monkeypatch, seeded)
 
     with pytest.raises(ValueError, match="cancelled"), seeded.begin() as conn:
-        ingest_v2_service.issue_ingest_key(conn, CUSTOMER_A, BRANCHES_A[0])
+        ingest_v2_service.issue_ingest_key(conn, CUSTOMER_A, BRANCHES_A[0], installation_id=None)
     with pytest.raises(ValueError, match="cancelled"), seeded.begin() as conn:
         ingest_v2_service.record_v2_cutover(conn, CUSTOMER_A, BRANCHES_A[0], None, "operator")
     with seeded.begin() as conn:  # the other tenant is unaffected
-        assert ingest_v2_service.issue_ingest_key(conn, CUSTOMER_B, BRANCHES_B[0])
+        assert ingest_v2_service.issue_ingest_key(conn, CUSTOMER_B, BRANCHES_B[0], installation_id=None)
 
 
 # ======================================================================================================================

@@ -54,6 +54,9 @@ const ISSUED = {
   ttl_minutes: 30,
   revoked_previous_count: 0,
 }
+const CANARY_TOKEN = 'CANARY-recovery-token-7Q4ZWXYZ2345'
+const RECOVERED = { installation: { id: 123, name: 'Main AMH Sorter' }, agent_token: CANARY_TOKEN, revoked_previous_count: 1 }
+const UNBOUND = { id: 55, description: 'NBPL canonical agent', branch_name: 'Main Branch', created_at: '2026-01-01T12:00:00Z', last_used_at: null }
 
 afterEach(() => {
   clients.length = 0
@@ -103,7 +106,7 @@ describe('Installations', () => {
     expect(within(active).getByText('Contract 2')).toBeInTheDocument()
     expect(within(active).getByText(/^Last used /)).toBeInTheDocument()
     expect(within(card(124)).getByText('Inactive')).toBeInTheDocument()
-    expect(document.body.textContent).not.toMatch(/hostname|collector version|installer|customer id|branch id|token|key id/i)
+    expect(document.body.textContent).not.toMatch(/hostname|collector version|installer|customer id|branch id|key id/i)
     expect(requestedUrls(fetchMock)).toEqual(['/api/admin/session', BASE])
   })
 
@@ -117,7 +120,7 @@ describe('Installations', () => {
     renderAt('/libraries/acme/installations', { [`GET ${BASE}`]: () => jsonResponse(200, LIST) })
     await loaded()
 
-    expect(buttons(card(123))).toEqual(['Rename', 'Deactivate', 'Retire', 'Issue enrollment code'])
+    expect(buttons(card(123))).toEqual(['Rename', 'Deactivate', 'Retire', 'Issue enrollment code', 'Issue recovery token'])
     expect(buttons(card(124))).toEqual(['Rename', 'Reactivate', 'Retire'])
     expect(buttons(card(125))).toEqual(['Rename'])
     expect(document.body.textContent).not.toMatch(/Return to provisioning|Suspend|Offboard|Provision library/)
@@ -326,6 +329,146 @@ describe('Installations', () => {
 
     expect(await within(card(123)).findByRole('alert')).toHaveTextContent(`Nothing was changed. ${message}`)
     expect(screen.queryByRole('heading', { name: /^Enrollment code for/ })).not.toBeInTheDocument()
+  })
+
+  it('says why retiring a key owner was refused, and leaves it as it was', async () => {
+    const message = "This installation owns its branch's active ingest key, so it cannot be retired here. Deactivate it instead."
+    renderAt('/libraries/acme/installations', {
+      [`GET ${BASE}`]: () => jsonResponse(200, LIST),
+      [`PUT ${BASE}/123/status`]: () => jsonResponse(409, { code: 'installation_owns_active_key', message }),
+    })
+    const person = userEvent.setup()
+    await loaded()
+
+    await person.click(within(card(123)).getByRole('button', { name: 'Retire' }))
+    await person.click(within(card(123)).getByRole('button', { name: 'Confirm: Retire' }))
+
+    expect(await within(card(123)).findByRole('alert')).toHaveTextContent(`Nothing was changed. ${message}`)
+    expect(within(card(123)).getByText('Active')).toBeInTheDocument()
+  })
+
+  it('offers a recovery token only to a Provisioning or Active Contract 2 installation', async () => {
+    const provisioning = { ...ACTIVE, id: 126, status: 'provisioning' }
+    const legacy = { ...ACTIVE, id: 127, required_contract: 1 }
+    renderAt('/libraries/acme/installations', {
+      [`GET ${BASE}`]: () => jsonResponse(200, { ...LIST, installations: [ACTIVE, provisioning, legacy, { ...INACTIVE, required_contract: 2 }, RETIRED] }),
+    })
+    await loaded()
+
+    expect(buttons(card(123))).toContain('Issue recovery token')
+    expect(buttons(card(126))).toContain('Issue recovery token')
+    expect(buttons(card(127))).not.toContain('Issue recovery token')
+    expect(buttons(card(124))).not.toContain('Issue recovery token')
+    expect(buttons(card(125))).not.toContain('Issue recovery token')
+  })
+
+  it('asks first, shows a recovery token once, and keeps it out of the cache, storage and the page after Done or leaving', async () => {
+    const fetchMock = renderAt('/libraries/acme/installations', {
+      [`GET ${BASE}`]: () => jsonResponse(200, LIST),
+      [`POST ${BASE}/123/recovery-token`]: () => jsonResponse(201, RECOVERED),
+      'GET /api/admin/libraries/acme': () =>
+        jsonResponse(200, {
+          timezone: 'America/Chicago', slug: 'acme', name: 'Acme Library', status: 'active', primary_branch: null,
+          operational_identity: 'assigned', subscription: null, has_active_owner: true, sorters: [],
+        }),
+    })
+    const person = userEvent.setup()
+    const writeText = vi.fn(() => Promise.resolve())
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    await loaded()
+
+    await person.click(within(card(123)).getByRole('button', { name: 'Issue recovery token' }))
+    expect(within(card(123)).getByText(/A request already in progress may still finish/)).toBeInTheDocument()
+    expect(bodies(fetchMock, 'POST', `${BASE}/123/recovery-token`)).toEqual([])
+    await person.click(within(card(123)).getByRole('button', { name: 'Confirm: Issue recovery token' }))
+
+    expect(await screen.findByText(CANARY_TOKEN)).toBeInTheDocument()
+    expect(screen.getByText(/^Shown only now/)).toHaveTextContent('tools\\set-api-token.ps1')
+    expect(screen.getByText(/earlier agent token no longer authenticates new requests/)).toBeInTheDocument()
+    await person.click(screen.getByRole('button', { name: 'Copy' }))
+    expect(writeText).toHaveBeenCalledWith(CANARY_TOKEN)
+    expect(bodies(fetchMock, 'POST', `${BASE}/123/recovery-token`)).toEqual([undefined])
+
+    const cached = clients.flatMap((client) => [
+      ...client.getQueryCache().getAll().map((query) => JSON.stringify(query.state.data ?? null)),
+      ...client.getMutationCache().getAll().map((mutation) => JSON.stringify(mutation.state.data ?? null)),
+    ])
+    expect(cached.length).toBeGreaterThan(0)
+    expect(cached.join('')).not.toContain(CANARY_TOKEN)
+    expect(JSON.stringify({ ...localStorage })).not.toContain(CANARY_TOKEN)
+    expect(JSON.stringify({ ...sessionStorage })).not.toContain(CANARY_TOKEN)
+
+    await person.click(screen.getByRole('button', { name: 'Done' }))
+    expect(document.body.textContent).not.toContain(CANARY_TOKEN)
+
+    await person.click(within(card(123)).getByRole('button', { name: 'Issue recovery token' }))
+    await person.click(within(card(123)).getByRole('button', { name: 'Confirm: Issue recovery token' }))
+    expect(await screen.findByText(CANARY_TOKEN)).toBeInTheDocument()
+    await person.click(screen.getByRole('link', { name: 'Acme Library' }))
+    await screen.findByRole('link', { name: 'Installations' })
+    expect(document.body.textContent).not.toContain(CANARY_TOKEN)
+    await person.click(screen.getByRole('link', { name: 'Installations' }))
+    await loaded()
+    expect(document.body.textContent).not.toContain(CANARY_TOKEN)
+  })
+
+  it('says why a recovery token was refused, and shows none', async () => {
+    const message = "A recovery token needs a Provisioning or Active Contract 2 installation that owns its branch's only active ingest key."
+    renderAt('/libraries/acme/installations', {
+      [`GET ${BASE}`]: () => jsonResponse(200, LIST),
+      [`POST ${BASE}/123/recovery-token`]: () => jsonResponse(409, { code: 'installation_not_recoverable', message }),
+    })
+    const person = userEvent.setup()
+    await loaded()
+
+    await person.click(within(card(123)).getByRole('button', { name: 'Issue recovery token' }))
+    await person.click(within(card(123)).getByRole('button', { name: 'Confirm: Issue recovery token' }))
+
+    expect(await within(card(123)).findByRole('alert')).toHaveTextContent(`Nothing was changed. ${message}`)
+    expect(screen.queryByRole('heading', { name: /^Recovery token for/ })).not.toBeInTheDocument()
+  })
+
+  it('lists unbound tokens only when asked, and revokes one after a warning that it is not an upload fence', async () => {
+    let revoked = false
+    const fetchMock = renderAt('/libraries/acme/installations', {
+      [`GET ${BASE}`]: () => jsonResponse(200, LIST),
+      [`GET ${BASE}/unbound-tokens`]: () => jsonResponse(200, { tokens: revoked ? [] : [UNBOUND] }),
+      [`POST ${BASE}/unbound-tokens/55/revoke`]: () => {
+        revoked = true
+        return jsonResponse(200, { id: 55 })
+      },
+    })
+    const person = userEvent.setup()
+    await loaded()
+    expect(requestedUrls(fetchMock)).toEqual(['/api/admin/session', BASE])
+
+    await person.click(screen.getByRole('button', { name: 'Show legacy unbound tokens' }))
+    expect(await screen.findByRole('heading', { level: 4, name: 'Token #55 — NBPL canonical agent' })).toBeInTheDocument()
+
+    await person.click(screen.getByRole('button', { name: 'Revoke' }))
+    expect(screen.getByText(/A request already in progress may still finish, so this is not an upload fence/)).toBeInTheDocument()
+    expect(bodies(fetchMock, 'POST', `${BASE}/unbound-tokens/55/revoke`)).toEqual([])
+    await person.click(screen.getByRole('button', { name: 'Confirm: Revoke' }))
+
+    expect(await screen.findByText('This library has no active unbound tokens.')).toBeInTheDocument()
+    expect(bodies(fetchMock, 'POST', `${BASE}/unbound-tokens/55/revoke`)).toEqual([undefined])
+  })
+
+  it('says why a revocation was refused, and keeps the token listed', async () => {
+    renderAt('/libraries/acme/installations', {
+      [`GET ${BASE}`]: () => jsonResponse(200, LIST),
+      [`GET ${BASE}/unbound-tokens`]: () => jsonResponse(200, { tokens: [UNBOUND] }),
+      [`POST ${BASE}/unbound-tokens/55/revoke`]: () => jsonResponse(404, { code: 'token_not_found', message: 'Unbound token not found.' }),
+    })
+    const person = userEvent.setup()
+    await loaded()
+
+    await person.click(screen.getByRole('button', { name: 'Show legacy unbound tokens' }))
+    await person.click(await screen.findByRole('button', { name: 'Revoke' }))
+    await person.click(screen.getByRole('button', { name: 'Confirm: Revoke' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Nothing was changed. Unbound token not found.')
+    expect(screen.getByRole('heading', { level: 4, name: /^Token #55/ })).toBeInTheDocument()
   })
 
   it('shows a cancelled library read-only', async () => {

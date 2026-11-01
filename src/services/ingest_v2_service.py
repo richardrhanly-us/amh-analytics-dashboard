@@ -191,26 +191,67 @@ def ingest_key_problem(conn, customer_id: int, branch_id: int, key_id: str, *, t
     return None
 
 
-def issue_ingest_key(conn, customer_id: int, branch_id: int) -> str:
+def _lock_tenant_for_unowned_key(conn, customer_id: int, branch_id: int) -> None:
+    """What issuing an unowned key serializes against, held to the end of the caller's transaction. PostgreSQL only: SQLite
+    (unit tests) has no row locks and serializes writers itself.
+
+    The organization, FOR SHARE: offboarding holds it FOR UPDATE, so it either waits for this key to commit and then retires
+    it, or has already committed and the caller's status check sees 'cancelled'. Without this a key can commit just after
+    offboarding's sweep and stay active on a cancelled tenant.
+
+    The branch, FOR NO KEY UPDATE: conflicts with an enrollment's and a retirement's lock on it, and not with the FOR KEY SHARE
+    an event insert takes, so an upload is not held up."""
+    if getattr(getattr(conn, "dialect", None), "name", "") != "postgresql":
+        return
+    conn.execute(text("SELECT id FROM organizations WHERE operational_customer_id = :customer_id FOR SHARE"),
+                 {"customer_id": customer_id})
+    conn.execute(text("SELECT id FROM branches WHERE operational_branch_id = :branch_id FOR NO KEY UPDATE"),
+                 {"branch_id": branch_id})
+
+
+def issue_ingest_key(conn, customer_id: int, branch_id: int, *, installation_id: int | None) -> str:
     """Registers a NEW server-issued key for one tenant and returns its `key_id` (a random UUIDv4; non-secret). The tenant
     must be the fully mapped operational pair -- the same bridge the token lookup uses -- and its organization must not be
-    cancelled (permanently offboarded), or nothing is written."""
+    cancelled (permanently offboarded), or nothing is written.
+
+    `installation_id` is the key's owner. An enrollment names its installation; it already holds the organization FOR SHARE,
+    took it before its code row, and has locked the branch and refused one with any active key. None is an unowned key, the operator's route, and is refused while the branch has an
+    active owned key: an unowned key would be open to a token the owned one refuses."""
+    if installation_id is None:
+        _lock_tenant_for_unowned_key(conn, customer_id, branch_id)
     _require_provisionable_tenant(conn, customer_id, branch_id)
+    if installation_id is None and any(owner is not None for owner in active_ingest_key_owners(conn, customer_id, branch_id)):
+        raise ValueError("the branch has an active key owned by an installation")
     key_id = str(uuid.uuid4())
     conn.execute(
         text("""
-            INSERT INTO ingest_key_ids (key_id, customer_id, branch_id, algorithm, status)
-            VALUES (:key_id, :customer_id, :branch_id, :algorithm, 'active')
+            INSERT INTO ingest_key_ids (key_id, customer_id, branch_id, algorithm, status, installation_id)
+            VALUES (:key_id, :customer_id, :branch_id, :algorithm, 'active', :installation_id)
         """),
-        {"key_id": key_id, "customer_id": customer_id, "branch_id": branch_id, "algorithm": ALGORITHM},
+        {"key_id": key_id, "customer_id": customer_id, "branch_id": branch_id, "algorithm": ALGORITHM,
+         "installation_id": installation_id},
     )
     return key_id
 
 
+def active_ingest_key_owners(conn, customer_id: int, branch_id: int) -> list[int | None]:
+    """The owner of each of the tenant's ACTIVE keys (None: a key with no owner). Under row level security the runtime role
+    sees only the tenant named by its transaction-local context, so the caller must have set it."""
+    rows = conn.execute(
+        text("""
+            SELECT installation_id
+            FROM ingest_key_ids
+            WHERE customer_id = :customer_id AND branch_id = :branch_id AND status = 'active'
+            ORDER BY id
+        """),
+        {"customer_id": customer_id, "branch_id": branch_id},
+    ).fetchall()
+    return [None if row[0] is None else int(row[0]) for row in rows]
+
+
 def has_active_ingest_key(conn, customer_id: int, branch_id: int) -> bool:
-    """True if the tenant already has an ACTIVE key. A retired key does not count. A key belongs to a (customer, branch)
-    and to nothing narrower: the registry does not say which installation uses it, so this is a statement about the
-    branch."""
+    """True if the tenant already has an ACTIVE key, whoever owns it. A retired key does not count. This is a statement about
+    the branch: it has one Contract v2 identity."""
     return conn.execute(
         text("""
             SELECT 1

@@ -372,10 +372,10 @@ def test_the_code_the_token_the_key_and_the_cutover_are_committed_together(owner
         assert ingest_v2_service.get_effective_v2_cutover(conn, 10, 1) == ORG_A_CREATED
 
 
-def test_an_enrollment_issues_its_key_with_no_owner(owner, runtime):
+def test_an_enrollment_issues_its_key_owned_by_the_enrolling_installation(owner, runtime):
     key_id = _post(_code(runtime, 101), contract_version=2).json()["key_id"]
 
-    assert _rows(owner, "SELECT installation_id FROM ingest_key_ids WHERE key_id = :k", k=key_id) == [{"installation_id": None}]
+    assert _rows(owner, "SELECT installation_id FROM ingest_key_ids WHERE key_id = :k", k=key_id) == [{"installation_id": 101}]
 
 
 def test_it_writes_only_the_enrolling_tenants_branch_and_leaves_every_other_tenant_untouched(owner, runtime):
@@ -531,12 +531,12 @@ def test_the_role_cannot_issue_a_key_without_a_tenant_context_or_for_another_ten
 
     # No context at all: the INSERT policy's check fails.
     with pytest.raises(DBAPIError, match="row-level security"), runtime.begin() as conn:
-        ingest_v2_service.issue_ingest_key(conn, 10, 1)
+        ingest_v2_service.issue_ingest_key(conn, 10, 1, installation_id=None)
     # Tenant A's context, a key for tenant B: refused by the same policy.
     with pytest.raises(DBAPIError, match="row-level security"), runtime.begin() as conn:
         conn.execute(text("SELECT set_config('app.operational_customer_id', '10', true)"))
         conn.execute(text("SELECT set_config('app.operational_branch_id', '1', true)"))
-        ingest_v2_service.issue_ingest_key(conn, 11, 2)
+        ingest_v2_service.issue_ingest_key(conn, 11, 2, installation_id=None)
     # The same customer, another branch: refused as well.
     with pytest.raises(DBAPIError, match="row-level security"), runtime.begin() as conn:
         conn.execute(text("SELECT set_config('app.operational_customer_id', '10', true)"))

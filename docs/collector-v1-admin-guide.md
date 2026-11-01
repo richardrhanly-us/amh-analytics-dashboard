@@ -260,7 +260,9 @@ Exit code `0` = stored, usable, bound to this customer/branch, ACL verified;
 Provision a **separate** token for the collector, distinct from any legacy or
 continuous-agent token, via `scripts/create_agent_token.py` (dry-run by
 default -- see that script's own docstring) so it can be revoked
-independently.
+independently. That token is unbound, so it cannot use a Contract v2 key owned
+by an installation: for a Contract v2 installation use **Issue recovery token**
+in SortView administration instead (`docs/collector-v2.md`).
 
 **A leftover Machine-scope `SORTVIEW_API_TOKEN`.** Installs that predate
 1.0.11 kept the token in that variable. The Collector no longer reads it, and

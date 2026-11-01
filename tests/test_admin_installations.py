@@ -4,6 +4,9 @@
     PUT      /api/admin/libraries/{org_slug}/installations/{installation_id}
     PUT      /api/admin/libraries/{org_slug}/installations/{installation_id}/status
     POST     /api/admin/libraries/{org_slug}/installations/{installation_id}/enrollment-codes
+    POST     /api/admin/libraries/{org_slug}/installations/{installation_id}/recovery-token
+    GET      /api/admin/libraries/{org_slug}/installations/unbound-tokens
+    POST     /api/admin/libraries/{org_slug}/installations/unbound-tokens/{token_id}/revoke
 
 Driven through TestClient(main.app) with services.admin_installation_service replaced at the flat identity the routes
 use: who may call, the exact shapes, every refusal, and that a raw enrollment code appears in the one answer that
@@ -43,6 +46,7 @@ LIBRARY_NOT_FOUND = {"code": "library_not_found", "message": "Library not found.
 
 # A distinctive code: it may appear in the 201 answer that issues it, and nowhere else at all.
 CANARY_CODE = "SV-CNRY-7Q4Z-WXYZ-2345"
+CANARY_TOKEN = "CANARY-recovery-token-7Q4ZWXYZ2345"
 ORGANIZATION_ID, BRANCH_ID = 90417, 90523  # internal ids, distinctive so a leak is caught by value
 
 ACME = Library(id=ORGANIZATION_ID, slug="acme", name="Acme Library", status="active")
@@ -72,6 +76,7 @@ INSTALLATION_JSON = {
     "pending_code_expires_at": None,
     "last_code_redeemed_at": "2026-10-01T12:50:00Z",
 }
+UNBOUND_TOKEN = {"id": 55, "description": "Canonical agent", "branch_name": "Main Branch", "created_at": CREATED, "last_used_at": None}
 FORBIDDEN_KEYS = {"organization_id", "branch_id", "customer_id", "operational_branch_id", "operational_customer_id",
                   "hostname", "collector_version", "key_id", "token", "token_id", "token_hash", "code_hash",
                   "enrollment_code_id", "updated_at"}
@@ -106,6 +111,21 @@ class World:
         monkeypatch.setattr(service, "rename_installation", self._write("rename"))
         monkeypatch.setattr(service, "change_status", self._write("status"))
         monkeypatch.setattr(service, "issue_enrollment_code", self._issue)
+        monkeypatch.setattr(service, "issue_recovery_token", self._recover)
+        monkeypatch.setattr(service, "list_unbound_tokens", lambda library: [dict(UNBOUND_TOKEN)])
+        monkeypatch.setattr(service, "revoke_unbound_token", self._revoke)
+
+    def _recover(self, library, installation_id, *, actor):
+        if self.refuse:
+            raise InstallationAdminError(self.refuse)
+        self.calls.append(("recover", library.id, installation_id, actor["id"]))
+        return {"installation": {"id": installation_id, "name": "Main AMH Sorter"}, "agent_token": CANARY_TOKEN,
+                "revoked_previous_count": 1}
+
+    def _revoke(self, library, token_id, *, actor):
+        if self.refuse:
+            raise InstallationAdminError(self.refuse)
+        self.calls.append(("revoke", library.id, token_id, actor["id"]))
 
     def _write(self, kind):
         def write(library, *args, **kwargs):
@@ -129,6 +149,8 @@ WRITES = [
     ("put", f"{BASE}/123", {"name": "Renamed"}),
     ("put", f"{BASE}/123/status", {"status": "inactive"}),
     ("post", f"{BASE}/123/enrollment-codes", None),
+    ("post", f"{BASE}/123/recovery-token", None),
+    ("post", f"{BASE}/unbound-tokens/55/revoke", None),
 ]
 
 
@@ -195,9 +217,10 @@ def test_an_unknown_library_is_404_everywhere(api, monkeypatch):
 @pytest.mark.parametrize(("method", "path"), [
     ("put", BASE), ("delete", BASE), ("patch", f"{BASE}/123"), ("delete", f"{BASE}/123"), ("post", f"{BASE}/123"),
     ("get", f"{BASE}/123/status"), ("post", f"{BASE}/123/status"), ("get", f"{BASE}/123/enrollment-codes"),
-    ("delete", f"{BASE}/123/enrollment-codes"),
+    ("delete", f"{BASE}/123/enrollment-codes"), ("get", f"{BASE}/123/recovery-token"), ("delete", f"{BASE}/unbound-tokens/55/revoke"),
+    ("post", f"{BASE}/unbound-tokens"), ("get", f"{BASE}/unbound-tokens/55/revoke"),
 ])
-def test_only_the_five_operations_are_routes(api, monkeypatch, method, path):
+def test_only_these_operations_are_routes(api, monkeypatch, method, path):
     World(monkeypatch)
 
     response = getattr(api, method)(path, headers={**COOKIE, "Origin": ADMIN_ORIGIN})
@@ -334,6 +357,48 @@ def test_an_issued_code_is_in_its_own_201_answer_once_and_in_no_log(api, monkeyp
     assert not _keys(response.json()) & FORBIDDEN_KEYS
 
 
+def test_a_recovery_token_is_in_its_own_201_answer_once_uncached_and_in_no_log(api, monkeypatch, caplog):
+    world = World(monkeypatch)
+
+    with caplog.at_level(logging.DEBUG):
+        response = _send(api, "post", f"{BASE}/123/recovery-token", None)
+        listed = api.get(BASE, headers=COOKIE)
+        unbound = api.get(f"{BASE}/unbound-tokens", headers=COOKIE)
+
+    assert response.status_code == 201
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {
+        "installation": {"id": 123, "name": "Main AMH Sorter"},
+        "agent_token": CANARY_TOKEN,
+        "revoked_previous_count": 1,
+    }
+    assert world.calls == [("recover", ORGANIZATION_ID, 123, 7)]
+    assert CANARY_TOKEN not in caplog.text and CANARY_TOKEN not in listed.text and CANARY_TOKEN not in unbound.text
+    assert not _keys(response.json()) & FORBIDDEN_KEYS
+
+
+def test_the_unbound_list_is_exactly_these_fields_and_uncached(api, monkeypatch):
+    World(monkeypatch)
+
+    response = api.get(f"{BASE}/unbound-tokens", headers=COOKIE)
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {"tokens": [{"id": 55, "description": "Canonical agent", "branch_name": "Main Branch",
+                                           "created_at": "2026-10-01T12:00:00Z", "last_used_at": None}]}
+    assert not _keys(response.json()) & FORBIDDEN_KEYS
+
+
+def test_revoking_sends_the_token_id_alone(api, monkeypatch):
+    world = World(monkeypatch)
+
+    response = _send(api, "post", f"{BASE}/unbound-tokens/55/revoke", None)
+
+    assert (response.status_code, response.json()) == (200, {"id": 55})
+    assert response.headers["cache-control"] == "no-store"
+    assert world.calls == [("revoke", ORGANIZATION_ID, 55, 7)]
+
+
 @pytest.mark.parametrize(("code", "status", "operation"), [
     ("installation_not_found", 404, 1), ("installation_not_found", 404, 2), ("installation_not_found", 404, 3),
     ("library_cancelled", 409, 0), ("library_cancelled", 409, 1), ("library_cancelled", 409, 2),
@@ -342,6 +407,9 @@ def test_an_issued_code_is_in_its_own_201_answer_once_and_in_no_log(api, monkeyp
     ("transition_not_allowed", 409, 2),
     ("installation_not_enrollable", 409, 3), ("library_not_enrollable", 409, 3),
     ("operational_identity_incomplete", 409, 3), ("branch_already_enrolled", 409, 3),
+    ("installation_owns_active_key", 409, 2),
+    ("installation_not_found", 404, 4), ("library_cancelled", 409, 4), ("installation_not_recoverable", 409, 4),
+    ("token_not_found", 404, 5), ("library_cancelled", 409, 5),
 ])
 def test_every_refusal_is_its_fixed_code_and_names_no_internal_reason(api, monkeypatch, caplog, code, status, operation):
     world = World(monkeypatch)

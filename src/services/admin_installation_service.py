@@ -19,17 +19,30 @@ WHAT AN ADMINISTRATOR MAY DO, AND NOTHING MORE:
 
                 An installation's bound agent token authenticates only while it is provisioning or active
                 (main.bound_installation_unusable_reason), so inactive and retired stop it at once. No ingest key and
-                no cutover is touched.
+                no cutover is touched, so an installation that owns an active key cannot be retired here: that would
+                strand the key. It can be deactivated; offboarding the library retires both together.
     code        a one-time enrollment code, by services.collector_enrollment_service.create_enrollment_code -- the one
                 implementation: it revokes the installation's earlier unused codes, stores only the code's hash,
                 snapshots the contract and returns the raw code ONCE. For a contract-2 installation whose branch
                 already has an active ingest key or any v2 cutover, nothing is written and BranchAlreadyEnrolled is
                 raised: such a code could never be redeemed (replacing a v2 machine is C6).
+    recovery    one new bound agent token for a provisioning or active Contract 2 installation that owns its branch's only
+                active key, replacing the installation's earlier tokens, by the enrollment service's issue_recovery_token.
+                The raw token is returned ONCE.
+    unbound     list and revoke a library's legacy unbound tokens, one at a time. Deactivating an installation does not stop
+                them. Revoking is not an upload fence: a request already past the token check may still finish.
 
-NOTHING HERE HOLDS OR RETURNS a hostname, a Collector version, a token or its hash, a code's hash, a key id or an
-operational or internal organization/branch id. The raw code leaves only in issue_enrollment_code's return value and is
-never logged, audited or put in an exception. Audit rows name the library as `target_org_slug` -- never `org_slug`,
-which marks an event as one the organization's own members may see (user_admin_service).
+LOCK ORDER. Offboarding holds the organization, then tokens, installations, codes and keys; an authenticated request holds
+its token and then updates the installation. So recovery and revocation take the organization first and tokens before the
+installation. An enrollment holds the organization FOR SHARE before its code row, so they wait for it and then see its token. A
+retirement takes the branch FOR NO KEY UPDATE, against an enrollment's lock on it, and never the organization
+or a token; it does not block an event insert's FOR KEY SHARE.
+
+NOTHING HERE HOLDS OR RETURNS a hostname, a Collector version, a token's hash, a code's hash, a key id or an operational or
+internal organization/branch id. The raw code and the raw recovery token leave only in the return value of the call that
+made them and are never logged, audited or put in an exception. A token's own row id and an unbound token's operator-written
+description are not secrets. Audit rows name the library as `target_org_slug` -- never `org_slug`, which marks an event as
+one the organization's own members may see (user_admin_service).
 """
 
 from __future__ import annotations
@@ -49,7 +62,11 @@ from . import (
     tenant_service,
 )
 from .collector_enrollment_service import EnrollmentError
-from .ingest_v2_service import has_active_ingest_key, has_any_v2_cutover
+from .ingest_v2_service import (
+    active_ingest_key_owners,
+    has_active_ingest_key,
+    has_any_v2_cutover,
+)
 
 MAX_NAME_LENGTH = 120
 
@@ -61,6 +78,8 @@ TRANSITIONS: dict[str, tuple[str, ...]] = {
     "retired": (),
 }
 
+INSTALLATION_OWNS_ACTIVE_KEY = "installation_owns_active_key"
+
 # What stops an installation being added (a fixed code each).
 LIBRARY_CANCELLED = "library_cancelled"
 NO_ACTIVE_PRIMARY_BRANCH = "no_active_primary_branch"
@@ -70,6 +89,8 @@ INSTALLATION_CREATED = "admin_installation_created"
 INSTALLATION_RENAMED = "admin_installation_renamed"
 INSTALLATION_STATUS_CHANGED = "admin_installation_status_changed"
 ENROLLMENT_CODE_ISSUED = "admin_enrollment_code_issued"
+RECOVERY_CREDENTIAL_ISSUED = "admin_recovery_token_issued"
+UNBOUND_CREDENTIAL_REVOKED = "admin_unbound_token_revoked"
 
 
 class InstallationAdminError(Exception):
@@ -327,9 +348,42 @@ _SET_STATUS_SQL = """
 """
 
 
+_INSTALLATION_TENANT_SQL = """
+    SELECT b.id AS branch_id, b.operational_branch_id, o.operational_customer_id
+    FROM collector_installations ci
+    JOIN organizations o
+      ON o.id = ci.organization_id
+    JOIN branches b
+      ON b.id = ci.branch_id
+    WHERE ci.id = :installation_id
+      AND ci.organization_id = :organization_id
+"""
+
+_LOCK_BRANCH_SQL = "SELECT id FROM branches WHERE id = :branch_id FOR NO KEY UPDATE"
+
+
+def _refuse_retiring_a_key_owner(conn: Any, library: Library, installation_id: int) -> None:
+    """installation_owns_active_key if retiring would strand an active key. Under the branch's lock, held to commit: an
+    enrollment holds the same one while it gives the installation a key, and reads the status again once it has it."""
+    tenant = conn.execute(
+        text(_INSTALLATION_TENANT_SQL), {"installation_id": installation_id, "organization_id": library.id}
+    ).mappings().first()
+    if tenant is None:
+        raise InstallationAdminError("installation_not_found")
+    if collector_enrollment_service.is_postgresql(conn):
+        conn.execute(text(_LOCK_BRANCH_SQL), {"branch_id": tenant["branch_id"]})
+    customer_id, operational_branch_id = tenant["operational_customer_id"], tenant["operational_branch_id"]
+    if customer_id is None or operational_branch_id is None:
+        return  # a key is issued only to a fully mapped tenant
+    # ingest_key_ids is read under row level security: the branch's own tenant.
+    collector_enrollment_service.set_tenant_context(conn, customer_id, operational_branch_id)
+    if installation_id in active_ingest_key_owners(conn, customer_id, operational_branch_id):
+        raise InstallationAdminError(INSTALLATION_OWNS_ACTIVE_KEY)
+
+
 def change_status(library: Library, installation_id: int, *, status: str, actor: dict[str, Any]) -> dict[str, Any]:
     """Moves the installation to `status` if TRANSITIONS allows it from its current one; transition_not_allowed if
-    not, or if it changed meanwhile."""
+    not, or if it changed meanwhile. installation_owns_active_key if `status` is retired and it owns an active key."""
     _refuse_cancelled(library)
     with get_engine().begin() as conn:
         current = conn.execute(
@@ -339,6 +393,8 @@ def change_status(library: Library, installation_id: int, *, status: str, actor:
             raise InstallationAdminError("installation_not_found")
         if not transition_allowed(current, status):
             raise InstallationAdminError("transition_not_allowed")
+        if status == "retired":
+            _refuse_retiring_a_key_owner(conn, library, installation_id)
         changed = conn.execute(text(_SET_STATUS_SQL), {
             "installation_id": installation_id, "organization_id": library.id,
             "status": status, "previous_status": current,
@@ -401,3 +457,95 @@ def issue_enrollment_code(library: Library, installation_id: int, *, actor: dict
             "ttl_minutes": issued["ttl_minutes"],
             "revoked_previous_count": issued["revoked_previous_count"],
         }
+
+
+# --- credential recovery and legacy unbound tokens -----------------------------------------------------------------------
+
+_LOCK_LIBRARY_SQL = "SELECT status FROM organizations WHERE id = :organization_id"
+
+
+def _lock_library(conn: Any, library: Library) -> None:
+    """The organization's row, as offboarding locks it, so neither can miss what the other does. library_cancelled if
+    offboarding committed first: the caller's Library may have been read before it did."""
+    status = conn.execute(
+        text(_LOCK_LIBRARY_SQL + collector_enrollment_service._lock_suffix(conn)), {"organization_id": library.id}
+    ).scalar()
+    if status == "cancelled":
+        raise InstallationAdminError(LIBRARY_CANCELLED)
+
+
+def issue_recovery_token(library: Library, installation_id: int, *, actor: dict[str, Any]) -> dict[str, Any]:
+    """One new bound agent token for the installation, replacing its earlier ones, audited, all in one transaction. The raw
+    token is in the return value and nowhere else; any failure leaves the earlier tokens as they were."""
+    _refuse_cancelled(library)
+    with get_engine().begin() as conn:
+        _lock_library(conn, library)
+        if conn.execute(
+            text(_CURRENT_STATUS_SQL), {"installation_id": installation_id, "organization_id": library.id}
+        ).first() is None:
+            raise InstallationAdminError("installation_not_found")
+        try:
+            issued = collector_enrollment_service.issue_recovery_token(
+                conn, installation_id, expected_organization_id=library.id
+            )
+        except EnrollmentError:
+            raise InstallationAdminError("installation_not_recoverable") from None
+        _audit(conn, RECOVERY_CREDENTIAL_ISSUED, "Collector recovery token issued.", library, actor,
+               installation_id=installation_id, token_id=issued["token_id"],
+               revoked_previous_count=issued["revoked_previous_count"])
+        return {
+            "installation": {"id": issued["installation_id"], "name": issued["installation_name"]},
+            "agent_token": issued["agent_token"],
+            "revoked_previous_count": issued["revoked_previous_count"],
+        }
+
+
+# Bound tokens are not here: their installation's status and the recovery token already govern them, and only a bound token's
+# description can carry a hostname. Both columns are TIMESTAMP with no zone, written as the session's CURRENT_TIMESTAMP.
+_UNBOUND_TOKENS_SQL = """
+    SELECT
+        t.id, t.description, b.name AS branch_name,
+        t.created_at AT TIME ZONE current_setting('TimeZone') AS created_at,
+        t.last_used_at AT TIME ZONE current_setting('TimeZone') AS last_used_at
+    FROM agent_tokens t
+    JOIN organizations o
+      ON o.operational_customer_id = t.customer_id
+    LEFT JOIN branches b
+      ON b.operational_branch_id = t.branch_id
+     AND b.organization_id = o.id
+    WHERE o.id = :organization_id
+      AND t.installation_id IS NULL
+      AND t.is_active = TRUE
+    ORDER BY t.id
+"""
+
+_REVOKE_UNBOUND_CREDENTIAL_SQL = """
+    UPDATE agent_tokens
+    SET is_active = FALSE
+    WHERE id = :token_id
+      AND installation_id IS NULL
+      AND is_active = TRUE
+      AND customer_id = (SELECT operational_customer_id FROM organizations WHERE id = :organization_id)
+    RETURNING id
+"""
+
+
+def list_unbound_tokens(library: Library) -> list[dict[str, Any]]:
+    """The library's active legacy unbound tokens. Never a hash."""
+    with get_engine().connect() as conn:
+        rows = conn.execute(text(_UNBOUND_TOKENS_SQL), {"organization_id": library.id}).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def revoke_unbound_token(library: Library, token_id: int, *, actor: dict[str, Any]) -> None:
+    """Deactivates one active unbound token of this library, audited, in one transaction. token_not_found otherwise: a bound
+    token, another library's and one already inactive are answered alike. Nothing here makes a token active again."""
+    _refuse_cancelled(library)
+    with get_engine().begin() as conn:
+        _lock_library(conn, library)
+        revoked = conn.execute(
+            text(_REVOKE_UNBOUND_CREDENTIAL_SQL), {"token_id": token_id, "organization_id": library.id}
+        ).first()
+        if revoked is None:
+            raise InstallationAdminError("token_not_found")
+        _audit(conn, UNBOUND_CREDENTIAL_REVOKED, "Legacy unbound agent token revoked.", library, actor, token_id=token_id)

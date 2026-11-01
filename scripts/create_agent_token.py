@@ -43,6 +43,11 @@ After a successful --execute run, immediately hand the printed token to
 whoever is configuring the agent (e.g. via
 agent/deploy/set-sortview-api-token.ps1) -- it cannot be recovered from
 the database afterward, only re-issued as a new token.
+
+THE TOKEN IS UNBOUND: it names no installation. A Contract v2 key owned by an
+installation (every key a Contract v2 enrollment issues) refuses it on /v2/upload
+and /v2/status, so this does not repair such a Collector: use Issue recovery token
+in SortView administration (docs/collector-v2.md).
 """
 
 from __future__ import annotations
@@ -123,12 +128,15 @@ def validate_token_scope(conn, customer_id: int, branch_id: int) -> dict:
     if branch is None:
         raise ScopeError(f"branch_id {branch_id} does not exist in branches")
 
+    # FOR SHARE, held to the end of the caller's transaction: offboarding holds the organization FOR UPDATE, so it either waits
+    # for this token and then revokes it, or has committed and the status below is 'cancelled'. PostgreSQL only.
+    lock = " FOR SHARE" if getattr(getattr(conn, "dialect", None), "name", "") == "postgresql" else ""
     orgs = conn.execute(
-        text("""
+        text(f"""
             SELECT id, slug, status
             FROM organizations
-            WHERE operational_customer_id = :customer_id
-        """),
+            WHERE operational_customer_id = :customer_id{lock}
+        """),  # nosec B608 - `lock` is one of two constants
         {"customer_id": customer_id},
     ).mappings().all()
     if not orgs:

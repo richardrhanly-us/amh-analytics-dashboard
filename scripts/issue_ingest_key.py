@@ -19,6 +19,9 @@ With --execute (a bare flag uses the DATABASE_URL environment variable, or pass 
 branches.operational_branch_id), exactly as for scripts/create_agent_token.py; `issue` refuses a pair that is not a mapped
 tenant and writes nothing. Retiring is one-way: issue a new key instead of reactivating an old one.
 
+A key issued here has NO OWNER. `issue` refuses a branch with an active key owned by an installation (one issued by Contract
+v2 enrollment): a second, unowned key would be open to a token the owned one refuses.
+
 Never point --execute at production without an explicit go-ahead: production is changed by an operator, not by tests or CI.
 """
 
@@ -90,8 +93,8 @@ def main(argv: list[str] | None = None, out: TextIO | None = None) -> int:
         with engine.begin() as conn:
             if args.command == "issue":
                 try:
-                    key_id = issue_ingest_key(conn, args.customer_id, args.branch_id)
-                except ValueError as exc:  # a fixed reason: unmapped tenant, or a cancelled organization
+                    key_id = issue_ingest_key(conn, args.customer_id, args.branch_id, installation_id=None)
+                except ValueError as exc:  # a fixed reason: unmapped tenant, a cancelled organization, or an active owned key
                     print(f"REFUSED: {exc}. Nothing was written.", file=out)
                     return EXIT_REFUSED
                 print(f"ISSUED key_id={key_id} for customer_id={args.customer_id} branch_id={args.branch_id}", file=out)
