@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import inspect
+import itertools
 from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
 
@@ -59,9 +60,13 @@ def v1_patron(patron, name, kind="ADULT", when=None):
     return (when or wall(2026, 9, 3, 9), "64", "", "", patron, f"64              00120260903    090000|AA{patron}|AE{name}|PT{kind}|")
 
 
-def v2_hold(n, when=datetime(2026, 9, 20, 15, tzinfo=UTC), **flags):
+def v2_hold(n, when=datetime(2026, 9, 20, 15, tzinfo=UTC), row_id=None, **flags):
     return (when, f"{n:064x}", "hold", "main", flags.get("is_ill", False), flags.get("is_branch_services", False),
-            flags.get("is_collection_services", False))
+            flags.get("is_collection_services", False), n if row_id is None else row_id)
+
+
+def v2_retraction(n, row_id, when=datetime(2026, 9, 20, 15, tzinfo=UTC)):
+    return (when, f"{n:064x}", "non_hold_101", None, None, None, None, row_id)
 
 
 class _Result:
@@ -177,6 +182,45 @@ def test_the_latest_record_of_an_item_in_its_era_decides_and_a_range_total_is_no
 
 
 # =====================================================================================================================
+# Records of one item at one instant: the greatest (event_time, id) decides, however the rows arrive
+# =====================================================================================================================
+
+@pytest.mark.parametrize(("rows", "expected"), [
+    pytest.param([v2_hold(1, row_id=10), v2_hold(1, row_id=11, is_ill=True)], (0, 1), id="public-corrected-to-ill"),
+    pytest.param([v2_hold(1, row_id=10, is_ill=True), v2_hold(1, row_id=11)], (1, 0), id="ill-corrected-to-public"),
+    pytest.param([v2_hold(1, row_id=10), v2_hold(1, row_id=11, is_ill=True), v2_hold(1, row_id=12)], (1, 0), id="a-b-a"),
+    pytest.param([v2_hold(1, row_id=10), v2_retraction(1, row_id=11)], (0, 0), id="public-retracted-in-its-second"),
+    pytest.param([v2_hold(1, row_id=10, is_ill=True), v2_retraction(1, row_id=11)], (0, 0), id="ill-retracted-in-its-second"),
+])
+def test_a_tie_is_decided_by_the_database_id_whichever_way_the_rows_arrive(rows, expected):
+    for arrival in itertools.permutations(rows):
+        assert counts(get_holds_report(Connection(v2=arrival), TENANT, window(v1=False))) == expected
+
+
+def test_dense_ties_across_many_items_count_each_items_greatest_id():
+    instants = [datetime(2026, 9, 20, 15, second, tzinfo=UTC) for second in range(3)]
+    rows, row_id = [], 0
+    for n in range(1, 61):
+        when, is_ill = instants[n % 3], n % 2 == 0
+        rows += [v2_hold(n, when, row_id + 1, is_ill=is_ill), v2_hold(n, when, row_id + 2, is_ill=not is_ill)]
+        rows += [v2_retraction(n, row_id + 3, when)] if n % 5 == 0 else []
+        row_id += 3
+
+    # 12 of the 60 items end retracted. Of the other 48, an odd n ends ILL (24) and an even n public (24).
+    assert counts(get_holds_report(Connection(v2=rows), TENANT, window(v1=False))) == (24, 24)
+    assert counts(get_holds_report(Connection(v2=rows[::-1]), TENANT, window(v1=False))) == (24, 24)
+
+
+def test_the_current_statement_selects_the_summarys_columns_in_order_and_orders_by_event_time_then_id():
+    statement = str(hold_report_service._V2_ROWS)
+    selected = statement.split("SELECT", 1)[1].split("FROM", 1)[0]
+
+    assert [column.strip() for column in selected.split(",")] == ["event_time", *hold_report_service._V2_COLUMNS[1:]]
+    assert hold_report_service._V2_COLUMNS[0] == "datetime" and "id" in hold_report_service._V2_COLUMNS
+    assert "ORDER BY event_time, id" in statement
+
+
+# =====================================================================================================================
 # The legacy rules of the site
 # =====================================================================================================================
 
@@ -217,6 +261,12 @@ def test_the_report_is_two_integers_and_nothing_else_read():
     text = repr(report)
     for private in (ACCOUNT, "p1", "b2", "101YNY", "Synthetic Title", "programming", "collection", "branch_services", "0" * 63):
         assert private not in text, private
+
+
+def test_the_database_id_never_reaches_the_report():
+    report = get_holds_report(Connection(v2=[v2_hold(1, row_id=987654321)]), TENANT, window(v1=False))
+
+    assert "987654321" not in repr(report) and counts(report) == (1, 0)
 
 
 def test_the_service_reads_only_the_columns_and_tables_it_needs_and_logs_nothing():

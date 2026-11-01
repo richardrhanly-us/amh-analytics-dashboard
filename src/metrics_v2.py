@@ -81,7 +81,8 @@ def _empty_summary_v2():
 #  Parameters:  acs_items_df - Normalized acs_item_events dataframe
 #                              (columns: datetime, item_key, state,
 #                              destination, is_ill, is_branch_services,
-#                              is_collection_services, is_hold).
+#                              is_collection_services, is_hold; id where
+#                              the caller has it).
 #               transit_labels - List of configured transit branch labels
 #                                (the SAME dashboard configuration v1's
 #                                build_acs_item_summary receives).
@@ -120,9 +121,13 @@ def build_acs_item_summary_v2(acs_items_df, transit_labels):
     # with drop_duplicates(subset=["barcode"], keep="last") -- Tech Logic can
     # emit more than one status record for the same physical item over time,
     # e.g. a hold placed and later retracted). item_key is used only for this
-    # internal grouping and is dropped before anything is returned.
+    # internal grouping and is dropped before anything is returned. The latest
+    # record is the greatest (event_time, id): a correction shares its hold's
+    # time. id, too, is dropped before anything is returned. Without an id, tied
+    # records keep the order they were given in, which is not the contract's order.
     if "datetime" in items.columns:
-        items = items.sort_values("datetime")
+        keys = ["datetime", "id"] if "id" in items.columns else ["datetime"]
+        items = items.sort_values(keys, kind="stable")
     items = items.drop_duplicates(subset=["item_key"], keep="last")
 
     items["is_hold"] = items["state"] == "hold"

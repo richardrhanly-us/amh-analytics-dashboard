@@ -66,16 +66,17 @@ _V1_ROWS = text("""
     ORDER BY event_time
 """).bindparams(bindparam("span_start", type_=DateTime(timezone=False)), bindparam("span_end", type_=DateTime(timezone=False)))
 
-# The current rows, with the columns the current summary reads. They hold no patron data at all.
-_V2_COLUMNS = ("datetime", "item_key", "state", "destination", "is_ill", "is_branch_services", "is_collection_services")
+# The current rows, with the columns the current summary reads. They hold no patron data at all. `id` is read only to
+# break ties: the latest record of an item is its greatest (event_time, id), and a correction reuses its hold's time.
+_V2_COLUMNS = ("datetime", "item_key", "state", "destination", "is_ill", "is_branch_services", "is_collection_services", "id")
 _V2_ROWS = text("""
-    SELECT event_time, item_key, state, destination, is_ill, is_branch_services, is_collection_services
+    SELECT event_time, item_key, state, destination, is_ill, is_branch_services, is_collection_services, id
     FROM acs_item_events
     WHERE customer_id = :customer_id
       AND branch_id = :branch_id
       AND event_time >= :span_start
       AND event_time < :span_end
-    ORDER BY event_time
+    ORDER BY event_time, id
 """).bindparams(bindparam("span_start", type_=DateTime(timezone=True)), bindparam("span_end", type_=DateTime(timezone=True)))
 
 # The legacy hold rules of the tenant's site: the `internal_routing` key of the organization's settings and of the

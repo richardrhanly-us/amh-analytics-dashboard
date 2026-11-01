@@ -117,21 +117,27 @@ def owner(pg_url):
 def runtime(pg_url, owner):
     """A non-owning role provisioned from the privilege baseline's OWN provisioning SQL."""
     name = f"sortview_rt_test_{secrets.token_hex(4)}"
-    with owner.begin() as conn:
-        conn.execute(text(
-            f"CREATE ROLE {name} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS INHERIT "  # nosec B608
-            f"PASSWORD '{RUNTIME_ROLE_PASSWORD}'"
-        ))
-        conn.execute(text(f'GRANT CONNECT ON DATABASE "{pg_url.database}" TO {name}'))  # nosec B608
-        for line in privileges.provisioning_sql(name).splitlines():
-            if line and not line.startswith("--") and line not in ("BEGIN;", "COMMIT;"):
-                conn.execute(text(line))
-    engine = create_engine(pg_url.set(username=name, password=RUNTIME_ROLE_PASSWORD), hide_parameters=True)
-    yield engine
-    engine.dispose()
-    with owner.begin() as conn:
-        conn.execute(text(f"DROP OWNED BY {name}"))  # nosec B608
-        conn.execute(text(f"DROP ROLE IF EXISTS {name}"))  # nosec B608
+    engine = create_engine(pg_url.set(username=name, password=RUNTIME_ROLE_PASSWORD), hide_parameters=True)  # connects only when used
+    try:
+        with owner.begin() as conn:
+            conn.execute(text(
+                f"CREATE ROLE {name} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS INHERIT "  # nosec B608
+                f"PASSWORD '{RUNTIME_ROLE_PASSWORD}'"
+            ))
+            conn.execute(text(f'GRANT CONNECT ON DATABASE "{pg_url.database}" TO {name}'))  # nosec B608
+            for line in privileges.provisioning_sql(name).splitlines():
+                if line and not line.startswith("--") and line not in ("BEGIN;", "COMMIT;"):
+                    conn.execute(text(line))
+        yield engine
+    finally:
+        try:
+            engine.dispose()
+        finally:
+            with owner.begin() as conn:
+                # A failed setup rolled the role back, and DROP OWNED BY refuses a role that does not exist.
+                if conn.execute(text("SELECT 1 FROM pg_roles WHERE rolname = :name"), {"name": name}).first():
+                    conn.execute(text(f"DROP OWNED BY {name}"))  # nosec B608
+                    conn.execute(text(f"DROP ROLE IF EXISTS {name}"))  # nosec B608
 
 
 def _key(*parts) -> str:
