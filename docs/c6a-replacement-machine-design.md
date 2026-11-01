@@ -4,7 +4,7 @@
 
 **Scope:** Support-controlled replacement of an enrolled Contract v2 Collector computer, through Mode 1 controlled handoff or Mode 2 fresh-identity recovery  
 
-**Implementation status:** Replacement is not implemented, and Mode 1 and Mode 2 are unavailable. Key ownership and the credential safeguards in Section 2 are implemented (milestones M1 and M2). Only the behavior listed in Section 2 and the code-inspection findings in Section 9 describe the system as it exists today; everything else here is proposed.
+**Implementation status:** Replacement is not implemented, and Mode 1 and Mode 2 are unavailable. Key ownership and the credential safeguards in Section 2 are implemented (milestones M1 and M2), as is a read-only inventory of legacy keys (milestone M3a). Only the behavior listed in Section 2 and the code-inspection findings in Section 9 describe the system as it exists today; everything else here is proposed.
 
 ## 1. Objective
 
@@ -35,6 +35,7 @@ A Mode 1 failure must never fall back to Mode 2 automatically. Mode 2 changes th
 - Ingest keys belong to a customer and branch, and may have an owning installation (`ingest_key_ids.installation_id`). A key issued by Contract v2 enrollment is owned by the enrolling installation. Keys issued earlier or by `scripts/issue_ingest_key.py` have no owner.
 - An installation that owns an active key cannot be retired through the administration API; it can be deactivated, and offboarding retires installations and keys together.
 - `scripts/issue_ingest_key.py` refuses to issue an unowned key for a branch with an active owned key. It still permits a second unowned key on a branch whose active keys are unowned.
+- `scripts/reconcile_ingest_keys.py inventory` reports ingest keys, recorded owners, duplicate or missing active keys, installation and token relationships, enrollment-record evidence and schema differences. It reads one snapshot in a read-only transaction, refuses a role that cannot see every row, and assigns no owner. Its enrollment-record candidates are for review, not proof of ownership.
 - A platform administrator can issue a recovery token for an eligible installation (Section 10) and can list and revoke legacy unbound tokens. Neither is an upload fence: a request already past the token check may still finish, and this remains so until the upload synchronization in Section 9A exists.
 - Ordinary Contract v2 enrollment is blocked when a branch has an active ingest key or any previous v2 cutover.
 - Both enrollment-code issuance and enrollment redemption enforce these restrictions.
