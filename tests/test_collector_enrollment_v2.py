@@ -490,6 +490,13 @@ def test_there_is_no_secret_in_the_response_and_none_on_the_server(world):
     assert result["agent_token"] not in everything
 
 
+def test_an_enrollment_issues_its_key_with_no_owner(world):
+    _redeem(world, _code(world, 101), contract_version=2)
+
+    [key] = _table(world, "ingest_key_ids")
+    assert key["installation_id"] is None
+
+
 def test_the_rules_are_the_enrolling_sites_own_and_never_another_librarys(world):
     a = _redeem(world, _code(world, 101), contract_version=2)
     b = _redeem(world, _code(world, 201), contract_version=2)

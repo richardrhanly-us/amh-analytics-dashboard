@@ -38,6 +38,7 @@ _FOREIGN_KEYS = [
     ("subscriptions", "organizations"), ("organization_settings", "organizations"), ("branch_settings", "branches"),
     ("collector_installations", "organizations"), ("collector_installations", "branches"),
     ("collector_enrollment_codes", "collector_installations"), ("agent_tokens", "collector_installations"),
+    ("ingest_key_ids", "collector_installations"),
 ]
 # Related without a foreign key (the schema does not enforce these, so the plan has to).
 _LOGICAL_PARENTS = [

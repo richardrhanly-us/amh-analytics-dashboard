@@ -158,7 +158,7 @@ _V2_DDL = (
         " last_heartbeat_at TEXT, health_status TEXT, last_error_class TEXT, pending_outbox_count INTEGER,"
         " quarantined_count INTEGER, oldest_pending_event_at TEXT, last_success_at TEXT, watcher_last_active_at TEXT,"
         " collector_last_run_at TEXT, collector_next_run_at TEXT, collector_run_duration_ms INTEGER,"
-        " collector_schedule_status TEXT)"
+        " collector_schedule_status TEXT, installation_id INTEGER)"
     ),
     (
         "CREATE TABLE checkin_events (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL,"

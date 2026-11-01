@@ -169,11 +169,14 @@ def _require_provisionable_tenant(conn, customer_id: int, branch_id: int) -> Non
 
 # --- key registry -------------------------------------------------------------------------------------------------
 
-def ingest_key_problem(conn, customer_id: int, branch_id: int, key_id: str) -> str | None:
+def ingest_key_problem(conn, customer_id: int, branch_id: int, key_id: str, *, token_installation_id: int | None) -> str | None:
     """Why `key_id` may not be used by the token's tenant, or None if it may. The reason is for server-side logs only:
-    the caller answers unknown, retired and wrong-tenant keys with the same generic 403."""
+    the caller answers unknown, retired, wrong-tenant and wrong-owner keys with the same generic 403.
+
+    `token_installation_id` is the installation the token is bound to (None: a legacy unbound token). A key with no owner is
+    not restricted by it; a key with an owner accepts only a token bound to that owner."""
     row = conn.execute(
-        text("SELECT customer_id, branch_id, status FROM ingest_key_ids WHERE key_id = :key_id"),
+        text("SELECT customer_id, branch_id, status, installation_id FROM ingest_key_ids WHERE key_id = :key_id"),
         {"key_id": key_id},
     ).mappings().first()
     if row is None:
@@ -182,6 +185,9 @@ def ingest_key_problem(conn, customer_id: int, branch_id: int, key_id: str) -> s
         return "key belongs to another tenant"
     if row["status"] != "active":
         return f"key status {row['status']!r}"
+    owner = row["installation_id"]
+    if owner is not None and (token_installation_id is None or int(owner) != int(token_installation_id)):
+        return "key is owned by another installation"
     return None
 
 

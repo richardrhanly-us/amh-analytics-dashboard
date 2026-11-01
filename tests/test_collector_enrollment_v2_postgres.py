@@ -372,6 +372,12 @@ def test_the_code_the_token_the_key_and_the_cutover_are_committed_together(owner
         assert ingest_v2_service.get_effective_v2_cutover(conn, 10, 1) == ORG_A_CREATED
 
 
+def test_an_enrollment_issues_its_key_with_no_owner(owner, runtime):
+    key_id = _post(_code(runtime, 101), contract_version=2).json()["key_id"]
+
+    assert _rows(owner, "SELECT installation_id FROM ingest_key_ids WHERE key_id = :k", k=key_id) == [{"installation_id": None}]
+
+
 def test_it_writes_only_the_enrolling_tenants_branch_and_leaves_every_other_tenant_untouched(owner, runtime):
     before = _written(owner)
 
