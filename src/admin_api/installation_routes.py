@@ -7,6 +7,11 @@
                                                                                      provisioning, or retire it
     POST /api/admin/libraries/{org_slug}/installations/{installation_id}/enrollment-codes
                                                                                      issue a one-time code
+    POST /api/admin/libraries/{org_slug}/installations/{installation_id}/recovery-token
+                                                                                     replace its agent token, once
+    GET  /api/admin/libraries/{org_slug}/installations/unbound-tokens                the legacy unbound tokens
+    POST /api/admin/libraries/{org_slug}/installations/unbound-tokens/{token_id}/revoke
+                                                                                     revoke one of them
 
 Included in the admin router (admin_api.router), so every route inherits its platform-administrator check and the
 admin Origin guard on the writes. Every answer is no-store. What each operation may do is
@@ -18,12 +23,16 @@ services.admin_installation_service's.
     no active primary branch to add at                     409 no_active_primary_branch
     contract 2 without the library's Collector settings    409 collector_settings_not_ready
     a status change the installation cannot make           409 transition_not_allowed
+    retiring an installation that owns an active key       409 installation_owns_active_key
     a code the installation cannot have                    409 installation_not_enrollable | library_not_enrollable |
                                                                operational_identity_incomplete | branch_already_enrolled
+    a recovery token the installation cannot have          409 installation_not_recoverable
+    a token that is not an active unbound one of this
+    library                                                404 token_not_found
     a value refused                                        422 with the field and why, never the value
 
-THE RAW ENROLLMENT CODE is in the 201 answer to the request that issued it and nowhere else: it is not logged, audited,
-stored or shown again.
+THE RAW ENROLLMENT CODE AND THE RAW RECOVERY TOKEN are each in the 201 answer to the request that issued them and nowhere
+else: they are not logged, audited, stored or shown again.
 """
 
 from __future__ import annotations
@@ -44,7 +53,11 @@ from admin_api.installation_schemas import (
     InstallationsResponse,
     InstallationStatusRequest,
     PrimaryBranchSummary,
+    RecoveryTokenResponse,
     RenameInstallationRequest,
+    RevokedUnboundToken,
+    UnboundToken,
+    UnboundTokensResponse,
 )
 from customer_api.errors import (
     NO_STORE_HEADERS,
@@ -71,6 +84,14 @@ _MESSAGES = {
     "branch_already_enrolled": (
         409, "This branch already has an enrolled Contract 2 Collector. Replacing it is not handled here.",
     ),
+    "installation_owns_active_key": (
+        409, "This installation owns its branch's active ingest key, so it cannot be retired here. Deactivate it instead.",
+    ),
+    "installation_not_recoverable": (
+        409,
+        "A recovery token needs a Provisioning or Active Contract 2 installation that owns its branch's only active ingest key.",
+    ),
+    "token_not_found": (404, "Unbound token not found."),
 }
 
 
@@ -192,5 +213,37 @@ def create_installation_router() -> APIRouter:
             revoked_previous_count=issued["revoked_previous_count"],
         )
         return _json(body, 201)
+
+    @router.post("/{installation_id}/recovery-token")
+    def issue_recovery_token(org_slug: str, installation_id: int, user: PlatformAdmin) -> Response:
+        library = _library(org_slug)
+        try:
+            issued = service.issue_recovery_token(library, installation_id, actor=user)
+        except InstallationAdminError as refused:
+            raise _refusal(refused) from None
+        # Never the token: the enrollment service has already logged the token's row id.
+        logger.info("Admin recovery token issued | org=%s user_id=%s installation_id=%s",
+                    library.slug, user["id"], installation_id)
+        body = RecoveryTokenResponse(
+            installation=InstallationRef(**issued["installation"]),
+            agent_token=issued["agent_token"],
+            revoked_previous_count=issued["revoked_previous_count"],
+        )
+        return _json(body, 201)
+
+    @router.get("/unbound-tokens")
+    def list_unbound_tokens(org_slug: str) -> Response:
+        library = _library(org_slug)
+        return _json(UnboundTokensResponse(tokens=[UnboundToken(**row) for row in service.list_unbound_tokens(library)]))
+
+    @router.post("/unbound-tokens/{token_id}/revoke")
+    def revoke_unbound_token(org_slug: str, token_id: int, user: PlatformAdmin) -> Response:
+        library = _library(org_slug)
+        try:
+            service.revoke_unbound_token(library, token_id, actor=user)
+        except InstallationAdminError as refused:
+            raise _refusal(refused) from None
+        logger.info("Admin unbound token revoked | org=%s user_id=%s token_id=%s", library.slug, user["id"], token_id)
+        return _json(RevokedUnboundToken(id=token_id))
 
     return router

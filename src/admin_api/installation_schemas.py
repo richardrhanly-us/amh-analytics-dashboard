@@ -2,8 +2,9 @@
 
 Closed (extra="forbid") both ways. An installation's id is shown to platform administrators as a support reference;
 nothing else that identifies a machine, a credential or a tenant is a field here: no hostname, no Collector version, no
-organization, branch, operational, key, token or code-row id, no code hash. The raw enrollment code is a field of
-EnrollmentCodeResponse alone -- the answer to the request that issued it, once.
+organization, branch, operational, key or code-row id, no code or token hash. The raw enrollment code is a field of
+EnrollmentCodeResponse alone and the raw recovery token of RecoveryTokenResponse alone -- the answer to the request that
+issued it, once. A token's row id appears only as the handle for revoking a legacy unbound token.
 """
 
 from __future__ import annotations
@@ -97,3 +98,29 @@ class EnrollmentCodeResponse(_Model):
     expires_at: datetime
     ttl_minutes: int
     revoked_previous_count: int
+
+
+class RecoveryTokenResponse(_Model):
+    """The one answer that carries a raw recovery token. It is not stored and cannot be shown again."""
+
+    installation: InstallationRef
+    agent_token: str
+    revoked_previous_count: int
+
+
+class UnboundToken(_Model):
+    """A legacy unbound agent token, by its row id: never its hash. `description` is what an operator wrote when issuing it."""
+
+    id: int
+    description: str | None
+    branch_name: str | None
+    created_at: datetime
+    last_used_at: datetime | None
+
+
+class UnboundTokensResponse(_Model):
+    tokens: list[UnboundToken]
+
+
+class RevokedUnboundToken(_Model):
+    id: int

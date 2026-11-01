@@ -5,7 +5,8 @@ import { count, list, oneOf, orNull, record, text } from '../libraries/libraries
  * A library's Collector installations and their enrollment codes (A2 item 5): platform administrators only. Every
  * response is checked against the shape below and only these fields are kept, whatever else a response carries.
  *
- * The raw enrollment code is returned by issueEnrollmentCode alone -- once. It is never put in the query cache.
+ * The raw enrollment code is returned by issueEnrollmentCode alone and the raw recovery token by issueRecoveryToken alone --
+ * once. Neither is ever put in the query cache.
  */
 
 export const STATUSES = ['provisioning', 'active', 'inactive', 'retired'] as const
@@ -41,6 +42,20 @@ export interface IssuedCode {
   expires_at: string
   ttl_minutes: number
   revoked_previous_count: number
+}
+
+export interface IssuedRecoveryToken {
+  installation: { id: number; name: string }
+  agent_token: string
+  revoked_previous_count: number
+}
+
+export interface UnboundToken {
+  id: number
+  description: string | null
+  branch_name: string | null
+  created_at: string
+  last_used_at: string | null
 }
 
 const ADD_PROBLEMS = ['library_cancelled', 'no_active_primary_branch', 'collector_settings_not_ready'] as const
@@ -120,4 +135,35 @@ export async function issueEnrollmentCode(orgSlug: string, id: number): Promise<
     ttl_minutes: count(body.ttl_minutes),
     revoked_previous_count: count(body.revoked_previous_count),
   }
+}
+
+/** POST .../recovery-token: replaces the installation's agent token, returned once. The caller keeps it in component state and nowhere else. */
+export async function issueRecoveryToken(orgSlug: string, id: number): Promise<IssuedRecoveryToken> {
+  const body = record(await apiRequest(`${base(orgSlug)}/${id}/recovery-token`, { method: 'POST' }))
+  const ref = record(body.installation)
+  return {
+    installation: { id: count(ref.id), name: text(ref.name) },
+    agent_token: text(body.agent_token),
+    revoked_previous_count: count(body.revoked_previous_count),
+  }
+}
+
+/** GET .../unbound-tokens: the library's active legacy unbound tokens. Never a token or its hash. */
+export async function getUnboundTokens(orgSlug: string, signal?: AbortSignal): Promise<UnboundToken[]> {
+  const body = record(await apiRequest(`${base(orgSlug)}/unbound-tokens`, { signal }))
+  return list(body.tokens).map((value) => {
+    const token = record(value)
+    return {
+      id: count(token.id),
+      description: orNull(token.description, text),
+      branch_name: orNull(token.branch_name, text),
+      created_at: text(token.created_at),
+      last_used_at: orNull(token.last_used_at, text),
+    }
+  })
+}
+
+/** POST .../unbound-tokens/{id}/revoke: revokes one of them. */
+export async function revokeUnboundToken(orgSlug: string, id: number): Promise<void> {
+  await apiRequest(`${base(orgSlug)}/unbound-tokens/${id}/revoke`, { method: 'POST' })
 }

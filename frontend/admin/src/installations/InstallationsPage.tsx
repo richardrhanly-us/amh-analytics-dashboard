@@ -8,12 +8,16 @@ import {
   addInstallation,
   changeInstallationStatus,
   getInstallations,
+  getUnboundTokens,
   issueEnrollmentCode,
+  issueRecoveryToken,
   renameInstallation,
+  revokeUnboundToken,
   type Contract,
   type Installation,
   type Installations,
   type IssuedCode,
+  type IssuedRecoveryToken,
   type StatusChange,
 } from './installationsApi.ts'
 import { AdminBreadcrumb } from '../AdminBreadcrumb.tsx'
@@ -94,7 +98,44 @@ function CodePanel({ issued, zone, onDone }: { issued: IssuedCode; zone: string;
   )
 }
 
-type Pending = { kind: 'rename' } | { kind: 'status'; to: StatusChange } | { kind: 'code' } | null
+/** The one place a raw recovery token is shown: from this page's own state, gone on Done or when the page is left. */
+function RecoveryTokenPanel({ issued, onDone }: { issued: IssuedRecoveryToken; onDone: () => void }) {
+  const [copied, setCopied] = useState<string | null>(null)
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(issued.agent_token)
+      setCopied('Copied.')
+    } catch {
+      setCopied('Could not copy. Select the token and copy it by hand.')
+    }
+  }
+
+  return (
+    <section className="panel" aria-labelledby="recovery-token-heading">
+      <h3 id="recovery-token-heading">
+        Recovery token for Installation #{issued.installation.id} &mdash; {issued.installation.name}
+      </h3>
+      <p>
+        <code className="enrollment-code">{issued.agent_token}</code>{' '}
+        <button type="button" onClick={() => void copy()}>
+          Copy
+        </button>
+      </p>
+      {copied !== null && <p role="status">{copied}</p>}
+      <p className="notice" role="note">
+        Shown only now &mdash; copy it before leaving this page. It cannot be shown again. Store it on the Collector computer with
+        tools\set-api-token.ps1, then run setup.ps1 again to resume.
+      </p>
+      {issued.revoked_previous_count > 0 && <p>This installation&rsquo;s earlier agent token no longer authenticates new requests.</p>}
+      <button type="button" className="button-secondary" onClick={onDone}>
+        Done
+      </button>
+    </section>
+  )
+}
+
+type Pending = { kind: 'rename' } | { kind: 'status'; to: StatusChange } | { kind: 'code' } | { kind: 'recovery' } | null
 
 const CONFIRM: Record<StatusChange, { action: string; text: (id: number) => string }> = {
   inactive: {
@@ -120,6 +161,7 @@ function InstallationCard({
   readOnly,
   onChanged,
   onIssued,
+  onRecovered,
 }: {
   orgSlug: string
   installation: Installation
@@ -127,6 +169,7 @@ function InstallationCard({
   readOnly: boolean
   onChanged: () => void
   onIssued: (issued: IssuedCode) => void
+  onRecovered: (issued: IssuedRecoveryToken) => void
 }) {
   const [pending, setPending] = useState<Pending>(null)
   const [name, setName] = useState(installation.name)
@@ -137,6 +180,7 @@ function InstallationCard({
   const statusActions: StatusChange[] =
     installation.status === 'inactive' ? ['provisioning', 'retired'] : installation.status === 'retired' ? [] : ['inactive', 'retired']
   const canIssue = installation.status === 'provisioning' || installation.status === 'active'
+  const canRecover = canIssue && installation.required_contract === 2
   const pendingCode = when(installation.pending_code_expires_at, zone)
 
   async function run(work: () => Promise<void>) {
@@ -225,6 +269,11 @@ function InstallationCard({
               Issue enrollment code
             </button>
           )}
+          {canRecover && (
+            <button type="button" className="button-secondary" onClick={() => setPending({ kind: 'recovery' })}>
+              Issue recovery token
+            </button>
+          )}
         </div>
       )}
 
@@ -308,7 +357,119 @@ function InstallationCard({
           </div>
         </div>
       )}
+
+      {pending?.kind === 'recovery' && (
+        <div role="group" aria-label={`Issue a recovery token for Installation #${id}`}>
+          <p className="notice">
+            {`Replace Installation #${id}'s agent token? Its current token stops authenticating new requests, so a running Collector stops until the new token is stored. A request already in progress may still finish. Use this when a Collector could not store its token.`}
+          </p>
+          <div className="form-actions">
+            <button
+              type="button"
+              aria-disabled={working}
+              onClick={() =>
+                void run(async () => {
+                  onRecovered(await issueRecoveryToken(orgSlug, id))
+                  onChanged()
+                })
+              }
+            >
+              Confirm: Issue recovery token
+            </button>
+            <button type="button" className="button-secondary" onClick={() => setPending(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </article>
+  )
+}
+
+/** A library's legacy unbound tokens, on request. Deactivating an installation does not stop these. */
+function UnboundTokens({ orgSlug, zone }: { orgSlug: string; zone: string }) {
+  const queryClient = useQueryClient()
+  const [shown, setShown] = useState(false)
+  const [confirming, setConfirming] = useState<number | null>(null)
+  const [failure, setFailure] = useState<string | null>(null)
+  const [working, setWorking] = useState(false)
+  const queryKey = ['admin', 'installations', orgSlug, 'unbound-tokens']
+  const query = useQuery({
+    queryKey,
+    queryFn: ({ signal }) => getUnboundTokens(orgSlug, signal),
+    enabled: shown,
+  })
+
+  async function revoke(id: number) {
+    if (working) {
+      return
+    }
+    setWorking(true)
+    setFailure(null)
+    try {
+      await revokeUnboundToken(orgSlug, id)
+      setConfirming(null)
+      await queryClient.invalidateQueries({ queryKey })
+    } catch (caught) {
+      setFailure(failureText(caught))
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  return (
+    <section aria-labelledby="unbound-tokens-heading">
+      <h3 id="unbound-tokens-heading">Legacy unbound tokens</h3>
+      {!shown && (
+        <button type="button" className="button-secondary" onClick={() => setShown(true)}>
+          Show legacy unbound tokens
+        </button>
+      )}
+      {shown && query.isPending && <p role="status">Loading unbound tokens…</p>}
+      {shown && query.isError && (
+        <p className="error-message" role="alert">
+          The unbound tokens could not be loaded. Please try again.
+        </p>
+      )}
+      {failure !== null && (
+        <p className="error-message" role="alert">
+          {failure}
+        </p>
+      )}
+      {query.data?.length === 0 && <p>This library has no active unbound tokens.</p>}
+      {query.data?.map((token) => (
+        <article className="panel" key={token.id} aria-labelledby={`unbound-token-${token.id}-heading`}>
+          <h4 id={`unbound-token-${token.id}-heading`}>
+            Token #{token.id}
+            {token.description !== null ? ` — ${token.description}` : ''}
+          </h4>
+          <dl className="account-facts">
+            <Fact term="Branch">{token.branch_name ?? <span className="quiet">Not mapped</span>}</Fact>
+            <Fact term="Created">{formatInstant(token.created_at, zone)}</Fact>
+            <Fact term="Last used">{when(token.last_used_at, zone) ?? <span className="quiet">Never</span>}</Fact>
+          </dl>
+          {confirming === token.id ? (
+            <div role="group" aria-label={`Revoke token #${token.id}`}>
+              <p className="notice">
+                {`Revoke token #${token.id}? Anything still using it stops authenticating new requests, and it cannot be restored. A request already in progress may still finish, so this is not an upload fence.`}
+              </p>
+              <div className="form-actions">
+                <button type="button" aria-disabled={working} onClick={() => void revoke(token.id)}>
+                  Confirm: Revoke
+                </button>
+                <button type="button" className="button-secondary" onClick={() => setConfirming(null)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button type="button" className="button-secondary" onClick={() => setConfirming(token.id)}>
+              Revoke
+            </button>
+          )}
+        </article>
+      ))}
+    </section>
   )
 }
 
@@ -421,6 +582,8 @@ export function InstallationsPage() {
   const zone = viewerZone()
   // The one raw enrollment code this page may hold: here, in component state, and nowhere else.
   const [issued, setIssued] = useState<IssuedCode | null>(null)
+  // The one raw recovery token this page may hold, under the same rule.
+  const [recovered, setRecovered] = useState<IssuedRecoveryToken | null>(null)
   const query = useQuery({
     queryKey: ['admin', 'installations', orgSlug],
     queryFn: ({ signal }) => getInstallations(orgSlug, signal),
@@ -464,6 +627,7 @@ export function InstallationsPage() {
             </p>
           )}
           {issued !== null && <CodePanel issued={issued} zone={zone} onDone={() => setIssued(null)} />}
+          {recovered !== null && <RecoveryTokenPanel issued={recovered} onDone={() => setRecovered(null)} />}
 
           {data.installations.length === 0 ? (
             <p>No installations are registered for this library.</p>
@@ -477,9 +641,12 @@ export function InstallationsPage() {
                 readOnly={cancelled}
                 onChanged={refresh}
                 onIssued={setIssued}
+                onRecovered={setRecovered}
               />
             ))
           )}
+
+          {!cancelled && <UnboundTokens orgSlug={orgSlug} zone={zone} />}
 
           {!cancelled && (
             <section aria-labelledby="add-installation-heading">

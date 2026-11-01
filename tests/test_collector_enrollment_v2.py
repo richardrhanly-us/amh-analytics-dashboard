@@ -490,11 +490,31 @@ def test_there_is_no_secret_in_the_response_and_none_on_the_server(world):
     assert result["agent_token"] not in everything
 
 
-def test_an_enrollment_issues_its_key_with_no_owner(world):
+def test_an_enrollment_issues_its_key_owned_by_the_enrolling_installation(world):
     _redeem(world, _code(world, 101), contract_version=2)
 
     [key] = _table(world, "ingest_key_ids")
-    assert key["installation_id"] is None
+    assert key["installation_id"] == 101
+
+
+def test_an_installation_retired_after_its_scope_was_read_is_refused_and_consumes_nothing(world, monkeypatch):
+    # What the status check under the branch's lock sees when a retirement committed while the enrollment waited for it.
+    code = _code(world, 101)
+    real = enrollment.resolve_installation_scope
+
+    def retired_after_the_read(conn, *args, **kwargs):
+        scope = real(conn, *args, **kwargs)
+        conn.execute(text("UPDATE collector_installations SET status = 'retired' WHERE id = 101"))
+        return scope
+
+    monkeypatch.setattr(enrollment, "resolve_installation_scope", retired_after_the_read)
+
+    with pytest.raises(EnrollmentError, match="installation_status_retired"):
+        _redeem(world, code, contract_version=2)
+
+    assert _table(world, "ingest_key_ids") == []
+    assert _table(world, "v2_cutovers") == []
+    assert _table(world, "agent_tokens") == []
 
 
 def test_the_rules_are_the_enrolling_sites_own_and_never_another_librarys(world):
@@ -759,8 +779,8 @@ def test_a_cutover_that_appears_between_the_check_and_the_insert_writes_nothing(
     code = _code(world, 101)
     real_issue = enrollment.issue_ingest_key
 
-    def issue_then_someone_else_cuts_over(conn, customer_id, branch_id):
-        key_id = real_issue(conn, customer_id, branch_id)
+    def issue_then_someone_else_cuts_over(conn, customer_id, branch_id, *, installation_id):
+        key_id = real_issue(conn, customer_id, branch_id, installation_id=installation_id)
         conn.execute(text("INSERT INTO v2_cutovers (customer_id, branch_id, cutover_at, set_by) "
                           "VALUES (10, 1, '2026-06-01T00:00:00+00:00', 'operator')"))
         return key_id

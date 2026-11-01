@@ -4,7 +4,7 @@
 
 **Scope:** Support-controlled replacement of an enrolled Contract v2 Collector computer, through Mode 1 controlled handoff or Mode 2 fresh-identity recovery  
 
-**Implementation status:** Not implemented. Only the behavior listed in Section 2 and the code-inspection findings in Section 9 describe the system as it exists today; everything else here is proposed.
+**Implementation status:** Replacement is not implemented, and Mode 1 and Mode 2 are unavailable. Key ownership and the credential safeguards in Section 2 are implemented (milestones M1 and M2). Only the behavior listed in Section 2 and the code-inspection findings in Section 9 describe the system as it exists today; everything else here is proposed.
 
 ## 1. Objective
 
@@ -32,19 +32,22 @@ A Mode 1 failure must never fall back to Mode 2 automatically. Mode 2 changes th
 - Collector 1.0.14 supports guided Contract v2 enrollment on a clean machine.
 - Installations support Provisioning, Active, Inactive, and Retired states.
 - Agent tokens are associated with installations through `agent_tokens.installation_id`.
-- Ingest keys are currently associated with a customer and branch, not a specific installation.
+- Ingest keys belong to a customer and branch, and may have an owning installation (`ingest_key_ids.installation_id`). A key issued by Contract v2 enrollment is owned by the enrolling installation. Keys issued earlier or by `scripts/issue_ingest_key.py` have no owner.
+- An installation that owns an active key cannot be retired through the administration API; it can be deactivated, and offboarding retires installations and keys together.
+- `scripts/issue_ingest_key.py` refuses to issue an unowned key for a branch with an active owned key. It still permits a second unowned key on a branch whose active keys are unowned.
+- A platform administrator can issue a recovery token for an eligible installation (Section 10) and can list and revoke legacy unbound tokens. Neither is an upload fence: a request already past the token check may still finish, and this remains so until the upload synchronization in Section 9A exists.
 - Ordinary Contract v2 enrollment is blocked when a branch has an active ingest key or any previous v2 cutover.
 - Both enrollment-code issuance and enrollment redemption enforce these restrictions.
 - The server stores no Collector HMAC secret; the secret is generated and protected locally.
 - Fresh Collector bootstrap starts at the end of each source file.
 - `event_key` and `item_key` derive from the master secret, not from `key_id`. Server deduplication is nevertheless scoped to `key_id`: `/v2/upload` uses `ON CONFLICT (customer_id, branch_id, key_id, event_key) DO NOTHING`.
 - An installation in `inactive` or `retired` status stops its bound agent token at authentication, for uploads and heartbeats alike. The check takes no lock. It does not stop a legacy unbound token, and it does not change the ingest key. `inactive` can return to `provisioning`, and the next accepted heartbeat makes the installation `active`.
-- `/v2/upload` and `/v2/status` check that the ingest key is active and belongs to the token's tenant. They do not check which installation owns the key.
+- `/v2/upload` and `/v2/status` check that the ingest key is active and belongs to the token's tenant and, when the key has an owner, that the token is bound to that owner.
 - The holds report reads `acs_item_events` without a `key_id` filter and selects each item's latest record by `(event_time, id)`. `id` is a table-wide `BIGSERIAL`, so it orders rows across keys by insertion.
 - Check-in and reject reports count stored rows with no `key_id` filter or `DISTINCT`. The application runtime role cannot update or delete event rows.
 - A v2 cursor is an offset plus a `(st_dev, st_ino)` file identity. A missing cursor or an identity mismatch makes the reader start that file at offset 0.
 
-The following do not exist today: a Collector drain command, handoff export or import, secret import, cursor rebinding, installation ownership of ingest keys, or a reporting discontinuity display.
+The following do not exist today: a Collector drain command, handoff export or import, secret import, cursor rebinding, or a reporting discontinuity display.
 
 These existing safeguards must remain intact for ordinary enrollment.
 
@@ -65,7 +68,7 @@ The original branch cutover must not be deleted, overwritten, or recreated.
 
 ## 4. Proposed database changes
 
-Add a nullable `installation_id` foreign key to `ingest_key_ids`, referencing `collector_installations.id`.
+`ingest_key_ids.installation_id` is a nullable column with a composite foreign key, `(installation_id, branch_id)` referencing `collector_installations (id, branch_id)`, so an owner must be at the key's own branch. It does not cascade (implemented in milestone M1).
 
 Requirements:
 
@@ -528,7 +531,7 @@ No recovery path may reactivate source credentials after activation, create a se
 
 If replacement enrollment succeeds on the server but the installer cannot securely store the returned agent token, installation must stop without creating another ingest identity.
 
-SortView support must be able to issue a recovery token explicitly bound to the replacement installation. The recovered token must pass the same installation-to-ingest-key ownership checks as the original token.
+SortView support must be able to issue a recovery token explicitly bound to the installation. This applies to any eligible Contract v2 installation, not only a replacement, because ordinary enrollment has the same failure. The recovered token must pass the same installation-to-ingest-key ownership checks as the original token.
 
 The existing installer resume and token-storage process should be reused where possible.
 
@@ -536,7 +539,7 @@ A replacement must not be repeated solely because the installer failed to store 
 
 The required installation-bound recovery-token capability is part of C6a implementation scope; the existing unbound token-generation script is insufficient.
 
-**Recovery-token issuance requirements:** The operation must be accessible only to an authorized platform administrator or support role and must produce a durable audit record. It is permitted only for a Provisioning or Active replacement installation that owns the applicable active ingest key. In one transaction, invalidate every earlier agent token bound to that installation and issue exactly one new installation-bound token scoped to the same operational customer and branch. Failure to revoke old tokens, verify ownership, create the new token, or write its audit record must roll back the transaction. Neither the raw token nor its hash may enter audit records. Inactive and Retired installations are ineligible. The raw recovery token may be displayed once for the existing secure installer-resume process.
+**Recovery-token issuance requirements:** The operation must be accessible only to an authorized platform administrator or support role and must produce a durable audit record. It is permitted only for a Provisioning or Active Contract v2 installation that owns its branch's only active ingest key. In one transaction, invalidate every earlier agent token bound to that installation and issue exactly one new installation-bound token scoped to the same operational customer and branch. Failure to revoke old tokens, verify ownership, create the new token, or write its audit record must roll back the transaction. Neither the raw token nor its hash may enter audit records. Inactive and Retired installations are ineligible. The raw recovery token may be displayed once for the existing secure installer-resume process.
 
 ## 11. Acceptance criteria
 
@@ -666,9 +669,19 @@ These decisions approve the design only. They do not authorize implementation or
 11. **Security policy:** Permit secret transfer only through an authorized, encrypted Mode 1 handoff. Never send or store the master secret on the SortView server.
 12. **Acceptance tests:** Require real PostgreSQL same-item and cross-key timestamp-tie regression tests before production release.
 
+****Approved for milestones M1 and M2****
+
+These decisions cover key ownership and credential tools only. They do not approve C6a, Mode 1, Mode 2, or any production change.
+
+- **Ownership schema (M1):** The composite foreign key in Section 4, with all existing keys left unowned.
+- **Recovery eligibility (M2):** Any eligible Contract v2 installation that owns its branch's only active key, not only a replacement.
+- **Revocation (M2):** The new revocation operation is limited to legacy unbound tokens. Installation status and the recovery token govern bound tokens.
+- **In-flight requests (M2):** A request authenticated before a token is revoked or replaced may still finish. This is a documented interim limitation until upload synchronization exists, and neither operation is an upload fence.
+- **Retirement (M2):** An installation that owns an active key cannot be retired through the administration API. A later replacement cutover must retire its source in its own transaction, not through that route.
+
 ****Still requiring design approval****
 
-1. Exact schema representation of replacement authorization and installation-to-key ownership.
+1. Exact schema representation of replacement authorization.
 2. Legacy NULL-owner key reconciliation for both active and retired keys, and recovery of branches without active keys.
 3. Database constraints guaranteeing a single active ingest identity and a single pending replacement.
 4. Replacement authorization expiry, cancellation, and recovery semantics.
@@ -706,4 +719,4 @@ The procedure must verify ownership evidence before backfilling, including any i
 
 Ambiguous cases require explicit operator reconciliation and must fail closed until resolved.
 
-No schema migration, endpoint, or production change should be made until these decisions have been reviewed.
+Apart from milestones M1 and M2, no schema migration, endpoint, or production change should be made until these decisions have been reviewed.

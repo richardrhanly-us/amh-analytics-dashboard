@@ -162,6 +162,9 @@ ADMIN_ROUTES = {
     ("PUT", "/api/admin/libraries/{org_slug}/installations/{installation_id}"),
     ("PUT", "/api/admin/libraries/{org_slug}/installations/{installation_id}/status"),
     ("POST", "/api/admin/libraries/{org_slug}/installations/{installation_id}/enrollment-codes"),
+    ("POST", "/api/admin/libraries/{org_slug}/installations/{installation_id}/recovery-token"),
+    ("GET", "/api/admin/libraries/{org_slug}/installations/unbound-tokens"),
+    ("POST", "/api/admin/libraries/{org_slug}/installations/unbound-tokens/{token_id}/revoke"),
     # A2 item 6.
     ("POST", "/api/admin/libraries/{org_slug}/lifecycle/suspend"),
     ("POST", "/api/admin/libraries/{org_slug}/lifecycle/reactivate"),

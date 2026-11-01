@@ -39,6 +39,12 @@ winner on any database, the lock makes the loser wait and see the winner's
 commit instead of racing it. Generation locks the installation row so two
 concurrent generations for one installation cannot both leave an unused code.
 
+Redemption locks the code's organization FOR SHARE BEFORE the code row. Offboarding,
+recovery and revocation hold that row FOR UPDATE, so each either waits for this
+enrollment and then sees its token, or has committed and this sees the outcome (for
+offboarding, a revoked code). The order is organization, then code, as in offboarding:
+taking the organization after the code could deadlock with offboarding's code sweep.
+
 ERRORS. Every redemption failure raises EnrollmentError carrying a specific
 INTERNAL reason (for server logs and tests); the HTTP layer only ever shows
 PUBLIC_ENROLLMENT_ERROR, so a caller cannot tell an unknown code from an
@@ -69,11 +75,12 @@ already holds the credential -- so they disclose nothing the generic refusal
 protects. NO REFUSAL CONSUMES THE CODE.
 
 A CONTRACT-2 ENROLLMENT also, in the SAME transaction: issues the branch's
-ingest key (a non-secret key_id; the HMAC secret behind it is generated on the
-Collector's machine and never exists here), records the branch's initial v2
-cutover -- which is also what closes the v1 /upload route for the branch -- and
-returns the site's Collector time zone and its classification rules document
-(services.collector_rules). Everything it needs is read and validated BEFORE
+ingest key, owned by the enrolling installation (a non-secret key_id; the HMAC
+secret behind it is generated on the Collector's machine and never exists here),
+records the branch's initial v2 cutover -- which is also what closes the v1
+/upload route for the branch -- and returns the site's Collector time zone and
+its classification rules document (services.collector_rules). Everything it
+needs is read and validated BEFORE
 the first write, and it is refused (enrollment_not_ready) if the site's
 settings are not ready, or if the branch already has an active ingest key or
 any cutover record: a second v2 identity for a branch is never created
@@ -84,6 +91,11 @@ A NEW INSTALLATION IS STILL CONTRACT 1 UNLESS IT IS CREATED AS 2, explicitly
 (services.tenant_service.create_collector_installation). Making 2 the normal
 choice waits for an installer that can enroll on it; until then a contract-2
 installation could not be enrolled by any released bundle.
+
+A RECOVERY TOKEN (issue_recovery_token) replaces the agent token of a Contract 2
+installation that owns its branch's only active key, for a Collector that could
+not store the token its enrollment returned. Only an authenticated platform
+administrator reaches it (services.admin_installation_service).
 """
 
 from __future__ import annotations
@@ -101,6 +113,7 @@ from sqlalchemy import DateTime, bindparam, text
 
 from . import collector_rules
 from .ingest_v2_service import (
+    active_ingest_key_owners,
     has_active_ingest_key,
     has_any_v2_cutover,
     issue_ingest_key,
@@ -244,6 +257,10 @@ def _clean_metadata(value: str | None, max_length: int) -> str | None:
         return None
     cleaned = _CONTROL_CHARACTERS.sub("", value).strip()[:max_length].strip()
     return cleaned or None
+
+
+def is_postgresql(conn: Any) -> bool:
+    return getattr(getattr(conn, "dialect", None), "name", "") == "postgresql"
 
 
 def _lock_suffix(conn: Any, target: str = "") -> str:
@@ -488,6 +505,16 @@ _LOOKUP_CODE_SQL = """
     WHERE code_hash = :code_hash
 """
 
+_CODE_ORGANIZATION_SQL = """
+    SELECT ci.organization_id
+    FROM collector_enrollment_codes c
+    JOIN collector_installations ci
+      ON ci.id = c.installation_id
+    WHERE c.code_hash = :code_hash
+"""
+
+_LOCK_ORGANIZATION_SHARED_SQL = "SELECT id FROM organizations WHERE id = :organization_id FOR SHARE"
+
 _CLAIM_CODE_SQL = """
     UPDATE collector_enrollment_codes
     SET used_at = CURRENT_TIMESTAMP
@@ -545,6 +572,8 @@ _V2_SITE_SQL = """
 
 _LOCK_BRANCH_SQL = "SELECT id FROM branches WHERE id = :branch_id"
 
+_INSTALLATION_STATUS_SQL = "SELECT status FROM collector_installations WHERE id = :installation_id"
+
 
 @dataclass(frozen=True)
 class _V2Site:
@@ -560,10 +589,14 @@ def _set_tenant_context(conn: Any, scope: InstallationScope) -> None:
     """The row level security context for the enrolling tenant, transaction-local -- what ingest_key_ids' policies
     test. Set from the validated installation scope, never from the request (the same rule as
     main._authenticate_agent). PostgreSQL only: SQLite (unit tests) has neither RLS nor set_config()."""
+    set_tenant_context(conn, scope.customer_id, scope.operational_branch_id)
+
+
+def set_tenant_context(conn: Any, customer_id: int, operational_branch_id: int) -> None:
     if getattr(getattr(conn, "dialect", None), "name", "") != "postgresql":
         return
-    conn.execute(text("SELECT set_config('app.operational_customer_id', :v, true)"), {"v": str(scope.customer_id)})
-    conn.execute(text("SELECT set_config('app.operational_branch_id', :v, true)"), {"v": str(scope.operational_branch_id)})
+    conn.execute(text("SELECT set_config('app.operational_customer_id', :v, true)"), {"v": str(customer_id)})
+    conn.execute(text("SELECT set_config('app.operational_branch_id', :v, true)"), {"v": str(operational_branch_id)})
 
 
 def _settings_document(value: object) -> dict[str, Any]:
@@ -597,9 +630,18 @@ def _prepare_v2_enrollment(conn: Any, scope: InstallationScope) -> _V2Site:
     EnrollmentRefused(ENROLLMENT_NOT_READY, <fixed reason>) if the site cannot be enrolled on Contract v2 now.
 
     Takes a row lock on the branch first (PostgreSQL), so two enrollments for one branch -- two installations of it --
-    cannot both pass the "no key, no cutover" checks below and each create an identity."""
+    cannot both pass the "no key, no cutover" checks below and each create an identity.
+
+    A retirement takes the same lock, so the installation's status is read again under it: one that committed while this
+    waited must not end up owning the key it is about to be given. Raises EnrollmentError: the installation is no longer
+    enrollable, exactly as if the code had been presented a moment later."""
     _set_tenant_context(conn, scope)
     conn.execute(text(_LOCK_BRANCH_SQL + _lock_suffix(conn)), {"branch_id": scope.branch_id})
+    installation_status = conn.execute(
+        text(_INSTALLATION_STATUS_SQL), {"installation_id": scope.installation_id}
+    ).scalar()
+    if installation_status not in ALLOWED_INSTALLATION_STATUSES:
+        raise EnrollmentError(f"installation_status_{installation_status}")
 
     row = conn.execute(
         text(_V2_SITE_SQL), {"organization_id": scope.organization_id, "branch_id": scope.branch_id}
@@ -631,8 +673,7 @@ def _prepare_v2_enrollment(conn: Any, scope: InstallationScope) -> _V2Site:
     if cutover_at is None:
         raise EnrollmentRefused(ENROLLMENT_NOT_READY, "organization_created_at_unusable")
 
-    # One v2 identity per branch, and never a second cutover. The registry does not say which installation a key
-    # belongs to, so "this branch already has one" is the whole of what can be known -- and is refused, not resolved.
+    # One v2 identity per branch, and never a second cutover, whoever owns the key: refused, not resolved.
     if has_active_ingest_key(conn, scope.customer_id, scope.operational_branch_id):
         raise EnrollmentRefused(ENROLLMENT_NOT_READY, "active_ingest_key_exists")
     if has_any_v2_cutover(conn, scope.customer_id, scope.operational_branch_id):
@@ -655,6 +696,16 @@ def _require_permitted_contract(required: int, requested: int | None) -> int:
     if required == CONTRACT_LEGACY and asked != CONTRACT_LEGACY:
         raise EnrollmentRefused(CONTRACT_NOT_PERMITTED, "code_permits_contract_1_only")
     return required
+
+
+def _lock_code_organization(conn: Any, code_hash: str) -> None:
+    """The organization of the code's installation, FOR SHARE, to the end of the caller's transaction (see CONCURRENCY in the
+    module docstring). PostgreSQL only. An unknown code locks nothing, and the caller then refuses it."""
+    if not is_postgresql(conn):
+        return
+    organization_id = conn.execute(text(_CODE_ORGANIZATION_SQL), {"code_hash": code_hash}).scalar()
+    if organization_id is not None:
+        conn.execute(text(_LOCK_ORGANIZATION_SHARED_SQL), {"organization_id": organization_id})
 
 
 def redeem_enrollment_code(
@@ -686,10 +737,12 @@ def redeem_enrollment_code(
     if canonical is None:
         raise EnrollmentError("malformed_code")
     checked_at = now or datetime.now(UTC)
+    code_hash = hash_enrollment_code(canonical)
+    _lock_code_organization(conn, code_hash)
 
     lookup_sql = _LOOKUP_CODE_SQL + _lock_suffix(conn)
     code_row = conn.execute(
-        _timestamped(lookup_sql, code_hash=hash_enrollment_code(canonical), now=checked_at)
+        _timestamped(lookup_sql, code_hash=code_hash, now=checked_at)
     ).mappings().first()
 
     if code_row is None:
@@ -745,9 +798,9 @@ def redeem_enrollment_code(
         )
         return result
 
-    # Contract v2: the branch's key and its cutover, in this same transaction. The key is a non-secret id -- the
-    # secret behind it is generated on the Collector's machine and never exists here.
-    key_id = issue_ingest_key(conn, scope.customer_id, scope.operational_branch_id)
+    # Contract v2: the branch's key, owned by this installation, and its cutover, in this same transaction. The key is a
+    # non-secret id -- the secret behind it is generated on the Collector's machine and never exists here.
+    key_id = issue_ingest_key(conn, scope.customer_id, scope.operational_branch_id, installation_id=scope.installation_id)
     cutover_id = record_initial_v2_cutover(
         conn,
         scope.customer_id,
@@ -773,3 +826,61 @@ def redeem_enrollment_code(
         sum(len(site.rules[name]) for name in collector_rules.NAME_LISTS),
     )
     return result
+
+
+# --- recovery (platform admin) -----------------------------------------------------------------------------------------
+
+_REVOKE_INSTALLATION_TOKENS_SQL = """
+    UPDATE agent_tokens
+    SET is_active = FALSE
+    WHERE installation_id = :installation_id
+      AND is_active = TRUE
+    RETURNING id
+"""
+
+
+def issue_recovery_token(conn: Any, installation_id: int, *, expected_organization_id: int) -> dict[str, Any]:
+    """Replaces an installation's agent tokens with one new bound token inside the caller's transaction, and returns the RAW
+    token exactly once. Raises EnrollmentError(reason) unless the installation is a provisioning or active Contract 2
+    installation of a usable tenant that owns its branch's only active key; the caller then rolls everything back. A token
+    not bound to this installation is not touched. The caller holds the organization's row lock.
+
+    The tokens come first, as on every authenticated request: a heartbeat holds its token and then updates the installation,
+    so locking the installation first could deadlock with it. A request already past the token check when this commits may
+    still finish: this replaces a credential, it is not an upload fence."""
+    revoked = len(conn.execute(text(_REVOKE_INSTALLATION_TOKENS_SQL), {"installation_id": installation_id}).fetchall())
+    scope = resolve_installation_scope(conn, installation_id, lock=True, expected_organization_id=expected_organization_id)
+    if scope.required_contract != CONTRACT_V2:
+        raise EnrollmentError("installation_contract_not_2")
+    _set_tenant_context(conn, scope)
+    if active_ingest_key_owners(conn, scope.customer_id, scope.operational_branch_id) != [scope.installation_id]:
+        raise EnrollmentError("installation_does_not_own_the_only_active_key")
+
+    agent_token, token_hash = new_agent_token()
+    token_id = conn.execute(
+        text(_INSERT_TOKEN_SQL),
+        {
+            "token_hash": token_hash,
+            "customer_id": scope.customer_id,
+            "branch_id": scope.operational_branch_id,
+            "description": _CONTROL_CHARACTERS.sub(
+                "",
+                f"Collector recovery | installation {scope.installation_id} "
+                f"({scope.installation_name[:_MAX_INSTALLATION_NAME_IN_DESCRIPTION]!r})",
+            ),
+            "installation_id": scope.installation_id,
+        },
+    ).scalar_one()
+
+    # Ids and counts only -- never the token.
+    logger.info(
+        "Collector recovery token issued | token_id=%s installation_id=%s customer_id=%s branch_id=%s revoked_previous=%s",
+        token_id, scope.installation_id, scope.customer_id, scope.operational_branch_id, revoked,
+    )
+    return {
+        "agent_token": agent_token,
+        "token_id": int(token_id),
+        "installation_id": scope.installation_id,
+        "installation_name": scope.installation_name,
+        "revoked_previous_count": revoked,
+    }

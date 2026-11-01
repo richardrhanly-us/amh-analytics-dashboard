@@ -180,14 +180,14 @@ def test_a_retired_key_can_never_be_reactivated_by_the_tool(tool):
 def test_the_service_refuses_to_issue_for_an_unmapped_tenant(url):
     engine = create_engine(url)
     with engine.begin() as conn, pytest.raises(ValueError):
-        service.issue_ingest_key(conn, 5, 5)
+        service.issue_ingest_key(conn, 5, 5, installation_id=None)
     engine.dispose()
 
 
 def test_ingest_key_problem_distinguishes_the_reasons_for_the_log_only(url):
     engine = create_engine(url)
     with engine.begin() as conn:
-        key = service.issue_ingest_key(conn, CUSTOMER, BRANCH)
+        key = service.issue_ingest_key(conn, CUSTOMER, BRANCH, installation_id=None)
         assert service.ingest_key_problem(conn, CUSTOMER, BRANCH, key, token_installation_id=None) is None
         assert (service.ingest_key_problem(conn, CUSTOMER, BRANCH, "8d9e0f1a-2b3c-4d4e-9f5a-6b7c8d9e0f1a", token_installation_id=None)
                 == "unknown key")
@@ -200,11 +200,48 @@ def test_ingest_key_problem_distinguishes_the_reasons_for_the_log_only(url):
 def test_a_key_is_issued_and_retired_with_no_owner(url):
     engine = create_engine(url)
     with engine.begin() as conn:
-        key = service.issue_ingest_key(conn, CUSTOMER, BRANCH)
+        key = service.issue_ingest_key(conn, CUSTOMER, BRANCH, installation_id=None)
         owner = text("SELECT installation_id FROM ingest_key_ids WHERE key_id = :k")
         assert conn.execute(owner, {"k": key}).scalar() is None
         service.retire_ingest_key(conn, key)
         assert conn.execute(owner, {"k": key}).scalar() is None
+    engine.dispose()
+
+
+def _insert_owned_key(url, *, status="active"):
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO ingest_key_ids (key_id, customer_id, branch_id, algorithm, status, retired_at, installation_id) "
+                          "VALUES ('3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e', :c, :b, 'hmac-sha256-v1', :s, "
+                          "CASE WHEN :s = 'retired' THEN CURRENT_TIMESTAMP END, 101)"),
+                     {"c": CUSTOMER, "b": BRANCH, "s": status})
+    engine.dispose()
+
+
+def test_the_tool_refuses_an_unowned_key_beside_an_active_owned_one_and_writes_nothing(tool, url):
+    _insert_owned_key(url)
+    before = keys(url)
+
+    code, out = run(tool, "issue", "--customer-id", str(CUSTOMER), "--branch-id", str(BRANCH), "--execute", url)
+
+    assert code == 2 and "REFUSED" in out and "active key owned by an installation" in out and "Nothing was written" in out
+    assert keys(url) == before
+
+
+def test_a_retired_owned_key_or_an_active_unowned_one_does_not_stop_an_unowned_key(tool, url):
+    _insert_owned_key(url, status="retired")
+
+    assert run(tool, "issue", "--customer-id", str(CUSTOMER), "--branch-id", str(BRANCH), "--execute", url)[0] == 0
+    assert run(tool, "issue", "--customer-id", str(CUSTOMER), "--branch-id", str(BRANCH), "--execute", url)[0] == 0
+    assert len(keys(url)) == 3
+
+
+def test_an_owned_key_is_stamped_with_its_owner(url):
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        key = service.issue_ingest_key(conn, CUSTOMER, BRANCH, installation_id=101)
+        assert service.active_ingest_key_owners(conn, CUSTOMER, BRANCH) == [101]
+        assert conn.execute(text("SELECT installation_id FROM ingest_key_ids WHERE key_id = :k"), {"k": key}).scalar() == 101
     engine.dispose()
 
 

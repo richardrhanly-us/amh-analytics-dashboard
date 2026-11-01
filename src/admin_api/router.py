@@ -9,7 +9,8 @@
     GET/PUT /api/admin/libraries/{org_slug}/internal-routing
                                            a library's collector configuration (admin_api.collector_config_routes)
     GET/POST /api/admin/libraries/{org_slug}/installations, PUT .../{installation_id}, PUT .../{installation_id}/status,
-    POST .../{installation_id}/enrollment-codes
+    POST .../{installation_id}/enrollment-codes, POST .../{installation_id}/recovery-token,
+    GET .../unbound-tokens, POST .../unbound-tokens/{token_id}/revoke
                                            a library's Collector installations (admin_api.installation_routes)
     POST /api/admin/libraries/{org_slug}/lifecycle/suspend, .../reactivate, .../offboard
                                            a library's lifecycle (admin_api.lifecycle_routes)
