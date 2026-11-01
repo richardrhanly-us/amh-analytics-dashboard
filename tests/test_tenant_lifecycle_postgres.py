@@ -452,6 +452,27 @@ def test_the_cutoff_deletes_nothing(seeded, runtime, monkeypatch):
     assert _counts(seeded) == {**before, "tenant_lifecycle_events": 1}
 
 
+def test_the_cutoff_retires_an_owned_key_and_keeps_its_owner_and_the_purge_then_removes_both(seeded, runtime, tool, pg_url, monkeypatch):
+    # Installation 101 is at branch 1. Installations are deleted after keys, so the foreign key never stands in the way.
+    owned_key = "SELECT status, installation_id FROM ingest_key_ids WHERE customer_id = :c AND branch_id = :b"
+    with seeded.begin() as conn:
+        conn.execute(text("UPDATE ingest_key_ids SET installation_id = 101 WHERE branch_id = 1"))
+
+    _offboard(monkeypatch, runtime)
+
+    with seeded.connect() as conn:
+        assert tuple(conn.execute(text(owned_key), {"c": CUSTOMER_A, "b": 1}).one()) == ("retired", 101)
+
+    code, out = _purge_cli(tool, pg_url, *_execute_args())
+
+    assert code == 0 and "LIVE DATABASE PURGE COMPLETE" in out, out
+    assert _scalar(seeded, "SELECT COUNT(*) FROM ingest_key_ids WHERE customer_id = :c", c=CUSTOMER_A) == 0
+    assert _scalar(seeded, "SELECT COUNT(*) FROM collector_installations WHERE organization_id = :o", o=ORG_A) == 0
+    # The other tenant's key and installation are untouched.
+    assert _scalar(seeded, "SELECT COUNT(*) FROM ingest_key_ids WHERE customer_id = :c", c=CUSTOMER_B) == 1
+    assert _scalar(seeded, "SELECT COUNT(*) FROM collector_installations WHERE organization_id = :o", o=ORG_B) == 1
+
+
 def test_a_cancelled_tenant_cannot_be_re_provisioned_on_the_real_schema(seeded, monkeypatch):
     _offboard(monkeypatch, seeded)
 

@@ -44,7 +44,7 @@ def url(tmp_path):
         conn.execute(text(
             "CREATE TABLE ingest_key_ids (id INTEGER PRIMARY KEY AUTOINCREMENT, key_id TEXT NOT NULL UNIQUE,"
             " customer_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, algorithm TEXT NOT NULL, status TEXT NOT NULL,"
-            " created_at TEXT DEFAULT CURRENT_TIMESTAMP, retired_at TEXT)"))
+            " created_at TEXT DEFAULT CURRENT_TIMESTAMP, retired_at TEXT, installation_id INTEGER)"))
         conn.execute(text("INSERT INTO organizations (id, operational_customer_id) VALUES (1, :c)"), {"c": CUSTOMER})
         conn.execute(text("INSERT INTO branches VALUES (1, 1, :b)"), {"b": BRANCH})
     engine.dispose()
@@ -188,11 +188,23 @@ def test_ingest_key_problem_distinguishes_the_reasons_for_the_log_only(url):
     engine = create_engine(url)
     with engine.begin() as conn:
         key = service.issue_ingest_key(conn, CUSTOMER, BRANCH)
-        assert service.ingest_key_problem(conn, CUSTOMER, BRANCH, key) is None
-        assert service.ingest_key_problem(conn, CUSTOMER, BRANCH, "8d9e0f1a-2b3c-4d4e-9f5a-6b7c8d9e0f1a") == "unknown key"
-        assert service.ingest_key_problem(conn, 20, 2, key) == "key belongs to another tenant"
+        assert service.ingest_key_problem(conn, CUSTOMER, BRANCH, key, token_installation_id=None) is None
+        assert (service.ingest_key_problem(conn, CUSTOMER, BRANCH, "8d9e0f1a-2b3c-4d4e-9f5a-6b7c8d9e0f1a", token_installation_id=None)
+                == "unknown key")
+        assert service.ingest_key_problem(conn, 20, 2, key, token_installation_id=None) == "key belongs to another tenant"
         service.retire_ingest_key(conn, key)
-        assert service.ingest_key_problem(conn, CUSTOMER, BRANCH, key) == "key status 'retired'"
+        assert service.ingest_key_problem(conn, CUSTOMER, BRANCH, key, token_installation_id=None) == "key status 'retired'"
+    engine.dispose()
+
+
+def test_a_key_is_issued_and_retired_with_no_owner(url):
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        key = service.issue_ingest_key(conn, CUSTOMER, BRANCH)
+        owner = text("SELECT installation_id FROM ingest_key_ids WHERE key_id = :k")
+        assert conn.execute(owner, {"k": key}).scalar() is None
+        service.retire_ingest_key(conn, key)
+        assert conn.execute(owner, {"k": key}).scalar() is None
     engine.dispose()
 
 

@@ -1187,9 +1187,12 @@ def _v2_route_class(limit_of: Callable[[], int]) -> type[APIRoute]:
 
 
 def _require_ingest_key(conn, token_row, key_id: str) -> None:
-    """The request's key must be registered, ACTIVE, and the token's own tenant's. Unknown, retired and wrong-tenant keys
-    get the same generic 403; the reason (and the validated, non-secret key_id) is only logged."""
-    problem = ingest_key_problem(conn, token_row["customer_id"], token_row["branch_id"], key_id)
+    """The request's key must be registered, ACTIVE, the token's own tenant's and, if it has an owning installation, that of
+    the token's bound installation. Unknown, retired, wrong-tenant and wrong-owner keys get the same generic 403; the reason
+    (and the validated, non-secret key_id) is only logged."""
+    problem = ingest_key_problem(
+        conn, token_row["customer_id"], token_row["branch_id"], key_id, token_installation_id=token_row.get("installation_id")
+    )
     if problem is not None:
         logger.warning(
             "Agent request rejected, ingest key not usable | token_id=%s customer_id=%s branch_id=%s key_id=%s reason=%s",
