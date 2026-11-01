@@ -89,8 +89,8 @@ INSTALLATION_CREATED = "admin_installation_created"
 INSTALLATION_RENAMED = "admin_installation_renamed"
 INSTALLATION_STATUS_CHANGED = "admin_installation_status_changed"
 ENROLLMENT_CODE_ISSUED = "admin_enrollment_code_issued"
-RECOVERY_TOKEN_ISSUED = "admin_recovery_token_issued"
-UNBOUND_TOKEN_REVOKED = "admin_unbound_token_revoked"
+RECOVERY_CREDENTIAL_ISSUED = "admin_recovery_token_issued"
+UNBOUND_CREDENTIAL_REVOKED = "admin_unbound_token_revoked"
 
 
 class InstallationAdminError(Exception):
@@ -490,7 +490,7 @@ def issue_recovery_token(library: Library, installation_id: int, *, actor: dict[
             )
         except EnrollmentError:
             raise InstallationAdminError("installation_not_recoverable") from None
-        _audit(conn, RECOVERY_TOKEN_ISSUED, "Collector recovery token issued.", library, actor,
+        _audit(conn, RECOVERY_CREDENTIAL_ISSUED, "Collector recovery token issued.", library, actor,
                installation_id=installation_id, token_id=issued["token_id"],
                revoked_previous_count=issued["revoked_previous_count"])
         return {
@@ -519,7 +519,7 @@ _UNBOUND_TOKENS_SQL = """
     ORDER BY t.id
 """
 
-_REVOKE_UNBOUND_TOKEN_SQL = """
+_REVOKE_UNBOUND_CREDENTIAL_SQL = """
     UPDATE agent_tokens
     SET is_active = FALSE
     WHERE id = :token_id
@@ -544,8 +544,8 @@ def revoke_unbound_token(library: Library, token_id: int, *, actor: dict[str, An
     with get_engine().begin() as conn:
         _lock_library(conn, library)
         revoked = conn.execute(
-            text(_REVOKE_UNBOUND_TOKEN_SQL), {"token_id": token_id, "organization_id": library.id}
+            text(_REVOKE_UNBOUND_CREDENTIAL_SQL), {"token_id": token_id, "organization_id": library.id}
         ).first()
         if revoked is None:
             raise InstallationAdminError("token_not_found")
-        _audit(conn, UNBOUND_TOKEN_REVOKED, "Legacy unbound agent token revoked.", library, actor, token_id=token_id)
+        _audit(conn, UNBOUND_CREDENTIAL_REVOKED, "Legacy unbound agent token revoked.", library, actor, token_id=token_id)
