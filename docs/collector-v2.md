@@ -497,7 +497,7 @@ rule. A legacy enrollment's record is unchanged.
 * the enrollment succeeded on the server but its response never reached the machine;
 * the API token could not be stored after enrollment -- a platform administrator issues a replacement token for the installation
   (SortView administration, the installation's **Issue recovery token**), it is stored with `tools\set-api-token.ps1`, and setup
-  resumes. `scripts/create_agent_token.py` does not work here: it makes an unbound token, which an owned key refuses;
+  resumes. `scripts/create_agent_token.py` refuses here: it makes an unbound token, which an owned key refuses;
 * the enrolled machine is lost or replaced.
 
 **Recovery token.** Available for a Provisioning or Active Contract 2 installation that owns its branch's only active key. In one
@@ -506,8 +506,8 @@ credential and is not an upload fence: a request already past the token check ma
 
 **Retiring an owner.** An installation that owns an active key cannot be retired in SortView administration (`409
 installation_owns_active_key`), because that would strand the key: deactivate it instead, which stops its token at once. Offboarding
-the library retires installations and keys together. `scripts/issue_ingest_key.py issue` likewise refuses a branch with an active owned
-key.
+the library retires installations and keys together. `scripts/issue_ingest_key.py retire` refuses an owned key, with no override, and
+`issue` refuses a branch with any active key, any key ever owned by an installation, or a Contract v2 enrollment on record.
 
 **Legacy unbound tokens.** SortView administration lists a library's active unbound tokens and revokes them one at a time, audited.
 Deactivating an installation does not stop these. Revoking is not an upload fence either.

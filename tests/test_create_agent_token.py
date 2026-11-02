@@ -35,6 +35,10 @@ def _orgs(*orgs):
     ])
 
 
+def _no_active_owned_key():
+    return FakeQueryResult(first=None)
+
+
 def _validate(*results, customer_id=1, branch_id=1):
     engine = FakeEngine(list(results))
     with engine.connect() as conn:
@@ -44,20 +48,21 @@ def _validate(*results, customer_id=1, branch_id=1):
 # --- validate_token_scope ----------------------------------------------------
 
 def test_nbpl_style_existing_mapping_is_accepted():
-    scope, engine = _validate(_customer(1), _branch(1, 1), _orgs((1, "nbpl")))
+    scope, engine = _validate(_customer(1), _branch(1, 1), _orgs((1, "nbpl")), _no_active_owned_key())
 
     assert scope == {
         "organization_id": 1, "organization_slug": "nbpl", "customer_id": 1, "branch_id": 1,
     }
-    # Read-only: three SELECTs, nothing else.
-    assert len(engine.calls) == 3
+    # Writes nothing: four SELECTs, and no lock or tenant context where the database has neither.
+    assert len(engine.calls) == 4
     assert all("SELECT" in c["sql"] for c in engine.calls)
+    assert not any("FOR " in c["sql"] or "set_config" in c["sql"] for c in engine.calls)
 
 
 def test_mapped_tenant_with_distinct_operational_customer_is_accepted():
     # SaaS org 2 -> operational customer 50, branch 2 -> 2.
     scope, _ = _validate(
-        _customer(50), _branch(2, 2), _orgs((2, "clean-install")),
+        _customer(50), _branch(2, 2), _orgs((2, "clean-install")), _no_active_owned_key(),
         customer_id=50, branch_id=2,
     )
 
@@ -66,9 +71,14 @@ def test_mapped_tenant_with_distinct_operational_customer_is_accepted():
 
 
 def test_trial_organization_is_accepted():
-    scope, _ = _validate(_customer(), _branch(), _orgs((1, "acme", "trial")))
+    scope, _ = _validate(_customer(), _branch(), _orgs((1, "acme", "trial")), _no_active_owned_key())
 
     assert scope["organization_slug"] == "acme"
+
+
+def test_a_branch_with_an_active_owned_key_is_rejected():
+    with pytest.raises(cat.ScopeError, match="active ingest key owned by an installation"):
+        _validate(_customer(), _branch(), _orgs((1, "nbpl")), FakeQueryResult(first=(1,)))
 
 
 def test_nonexistent_customer_is_rejected():
@@ -158,9 +168,20 @@ def test_execute_with_an_unmapped_pair_writes_nothing_and_prints_no_token(monkey
     assert "RAW-TOKEN-VALUE" not in output
 
 
+def test_execute_beside_an_active_owned_key_writes_nothing_and_prints_no_token(monkeypatch, capsys):
+    engine = FakeEngine([_customer(2), _branch(2, 2), _orgs((2, "clean-install")), FakeQueryResult(first=(1,))])
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run_main(monkeypatch, engine, "--execute", "postgresql://unused")
+
+    assert "REFUSED" in str(excinfo.value) and "Nothing was written" in str(excinfo.value)
+    assert not any(_INSERT_MARKER in c["sql"] for c in engine.calls)
+    assert "RAW-TOKEN-VALUE" not in capsys.readouterr().out
+
+
 def test_execute_with_a_valid_pair_inserts_the_hash_and_shows_the_token_once(monkeypatch, capsys):
     engine = FakeEngine([
-        _customer(2), _branch(2, 2), _orgs((2, "clean-install")),
+        _customer(2), _branch(2, 2), _orgs((2, "clean-install")), _no_active_owned_key(),
         FakeQueryResult(),  # INSERT
     ])
 

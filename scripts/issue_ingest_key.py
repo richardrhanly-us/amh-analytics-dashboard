@@ -19,8 +19,10 @@ With --execute (a bare flag uses the DATABASE_URL environment variable, or pass 
 branches.operational_branch_id), exactly as for scripts/create_agent_token.py; `issue` refuses a pair that is not a mapped
 tenant and writes nothing. Retiring is one-way: issue a new key instead of reactivating an old one.
 
-A key issued here has NO OWNER. `issue` refuses a branch with an active key owned by an installation (one issued by Contract
-v2 enrollment): a second, unowned key would be open to a token the owned one refuses.
+A key issued here has NO OWNER. `issue` refuses a branch with any active key (retire it first: a branch has one), any key ever
+owned by an installation, or a Contract v2 enrollment on record. A second, unowned key would be open to a token an owned one
+refuses. `retire` refuses a key owned by an installation, with no override: deactivating the installation stops its token, and
+offboarding retires both together. A dry run has no database access, so it checks none of this.
 
 Never point --execute at production without an explicit go-ahead: production is changed by an operator, not by tests or CI.
 """
@@ -80,7 +82,7 @@ def main(argv: list[str] | None = None, out: TextIO | None = None) -> int:
                   f"branch_id={args.branch_id} (algorithm hmac-sha256-v1, status active). Nothing was written.", file=out)
         else:
             print(f"DRY RUN: would retire key_id={args.key_id}. Nothing was written.", file=out)
-        print("Re-run with --execute to make the change.", file=out)
+        print("A dry run has no database access, so it checked nothing. Re-run with --execute to make the change.", file=out)
         return EXIT_OK
 
     url = os.environ.get("DATABASE_URL") if args.execute == "__use_env__" else args.execute
@@ -94,14 +96,19 @@ def main(argv: list[str] | None = None, out: TextIO | None = None) -> int:
             if args.command == "issue":
                 try:
                     key_id = issue_ingest_key(conn, args.customer_id, args.branch_id, installation_id=None)
-                except ValueError as exc:  # a fixed reason: unmapped tenant, a cancelled organization, or an active owned key
+                except ValueError as exc:  # a fixed reason: unmapped tenant, a cancelled organization, or the branch's keys
                     print(f"REFUSED: {exc}. Nothing was written.", file=out)
                     return EXIT_REFUSED
                 print(f"ISSUED key_id={key_id} for customer_id={args.customer_id} branch_id={args.branch_id}", file=out)
                 print("Give this key_id to the collector. It is not a secret; the HMAC secret is generated locally "
                       "and never leaves the collector.", file=out)
             else:
-                if not retire_ingest_key(conn, args.key_id):
+                try:
+                    retired = retire_ingest_key(conn, args.key_id)
+                except ValueError as exc:  # a fixed reason: the key is owned by an installation
+                    print(f"REFUSED: {exc}. Nothing was changed.", file=out)
+                    return EXIT_REFUSED
+                if not retired:
                     print("REFUSED: no ACTIVE key with that key_id. Nothing was changed.", file=out)
                     return EXIT_REFUSED
                 print(f"RETIRED key_id={args.key_id}", file=out)

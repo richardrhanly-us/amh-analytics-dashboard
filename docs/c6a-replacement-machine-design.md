@@ -4,7 +4,7 @@
 
 **Scope:** Support-controlled replacement of an enrolled Contract v2 Collector computer, through Mode 1 controlled handoff or Mode 2 fresh-identity recovery  
 
-**Implementation status:** Replacement is not implemented, and Mode 1 and Mode 2 are unavailable. Key ownership and the credential safeguards in Section 2 are implemented (milestones M1 and M2), as is a read-only inventory of legacy keys (milestone M3a). Only the behavior listed in Section 2 and the code-inspection findings in Section 9 describe the system as it exists today; everything else here is proposed.
+**Implementation status:** Replacement is not implemented, and Mode 1 and Mode 2 are unavailable. Key ownership and the credential safeguards in Section 2 are implemented (milestones M1 and M2), as are a read-only inventory of legacy keys (milestone M3a) and safeguards in the legacy credential scripts (milestone M3b). Only the behavior listed in Section 2 and the code-inspection findings in Section 9 describe the system as it exists today; everything else here is proposed.
 
 ## 1. Objective
 
@@ -34,7 +34,8 @@ A Mode 1 failure must never fall back to Mode 2 automatically. Mode 2 changes th
 - Agent tokens are associated with installations through `agent_tokens.installation_id`.
 - Ingest keys belong to a customer and branch, and may have an owning installation (`ingest_key_ids.installation_id`). A key issued by Contract v2 enrollment is owned by the enrolling installation. Keys issued earlier or by `scripts/issue_ingest_key.py` have no owner.
 - An installation that owns an active key cannot be retired through the administration API; it can be deactivated, and offboarding retires installations and keys together.
-- `scripts/issue_ingest_key.py` refuses to issue an unowned key for a branch with an active owned key. It still permits a second unowned key on a branch whose active keys are unowned.
+- `scripts/issue_ingest_key.py` refuses to issue a key for a branch with any active key, any key ever owned by an installation, or a Contract v2 enrollment cutover on record. It refuses to retire an owned key, with no override. A branch with only unowned legacy keys can still retire one and then issue another. Existing duplicate keys and unbound tokens keep working, and no database constraint enforces one active key yet.
+- `scripts/create_agent_token.py` refuses a branch with an active owned key. It still permits one whose owned keys are all retired, and it revokes nothing. An unbound token that already exists, or that commits before an enrollment, stays active beside the owned key, which refuses it.
 - `scripts/reconcile_ingest_keys.py inventory` reports ingest keys, recorded owners, duplicate or missing active keys, installation and token relationships, enrollment-record evidence and schema differences. It reads one snapshot in a read-only transaction, refuses a role that cannot see every row, and assigns no owner. Its enrollment-record candidates are for review, not proof of ownership.
 - A platform administrator can issue a recovery token for an eligible installation (Section 10) and can list and revoke legacy unbound tokens. Neither is an upload fence: a request already past the token check may still finish, and this remains so until the upload synchronization in Section 9A exists.
 - Ordinary Contract v2 enrollment is blocked when a branch has an active ingest key or any previous v2 cutover.
@@ -679,6 +680,14 @@ These decisions cover key ownership and credential tools only. They do not appro
 - **Revocation (M2):** The new revocation operation is limited to legacy unbound tokens. Installation status and the recovery token govern bound tokens.
 - **In-flight requests (M2):** A request authenticated before a token is revoked or replaced may still finish. This is a documented interim limitation until upload synchronization exists, and neither operation is an upload fence.
 - **Retirement (M2):** An installation that owns an active key cannot be retired through the administration API. A later replacement cutover must retire its source in its own transaction, not through that route.
+
+****Approved for milestone M3b****
+
+These decisions cover the legacy credential scripts only. They do not approve C6a, ownership stamping, or any production change.
+
+- **Issuance:** An unowned key is refused while the branch has any active key, any key ever owned by an installation, or an enrollment cutover on record, even if its old key has no owner. Issue-then-retire rotation is no longer supported.
+- **Retirement:** An owned key cannot be retired through `scripts/issue_ingest_key.py`, with no override.
+- **Unbound tokens:** `scripts/create_agent_token.py` refuses a branch with an active owned key, not one with only retired owned keys. Nothing revokes an existing unbound token.
 
 ****Still requiring design approval****
 

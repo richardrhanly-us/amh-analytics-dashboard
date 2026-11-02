@@ -45,6 +45,8 @@ def url(tmp_path):
             "CREATE TABLE ingest_key_ids (id INTEGER PRIMARY KEY AUTOINCREMENT, key_id TEXT NOT NULL UNIQUE,"
             " customer_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, algorithm TEXT NOT NULL, status TEXT NOT NULL,"
             " created_at TEXT DEFAULT CURRENT_TIMESTAMP, retired_at TEXT, installation_id INTEGER)"))
+        conn.execute(text("CREATE TABLE v2_cutovers (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL, branch_id INTEGER NOT NULL,"
+                          " cutover_at TEXT, set_by TEXT NOT NULL, note TEXT)"))
         conn.execute(text("INSERT INTO organizations (id, operational_customer_id) VALUES (1, :c)"), {"c": CUSTOMER})
         conn.execute(text("INSERT INTO branches VALUES (1, 1, :b)"), {"b": BRANCH})
     engine.dispose()
@@ -107,11 +109,22 @@ def test_execute_registers_a_new_active_key_for_the_tenant(tool, url):
     assert f"ISSUED key_id={key_id}" in out
 
 
-def test_each_issue_gives_a_new_key(tool, url):
-    run(tool, "issue", "--customer-id", str(CUSTOMER), "--branch-id", str(BRANCH), "--execute", url)
+def test_each_issue_after_a_retirement_gives_a_new_key(tool, url):
+    _code, out = run(tool, "issue", "--customer-id", str(CUSTOMER), "--branch-id", str(BRANCH), "--execute", url)
+    run(tool, "retire", "--key-id", re.search(r"key_id=(\S+)", out).group(1), "--execute", url)
     run(tool, "issue", "--customer-id", str(CUSTOMER), "--branch-id", str(BRANCH), "--execute", url)
 
     assert len({k[0] for k in keys(url)}) == 2
+
+
+def test_a_second_active_key_is_refused_and_nothing_is_written(tool, url):
+    run(tool, "issue", "--customer-id", str(CUSTOMER), "--branch-id", str(BRANCH), "--execute", url)
+    before = keys(url)
+
+    code, out = run(tool, "issue", "--customer-id", str(CUSTOMER), "--branch-id", str(BRANCH), "--execute", url)
+
+    assert code == 2 and "REFUSED" in out and "already has an active key" in out and "Nothing was written" in out
+    assert keys(url) == before
 
 
 def test_an_unmapped_tenant_is_refused_and_nothing_is_written(tool, url):
@@ -228,12 +241,64 @@ def test_the_tool_refuses_an_unowned_key_beside_an_active_owned_one_and_writes_n
     assert keys(url) == before
 
 
-def test_a_retired_owned_key_or_an_active_unowned_one_does_not_stop_an_unowned_key(tool, url):
+def test_a_retired_owned_key_refuses_an_unowned_key_and_nothing_is_written(tool, url):
     _insert_owned_key(url, status="retired")
+    before = keys(url)
 
+    code, out = run(tool, "issue", "--customer-id", str(CUSTOMER), "--branch-id", str(BRANCH), "--execute", url)
+
+    assert code == 2 and "REFUSED" in out and "owned by an installation" in out and "Nothing was written" in out
+    assert keys(url) == before
+
+
+def test_an_enrollment_cutover_refuses_an_unowned_key_and_an_operators_does_not(tool, url):
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        service.record_v2_cutover(conn, CUSTOMER, BRANCH, None, "an operator")
+    engine.dispose()
     assert run(tool, "issue", "--customer-id", str(CUSTOMER), "--branch-id", str(BRANCH), "--execute", url)[0] == 0
-    assert run(tool, "issue", "--customer-id", str(CUSTOMER), "--branch-id", str(BRANCH), "--execute", url)[0] == 0
-    assert len(keys(url)) == 3
+
+    ((key_id, *_rest),) = keys(url)
+    run(tool, "retire", "--key-id", key_id, "--execute", url)
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        service.record_v2_cutover(conn, CUSTOMER, BRANCH, None, service.ENROLLMENT_CUTOVER_SET_BY)
+    engine.dispose()
+    before = keys(url)
+
+    code, out = run(tool, "issue", "--customer-id", str(CUSTOMER), "--branch-id", str(BRANCH), "--execute", url)
+
+    assert code == 2 and "REFUSED" in out and "enrolled" in out and keys(url) == before
+
+
+def test_the_tool_refuses_to_retire_an_owned_key_and_nothing_is_changed(tool, url):
+    _insert_owned_key(url)
+    before = keys(url)
+
+    code, out = run(tool, "retire", "--key-id", "3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e", "--execute", url)
+
+    assert code == 2 and "REFUSED" in out and "owned by an installation" in out and "Nothing was changed" in out
+    assert keys(url) == before
+
+
+def test_the_service_refuses_to_retire_an_owned_key(url):
+    _insert_owned_key(url)
+    engine = create_engine(url)
+
+    with pytest.raises(ValueError, match="owned by an installation"), engine.begin() as conn:
+        service.retire_ingest_key(conn, "3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e")
+
+    engine.dispose()
+
+
+def test_a_retired_owned_key_answers_false_to_retire_like_any_retired_key(url):
+    _insert_owned_key(url, status="retired")
+    engine = create_engine(url)
+
+    with engine.begin() as conn:
+        assert service.retire_ingest_key(conn, "3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e") is False
+
+    engine.dispose()
 
 
 def test_an_owned_key_is_stamped_with_its_owner(url):

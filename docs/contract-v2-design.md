@@ -234,8 +234,8 @@ out, or differs from a sentence in this document as first written. Each is delib
 10. **Request-size limits** are constants (1 MiB for `/v2/upload`, 16 KiB for `/v2/status`), not environment variables, so a
     misconfiguration cannot silently loosen them. Both are enforced for a declared `Content-Length` and for chunked bodies.
 11. **`scripts/issue_ingest_key.py`** issues (`issue`) and retires (`retire`) keys; dry run by default. There is no
-    reactivation: a retired key is replaced by a new one. A key issued this way has no owner, and `issue` refuses a branch with an
-    active key owned by an installation.
+    reactivation: a retired key is replaced by a new one. A key issued this way has no owner. `issue` refuses a branch with any active
+    key, any key ever owned by an installation, or a Contract v2 enrollment on record, and `retire` refuses an owned key.
 12. **`ruleset_id` is excluded from the conflict-comparison columns, not only from the `event_key`.** An earlier draft of
     section 5 listed `ruleset_id` among the fields whose change makes a resend a conflict. The shipped code
     (`ACS_ITEM_COMPARE_COLUMNS`, `ingest_v2_service.py`) and the collector's own identity design
