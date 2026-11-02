@@ -46,8 +46,9 @@ the database afterward, only re-issued as a new token.
 
 THE TOKEN IS UNBOUND: it names no installation. A Contract v2 key owned by an
 installation (every key a Contract v2 enrollment issues) refuses it on /v2/upload
-and /v2/status, so this does not repair such a Collector: use Issue recovery token
-in SortView administration (docs/collector-v2.md).
+and /v2/status, so --execute refuses a branch with an active owned key: use Issue
+recovery token in SortView administration (docs/collector-v2.md). An existing
+unbound token is never revoked here.
 """
 
 from __future__ import annotations
@@ -108,8 +109,11 @@ class ScopeError(Exception):
 
 def validate_token_scope(conn, customer_id: int, branch_id: int) -> dict:
     """Verify (customer_id, branch_id) is a valid, fully mapped operational
-    pair belonging to ONE organization. Read-only. Raises ScopeError with a
+    pair belonging to ONE organization, with no active key owned by an
+    installation. Writes nothing, but on PostgreSQL holds the locks described
+    below to the end of the caller's transaction. Raises ScopeError with a
     specific reason; returns a summary dict on success."""
+    postgresql = getattr(getattr(conn, "dialect", None), "name", "") == "postgresql"
     customer = conn.execute(
         text("SELECT id FROM customers WHERE id = :customer_id"),
         {"customer_id": customer_id},
@@ -130,7 +134,7 @@ def validate_token_scope(conn, customer_id: int, branch_id: int) -> dict:
 
     # FOR SHARE, held to the end of the caller's transaction: offboarding holds the organization FOR UPDATE, so it either waits
     # for this token and then revokes it, or has committed and the status below is 'cancelled'. PostgreSQL only.
-    lock = " FOR SHARE" if getattr(getattr(conn, "dialect", None), "name", "") == "postgresql" else ""
+    lock = " FOR SHARE" if postgresql else ""
     orgs = conn.execute(
         text(f"""
             SELECT id, slug, status
@@ -178,6 +182,31 @@ def validate_token_scope(conn, customer_id: int, branch_id: int) -> dict:
         raise ScopeError(
             f"branch {branch_id} status is {branch['status']!r}; "
             f"expected {_ALLOWED_BRANCH_STATUS!r}"
+        )
+
+    if postgresql:
+        # The branch, FOR NO KEY UPDATE, after the organization: an enrollment also holds the organization FOR SHARE, which does
+        # not conflict, and holds this row while it inserts its key, so this waits and then sees that key. An event insert's
+        # FOR KEY SHARE is not held up.
+        conn.execute(text("SELECT id FROM branches WHERE id = :branch_id FOR NO KEY UPDATE"), {"branch_id": branch_id})
+        # ingest_key_ids is under row level security: with no tenant context the runtime role would read no key, and this
+        # check would pass. Transaction-local, set from the validated pair.
+        conn.execute(text("SELECT set_config('app.operational_customer_id', :v, true)"), {"v": str(customer_id)})
+        conn.execute(text("SELECT set_config('app.operational_branch_id', :v, true)"), {"v": str(branch_id)})
+    active_owned_key = conn.execute(
+        text("""
+            SELECT 1
+            FROM ingest_key_ids
+            WHERE customer_id = :customer_id AND branch_id = :branch_id
+              AND status = 'active' AND installation_id IS NOT NULL
+            LIMIT 1
+        """),
+        {"customer_id": customer_id, "branch_id": branch_id},
+    ).first()
+    if active_owned_key is not None:
+        raise ScopeError(
+            f"branch {branch_id} has an active ingest key owned by an installation, "
+            "which refuses an unbound token; use Issue recovery token in SortView administration"
         )
 
     return {

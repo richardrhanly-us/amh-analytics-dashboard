@@ -33,6 +33,9 @@ from .ingest_v2_models import (
 )
 
 ALGORITHM = "hmac-sha256-v1"
+# collector_enrollment_service.INITIAL_CUTOVER_SET_BY, which imports this module. A real redemption in
+# tests/test_legacy_credential_safeguards_postgres.py fails if they ever differ.
+ENROLLMENT_CUTOVER_SET_BY = "collector-enrollment"
 
 # Explicit insert columns, per table (tenant columns and `received_at` are added by the statement, not by the model).
 CHECKIN_COLUMNS = ("event_key", "event_time", "item_key", "destination", "bin")
@@ -209,19 +212,44 @@ def _lock_tenant_for_unowned_key(conn, customer_id: int, branch_id: int) -> None
                  {"branch_id": branch_id})
 
 
+def _refuse_an_unowned_key(conn, customer_id: int, branch_id: int) -> None:
+    """Raises ValueError unless the branch may be given an unowned key: it has no active key, has never had an owned one, and
+    no enrollment cutover says a Collector was enrolled there (a key from before C6a M2 left no owner, only that row). A forged
+    row can only cause a refusal. Under row level security the keys are read in the caller's tenant context; with none this
+    reads no key, and the INSERT that follows fails the same policy."""
+    keys = conn.execute(
+        text("SELECT status, installation_id FROM ingest_key_ids WHERE customer_id = :customer_id AND branch_id = :branch_id"),
+        {"customer_id": customer_id, "branch_id": branch_id},
+    ).fetchall()
+    active = [owner for status, owner in keys if status == "active"]
+    if any(owner is not None for owner in active):
+        raise ValueError("the branch has an active key owned by an installation")
+    if active:
+        raise ValueError("the branch already has an active key")
+    if any(owner is not None for _status, owner in keys):
+        raise ValueError("the branch has a retired key owned by an installation")
+    enrolled = conn.execute(
+        text("SELECT 1 FROM v2_cutovers WHERE customer_id = :customer_id AND branch_id = :branch_id AND set_by = :set_by LIMIT 1"),
+        {"customer_id": customer_id, "branch_id": branch_id, "set_by": ENROLLMENT_CUTOVER_SET_BY},
+    ).first()
+    if enrolled is not None:
+        raise ValueError("the branch was enrolled through Contract v2")
+
+
 def issue_ingest_key(conn, customer_id: int, branch_id: int, *, installation_id: int | None) -> str:
     """Registers a NEW server-issued key for one tenant and returns its `key_id` (a random UUIDv4; non-secret). The tenant
     must be the fully mapped operational pair -- the same bridge the token lookup uses -- and its organization must not be
     cancelled (permanently offboarded), or nothing is written.
 
     `installation_id` is the key's owner. An enrollment names its installation; it already holds the organization FOR SHARE,
-    took it before its code row, and has locked the branch and refused one with any active key. None is an unowned key, the operator's route, and is refused while the branch has an
-    active owned key: an unowned key would be open to a token the owned one refuses."""
+    took it before its code row, and has locked the branch and refused one with any active key. None is an unowned key, the
+    operator's route, and is refused as _refuse_an_unowned_key says: one active key per branch, and an unowned key would be open
+    to a token an owned one refuses."""
     if installation_id is None:
         _lock_tenant_for_unowned_key(conn, customer_id, branch_id)
     _require_provisionable_tenant(conn, customer_id, branch_id)
-    if installation_id is None and any(owner is not None for owner in active_ingest_key_owners(conn, customer_id, branch_id)):
-        raise ValueError("the branch has an active key owned by an installation")
+    if installation_id is None:
+        _refuse_an_unowned_key(conn, customer_id, branch_id)
     key_id = str(uuid.uuid4())
     conn.execute(
         text("""
@@ -264,16 +292,29 @@ def has_active_ingest_key(conn, customer_id: int, branch_id: int) -> bool:
 
 
 def retire_ingest_key(conn, key_id: str) -> bool:
-    """Retires an active key (it is rejected from then on). True if a key was retired."""
+    """Retires an active unowned key (it is rejected from then on). True if a key was retired, False if there is no such active
+    key. Raises ValueError for an active key an installation owns: that would strand its owner, and deactivating the owner
+    already stops the only token an owned key accepts. Offboarding and a replacement cutover retire owned keys themselves.
+
+    One statement, so no other lock: an ownership change or an offboarding it waits behind is seen when PostgreSQL rereads the
+    row and applies this WHERE again."""
     result = conn.execute(
         text("""
             UPDATE ingest_key_ids
             SET status = 'retired', retired_at = CURRENT_TIMESTAMP
-            WHERE key_id = :key_id AND status = 'active'
+            WHERE key_id = :key_id AND status = 'active' AND installation_id IS NULL
         """),
         {"key_id": key_id},
     )
-    return result.rowcount == 1
+    if result.rowcount == 1:
+        return True
+    owned = conn.execute(
+        text("SELECT 1 FROM ingest_key_ids WHERE key_id = :key_id AND status = 'active' AND installation_id IS NOT NULL"),
+        {"key_id": key_id},
+    ).first()
+    if owned is not None:
+        raise ValueError("the key is owned by an installation")
+    return False
 
 
 def latest_ingest_status(conn, customer_id: int, branch_id: int) -> dict[str, Any] | None:

@@ -658,6 +658,7 @@ def test_the_guards_do_not_get_in_the_way_of_a_live_or_suspended_tenant(world):
     updated = tenant_service.update_collector_installation(
         installation_id=201, organization_id=2, name="Renamed", hostname=None, collector_version=None, status="inactive",
     )
+    _run(world, "UPDATE ingest_key_ids SET status = 'retired', retired_at = CURRENT_TIMESTAMP WHERE customer_id = 20")
     with world.begin() as conn:
         key_id = ingest_v2_service.issue_ingest_key(conn, 20, 2, installation_id=None)
         cutover_id = ingest_v2_service.record_v2_cutover(conn, 20, 2, None, "operator")

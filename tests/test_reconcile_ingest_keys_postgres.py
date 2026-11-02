@@ -271,8 +271,9 @@ def test_active_and_retired_keys_with_no_owner_are_both_reported_and_a_retired_o
 
 def test_a_second_active_key_and_a_branch_with_no_active_key_are_reported_and_nothing_is_chosen(db, cluster):
     with db.begin() as conn:
-        first = ingest_v2_service.issue_ingest_key(conn, 10, 1, installation_id=None)
-        second = ingest_v2_service.issue_ingest_key(conn, 10, 1, installation_id=None)
+        first, second = KEY, SECOND_KEY  # only by hand now: issue_ingest_key refuses a second active key
+        _key(conn, first)
+        _key(conn, second)
         retired = ingest_v2_service.issue_ingest_key(conn, 10, 3, installation_id=None)
         ingest_v2_service.retire_ingest_key(conn, retired)
 
@@ -313,11 +314,12 @@ def test_equal_timestamps_at_another_branch_mean_nothing_here(db, cluster):
     assert _one_key(_report(cluster))["e1"]["status"] == "none"
 
 
-def test_a_real_key_issued_after_an_enrollment_gets_none_of_its_evidence(db, cluster):
+def test_a_later_key_at_an_enrolled_branch_gets_none_of_its_evidence(db, cluster):
     enrolled = _redeem(db, clear_owner=True)
+    later = KEY
     with db.begin() as conn:
         ingest_v2_service.retire_ingest_key(conn, enrolled)
-        later = ingest_v2_service.issue_ingest_key(conn, 10, 1, installation_id=None)
+        _key(conn, later, created_at=LATER)  # only by hand now: issue_ingest_key refuses an enrolled branch
 
     report = _report(cluster)
 
