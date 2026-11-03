@@ -26,6 +26,11 @@ When a release includes multiple types of changes, use this order:
 
 This reduces the chance of schema mismatches, API payload mismatches, or stale frontend assumptions.
 
+The backend deploys automatically when a change is merged into `main`. A migration the new backend code needs must be
+reviewed and applied to production **before** that merge, not after it (the 2026-11-02 Contract v2 outage). See
+[deployment.md](deployment.md), "schema compatibility guard", for the deploy-time check meant to enforce this and what
+it does not cover.
+
 ---
 
 ## before starting a release
@@ -296,6 +301,9 @@ After migration:
 
 ### migration rules
 
+- apply a migration the new code needs before merging that code to `main`, because the merge deploys it
+- a migration must keep the code that is already running working (add first; remove or rename only in a later
+  release, once no deployed code reads it)
 - do not run Alembic from the AMH machine
 - do not manage schema changes in request handlers
 - do not use ad hoc SQL edits in production as the normal process
@@ -317,9 +325,11 @@ The backend is responsible for:
 
 ### deployment steps
 
-1. push backend code changes to GitHub
-2. deploy or restart the backend service
-3. if the release includes schema changes, make sure Alembic migration has already been run
+1. if the release includes schema changes, confirm the migration has already been applied to production
+   (part 1, step 4) -- before anything reaches `main`
+2. merge the backend code to `main`; DigitalOcean deploys it automatically
+3. once the schema compatibility guard is configured, confirm its job passed in the deployment log
+   ([deployment.md](deployment.md)); a refusal means the previous deployment is still serving
 4. verify the backend starts cleanly
 
 ### backend validation checklist
@@ -509,13 +519,15 @@ Use this when a release affects more than one layer.
 - confirm migration needs
 - confirm tests were run
 
-### migration
+### migration (before the backend merge)
 - run `alembic current`
+- review the migration for backward compatibility with the code already running
 - apply `alembic upgrade head` if needed
 - verify migration result
 
 ### backend
-- deploy backend
+- merge to `main`, which deploys the backend
+- confirm the schema compatibility check passed, once configured
 - verify API health
 - verify upload behavior
 
