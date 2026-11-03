@@ -86,9 +86,20 @@ Typical migration workflow:
 2. run `alembic current`
 3. create a migration with `alembic revision -m "..."`
 4. edit the migration file
-5. review the migration carefully
+5. review the migration carefully, including whether the code ALREADY running keeps working once it is applied
 6. run `alembic upgrade head`
 7. verify app behavior after the migration
+8. only then merge the application code that needs it: merging to `main` deploys the backend
+
+A schema-expanding migration that new application code requires (a new column, table or constraint the code reads)
+is reviewed and applied to production **before** that code is deployed. Removing or renaming something the running
+code still reads is a later, separate release. The 2026-11-02 Contract v2 outage was this order reversed: code that
+read a column from `c1e7a94f2b60` was deployed while production was at `f7b3d2c81a46`.
+
+`scripts/check_schema_compat.py` is the deploy-time check for the first half of this rule: it refuses a deployment
+while the database is behind the code's Alembic head. It checks revision ancestry only, not backward compatibility.
+Its configuration, database role, failure behavior and rehearsal are in [deployment.md](deployment.md), "schema
+compatibility guard".
 
 ## examples of valid schema changes
 

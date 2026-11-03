@@ -55,13 +55,20 @@ The backend API is responsible for:
     in a fixed order, zero where there were none, whose counts add up to the
     `rejects/count` result)
 
+DigitalOcean deploys the backend automatically when a change is merged into `main`, so **merging is deploying**.
+
 Typical backend deployment flow:
 
-1. make code changes locally
-2. commit and push to GitHub
-3. deploy the backend service
-4. if schema changes are included, run Alembic migrations
-5. verify API health
+1. make code changes locally, and open a pull request
+2. if the change includes a migration the new code needs, review it, then apply it to production **before** the code
+   reaches `main` ([database-migrations.md](database-migrations.md), "apply migrations")
+3. merge to `main`, which deploys the backend
+4. verify API health
+
+Step 2 must not move after step 3. On 2026-11-02 the backend was deployed at a commit that read a column added by
+migration `c1e7a94f2b60` while production was still at `f7b3d2c81a46`: every Contract v2 upload and status call failed
+with `UndefinedColumn` (SQLSTATE 42703) until the migration was applied. The schema compatibility guard below is
+meant to turn that mistake into a blocked deployment instead of an outage.
 
 ## backend validation checklist
 
@@ -178,6 +185,141 @@ If multiple parts change at once, use this order:
 5. AMH agent
 
 This reduces the chance of payload/schema mismatches.
+
+## schema compatibility guard (DigitalOcean PRE_DEPLOY job)
+
+**Status: the script is in the repository; the DigitalOcean job and its database role are NOT configured yet.** Until
+both are set up and rehearsed (below), nothing blocks a deployment, and step 2 of the backend flow is a manual
+discipline.
+
+[`scripts/check_schema_compat.py`](../scripts/check_schema_compat.py) compares the code being deployed with the
+database it will run against:
+
+- the code's Alembic head, from `alembic/versions` (exactly one head is required; nothing connects to find it);
+- the database's single `alembic_version` row, read in a READ ONLY transaction (connect timeout 10s, statement
+  timeout 5s, lock timeout 2s).
+
+| Database revision | Result |
+|---|---|
+| equal to the code's head | exit 0, deploy |
+| a known descendant of the head | exit 0, deploy (ancestry only, see below) |
+| an ancestor of the head: the code needs migrations not yet applied | exit 1, refused |
+| divergent, or unknown to this code | exit 1, refused |
+| anything else: no URL, connection failure, no or several rows, unreadable table, timeout, several code heads | exit 1, refused |
+
+With exactly one head, every revision the code knows is an ancestor of it, so in practice a database that is
+**ahead** of the code (a schema-first migration from a newer commit, then a deploy or rollback of older code) is
+`unknown` and refused. That is deliberate: deploying older code over a newer schema is a decision, made through the
+manual recovery below.
+
+It prints one line: a fixed status, the code's head, and the database's revision, plus a SQLSTATE or an exception class
+name on failure. It never prints the URL, a credential, a SQL parameter or exception text.
+
+### what the guard does not prove
+
+A pass means only that the database has applied every migration this code's graph contains. It does **not** prove:
+
+- that a migration is backward compatible with the code still running during the deploy (a dropped or renamed column
+  breaks the old code the moment the migration runs); every migration must still be reviewed for that;
+- that the database matches what its revision implies (manual SQL, a partial restore);
+- anything about data, environment variables, grants, or the Collector and frontend versions.
+
+It is one prerequisite, not a release-safety guarantee. The release checklist in
+[release-process.md](release-process.md) still applies.
+
+Expand and contract: a migration that only adds (a nullable column, a table, an index, a constraint existing rows
+already satisfy) is applied before the code that uses it. A migration that removes or renames something the running
+code reads ships in a LATER release, after the code no longer reads it.
+
+### the database role (to be created by the operator; not done)
+
+A dedicated role that can read one table and nothing else, so a leaked credential reveals only the schema revision:
+
+```sql
+-- Run by the table owner, after review. Generate the password; never commit or paste it.
+CREATE ROLE sortview_schema_check LOGIN PASSWORD '<generated>'
+    NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
+GRANT CONNECT ON DATABASE neondb TO sortview_schema_check;
+GRANT USAGE ON SCHEMA public TO sortview_schema_check;
+GRANT SELECT ON public.alembic_version TO sortview_schema_check;
+ALTER ROLE sortview_schema_check SET default_transaction_read_only = on;
+```
+
+- It is not `sortview_app`: the runtime role stays without access to `alembic_version`, as
+  [release-process.md](release-process.md) requires. It is not the owner role either.
+- PostgreSQL lets every role read the system catalogs, so it can see table and column names, but no row of any
+  application table.
+- The script reads only `SORTVIEW_SCHEMA_CHECK_DATABASE_URL`, never the application's `DATABASE_URL`. The URL must set
+  `sslmode=require` (or `verify-ca` / `verify-full`); a remote URL without one is refused.
+
+### the DigitalOcean job (to be configured by the operator; not done)
+
+Export the current app spec first (`doctl apps spec get <app-id>`) and keep the reviewed copy outside the repository
+or with secrets removed. Add a job component built from the same repository, branch and source directory as the
+backend service:
+
+```yaml
+jobs:
+  - name: schema-compat-check
+    kind: PRE_DEPLOY
+    # same github / source_dir / environment_slug as the backend service
+    run_command: python scripts/check_schema_compat.py
+    instance_size_slug: <smallest available>
+    envs:
+      - key: SORTVIEW_SCHEMA_CHECK_DATABASE_URL
+        scope: RUN_TIME
+        type: SECRET
+        value: <set in the DigitalOcean console, encrypted>
+```
+
+- Scope the secret to this job only. Do not add it to the backend service or to app-level environment variables, and
+  do not store it in GitHub.
+- Confirm every field name against the exported spec and DigitalOcean's documentation during the rehearsal; this
+  snippet is a plan, not a verified configuration.
+
+### failure behavior
+
+DigitalOcean documents that a failing PRE_DEPLOY job fails the deployment and leaves the previous deployment serving.
+**That has not been verified for this app**; the rehearsal must prove it. If it holds:
+
+- a refused check means the new code does not go live; production keeps running the previous commit, unchanged;
+- an unreachable database also refuses (fail closed), so a Neon outage blocks deploys, including urgent fixes, but does
+  not affect the running service.
+
+### manual recovery
+
+When a deployment is refused, read the job's one line in the deployment log.
+
+- `ancestor`: the code needs migrations. Review them, apply them as in [database-migrations.md](database-migrations.md),
+  confirm `alembic current`, then redeploy the same commit from the DigitalOcean console.
+- `unknown` (the database is ahead, typically a code rollback after a migration): decide whether the older code works
+  with the newer schema. If it does, deploy it with the job temporarily removed, record why, and restore the job
+  immediately afterwards. If not, fix forward.
+- `connection_failed`, `database_timeout`, `metadata_unreadable` or similar: fix the database, the role or the secret,
+  then redeploy. To ship an urgent fix while the check itself cannot run, remove the job, deploy, and restore it; record
+  the bypass.
+- Never make the check pass by editing `alembic_version` or by granting the runtime role access to it.
+
+### rehearsal requirements (before relying on the guard)
+
+On a throwaway DigitalOcean app pointed at a non-production Neon branch (never production):
+
+1. With the database one migration behind the code, a deployment fails at the job and the previous deployment keeps
+   serving its health endpoint.
+2. With the database at the code's head, a deployment succeeds.
+3. With a wrong password in the secret, the deployment fails, and the job log shows only the fixed line.
+4. The job's log, the build log and the app's runtime environment show no part of the URL.
+5. Removing and restoring the job works as the manual recovery describes.
+
+Record the results, the app spec as configured, and the date in this section, then create the production role and job
+as separate, approved operator actions.
+
+### testing the script
+
+`tests/test_check_schema_compat.py` covers the graph and the decisions without a database.
+`tests/test_check_schema_compat_postgres.py` runs it against real migrations and roles; it is opt-in
+(`SORTVIEW_TEST_POSTGRES_URL`, a local, non-production server) and never reads `DATABASE_URL` or
+`SORTVIEW_SCHEMA_CHECK_DATABASE_URL`.
 
 ## important rules
 
