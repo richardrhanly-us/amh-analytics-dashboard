@@ -4,6 +4,8 @@
 
 **Scope:** Support-controlled replacement of an enrolled Contract v2 Collector computer, through Mode 1 controlled handoff or Mode 2 fresh-identity recovery  
 
+**Amendment A (Section 14, design approved 2026-11-12; R0 complete):** Mode 2 is implemented first, through the unchanged Collector 1.0.14 SortView Setup GUI. Where Section 14 is more specific than an earlier section, Section 14 applies to Mode 2. Stages R1–R5 are **not implemented**, and machine replacement is not available.
+
 **Implementation status:** Replacement is not implemented, and Mode 1 and Mode 2 are unavailable. Key ownership and the credential safeguards in Section 2 are implemented (milestones M1 and M2), as are a read-only inventory of legacy keys (milestone M3a) and safeguards in the legacy credential scripts (milestone M3b). Only the behavior listed in Section 2 and the code-inspection findings in Section 9 describe the system as it exists today; everything else here is proposed.
 
 ## 1. Objective
@@ -730,3 +732,267 @@ The procedure must verify ownership evidence before backfilling, including any i
 Ambiguous cases require explicit operator reconciliation and must fail closed until resolved.
 
 Apart from milestones M1 and M2, no schema migration, endpoint, or production change should be made until these decisions have been reviewed.
+
+## 14. Amendment A — Mode 2 first, through the existing installer
+
+**Status:** Design approved, 2026-11-12. **R0 is complete, and R1 may begin.**
+
+- **Decided by the product owner:** items 14.1(a) and 14.1(b); D1, D2, D3, D4, D7 and D8 (14.10), subject to compatibility with the existing implementation; and the attribution representation in 14.2 and 14.2a. The installation row is the durable authorization record, and `auth_audit_log` records the lifecycle events.
+- **Still open:** D5 and D6, to be decided before R5, and the remaining technical issues at the end of 14.10.
+- **Not implemented:** none of R1–R5 is implemented, and machine replacement is not available. Design approval does not by itself approve a production change. Each stage ships through its own reviewed PR and meets its acceptance criteria in 14.9.
+
+### 14.1 Scope
+
+(a) **Decided:** Mode 2 (Section 9B) is the first replacement capability. Mode 1 (Section 9A) stays an approved design for a later, continuity-preserving capability and is not part of R1–R5.
+
+(b) **Decided:** the replacement computer is installed with the existing SortView Setup GUI and Collector 1.0.14 bundle (the G2 package), **unmodified**.
+
+(c) Consequences for the server:
+
+- A replacement code is an ordinary enrollment code (same format, hash, one-time claim and time limit), issued for a replacement installation and redeemed at the existing `POST /collector/enroll`.
+- A successful redemption returns **exactly** the ordinary Contract v2 response: the same field set and types as today, with the replacement's own `installation_id`, `agent_token` and `key_id`. No field is added, because the setup engine rejects an unexpected response.
+- Every replacement refusal uses an existing public refusal code (`enrollment_not_ready` for every replacement-specific reason), returns `409`, and consumes nothing. Setup 1.0.14 then reports "not ready to be enrolled" and says the code was not used.
+- The rules and time zone returned are the library's **current** server settings, as in ordinary enrollment. Unlike Mode 1, Mode 2 does not preserve the source's exact rules.
+
+### 14.2 Representation
+
+- **New column:** `collector_installations.replaces_installation_id`, nullable, with no default.
+- **Same branch:** a composite foreign key `(replaces_installation_id, branch_id)` referencing `collector_installations (id, branch_id)`. It uses the existing `uq_collector_installations_id_branch_id`, added in M1. A replacement can only replace an installation at its own branch. No cascade.
+- **No self-reference:** a CHECK that `replaces_installation_id <> id`.
+- **The chain:** a replacement of a replacement links to the installation it replaced, so the chain records every computer the branch has had. Existing rows stay `NULL`, and an installation with `NULL` behaves exactly as today.
+- **Library and contract:** the replacement is created in the source's library and branch, with `required_contract = 2`, in `provisioning`. Today the branch is always the library's primary branch, because multi-branch provisioning (C8) does not exist. Authorization verifies that rather than assuming it.
+- **One active owner:** the replacement does not own a key until redemption. At every moment, the branch's active key has exactly one owner.
+- **Attribution columns,** set together with the link:
+  - `replacement_authorized_by_user_id BIGINT`: the administrator who authorized the replacement;
+  - `replacement_authorized_at TIMESTAMPTZ`: when they did.
+
+  A CHECK requires all three replacement columns to be set together or all to be `NULL`. `replacement_authorized_by_user_id` has **no foreign key**: it is a historical value, as `tenant_lifecycle_events.actor_user_id` is. That way neither deleting a user nor `ON DELETE SET NULL` can break the CHECK or erase attribution. (No application path deletes `app_users`; the runtime role has no DELETE on it.)
+- **Write-once, enforced by the database:** the three replacement columns are written only when authorization inserts the row. A `BEFORE UPDATE` row trigger on `collector_installations` raises if any of them changes. Every other column, including `status`, stays updatable. The runtime role has UPDATE on this table, so the trigger, not code convention, is what makes the link and its attribution immutable. This follows `tenant_lifecycle_events`, which a trigger protects. The general installation create path never sets these columns.
+- **Retired is final in every write path.** Replacement depends on a retired source, a cancelled replacement or a replaced installation never becoming usable again. The administration service already allows no transition out of `retired`. `services.tenant_service.update_collector_installation` writes any status with no transition check. It has no caller in `src/`, `main.py` or `scripts/` today, but it could move an installation out of `retired`. R1 removes it or makes it refuse any change out of `retired`.
+
+### 14.2a Attribution and audit (approved 2026-11-12)
+
+**Two places, each doing one job:**
+
+| Purpose | Where | Why |
+|---|---|---|
+| The link redemption must read, inside its own transaction: which installation is replaced and who authorized it | The write-once columns on the replacement's own `collector_installations` row (14.2) | Read under the redemption's existing locks. Immutable by trigger. Present for as long as the installation row exists |
+| The record of each action | `auth_audit_log`, through the existing `log_auth_event_with_connection`, in the same transaction as the change | Every installation administration event already goes there, including status changes, codes and recovery tokens. The runtime role has only SELECT and INSERT on it, so the application cannot change or delete a record. The tenant purge keeps it |
+
+**Events, all with IDs only and never a code, token, hash, hostname or key secret:**
+- `admin_replacement_authorized`: actor is the administrator. Records the source and replacement installation IDs, the source's status, and, for a `provisioning` source, `lost_response_confirmed: true` (14.3a).
+- `admin_replacement_cancelled`: actor is the administrator. Records the same two installation IDs.
+- `collector_replacement_redeemed`: a **system action** (`user_id` NULL). Records `authorized_by_user_id` (copied from the replacement's row), the source and replacement installation IDs, the retired and new key IDs, the enrollment code ID, and the IDs of the tokens deactivated.
+
+Each event commits or rolls back with its change.
+
+**Not chosen:**
+- **Reading the authorizer back from `auth_audit_log` at redemption.** It can only be searched by JSON metadata, it has no protection beyond the role's grants, and it is awaiting a retention policy that could remove the record redemption depends on.
+- **`collector_enrollment_codes.created_by_user_id`.** It names whoever issued the *code*, who can differ from the authorizer, and a new code is issued after each expiry.
+- **`tenant_lifecycle_events`.** It is trigger-protected, but its event types are a closed list of tenant lifecycle actions, and replacement is not one of them.
+
+**Limits, stated rather than assumed:**
+- `auth_audit_log` is append-only for the application role, not trigger-protected. The table owner can still change it, as for every existing administration event.
+- A purge deletes the tenant's `collector_installations` rows and with them the write-once columns. The `auth_audit_log` events remain.
+
+### 14.3 Authorization, code issuance, cancellation, expiry
+
+**Authorize.** A platform administrator selects an existing installation and confirms replacement. In one transaction, the server verifies:
+
+1. The library is not cancelled. The source belongs to this library and to its active primary branch, and the source is Contract 2.
+2. The source is **enrolled**: it is `provisioning`, `active` or `inactive`, and
+3. `active_ingest_key_owners(...)` for the branch is exactly `[source]`. That refuses a key with no owner, several active keys, or a key owned by another installation. Key ownership, not status, decides eligibility (14.3a).
+4. The branch has a v2 cutover on record.
+5. The branch has no active legacy unbound agent token (decision D4).
+6. No other replacement is pending at the branch (14.5).
+
+The server then creates the replacement installation and writes an audit record naming the source and the replacement. It changes no token, key, cutover or source status. Every refusal has a fixed public code.
+
+**Issue a code.** The existing `issue_enrollment_code`, with one change. Its `branch_already_enrolled` refusal is skipped only when the installation has `replaces_installation_id` **and** checks 1–6 still hold under the same locks. An installation without the link is refused exactly as today. Issuing a new code revokes the installation's earlier unused codes, as today. A code expires after the existing time limit, and a new one can be issued for the same pending replacement.
+
+**Cancel (D7, approved direction).** A dedicated **Cancel replacement** operation, before redemption only. Under the same locks as authorization, it verifies that the installation is a pending replacement (14.5), moves it to `retired`, revokes its unused codes, and writes its own audit event naming the source and the replacement. The source keeps running unaffected. A retired installation's codes are already refused at redemption, because only `provisioning` and `active` installations are enrollable. The general status change refuses `retired` for a pending replacement and points to Cancel replacement, so every cancellation has the explicit event. After redemption, cancellation is not possible: see 14.6.
+
+**Expiry (D2, approved direction):** a pending replacement does not expire. Each enrollment code keeps its normal time limit and can be reissued.
+
+### 14.3a Which installations can be a source (D3, approved 2026-11-12)
+
+Redemption never changes the installation's status. An installation becomes `active` at its first accepted contact. That contact is either a scheduled-run heartbeat or a preflight probe (`main.record_installation_heartbeat`). Setup's step 8 runs the interactive and SYSTEM-context preflights, so **a setup that completes moves its installation to `active` before the wizard finishes.** On the server, the four situations look like this:
+
+| # | Situation | What the server shows | Handling |
+|---|---|---|---|
+| 1 | Provisioning, never redeemed: an ordinary installation, a pending replacement, or an installation added to an already enrolled branch | Owns no key; no used code | **Not a source.** A pending replacement: issue a new code, or Cancel replacement. An ordinary installation on an unenrolled branch: issue a new code. An unlinked installation on an enrolled branch, which can never enroll: retire it with the status change |
+| 2 | Redeemed, but the response never reached the computer | `provisioning`, a used code, owns the only active key, no contact | **Replace** (this source) |
+| 3 | Redeemed and the response received, but setup stopped before step 8, or is still running; including a token that could not be stored | Identical to 2 | **Not a replacement case.** Run SortView Setup again and choose **Resume setup**. If the token could not be stored, use the existing recovery token for this installation, then resume |
+| 4 | Active or Inactive, owns the only active key | `active` or `inactive`; owns the only active key | **Replace** when the computer is failed, lost, compromised (deactivate it first) or being retired |
+
+**The server cannot tell 2 from 3.** Only the computer knows whether it holds the saved enrollment. Setup saves the non-secret enrollment details as soon as it receives the response. When it can't tell whether the request succeeded, SortView Setup stops with **Contact SortView support** and its **Copy details** report, rather than offering Resume.
+
+**Rules (approved):**
+
+- A source must own the branch's only active key and be `provisioning`, `active` or `inactive`. A `retired` installation, an installation that owns no key, and a branch with no active key, or with a key that has no owner, are refused; these need operator reconciliation, outside R1–R5.
+- **A `provisioning` source** additionally requires the administrator to confirm that the computer did **not** keep its enrollment: SortView Setup reported an unknown result and offered no Resume setup. The confirmation is recorded in the authorization's audit event as `lost_response_confirmed: true` (14.2a). Without it, authorization is refused, and the refusal tells support to try Resume setup or the recovery token first.
+- **Replacing in situation 3 by mistake** is safe for the one-key guarantee: that computer's token stops working at redemption. It only costs the customer the extra steps of a replacement.
+- **Repeated replacements:** a redeemed replacement owns the only active key, so it can itself become a source, in either situation 2 (its own lost response) or situation 4 (a later failure). That is the whole chain rule. No other installation is ever eligible.
+- **A pending replacement is never a source:** it owns no key.
+
+### 14.4 Redemption: order and locks
+
+Redemption of a code whose installation has `replaces_installation_id` runs in **one** transaction. It extends the existing redemption, keeps its lock order, and adds the source's credentials using the order the recovery token already uses (tokens before installation):
+
+| Step | Action | Existing or new |
+|---|---|---|
+| 1 | Organization `FOR SHARE`, from the code (`_lock_code_organization`) | Existing |
+| 2 | Code row `FOR UPDATE`; reject unknown, used, revoked or expired codes | Existing |
+| 3 | Replacement installation scope; must be `provisioning` or `active` | Existing |
+| 4 | Branch row `FOR UPDATE` (`_prepare_v2_enrollment`), tenant context set, replacement status re-read under the lock | Existing |
+| 5 | Settings, time zone and rules checks | Existing |
+| 6 | Instead of the `active_ingest_key_exists` and `cutover_exists` refusals: re-run checks 1–6 of 14.3 for the linked source. Any failure → `enrollment_not_ready`, nothing consumed | **New** |
+| 7 | Claim the code (exactly one row) | Existing |
+| 8 | Deactivate every agent token bound to the source | **New** (the recovery token's statement) |
+| 9 | Lock the source installation row, then move it to `retired`, guarded on the status read in step 6 (exactly one row) | **New** |
+| 10 | Retire the source's key: `status = 'retired'`, `retired_at` set, guarded on `key_id`, `installation_id = source` and `status = 'active'` (exactly one row). `retire_ingest_key` is not used: it refuses owned keys by design | **New** |
+| 11 | Issue the new key, owned by the replacement (`issue_ingest_key`) | Existing |
+| 12 | Insert the new bound agent token | Existing |
+| 13 | **No** `record_initial_v2_cutover`. The branch's cutover is never written, moved or recreated | **New** (skipped) |
+| 14 | `collector_replacement_redeemed` audit event, a **system action** (D8). The authorizing administrator is read from the replacement's write-once `replacement_authorized_by_user_id`, already read in step 3. Contents in 14.2a | **New** |
+| 15 | Return the ordinary v2 response (14.1(c)) | Existing shape |
+
+An ordinary enrollment is unchanged, including both refusals that step 6 replaces for replacements only.
+
+**Why this order:**
+- Offboarding takes the organization `FOR UPDATE`, and so do recovery and revocation. Enrollment takes it `FOR SHARE`. Any of them serializes against redemption.
+- A heartbeat holds its token and then updates its installation. Steps 8–9 take tokens before the installation in the same order, as the recovery token does, so they cannot deadlock with it.
+- Administrative retirement takes the branch `FOR NO KEY UPDATE`, which conflicts with step 4's lock.
+- Event inserts take the branch `FOR KEY SHARE`, so a branch's uploads wait for the redemption to commit, exactly as during an ordinary enrollment today.
+- The authorization transaction takes the organization `FOR UPDATE` and then the branch, so authorization, code issuance and redemption cannot interleave.
+
+### 14.5 Atomicity and concurrency guarantees
+
+- **All or nothing:** any failure at steps 1–15 rolls back the whole transaction. The code stays unused, the source keeps its status, tokens and key, and no key or token is created. Every guarded update must affect exactly one row; zero rows is a failure, not success (Section 6).
+- **One active Collector:** after commit, the source's bound tokens are inactive, its installation is retired, and its key is retired. `/v2/upload` and `/v2/status` refuse it on all three grounds. The only token that can use the branch's single active key is bound to the replacement.
+- **Earlier requests:** a request that passed authentication before the commit may still finish under the old key. This is the interim limitation recorded for M2. Under Mode 2 those rows are genuine events from the source and are kept.
+- **Races:** two redemptions for one branch, or a redemption against an ordinary enrollment, recovery-token issuance, administrative retirement or offboarding, serialize on the locks in 14.4. Exactly one outcome commits, and every other request sees it and is refused.
+- **Pending replacements (D1, approved direction):** at most one per branch, enforced by checks under the existing locks and proved by concurrency tests. No new constraint. A **pending replacement** is an installation that has `replaces_installation_id`, is not `retired`, and owns no ingest key, active or retired. `inactive` counts as pending: otherwise deactivating one pending replacement, authorizing a second and reactivating the first would leave two. The rule holds only because every path that could add a pending replacement is serialized, as follows:
+
+  | Path | Effect on pending replacements | Why the rule still holds |
+  |---|---|---|
+  | Authorize | Adds one | The only writer of `replaces_installation_id`. Takes the organization `FOR UPDATE` before checking |
+  | Cancel replacement | Removes one | Same lock |
+  | Redemption | Removes one (it now owns a key) | Holds the organization `FOR SHARE`, which conflicts with the two above |
+  | Offboarding | Removes all | Organization `FOR UPDATE` |
+  | Status change: `provisioning` ↔ `inactive` | None (both count) | — |
+  | Status change: `retired` | Would remove one | Refused for a pending replacement (Cancel replacement instead) |
+  | Ordinary "Add an installation" | None: it never sets the link | The link is immutable |
+  | Heartbeat or recovery token | None: a pending replacement has no token and owns no key | — |
+  | `tenant_service.update_collector_installation` | Could revive a cancelled replacement or a retired source | Removed or guarded in R1 (14.2) |
+- **Constraint:** a database constraint enforcing one active key per branch (open item 3 in Section 13) is **not** part of R1. It follows the production key inventory (`scripts/reconcile_ingest_keys.py inventory`), because duplicate legacy keys may exist (Section 2).
+
+### 14.6 Interrupted replacement and lost responses
+
+| Situation | Outcome |
+|---|---|
+| Authorized, no code yet, or code expired | Issue a new code for the same pending replacement. The source is unaffected |
+| Redemption refused (`enrollment_not_ready`) | Nothing consumed. Support fixes the cause (for example, revokes an unbound token) and the installer retries with the same code before it expires |
+| Abandoned before redemption | Cancel (14.3). The source is unaffected |
+| Setup stops after a successful redemption, with the response received (14.3a, situation 3) | The existing 1.0.14 resume: run SortView Setup again and choose **Resume setup**. No new code, and no replacement |
+| The token could not be stored after redemption (situation 3) | The existing recovery token for the **replacement** installation, then Resume setup. It is eligible because it owns its branch's only active key and is `provisioning` or `active` |
+| Response lost: SortView Setup reports an unknown result and offers no Resume setup (situation 2) | The code is used, and the replacement owns the active key but its computer holds nothing. A recovery token cannot help: the computer also lacks the key ID, rules and time zone. Recovery is **another authorized replacement whose source is the unconfirmed replacement**, with the `provisioning` confirmation in 14.3a. Never retry a used code |
+| The replacement computer fails later | Another replacement, with that computer's installation as the source |
+
+**No rollback after redemption.** The commit of step 15 is the rollback boundary. A retired installation cannot return to `provisioning` (`retired` is terminal today). No path reactivates the source's tokens, its key or its status, and no path creates a second active key or a second cutover.
+
+**The source computer:** after redemption it can still run, but every upload and heartbeat is refused. The runbook requires a support step: disable its `SortView Collector` task and run `tools\uninstall.ps1`. Its local secret is useless to the server once its key is retired.
+
+**To verify in R4 rather than assume:** that a computer whose enrollment response was lost is still clean enough for a new run of SortView Setup.
+
+### 14.7 Historical data, and what Mode 2 does not guarantee
+
+**Preserved:**
+- **Events:** every stored event row is kept unchanged. The runtime role cannot update or delete event rows.
+- **Keys and installations:** the retired key and the retired source installation are kept, not deleted.
+- **The cutover:** the branch's `v2_cutovers` row is never written by a replacement. The runtime role has only `SELECT` and `INSERT` on that table.
+- **Reports:** they read events without a `key_id` filter, so data from before the replacement stays visible.
+
+**Not guaranteed. Mode 2 does not provide gap-free ingestion:**
+- **Records never ingested:** lines Tech Logic wrote after the source's last committed position, and lines written before the replacement's bootstrap (which starts at the end of each file), are never ingested.
+- **Holds across the boundary:** a hold recorded before the replacement cannot be retracted or corrected by a later record, because item identities change with the new secret.
+- **Double counting:** one physical item can be counted under both identities in a range that spans the replacement.
+
+**Reducing the gap (runbook, not a guarantee):** for a planned replacement, stop the sorter, let the source finish one successful run, and confirm it in SortView Administration before the code is redeemed.
+
+### 14.8 Before commercial distribution
+
+R1–R4 may only be used under decision D6. Before replacement is offered to customers generally (R5), all of the following must hold:
+
+1. **Discontinuity shown:** reports and the dashboard show an explicit discontinuity for any range that spans a replacement (Section 9B). Decision D5 chooses the data source and presentation.
+2. **Unfinished replacements visible:** support can see a replacement that was redeemed but never sent a heartbeat, and one that sends heartbeats but ingests nothing despite expected sorter activity (Section 11, *Monitoring*).
+3. **Customer documentation:** the customer guide and the internal onboarding checklist describe replacement, in particular what happens to the old computer, the possible data gap, and that a used code is never reused.
+4. **Support runbook:** authorize, issue a code, cancel, recover a lost response, and retire the old computer, with the audit records each step leaves.
+5. **Limitations approved:** the Mode 2 limitations in 14.7 are approved by the product owner and stated to the customer.
+
+### 14.9 Implementation stages
+
+Each stage is its own PR and deploys independently. No stage adds Mode 1, key rotation, multi-branch provisioning or a change to the installer.
+
+**R1 — authorization and cancellation** (migration, service, admin API, audit, tests). Acceptance:
+- The migration adds 14.2 and is reversible; existing rows are unchanged.
+- Authorization succeeds only when every check in 14.3 holds. It creates one linked `provisioning` installation with an audit record and changes nothing else. Each refusal has a fixed code and a test.
+- A code can be issued for a linked installation. An unlinked installation on an enrolled branch is still refused with `branch_already_enrolled`.
+- **Redeeming a replacement code is still refused (`cutover_exists`), and the code is not consumed.** This shows R1 cannot enable replacement on its own.
+- Cancel replacement retires the pending replacement with its own audit event, and its code is then refused. The general status change refuses to retire a pending replacement.
+- Source eligibility follows 14.3a. Each of situations 1–4 is tested, including a refused `provisioning` source without the confirmation.
+- Concurrency tests show two authorizations for one branch, an authorization against Cancel replacement, an authorization against offboarding, and the deactivate–authorize–reactivate sequence all leave at most one pending replacement.
+- No path moves an installation out of `retired`, including `tenant_service.update_collector_installation` (removed or guarded).
+- On PostgreSQL, the write-once trigger refuses any update to the three replacement columns, including one made as the runtime role, and allows every other column. The all-or-none CHECK refuses a partial link.
+- `admin_replacement_authorized` and `admin_replacement_cancelled` are written in the same transaction as their change, contain only the fields in 14.2a, and roll back with it.
+- All existing enrollment, installation, recovery and RLS tests pass unchanged.
+
+**R2 — replacement redemption** (enrollment service). Acceptance:
+- 14.4 and 14.5, tested on SQLite and on PostgreSQL under the runtime role with RLS.
+- After commit: the old token is refused on both v2 endpoints, the old key is refused, the new token and key are accepted, exactly one active key exists, the cutover rows are unchanged, and event row counts are unchanged.
+- Fault injection at each step of 14.4 leaves everything unchanged with the code unused.
+- Concurrency tests cover every race in 14.5.
+- Chains work: A → B → C, and recovery from a lost response by replacing the unconfirmed installation.
+- The replacement response has exactly the ordinary v2 field set, checked against the setup engine's parser. A Contract 1 or 1.0.13 request is refused without consuming the code.
+- No code, token or secret appears in logs or audit records.
+
+**R3 — administration UI and runbook.** "Replace this Collector computer" and "Cancel replacement" in the React admin app, showing a pending replacement and its source. Plus the support runbook (14.8, item 4). Acceptance: UI tests, the accessibility checks used for the rest of the admin app, and a runbook review.
+
+**R4 — VM qualification with the unchanged G2 package.** Acceptance:
+- A first replacement from an active, ingesting source, using installation `9`, is documented. Afterwards:
+  - the source's next scheduled run is refused and inserts nothing;
+  - the replacement's first automatic run gives `0` and it becomes Active;
+  - appended synthetic records are ingested;
+  - the database shows the source and its key retired, one active key owned by the replacement, the source's rows unchanged, and the cutover unchanged.
+- A second replacement (replacement → third computer) works.
+- One interrupted-after-redemption resume works, and a lost response is recovered.
+
+**R5 — commercial gate.** Everything in 14.8 is implemented, tested and approved.
+
+### 14.10 Decisions needed before R1
+
+| ID | Decision | Options | Proposed |
+|---|---|---|---|
+| D1 | How to enforce at most one pending replacement per branch | (a) a check under the locks in 14.4, as one active key is enforced today; (b) a redemption marker column plus a partial unique index | **Approved direction: (a)**, with concurrency tests; definition and path analysis in 14.5 |
+| D2 | Does the authorization expire? | (a) no, it lasts until cancelled or redeemed (codes still expire); (b) a time limit on the authorization | **Approved direction: (a)** |
+| D3 | Which installations can be a source? | See 14.3a | **Approved 2026-11-12:** the owner of the branch's only active key, in `provisioning`, `active` or `inactive`, never `retired`; a `provisioning` source needs the lost-response confirmation, recorded in the authorization audit |
+| D4 | Active legacy unbound tokens at the branch | (a) refuse, and support revokes them with the existing route; (b) revoke them automatically at redemption | **Approved direction: (a)** |
+| D5 | Data source and presentation of the reporting discontinuity | For example, derived from the retired key's `retired_at` and the new key's `created_at` in `ingest_key_ids`, or from the replacement audit record | Decide before R5; not needed for R1 |
+| D6 | May supervised-pilot customers use replacement before R5? | Yes, with the 14.7 limitations stated and support performing every step; or no | Product owner decision |
+| D7 | Cancellation | (a) the existing status change to `retired`, audited as a status change; (b) a dedicated cancel operation with its own audit event | **Approved direction: (b)**; see 14.3 |
+| D8 | Audit record at redemption | Redemption has no administrator. Record the system as the actor, or record only the enrollment log line | **Approved direction:** a system action in the same transaction, naming the administrator who authorized the replacement (14.4, step 14) |
+
+**Attribution representation: approved 2026-11-12** (14.2, 14.2a):
+- the columns `replaces_installation_id`, `replacement_authorized_by_user_id` and `replacement_authorized_at`;
+- the all-or-none CHECK and the write-once `BEFORE UPDATE` trigger;
+- the authorization, cancellation and redemption audit events, each written in the same transaction as its change.
+
+**Outstanding decisions:** D5 and D6, before R5.
+
+**Remaining technical issues (none blocks R1; all still outstanding):**
+
+1. **Retention of `auth_audit_log`:** its retention policy is still undecided (`data_lifecycle_policy`: "pending an audit-retention policy"). That policy must keep replacement events, or move them somewhere else, for as long as replacement evidence is needed. The write-once columns keep the attribution meanwhile.
+2. **Protection of `auth_audit_log`:** append-only for the application role, without a trigger, as for every existing administration event. Adding a trigger to the whole table is a separate security decision for Workstream B, not part of C6a.
+3. **A constraint for one active key per branch:** still deferred until the production key inventory (14.5).
+4. **D5 and D6:** reporting discontinuity and pilot use, decided before R5.
+5. **Clean computer after a lost response:** verified in R4, not assumed (14.6).
