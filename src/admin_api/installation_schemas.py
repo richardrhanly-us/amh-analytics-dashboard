@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, StrictStr
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr
 
 AddProblem = Literal["library_cancelled", "no_active_primary_branch", "collector_settings_not_ready"]
 InstallationStatus = Literal["provisioning", "active", "inactive", "retired"]
@@ -106,6 +106,22 @@ class RecoveryTokenResponse(_Model):
     installation: InstallationRef
     agent_token: str
     revoked_previous_count: int
+
+
+class AuthorizeReplacementRequest(_Model):
+    """C6a R1: the replacement installation's name, and -- for a Provisioning source only -- the administrator's
+    confirmation that its enrollment response was lost and setup cannot resume (design 14.3a). No branch, contract or
+    status: a replacement is Contract 2, provisioning, at the source's branch."""
+
+    name: StrictStr
+    confirm_lost_response: StrictBool = False
+
+
+class ReplacementResponse(_Model):
+    """A replacement installation and the installation it replaces (both are support references)."""
+
+    installation: Installation
+    replaces_installation_id: int
 
 
 class UnboundToken(_Model):

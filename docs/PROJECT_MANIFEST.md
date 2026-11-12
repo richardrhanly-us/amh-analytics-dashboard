@@ -804,6 +804,22 @@ deployment, not a fresh install. What remains unverified above must not be assum
       PostgreSQL opt-in tests were not run.
 
       **Remaining C6 work:** Replacement-machine workflow and key rotation. C6 remains open.
+
+      **Replacement machine (C6a), stage R1:** implemented and validated locally on 2026-11-12, on branch
+      `feature/c6a-r1-replacement-authorization`. **Not merged and not deployed.**
+      - Adds migration `b8e2d4f61a07` (the link to the replaced installation, plus attribution columns that are
+        set at authorization and can never change).
+      - Adds the admin endpoints `POST …/installations/{id}/replacements` and `…/cancel-replacement`, each
+        audited.
+      - Every R1 acceptance criterion passed in local validation (local PostgreSQL only):
+        - the full PostgreSQL suite: 489 passed, 0 failed;
+        - the suite without PostgreSQL: 11,290 passed, 0 failed;
+        - covered: audit rollback, the migration round trip, the exact redemption refusal, and the tenant purge of a
+          replacement chain.
+      - Redeeming a replacement code is still refused until R2, so machine replacement is **not available**.
+      - **Deploy order:** apply `b8e2d4f61a07` to production before the code goes live. The schema guard is not
+        configured yet.
+      - Details: `docs/c6a-replacement-machine-design.md`, 14.9.
 - [ ] **C7. Self-serve commercial flow** (Stripe against the existing plans/subscriptions schema; guided signup) —
       last, and only once a second customer is real. Includes deciding customer-visible plan/subscription display
       (deferred here by D8).

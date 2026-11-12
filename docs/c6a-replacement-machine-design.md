@@ -4,9 +4,9 @@
 
 **Scope:** Support-controlled replacement of an enrolled Contract v2 Collector computer, through Mode 1 controlled handoff or Mode 2 fresh-identity recovery  
 
-**Amendment A (Section 14, design approved 2026-11-12; R0 complete):** Mode 2 is implemented first, through the unchanged Collector 1.0.14 SortView Setup GUI. Where Section 14 is more specific than an earlier section, Section 14 applies to Mode 2. Stages R1–R5 are **not implemented**, and machine replacement is not available.
+**Amendment A (Section 14, design approved 2026-11-12; R0 complete):** Mode 2 is implemented first, through the unchanged Collector 1.0.14 SortView Setup GUI. Where Section 14 is more specific than an earlier section, Section 14 applies to Mode 2. **R1 (authorization and cancellation) is implemented and validated locally only**, on branch `feature/c6a-r1-replacement-authorization`; it is not merged or deployed (14.9). R2–R5 are not implemented. Replacement enrollment stays refused, and machine replacement is not available to customers.
 
-**Implementation status:** Replacement is not implemented, and Mode 1 and Mode 2 are unavailable. Key ownership and the credential safeguards in Section 2 are implemented (milestones M1 and M2), as are a read-only inventory of legacy keys (milestone M3a) and safeguards in the legacy credential scripts (milestone M3b). Only the behavior listed in Section 2 and the code-inspection findings in Section 9 describe the system as it exists today; everything else here is proposed.
+**Implementation status:** Replacement is not available, and Mode 1 and Mode 2 are unavailable. Mode 2 stage R1 exists only on an unmerged branch (14.9). Key ownership and the credential safeguards in Section 2 are implemented (milestones M1 and M2), as are a read-only inventory of legacy keys (milestone M3a) and safeguards in the legacy credential scripts (milestone M3b). Only the behavior listed in Section 2 and the code-inspection findings in Section 9 describe the system as it exists today; everything else here is proposed.
 
 ## 1. Objective
 
@@ -739,7 +739,8 @@ Apart from milestones M1 and M2, no schema migration, endpoint, or production ch
 
 - **Decided by the product owner:** items 14.1(a) and 14.1(b); D1, D2, D3, D4, D7 and D8 (14.10), subject to compatibility with the existing implementation; and the attribution representation in 14.2 and 14.2a. The installation row is the durable authorization record, and `auth_audit_log` records the lifecycle events.
 - **Still open:** D5 and D6, to be decided before R5, and the remaining technical issues at the end of 14.10.
-- **Not implemented:** none of R1–R5 is implemented, and machine replacement is not available. Design approval does not by itself approve a production change. Each stage ships through its own reviewed PR and meets its acceptance criteria in 14.9.
+- **R1:** implemented, and all its acceptance criteria passed in local validation on 2026-11-12. **Not merged or deployed.** Its record is in 14.9.
+- **Not implemented:** R2–R5. Redeeming a replacement code is still refused, and machine replacement is not available. Design approval does not by itself approve a production change. Each stage ships through its own reviewed PR and meets its acceptance criteria in 14.9.
 
 ### 14.1 Scope
 
@@ -785,6 +786,15 @@ Apart from milestones M1 and M2, no schema migration, endpoint, or production ch
 - `collector_replacement_redeemed`: a **system action** (`user_id` NULL). Records `authorized_by_user_id` (copied from the replacement's row), the source and replacement installation IDs, the retired and new key IDs, the enrollment code ID, and the IDs of the tokens deactivated.
 
 Each event commits or rolls back with its change.
+
+**Additional metadata (approved 2026-11-12, R1):** the events also carry these fields. None is a code, token, hash, hostname or key secret.
+
+| Field | Events | Purpose |
+|---|---|---|
+| `target_org_slug`, `actor_user_id` | Both | The standard fields of every installation administration event |
+| `branch_slug` | `admin_replacement_authorized` | The branch the replacement is for |
+| `previous_status` | `admin_replacement_cancelled` | The replacement's status before it was retired |
+| `revoked_code_count` | `admin_replacement_cancelled` | How many unused enrollment codes the cancellation revoked |
 
 **Not chosen:**
 - **Reading the authorizer back from `auth_audit_log` at redemption.** It can only be searched by JSON metadata, it has no protection beyond the role's grants, and it is awaiting a retention policy that could remove the record redemption depends on.
@@ -938,7 +948,7 @@ Each stage is its own PR and deploys independently. No stage adds Mode 1, key ro
 - The migration adds 14.2 and is reversible; existing rows are unchanged.
 - Authorization succeeds only when every check in 14.3 holds. It creates one linked `provisioning` installation with an audit record and changes nothing else. Each refusal has a fixed code and a test.
 - A code can be issued for a linked installation. An unlinked installation on an enrolled branch is still refused with `branch_already_enrolled`.
-- **Redeeming a replacement code is still refused (`cutover_exists`), and the code is not consumed.** This shows R1 cannot enable replacement on its own.
+- **Redeeming a replacement code is still refused with `enrollment_not_ready`, and the code is not consumed.** This shows R1 cannot enable replacement on its own. The internal reason is `active_ingest_key_exists`: the source owns the branch's active key, and that check runs before `cutover_exists`. (Corrected 2026-11-12; the requirement that the code stays unused is unchanged.)
 - Cancel replacement retires the pending replacement with its own audit event, and its code is then refused. The general status change refuses to retire a pending replacement.
 - Source eligibility follows 14.3a. Each of situations 1–4 is tested, including a refused `provisioning` source without the confirmation.
 - Concurrency tests show two authorizations for one branch, an authorization against Cancel replacement, an authorization against offboarding, and the deactivate–authorize–reactivate sequence all leave at most one pending replacement.
@@ -946,6 +956,55 @@ Each stage is its own PR and deploys independently. No stage adds Mode 1, key ro
 - On PostgreSQL, the write-once trigger refuses any update to the three replacement columns, including one made as the runtime role, and allows every other column. The all-or-none CHECK refuses a partial link.
 - `admin_replacement_authorized` and `admin_replacement_cancelled` are written in the same transaction as their change, contain only the fields in 14.2a, and roll back with it.
 - All existing enrollment, installation, recovery and RLS tests pass unchanged.
+
+**R1 status: implemented, and every R1 acceptance criterion above passed in local validation on 2026-11-12. Not merged and not deployed:** branch `feature/c6a-r1-replacement-authorization`. The migration has not been applied to production, and machine replacement is not available.
+
+- **Migration `b8e2d4f61a07`** (after `c1e7a94f2b60`; single head). It adds:
+  - the three columns in 14.2;
+  - `fk_collector_installations_replaces_same_branch` (NO ACTION, no cascade);
+  - `ck_collector_installations_replacement_all_or_none` and `ck_collector_installations_replaces_not_self`;
+  - the trigger `trg_collector_installations_replacement_write_once`.
+
+  Its downgrade removes exactly these.
+- **Endpoints** (platform administrator, admin origin guard):
+  - `POST /api/admin/libraries/{org_slug}/installations/{installation_id}/replacements`: authorize, `201`. Body `name`, `confirm_lost_response` (default `false`).
+  - `POST /api/admin/libraries/{org_slug}/installations/{installation_id}/cancel-replacement`: cancel, `200`.
+- **Service** (`services/admin_installation_service.py`): `authorize_replacement` and `cancel_replacement` take the organization `FOR UPDATE`, then the branch.
+  - `issue_enrollment_code` allows a code for a linked installation only while the source is still eligible.
+  - `change_status` refuses to retire a pending replacement (`use_cancel_replacement`).
+- **Retired is final:** `tenant_service.update_collector_installation` now refuses any change out of `retired`.
+- **Attribution and audit:**
+  - The write-once trigger refuses any change to the three columns, for the runtime role and the owner alike.
+  - `admin_replacement_authorized` and `admin_replacement_cancelled` are written through `log_auth_event_with_connection`, in the change's transaction. They carry only the fields in 14.2a, including the approved additional metadata.
+- **Replacement chains and the tenant purge:** the self-referencing foreign key is compatible with `scripts/purge_tenant_data.py`.
+  - The purge deletes a tenant's installations in one statement.
+  - A NO ACTION key is checked at the end of the statement.
+  - The key includes `branch_id`, so a chain never leaves the tenant.
+  - PostgreSQL tests check this: the purge-order test requires a self-reference to stay NO ACTION and include `branch_id`; a chain A → B → C is purged in full; deleting the middle of a chain is refused.
+- **Replacement enrollment remains disabled until R2:** redemption is unchanged and refuses a replacement code without consuming it.
+- **Final local validation (2026-11-12; local disposable PostgreSQL 18, never production):**
+  - **Full PostgreSQL opt-in suite: 489 passed, 0 failed.** It includes the audit-rollback tests, the migration round trip, the exact redemption refusal, and the tenant-purge replacement-chain tests.
+  - Full Python suite without PostgreSQL: 11,290 passed, 1,024 skipped, 0 failed. This run predates the three PostgreSQL-only tests, which are skipped without a database.
+  - ruff and bandit clean on changed files; `git diff --check` clean.
+- **Deployment order:** apply `b8e2d4f61a07` to production **before** this code goes live.
+  - The admin status change and code issuance read `replaces_installation_id` for every installation, so on an unmigrated database they fail.
+  - The migration is safe under the current code: it only adds, and existing rows stay `NULL`.
+  - Merging to `main` deploys automatically, and the schema compatibility guard (`docs/deployment.md`) is not yet configured, so this order is a manual step.
+- **Redemption refusal:** the test asserts the public `enrollment_not_ready`, the exact internal reason `active_ingest_key_exists`, and an unused code.
+- **Three existing tests were changed (approved as justified):**
+  - **The two route inventories** (`tests/test_admin_api.py`, `tests/test_customer_api_import_seam.py`). They list every admin route on purpose, so that a new route must be added deliberately and is checked for the platform-administrator and admin-origin guards. They gained the two new routes; no existing entry changed.
+  - **The tenant-purge foreign-key test** (`tests/test_tenant_lifecycle_postgres.py`). It assumed every foreign key joins two different tables, purged child first. A self-reference cannot satisfy that.
+    - The test now requires such a key on a purged table to be NO ACTION and to include `branch_id`, the two properties that make a single-statement purge safe.
+    - Every cross-table check is unchanged.
+- **Added for the remaining criteria. Passed on PostgreSQL, 2026-11-12:**
+  - **Audit rollback** (`tests/test_admin_replacement_postgres.py`): a failure is injected after the audit insert, inside the transaction. Two tests, one for authorization and one for cancellation, show:
+    - the event was visible to the transaction;
+    - after the rollback, the event, the installation, its status and its codes are exactly as before.
+  - **Migration round trip** (same module), on its own throwaway database:
+    - upgrade from `c1e7a94f2b60`, then check that the upgrade adds exactly the three columns, three constraints, the trigger and its function, and leaves existing rows unset;
+    - check that each constraint and the trigger is enforced;
+    - downgrade to `c1e7a94f2b60`, then check that every column, constraint, index, trigger, function and row in the public schema matches its state before the upgrade;
+    - upgrade to head again.
 
 **R2 — replacement redemption** (enrollment service). Acceptance:
 - 14.4 and 14.5, tested on SQLite and on PostgreSQL under the runtime role with RLS.

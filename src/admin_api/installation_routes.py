@@ -12,6 +12,10 @@
     GET  /api/admin/libraries/{org_slug}/installations/unbound-tokens                the legacy unbound tokens
     POST /api/admin/libraries/{org_slug}/installations/unbound-tokens/{token_id}/revoke
                                                                                      revoke one of them
+    POST /api/admin/libraries/{org_slug}/installations/{installation_id}/replacements
+                                                                                     authorize replacing it (C6a R1)
+    POST /api/admin/libraries/{org_slug}/installations/{installation_id}/cancel-replacement
+                                                                                     cancel this pending replacement
 
 Included in the admin router (admin_api.router), so every route inherits its platform-administrator check and the
 admin Origin guard on the writes. Every answer is no-store. What each operation may do is
@@ -29,7 +33,22 @@ services.admin_installation_service's.
     a recovery token the installation cannot have          409 installation_not_recoverable
     a token that is not an active unbound one of this
     library                                                404 token_not_found
+    retiring a pending replacement by status               409 use_cancel_replacement
+    a replacement that cannot be authorized                409 replacement_source_retired | replacement_source_not_contract_2 |
+                                                               replacement_source_not_at_primary_branch |
+                                                               replacement_source_not_key_owner |
+                                                               replacement_branch_not_enrolled | unbound_tokens_active |
+                                                               replacement_already_pending |
+                                                               lost_response_confirmation_required |
+                                                               operational_identity_incomplete | no_active_primary_branch |
+                                                               collector_settings_not_ready
+    a code for a replacement whose source is no longer
+    eligible                                               409 the same replacement_* | unbound_tokens_active codes
+    cancelling what is not a pending replacement           409 not_a_pending_replacement
     a value refused                                        422 with the field and why, never the value
+
+A REPLACEMENT IS ONLY AUTHORIZED HERE (C6a R1). Its enrollment code cannot be redeemed until R2: the enrollment refuses it
+with enrollment_not_ready and consumes nothing. No old credential is retired and no replacement machine is activated.
 
 THE RAW ENROLLMENT CODE AND THE RAW RECOVERY TOKEN are each in the 201 answer to the request that issued them and nowhere
 else: they are not logged, audited, stored or shown again.
@@ -45,6 +64,7 @@ from starlette.responses import JSONResponse, Response
 from admin_api.dependencies import require_platform_admin
 from admin_api.installation_schemas import (
     AddInstallationRequest,
+    AuthorizeReplacementRequest,
     EnrollmentCodeResponse,
     Installation,
     InstallationBranch,
@@ -55,6 +75,7 @@ from admin_api.installation_schemas import (
     PrimaryBranchSummary,
     RecoveryTokenResponse,
     RenameInstallationRequest,
+    ReplacementResponse,
     RevokedUnboundToken,
     UnboundToken,
     UnboundTokensResponse,
@@ -92,6 +113,28 @@ _MESSAGES = {
         "A recovery token needs a Provisioning or Active Contract 2 installation that owns its branch's only active ingest key.",
     ),
     "token_not_found": (404, "Unbound token not found."),
+    "use_cancel_replacement": (409, "This installation is a pending replacement. Use Cancel replacement instead."),
+    "replacement_source_retired": (409, "A retired installation cannot be replaced."),
+    "replacement_source_not_contract_2": (409, "Only a Contract 2 installation can be replaced."),
+    "replacement_source_not_at_primary_branch": (
+        409, "Only an installation at the library's active primary branch can be replaced.",
+    ),
+    "replacement_source_not_key_owner": (
+        409, "Only the installation that owns its branch's only active ingest key can be replaced.",
+    ),
+    "replacement_branch_not_enrolled": (409, "This branch has no Contract 2 enrollment to replace."),
+    "unbound_tokens_active": (
+        409, "This branch still has an active legacy unbound token. Revoke it before authorizing a replacement.",
+    ),
+    "replacement_already_pending": (409, "This branch already has a pending replacement. Cancel it first."),
+    "lost_response_confirmation_required": (
+        409,
+        (
+            "This installation is still Provisioning. Confirm that its enrollment response was lost and setup cannot "
+            "resume (try Resume setup and the recovery token first)."
+        ),
+    ),
+    "not_a_pending_replacement": (409, "This installation is not a pending replacement."),
 }
 
 
@@ -245,5 +288,37 @@ def create_installation_router() -> APIRouter:
             raise _refusal(refused) from None
         logger.info("Admin unbound token revoked | org=%s user_id=%s token_id=%s", library.slug, user["id"], token_id)
         return _json(RevokedUnboundToken(id=token_id))
+
+    @router.post("/{installation_id}/replacements")
+    def authorize_replacement(
+        org_slug: str, installation_id: int, user: PlatformAdmin, body: AuthorizeReplacementRequest
+    ) -> Response:
+        library = _library(org_slug)
+        try:
+            name = service.validate_name(body.name)
+        except ValueError as invalid:
+            return _invalid_name(str(invalid))
+        try:
+            authorized = service.authorize_replacement(
+                library, installation_id, name=name, confirm_lost_response=body.confirm_lost_response, actor=user,
+            )
+        except InstallationAdminError as refused:
+            raise _refusal(refused) from None
+        logger.info("Admin replacement authorized | org=%s user_id=%s installation_id=%s replaces_installation_id=%s",
+                    library.slug, user["id"], authorized["installation"]["id"], installation_id)
+        return _json(ReplacementResponse(installation=_installation(authorized["installation"]),
+                                         replaces_installation_id=authorized["replaces_installation_id"]), 201)
+
+    @router.post("/{installation_id}/cancel-replacement")
+    def cancel_replacement(org_slug: str, installation_id: int, user: PlatformAdmin) -> Response:
+        library = _library(org_slug)
+        try:
+            cancelled = service.cancel_replacement(library, installation_id, actor=user)
+        except InstallationAdminError as refused:
+            raise _refusal(refused) from None
+        logger.info("Admin replacement cancelled | org=%s user_id=%s installation_id=%s",
+                    library.slug, user["id"], installation_id)
+        return _json(ReplacementResponse(installation=_installation(cancelled["installation"]),
+                                         replaces_installation_id=cancelled["replaces_installation_id"]))
 
     return router
