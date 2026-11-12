@@ -25,7 +25,22 @@ WHAT AN ADMINISTRATOR MAY DO, AND NOTHING MORE:
                 implementation: it revokes the installation's earlier unused codes, stores only the code's hash,
                 snapshots the contract and returns the raw code ONCE. For a contract-2 installation whose branch
                 already has an active ingest key or any v2 cutover, nothing is written and BranchAlreadyEnrolled is
-                raised: such a code could never be redeemed (replacing a v2 machine is C6).
+                raised: such a code could never be redeemed. The one exception is a PENDING REPLACEMENT (below): it may
+                have a code while its source is still an eligible source. Redeeming that code is still refused until
+                C6a R2, by the enrollment's own "one v2 identity per branch" checks, and consumes nothing.
+    replace     C6a R1 (docs/c6a-replacement-machine-design.md, Amendment A, 14.2-14.5): authorize the replacement of an
+                ENROLLED Contract 2 installation -- the owner of its branch's only active ingest key, provisioning, active or
+                inactive, never retired, at the library's active primary branch, with a v2 cutover and no active legacy
+                unbound token at the branch. A provisioning source also needs the administrator's confirmation that its
+                enrollment response was lost (14.3a). At most one pending replacement per branch. It adds one
+                `provisioning` Contract 2 installation whose write-once columns name the source, the authorizing
+                administrator and the time, and changes nothing else: no token, key, cutover or status.
+    cancel      a pending replacement only, by its own operation and audit event: it is retired and its unused codes
+                revoked. The general status change refuses to retire a pending replacement.
+
+    A PENDING REPLACEMENT is an installation that names the installation it replaces, is not retired, and owns no
+    ingest key, active or retired. Inactive counts: deactivating one, authorizing another and reactivating the first
+    must not leave two.
     recovery    one new bound agent token for a provisioning or active Contract 2 installation that owns its branch's only
                 active key, replacing the installation's earlier tokens, by the enrollment service's issue_recovery_token.
                 The raw token is returned ONCE.
@@ -36,7 +51,9 @@ LOCK ORDER. Offboarding holds the organization, then tokens, installations, code
 its token and then updates the installation. So recovery and revocation take the organization first and tokens before the
 installation. An enrollment holds the organization FOR SHARE before its code row, so they wait for it and then see its token. A
 retirement takes the branch FOR NO KEY UPDATE, against an enrollment's lock on it, and never the organization
-or a token; it does not block an event insert's FOR KEY SHARE.
+or a token; it does not block an event insert's FOR KEY SHARE. Replacement authorization, cancellation and code issuance
+take the organization FOR UPDATE first, then the installation or branch: so they serialize with each other, with
+offboarding and with an enrollment, and a pending replacement can only appear under that lock (14.5).
 
 NOTHING HERE HOLDS OR RETURNS a hostname, a Collector version, a token's hash, a code's hash, a key id or an operational or
 internal organization/branch id. The raw code and the raw recovery token leave only in the return value of the call that
@@ -91,6 +108,21 @@ INSTALLATION_STATUS_CHANGED = "admin_installation_status_changed"
 ENROLLMENT_CODE_ISSUED = "admin_enrollment_code_issued"
 RECOVERY_CREDENTIAL_ISSUED = "admin_recovery_token_issued"
 UNBOUND_CREDENTIAL_REVOKED = "admin_unbound_token_revoked"
+REPLACEMENT_AUTHORIZED = "admin_replacement_authorized"
+REPLACEMENT_CANCELLED = "admin_replacement_cancelled"
+
+# Why a replacement cannot be authorized, a code issued for one, or one cancelled (a fixed code each).
+OPERATIONAL_IDENTITY_INCOMPLETE = "operational_identity_incomplete"
+REPLACEMENT_SOURCE_RETIRED = "replacement_source_retired"
+REPLACEMENT_SOURCE_NOT_CONTRACT_2 = "replacement_source_not_contract_2"
+REPLACEMENT_SOURCE_NOT_AT_PRIMARY_BRANCH = "replacement_source_not_at_primary_branch"
+REPLACEMENT_SOURCE_NOT_KEY_OWNER = "replacement_source_not_key_owner"
+REPLACEMENT_BRANCH_NOT_ENROLLED = "replacement_branch_not_enrolled"
+UNBOUND_TOKENS_ACTIVE = "unbound_tokens_active"
+REPLACEMENT_ALREADY_PENDING = "replacement_already_pending"
+LOST_RESPONSE_CONFIRMATION_REQUIRED = "lost_response_confirmation_required"
+NOT_A_PENDING_REPLACEMENT = "not_a_pending_replacement"
+USE_CANCEL_REPLACEMENT = "use_cancel_replacement"
 
 
 class InstallationAdminError(Exception):
@@ -331,8 +363,18 @@ def rename_installation(library: Library, installation_id: int, *, name: str, ac
 
 
 _CURRENT_STATUS_SQL = """
-    SELECT status FROM collector_installations WHERE id = :installation_id AND organization_id = :organization_id
+    SELECT status, replaces_installation_id
+    FROM collector_installations
+    WHERE id = :installation_id AND organization_id = :organization_id
 """
+
+# Whether the installation owns any ingest key, active or retired: a replacement that owns one has been redeemed and is no
+# longer pending. ingest_key_ids is read under row level security: the caller has set the branch's tenant context.
+_OWNS_ANY_KEY_SQL = "SELECT 1 FROM ingest_key_ids WHERE installation_id = :installation_id LIMIT 1"
+
+
+def _owns_any_key(conn: Any, installation_id: int) -> bool:
+    return conn.execute(text(_OWNS_ANY_KEY_SQL), {"installation_id": installation_id}).first() is not None
 
 # Guarded on the status that was read and allowed, so a concurrent change is refused rather than overwritten. Status
 # alone: installed_at is the heartbeat's to stamp.
@@ -383,18 +425,24 @@ def _refuse_retiring_a_key_owner(conn: Any, library: Library, installation_id: i
 
 def change_status(library: Library, installation_id: int, *, status: str, actor: dict[str, Any]) -> dict[str, Any]:
     """Moves the installation to `status` if TRANSITIONS allows it from its current one; transition_not_allowed if
-    not, or if it changed meanwhile. installation_owns_active_key if `status` is retired and it owns an active key."""
+    not, or if it changed meanwhile. installation_owns_active_key if `status` is retired and it owns an active key.
+    use_cancel_replacement if `status` is retired and it is a pending replacement: that has its own operation and audit
+    event (cancel_replacement)."""
     _refuse_cancelled(library)
     with get_engine().begin() as conn:
-        current = conn.execute(
+        found = conn.execute(
             text(_CURRENT_STATUS_SQL), {"installation_id": installation_id, "organization_id": library.id}
-        ).scalar()
-        if current is None:
+        ).mappings().first()
+        if found is None:
             raise InstallationAdminError("installation_not_found")
+        current = found["status"]
         if not transition_allowed(current, status):
             raise InstallationAdminError("transition_not_allowed")
         if status == "retired":
+            # Takes the branch lock and sets its tenant context, so the key read below is the one a redemption would see.
             _refuse_retiring_a_key_owner(conn, library, installation_id)
+            if found["replaces_installation_id"] is not None and not _owns_any_key(conn, installation_id):
+                raise InstallationAdminError(USE_CANCEL_REPLACEMENT)
         changed = conn.execute(text(_SET_STATUS_SQL), {
             "installation_id": installation_id, "organization_id": library.id,
             "status": status, "previous_status": current,
@@ -420,9 +468,15 @@ def _public_refusal(reason: str) -> str:
 def issue_enrollment_code(library: Library, installation_id: int, *, actor: dict[str, Any]) -> dict[str, Any]:
     """A one-time enrollment code for the installation, by the enrollment service's own create_enrollment_code. The
     raw code is in the return value and nowhere else. Every check -- the installation is this library's, enrollable,
-    of a usable tenant, and (contract 2) its branch is not already enrolled -- is made before anything is written."""
+    of a usable tenant, and (contract 2) its branch is not already enrolled -- is made before anything is written.
+
+    A pending replacement (C6a R1) is the one Contract 2 installation that may have a code on an enrolled branch, and
+    only while its source is still an eligible source (_require_eligible_source, under the same locks as authorization).
+    Redeeming that code stays refused until R2."""
     _refuse_cancelled(library)
     with get_engine().begin() as conn:
+        # The organization first, as authorization and cancellation take it, so neither can interleave with this.
+        _lock_library(conn, library)
         try:
             scope = collector_enrollment_service.resolve_installation_scope(
                 conn, installation_id, lock=True, expected_organization_id=library.id
@@ -433,7 +487,12 @@ def issue_enrollment_code(library: Library, installation_id: int, *, actor: dict
         if scope.required_contract == collector_enrollment_service.CONTRACT_V2:
             # ingest_key_ids is read under row level security: the branch's own tenant, as the enrollment reads it.
             collector_enrollment_service._set_tenant_context(conn, scope)
-            if has_active_ingest_key(conn, scope.customer_id, scope.operational_branch_id) or has_any_v2_cutover(
+            replaces = conn.execute(
+                text(_CURRENT_STATUS_SQL), {"installation_id": installation_id, "organization_id": library.id}
+            ).mappings().one()["replaces_installation_id"]
+            if replaces is not None and not _owns_any_key(conn, installation_id):
+                _require_eligible_source(conn, library, int(replaces))
+            elif has_active_ingest_key(conn, scope.customer_id, scope.operational_branch_id) or has_any_v2_cutover(
                 conn, scope.customer_id, scope.operational_branch_id
             ):
                 raise InstallationAdminError("branch_already_enrolled")
@@ -549,3 +608,195 @@ def revoke_unbound_token(library: Library, token_id: int, *, actor: dict[str, An
         if revoked is None:
             raise InstallationAdminError("token_not_found")
         _audit(conn, UNBOUND_CREDENTIAL_REVOKED, "Legacy unbound agent token revoked.", library, actor, token_id=token_id)
+
+
+# --- machine replacement: authorization and cancellation (C6a R1) ------------------------------------------------------
+#
+# docs/c6a-replacement-machine-design.md, Amendment A (14.2-14.5, 14.9). Nothing here redeems a replacement, retires a
+# credential, a key or a source, or writes a cutover: that is R2. The replacement installation's row is the durable
+# authorization record (its write-once columns); auth_audit_log records each action in the same transaction.
+
+# The installation with what the replacement rules need: its tenant mapping comes with it, so nothing is read twice.
+_REPLACEMENT_SUBJECT_SQL = """
+    SELECT
+        ci.id, ci.status, ci.required_contract, ci.branch_id, ci.replaces_installation_id,
+        b.operational_branch_id, o.operational_customer_id
+    FROM collector_installations ci
+    JOIN organizations o
+      ON o.id = ci.organization_id
+    JOIN branches b
+      ON b.id = ci.branch_id
+    WHERE ci.id = :installation_id
+      AND ci.organization_id = :organization_id
+"""
+
+# A legacy unbound token at the branch could upload under the branch's key whatever an installation's status (14.3, D4).
+_ACTIVE_UNBOUND_AT_BRANCH_SQL = """
+    SELECT 1
+    FROM agent_tokens
+    WHERE installation_id IS NULL
+      AND is_active = TRUE
+      AND customer_id = :customer_id
+      AND branch_id = :operational_branch_id
+    LIMIT 1
+"""
+
+# A pending replacement at the branch (14.5): names a source, is not retired, owns no key. ingest_key_ids under row level
+# security: the caller has set the branch's tenant context.
+_PENDING_REPLACEMENT_AT_BRANCH_SQL = """
+    SELECT ci.id
+    FROM collector_installations ci
+    WHERE ci.branch_id = :branch_id
+      AND ci.replaces_installation_id IS NOT NULL
+      AND ci.status <> 'retired'
+      AND NOT EXISTS (SELECT 1 FROM ingest_key_ids k WHERE k.installation_id = ci.id)
+    LIMIT 1
+"""
+
+# The only statement that writes the replacement columns (the general create path never names them). The trigger of
+# migration b8e2d4f61a07 keeps them as written.
+_INSERT_REPLACEMENT_SQL = """
+    INSERT INTO collector_installations
+        (organization_id, branch_id, name, status, required_contract,
+         replaces_installation_id, replacement_authorized_by_user_id, replacement_authorized_at)
+    VALUES
+        (:organization_id, :branch_id, :name, 'provisioning', :required_contract,
+         :replaces_installation_id, :authorized_by_user_id, CURRENT_TIMESTAMP)
+    RETURNING id
+"""
+
+_CANCEL_REPLACEMENT_SQL = """
+    UPDATE collector_installations
+    SET status = 'retired',
+        updated_at = NOW()
+    WHERE id = :installation_id
+      AND organization_id = :organization_id
+      AND status = :previous_status
+    RETURNING id
+"""
+
+_REVOKE_UNUSED_CODES_SQL = """
+    UPDATE collector_enrollment_codes
+    SET revoked_at = CURRENT_TIMESTAMP
+    WHERE installation_id = :installation_id
+      AND used_at IS NULL
+      AND revoked_at IS NULL
+    RETURNING id
+"""
+
+
+def _replacement_subject(conn: Any, library: Library, installation_id: int) -> Any:
+    found = conn.execute(
+        text(_REPLACEMENT_SUBJECT_SQL), {"installation_id": installation_id, "organization_id": library.id}
+    ).mappings().first()
+    if found is None:
+        raise InstallationAdminError("installation_not_found")
+    return found
+
+
+def _lock_branch_for_tenant(conn: Any, subject: Any) -> bool:
+    """The subject's branch FOR NO KEY UPDATE (as a retirement takes it, against an enrollment's FOR UPDATE), then its
+    tenant context for ingest_key_ids' row level security. False if the tenant is not fully mapped: it has no key then."""
+    if collector_enrollment_service.is_postgresql(conn):
+        conn.execute(text(_LOCK_BRANCH_SQL), {"branch_id": subject["branch_id"]})
+    if subject["operational_customer_id"] is None or subject["operational_branch_id"] is None:
+        return False
+    collector_enrollment_service.set_tenant_context(
+        conn, int(subject["operational_customer_id"]), int(subject["operational_branch_id"])
+    )
+    return True
+
+
+def _require_eligible_source(conn: Any, library: Library, source_id: int) -> tuple[Any, PrimaryBranch]:
+    """The source and the primary branch, if `source_id` may be replaced now (14.3 checks 1-5, 14.3a): this library's,
+    Contract 2, not retired, at the library's active primary branch, the owner of the branch's ONLY active key, the
+    branch enrolled (a v2 cutover) and no active legacy unbound token at it. A fixed refusal code otherwise. Takes the
+    branch lock and leaves the branch's tenant context set. The caller holds the organization FOR UPDATE."""
+    source = _replacement_subject(conn, library, source_id)
+    if source["status"] == "retired":
+        raise InstallationAdminError(REPLACEMENT_SOURCE_RETIRED)
+    if int(source["required_contract"]) != tenant_service.COLLECTOR_CONTRACT_V2:
+        raise InstallationAdminError(REPLACEMENT_SOURCE_NOT_CONTRACT_2)
+    primary = _primary_branch(conn, library.id)
+    if primary is None or primary.status != "active":
+        raise InstallationAdminError(NO_ACTIVE_PRIMARY_BRANCH)
+    if int(source["branch_id"]) != primary.id:
+        raise InstallationAdminError(REPLACEMENT_SOURCE_NOT_AT_PRIMARY_BRANCH)
+    if not _lock_branch_for_tenant(conn, source):
+        raise InstallationAdminError(OPERATIONAL_IDENTITY_INCOMPLETE)
+    customer_id, operational_branch_id = int(source["operational_customer_id"]), int(source["operational_branch_id"])
+    # Key ownership, not status, decides (14.3a): no key, a key with no owner, two active keys or another owner all refuse.
+    if active_ingest_key_owners(conn, customer_id, operational_branch_id) != [source_id]:
+        raise InstallationAdminError(REPLACEMENT_SOURCE_NOT_KEY_OWNER)
+    if not has_any_v2_cutover(conn, customer_id, operational_branch_id):
+        raise InstallationAdminError(REPLACEMENT_BRANCH_NOT_ENROLLED)
+    if conn.execute(
+        text(_ACTIVE_UNBOUND_AT_BRANCH_SQL),
+        {"customer_id": customer_id, "operational_branch_id": operational_branch_id},
+    ).first() is not None:
+        raise InstallationAdminError(UNBOUND_TOKENS_ACTIVE)
+    return source, primary
+
+
+def authorize_replacement(
+    library: Library, source_installation_id: int, *, name: str, confirm_lost_response: bool, actor: dict[str, Any]
+) -> dict[str, Any]:
+    """Authorizes the replacement of `source_installation_id` (14.3): one new `provisioning` Contract 2 installation at the
+    source's branch, naming the source, the authorizing administrator and the time in its write-once columns, audited in
+    the same transaction. Nothing else changes: the source keeps running, with its tokens, key, status and cutover.
+
+    `confirm_lost_response` must be True for a `provisioning` source (14.3a): the administrator confirms its enrollment
+    response was lost and setup cannot resume. Returns {"installation", "replaces_installation_id"}."""
+    name = validate_name(name)
+    _refuse_cancelled(library)
+    if not v2_settings_ready(library):
+        raise InstallationAdminError(COLLECTOR_SETTINGS_NOT_READY)
+    with get_engine().begin() as conn:
+        _lock_library(conn, library)
+        source, primary = _require_eligible_source(conn, library, source_installation_id)
+        if conn.execute(text(_PENDING_REPLACEMENT_AT_BRANCH_SQL), {"branch_id": primary.id}).first() is not None:
+            raise InstallationAdminError(REPLACEMENT_ALREADY_PENDING)
+        provisioning_source = source["status"] == "provisioning"
+        if provisioning_source and confirm_lost_response is not True:
+            raise InstallationAdminError(LOST_RESPONSE_CONFIRMATION_REQUIRED)
+
+        installation_id = int(conn.execute(text(_INSERT_REPLACEMENT_SQL), {
+            "organization_id": library.id, "branch_id": primary.id, "name": name,
+            "required_contract": tenant_service.COLLECTOR_CONTRACT_V2,
+            "replaces_installation_id": source_installation_id, "authorized_by_user_id": int(actor["id"]),
+        }).scalar_one())
+        details: dict[str, Any] = {
+            "installation_id": installation_id, "replaces_installation_id": source_installation_id,
+            "source_status": source["status"], "branch_slug": primary.slug,
+        }
+        if provisioning_source:
+            details["lost_response_confirmed"] = True
+        _audit(conn, REPLACEMENT_AUTHORIZED, "Collector replacement authorized.", library, actor, **details)
+        return {"installation": _one(conn, library, installation_id), "replaces_installation_id": source_installation_id}
+
+
+def cancel_replacement(library: Library, installation_id: int, *, actor: dict[str, Any]) -> dict[str, Any]:
+    """Cancels a pending replacement (14.3, D7): it is retired, its unused enrollment codes revoked, and the cancellation
+    audited in the same transaction. The source is untouched. not_a_pending_replacement for any other installation,
+    including a replacement already redeemed. Returns {"installation", "replaces_installation_id"}."""
+    _refuse_cancelled(library)
+    with get_engine().begin() as conn:
+        _lock_library(conn, library)
+        subject = _replacement_subject(conn, library, installation_id)
+        if subject["replaces_installation_id"] is None or subject["status"] == "retired":
+            raise InstallationAdminError(NOT_A_PENDING_REPLACEMENT)
+        _lock_branch_for_tenant(conn, subject)
+        if _owns_any_key(conn, installation_id):
+            raise InstallationAdminError(NOT_A_PENDING_REPLACEMENT)
+
+        cancelled = conn.execute(text(_CANCEL_REPLACEMENT_SQL), {
+            "installation_id": installation_id, "organization_id": library.id, "previous_status": subject["status"],
+        }).first()
+        if cancelled is None:
+            raise InstallationAdminError("transition_not_allowed")  # changed meanwhile
+        revoked = len(conn.execute(text(_REVOKE_UNUSED_CODES_SQL), {"installation_id": installation_id}).fetchall())
+        replaces = int(subject["replaces_installation_id"])
+        _audit(conn, REPLACEMENT_CANCELLED, "Collector replacement cancelled.", library, actor,
+               installation_id=installation_id, replaces_installation_id=replaces,
+               previous_status=subject["status"], revoked_code_count=revoked)
+        return {"installation": _one(conn, library, installation_id), "replaces_installation_id": replaces}

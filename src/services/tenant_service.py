@@ -664,6 +664,12 @@ def update_collector_installation(
     An installation of a cancelled (permanently offboarded) organization is
     never updated: the guard is part of the UPDATE itself, so it cannot be
     raced, and such an installation is reported like one that was not found.
+
+    RETIRED IS FINAL HERE TOO (C6a, docs/c6a-replacement-machine-design.md
+    section 14.2): a retired installation keeps the status 'retired'. Asking
+    for any other status is refused, in the UPDATE itself, and reported like
+    an installation that was not found -- so this path can never revive a
+    replaced source or a cancelled replacement.
     """
     name = _validate_installation_fields(name, status)
 
@@ -680,6 +686,7 @@ def update_collector_installation(
             updated_at = NOW()
         WHERE id = :installation_id
           AND organization_id = :organization_id
+          AND (status <> 'retired' OR :status = 'retired')
           AND NOT EXISTS (
               SELECT 1
               FROM organizations o
@@ -708,7 +715,7 @@ def update_collector_installation(
     if not row:
         raise RuntimeError(
             f"Collector installation {installation_id} not found for organization {organization_id}"
-            " (or the organization is cancelled)"
+            " (or the organization is cancelled, or a retired installation was asked to change status)"
         )
     return dict(row)
 

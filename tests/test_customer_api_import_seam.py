@@ -165,6 +165,9 @@ ADMIN_ROUTES = {
     ("POST", "/api/admin/libraries/{org_slug}/installations/{installation_id}/recovery-token"),
     ("GET", "/api/admin/libraries/{org_slug}/installations/unbound-tokens"),
     ("POST", "/api/admin/libraries/{org_slug}/installations/unbound-tokens/{token_id}/revoke"),
+    # C6a R1: machine replacement authorization and cancellation.
+    ("POST", "/api/admin/libraries/{org_slug}/installations/{installation_id}/replacements"),
+    ("POST", "/api/admin/libraries/{org_slug}/installations/{installation_id}/cancel-replacement"),
     # A2 item 6.
     ("POST", "/api/admin/libraries/{org_slug}/lifecycle/suspend"),
     ("POST", "/api/admin/libraries/{org_slug}/lifecycle/reactivate"),

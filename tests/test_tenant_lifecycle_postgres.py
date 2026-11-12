@@ -29,6 +29,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError
 
 from scripts import runtime_role_privileges as privileges
 from src.services import data_lifecycle_policy as policy
@@ -280,7 +281,9 @@ def test_every_table_in_the_migrated_schema_is_classified_by_the_lifecycle_polic
 def test_the_purge_order_satisfies_every_real_foreign_key_and_nothing_retained_hangs_off_a_purged_table(owner):
     with owner.connect() as conn:
         foreign_keys = conn.execute(text("""
-            SELECT child.relname, parent.relname
+            SELECT child.relname, parent.relname, c.conname, c.confdeltype,
+                   ARRAY(SELECT a.attname FROM unnest(c.conkey) AS k(attnum)
+                         JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) AS columns
             FROM pg_constraint c
             JOIN pg_class child ON child.oid = c.conrelid
             JOIN pg_class parent ON parent.oid = c.confrelid
@@ -290,7 +293,18 @@ def test_the_purge_order_satisfies_every_real_foreign_key_and_nothing_retained_h
     order = {entry.table: entry.purge_order for entry in policy.purge_plan()}
 
     assert len(foreign_keys) >= 20
-    for child, parent in foreign_keys:
+    for child, parent, name, on_delete, columns in foreign_keys:
+        if child == parent:
+            # A SELF-REFERENCE (C6a R1: collector_installations.replaces_installation_id) cannot be ordered "child first":
+            # it is the same table. It is safe only because the purge deletes a table's tenant rows in ONE statement
+            # and a NO ACTION key is checked at the END of that statement -- so the key must be NO ACTION (not RESTRICT,
+            # checked row by row; not CASCADE or SET NULL, which would act silently), and must include branch_id, so a
+            # row can only reference a row of its own tenant, deleted by the same statement. The purge of a real chain
+            # is proved by test_the_purge_removes_a_replacement_chain_in_one_statement.
+            if parent in order:
+                assert on_delete == "a", f"{name}: a self-referencing key on a purged table must be NO ACTION"
+                assert "branch_id" in columns, f"{name}: a self-reference must stay within the row's own branch"
+            continue
         if parent in order:
             # A purged parent's children must be purged too, and first -- otherwise the DELETE fails or cascades silently.
             assert child in order, f"{child} references purged table {parent} but is retained"
@@ -471,6 +485,53 @@ def test_the_cutoff_retires_an_owned_key_and_keeps_its_owner_and_the_purge_then_
     # The other tenant's key and installation are untouched.
     assert _scalar(seeded, "SELECT COUNT(*) FROM ingest_key_ids WHERE customer_id = :c", c=CUSTOMER_B) == 1
     assert _scalar(seeded, "SELECT COUNT(*) FROM collector_installations WHERE organization_id = :o", o=ORG_B) == 1
+
+
+def test_the_purge_removes_a_replacement_chain_in_one_statement(seeded, runtime, tool, pg_url, monkeypatch):
+    # C6a R1: installation 101 was replaced by 102, and 102 by 103 (A -> B -> C), at branch 1. The chain's links are a
+    # self-referencing foreign key, so the purge's single DELETE of the tenant's installations must remove all three at
+    # once. 103 owns the branch's key, as the last redeemed replacement would; 101 and 102 are retired.
+    chain = "SELECT id, replaces_installation_id FROM collector_installations WHERE organization_id = :o ORDER BY id"
+    with seeded.begin() as conn:
+        for installation, replaces in ((102, 101), (103, 102)):
+            conn.execute(text(
+                "INSERT INTO collector_installations (id, organization_id, branch_id, name, status, required_contract, "
+                "replaces_installation_id, replacement_authorized_by_user_id, replacement_authorized_at) "
+                "VALUES (:i, :o, 1, 'Replacement', 'active', 2, :r, 1, now())"
+            ), {"i": installation, "o": ORG_A, "r": replaces})
+        conn.execute(text("UPDATE collector_installations SET status = 'retired' WHERE id IN (101, 102)"))
+        conn.execute(text("UPDATE ingest_key_ids SET installation_id = 103 WHERE branch_id = 1"))
+    with seeded.connect() as conn:
+        assert [tuple(row) for row in conn.execute(text(chain), {"o": ORG_A})] == [(101, None), (102, 101), (103, 102)]
+
+    _offboard(monkeypatch, runtime)
+    code, out = _purge_cli(tool, pg_url, *_execute_args())
+
+    assert code == 0 and "LIVE DATABASE PURGE COMPLETE" in out, out
+    assert _scalar(seeded, "SELECT COUNT(*) FROM collector_installations WHERE organization_id = :o", o=ORG_A) == 0
+    assert _scalar(seeded, "SELECT COUNT(*) FROM ingest_key_ids WHERE customer_id = :c", c=CUSTOMER_A) == 0
+    assert _scalar(seeded, "SELECT COUNT(*) FROM collector_installations WHERE replaces_installation_id IS NOT NULL") == 0
+    # The other tenant is untouched, and the purge's own evidence is kept.
+    assert _scalar(seeded, "SELECT COUNT(*) FROM collector_installations WHERE organization_id = :o", o=ORG_B) == 1
+    assert _scalar(seeded, "SELECT COUNT(*) FROM tenant_lifecycle_events WHERE organization_id = :o "
+                           "AND event_type = 'purge_executed'", o=ORG_A) == 1
+
+
+def test_a_replacement_chain_cannot_be_deleted_from_the_middle(seeded):
+    # The converse: the key is real. Deleting B alone, while C still names it, is refused -- so only a statement that
+    # takes the whole chain at once, as the purge's does, can remove it.
+    with seeded.begin() as conn:
+        for installation, replaces in ((102, 101), (103, 102)):
+            conn.execute(text(
+                "INSERT INTO collector_installations (id, organization_id, branch_id, name, status, required_contract, "
+                "replaces_installation_id, replacement_authorized_by_user_id, replacement_authorized_at) "
+                "VALUES (:i, :o, 1, 'Replacement', 'retired', 2, :r, 1, now())"
+            ), {"i": installation, "o": ORG_A, "r": replaces})
+
+    with pytest.raises(DBAPIError, match="fk_collector_installations_replaces_same_branch"), seeded.begin() as conn:
+        conn.execute(text("DELETE FROM collector_installations WHERE id = 102"))
+
+    assert _scalar(seeded, "SELECT COUNT(*) FROM collector_installations WHERE organization_id = :o", o=ORG_A) == 3
 
 
 def test_a_cancelled_tenant_cannot_be_re_provisioned_on_the_real_schema(seeded, monkeypatch):

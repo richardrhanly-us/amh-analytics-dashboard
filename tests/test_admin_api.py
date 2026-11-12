@@ -221,6 +221,9 @@ def test_every_admin_route_requires_a_platform_admin_and_the_admin_origin_guard(
         ("POST", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/installations/{{installation_id}}/recovery-token"),
         ("GET", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/installations/unbound-tokens"),
         ("POST", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/installations/unbound-tokens/{{token_id}}/revoke"),
+        # C6a R1: machine replacement authorization and cancellation (admin_api.installation_routes).
+        ("POST", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/installations/{{installation_id}}/replacements"),
+        ("POST", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/installations/{{installation_id}}/cancel-replacement"),
         # A2 item 6: a library's lifecycle (admin_api.lifecycle_routes) -- explicit actions, no generic status write.
         ("POST", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/lifecycle/suspend"),
         ("POST", f"{ADMIN_API_PREFIX}/libraries/{{org_slug}}/lifecycle/reactivate"),
