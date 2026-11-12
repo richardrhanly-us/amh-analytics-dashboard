@@ -3,7 +3,7 @@
 The big picture, kept in one place so a single task does not swallow the plan. Read this before starting any
 non-trivial task, and check the task against it before widening scope.
 
-Last reviewed: 2026-10-28. Facts marked **(verify)** were not confirmed against production or the person who
+Last reviewed: 2026-11-12 (G2 qualification entries only; the rest as of 2026-10-28). Facts marked **(verify)** were not confirmed against production or the person who
 knows; everything else was checked in the repository on that date.
 
 ---
@@ -478,6 +478,17 @@ planning come first and decide which C milestones they cover. Nothing below is r
   happened only **after the trigger was edited** (following a VM time-zone correction); why the original trigger
   missed its runs is not established. Tech Logic files were empty placeholders, so ingesting realistic events through
   G2 is not validated. Recorded in `docs/releases/collector-1.0.14.md`, *G2 validation*.
+- **G2 fresh installation and end-to-end ingestion passed 2026-11-12** on a clean Windows 10 LTSC 2019 VM snapshot,
+  same package (`6f91da7d…`), library `sortview-g2-qualification-2`, installation `9` (Contract v2, left active): all
+  seven stages, exit code `0`; heartbeat healthy, onboarding Ready, pipeline OK. The first automatic run after
+  installation (10:43:43 AM CST) and the later runs at 10:58 and 11:13 AM all came from the **original, unedited
+  trigger**, each with exit code `0`. This does not explain why installation `8`'s trigger missed its runs on
+  2026-10-29; that cause is still unknown.
+  PostgreSQL holds 13 events for installation `9`: ACS 5 hold, 1 non-hold 101, 1 other code-10; 4 check-ins; 2
+  rejects. 0 quarantined, 0 pending, 0 server-reported duplicates. Two of those check-in/reject events come from a
+  **test-harness error** (a PowerShell fixture that left out the ACS `0x02` separators), not a Collector or installer
+  defect. Resume, upgrade, repair, uninstall and accessibility were not part of this test. Recorded in
+  `docs/releases/collector-1.0.14.md`, *G2 validation: fresh installation and end-to-end ingestion*.
 - **G2 ZIP and canonical 1.0.14 bundle: recovered and stored (2026-10-28).** Both originals were found on
   `DESKTOP-DORG9IO` under `C:\SortView\ReleaseBuilds\`, matched their recorded SHA-256, passed the secrets and
   library-data inspection, and are stored in `sortview-artifacts` at commit
@@ -804,6 +815,10 @@ deployment, not a fresh install. What remains unverified above must not be assum
 ---
 
 ## 5. Done recently (newest first)
+
+- 2026-11-12 — G2 fresh installation and end-to-end ingestion passed on a clean VM (installation `9`, library
+  `sortview-g2-qualification-2`, left active); PostgreSQL holds 13 events, including 2 from a corrected test-harness
+  error. Recorded in `docs/releases/collector-1.0.14.md` (section 4, C).
 
 - 2026-10-29 — G2 exact-package GUI installation passed on a VM (installation `8`, deactivated afterwards); automatic
   task run passed only after a trigger edit. Recorded in `docs/releases/collector-1.0.14.md` (section 4, C).
