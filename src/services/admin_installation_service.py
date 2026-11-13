@@ -26,8 +26,8 @@ WHAT AN ADMINISTRATOR MAY DO, AND NOTHING MORE:
                 snapshots the contract and returns the raw code ONCE. For a contract-2 installation whose branch
                 already has an active ingest key or any v2 cutover, nothing is written and BranchAlreadyEnrolled is
                 raised: such a code could never be redeemed. The one exception is a PENDING REPLACEMENT (below): it may
-                have a code while its source is still an eligible source. Redeeming that code is still refused until
-                C6a R2, by the enrollment's own "one v2 identity per branch" checks, and consumes nothing.
+                have a code while its source is still an eligible source. Redeeming that code is the replacement
+                itself (C6a R2, collector_enrollment_service._redeem_replacement).
     replace     C6a R1 (docs/c6a-replacement-machine-design.md, Amendment A, 14.2-14.5): authorize the replacement of an
                 ENROLLED Contract 2 installation -- the owner of its branch's only active ingest key, provisioning, active or
                 inactive, never retired, at the library's active primary branch, with a v2 cutover and no active legacy
@@ -76,6 +76,7 @@ from . import (
     auth_service,
     collector_enrollment_service,
     collector_rules,
+    replacement_eligibility,
     tenant_service,
 )
 from .collector_enrollment_service import EnrollmentError
@@ -99,7 +100,7 @@ INSTALLATION_OWNS_ACTIVE_KEY = "installation_owns_active_key"
 
 # What stops an installation being added (a fixed code each).
 LIBRARY_CANCELLED = "library_cancelled"
-NO_ACTIVE_PRIMARY_BRANCH = "no_active_primary_branch"
+NO_ACTIVE_PRIMARY_BRANCH = replacement_eligibility.NO_ACTIVE_PRIMARY_BRANCH
 COLLECTOR_SETTINGS_NOT_READY = "collector_settings_not_ready"
 
 INSTALLATION_CREATED = "admin_installation_created"
@@ -111,14 +112,15 @@ UNBOUND_CREDENTIAL_REVOKED = "admin_unbound_token_revoked"
 REPLACEMENT_AUTHORIZED = "admin_replacement_authorized"
 REPLACEMENT_CANCELLED = "admin_replacement_cancelled"
 
-# Why a replacement cannot be authorized, a code issued for one, or one cancelled (a fixed code each).
-OPERATIONAL_IDENTITY_INCOMPLETE = "operational_identity_incomplete"
-REPLACEMENT_SOURCE_RETIRED = "replacement_source_retired"
-REPLACEMENT_SOURCE_NOT_CONTRACT_2 = "replacement_source_not_contract_2"
-REPLACEMENT_SOURCE_NOT_AT_PRIMARY_BRANCH = "replacement_source_not_at_primary_branch"
-REPLACEMENT_SOURCE_NOT_KEY_OWNER = "replacement_source_not_key_owner"
-REPLACEMENT_BRANCH_NOT_ENROLLED = "replacement_branch_not_enrolled"
-UNBOUND_TOKENS_ACTIVE = "unbound_tokens_active"
+# Why a replacement cannot be authorized, a code issued for one, or one cancelled (a fixed code each). The source rules
+# are shared with redemption (services.replacement_eligibility); their codes are the same values.
+OPERATIONAL_IDENTITY_INCOMPLETE = replacement_eligibility.OPERATIONAL_IDENTITY_INCOMPLETE
+REPLACEMENT_SOURCE_RETIRED = replacement_eligibility.REPLACEMENT_SOURCE_RETIRED
+REPLACEMENT_SOURCE_NOT_CONTRACT_2 = replacement_eligibility.REPLACEMENT_SOURCE_NOT_CONTRACT_2
+REPLACEMENT_SOURCE_NOT_AT_PRIMARY_BRANCH = replacement_eligibility.REPLACEMENT_SOURCE_NOT_AT_PRIMARY_BRANCH
+REPLACEMENT_SOURCE_NOT_KEY_OWNER = replacement_eligibility.REPLACEMENT_SOURCE_NOT_KEY_OWNER
+REPLACEMENT_BRANCH_NOT_ENROLLED = replacement_eligibility.REPLACEMENT_BRANCH_NOT_ENROLLED
+UNBOUND_TOKENS_ACTIVE = replacement_eligibility.UNBOUND_TOKENS_ACTIVE
 REPLACEMENT_ALREADY_PENDING = "replacement_already_pending"
 LOST_RESPONSE_CONFIRMATION_REQUIRED = "lost_response_confirmation_required"
 NOT_A_PENDING_REPLACEMENT = "not_a_pending_replacement"
@@ -616,43 +618,6 @@ def revoke_unbound_token(library: Library, token_id: int, *, actor: dict[str, An
 # credential, a key or a source, or writes a cutover: that is R2. The replacement installation's row is the durable
 # authorization record (its write-once columns); auth_audit_log records each action in the same transaction.
 
-# The installation with what the replacement rules need: its tenant mapping comes with it, so nothing is read twice.
-_REPLACEMENT_SUBJECT_SQL = """
-    SELECT
-        ci.id, ci.status, ci.required_contract, ci.branch_id, ci.replaces_installation_id,
-        b.operational_branch_id, o.operational_customer_id
-    FROM collector_installations ci
-    JOIN organizations o
-      ON o.id = ci.organization_id
-    JOIN branches b
-      ON b.id = ci.branch_id
-    WHERE ci.id = :installation_id
-      AND ci.organization_id = :organization_id
-"""
-
-# A legacy unbound token at the branch could upload under the branch's key whatever an installation's status (14.3, D4).
-_ACTIVE_UNBOUND_AT_BRANCH_SQL = """
-    SELECT 1
-    FROM agent_tokens
-    WHERE installation_id IS NULL
-      AND is_active = TRUE
-      AND customer_id = :customer_id
-      AND branch_id = :operational_branch_id
-    LIMIT 1
-"""
-
-# A pending replacement at the branch (14.5): names a source, is not retired, owns no key. ingest_key_ids under row level
-# security: the caller has set the branch's tenant context.
-_PENDING_REPLACEMENT_AT_BRANCH_SQL = """
-    SELECT ci.id
-    FROM collector_installations ci
-    WHERE ci.branch_id = :branch_id
-      AND ci.replaces_installation_id IS NOT NULL
-      AND ci.status <> 'retired'
-      AND NOT EXISTS (SELECT 1 FROM ingest_key_ids k WHERE k.installation_id = ci.id)
-    LIMIT 1
-"""
-
 # The only statement that writes the replacement columns (the general create path never names them). The trigger of
 # migration b8e2d4f61a07 keeps them as written.
 _INSERT_REPLACEMENT_SQL = """
@@ -686,56 +651,24 @@ _REVOKE_UNUSED_CODES_SQL = """
 
 
 def _replacement_subject(conn: Any, library: Library, installation_id: int) -> Any:
-    found = conn.execute(
-        text(_REPLACEMENT_SUBJECT_SQL), {"installation_id": installation_id, "organization_id": library.id}
-    ).mappings().first()
+    found = replacement_eligibility.replacement_subject(conn, library.id, installation_id)
     if found is None:
         raise InstallationAdminError("installation_not_found")
     return found
 
 
-def _lock_branch_for_tenant(conn: Any, subject: Any) -> bool:
-    """The subject's branch FOR NO KEY UPDATE (as a retirement takes it, against an enrollment's FOR UPDATE), then its
-    tenant context for ingest_key_ids' row level security. False if the tenant is not fully mapped: it has no key then."""
-    if collector_enrollment_service.is_postgresql(conn):
-        conn.execute(text(_LOCK_BRANCH_SQL), {"branch_id": subject["branch_id"]})
-    if subject["operational_customer_id"] is None or subject["operational_branch_id"] is None:
-        return False
-    collector_enrollment_service.set_tenant_context(
-        conn, int(subject["operational_customer_id"]), int(subject["operational_branch_id"])
-    )
-    return True
+_lock_branch_for_tenant = replacement_eligibility.lock_branch_for_tenant
 
 
-def _require_eligible_source(conn: Any, library: Library, source_id: int) -> tuple[Any, PrimaryBranch]:
-    """The source and the primary branch, if `source_id` may be replaced now (14.3 checks 1-5, 14.3a): this library's,
-    Contract 2, not retired, at the library's active primary branch, the owner of the branch's ONLY active key, the
-    branch enrolled (a v2 cutover) and no active legacy unbound token at it. A fixed refusal code otherwise. Takes the
-    branch lock and leaves the branch's tenant context set. The caller holds the organization FOR UPDATE."""
-    source = _replacement_subject(conn, library, source_id)
-    if source["status"] == "retired":
-        raise InstallationAdminError(REPLACEMENT_SOURCE_RETIRED)
-    if int(source["required_contract"]) != tenant_service.COLLECTOR_CONTRACT_V2:
-        raise InstallationAdminError(REPLACEMENT_SOURCE_NOT_CONTRACT_2)
-    primary = _primary_branch(conn, library.id)
-    if primary is None or primary.status != "active":
-        raise InstallationAdminError(NO_ACTIVE_PRIMARY_BRANCH)
-    if int(source["branch_id"]) != primary.id:
-        raise InstallationAdminError(REPLACEMENT_SOURCE_NOT_AT_PRIMARY_BRANCH)
-    if not _lock_branch_for_tenant(conn, source):
-        raise InstallationAdminError(OPERATIONAL_IDENTITY_INCOMPLETE)
-    customer_id, operational_branch_id = int(source["operational_customer_id"]), int(source["operational_branch_id"])
-    # Key ownership, not status, decides (14.3a): no key, a key with no owner, two active keys or another owner all refuse.
-    if active_ingest_key_owners(conn, customer_id, operational_branch_id) != [source_id]:
-        raise InstallationAdminError(REPLACEMENT_SOURCE_NOT_KEY_OWNER)
-    if not has_any_v2_cutover(conn, customer_id, operational_branch_id):
-        raise InstallationAdminError(REPLACEMENT_BRANCH_NOT_ENROLLED)
-    if conn.execute(
-        text(_ACTIVE_UNBOUND_AT_BRANCH_SQL),
-        {"customer_id": customer_id, "operational_branch_id": operational_branch_id},
-    ).first() is not None:
-        raise InstallationAdminError(UNBOUND_TOKENS_ACTIVE)
-    return source, primary
+def _require_eligible_source(
+    conn: Any, library: Library, source_id: int
+) -> tuple[Any, replacement_eligibility.PrimarySite]:
+    """The source and the primary branch, if `source_id` may be replaced now (services.replacement_eligibility, shared with
+    redemption). The caller holds the organization FOR UPDATE."""
+    try:
+        return replacement_eligibility.require_eligible_source(conn, library.id, source_id)
+    except replacement_eligibility.ReplacementIneligible as refused:
+        raise InstallationAdminError(refused.code) from None
 
 
 def authorize_replacement(
@@ -754,7 +687,7 @@ def authorize_replacement(
     with get_engine().begin() as conn:
         _lock_library(conn, library)
         source, primary = _require_eligible_source(conn, library, source_installation_id)
-        if conn.execute(text(_PENDING_REPLACEMENT_AT_BRANCH_SQL), {"branch_id": primary.id}).first() is not None:
+        if replacement_eligibility.pending_replacement_at_branch(conn, primary.id) is not None:
             raise InstallationAdminError(REPLACEMENT_ALREADY_PENDING)
         provisioning_source = source["status"] == "provisioning"
         if provisioning_source and confirm_lost_response is not True:

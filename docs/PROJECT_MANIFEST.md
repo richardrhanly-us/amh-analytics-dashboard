@@ -805,8 +805,8 @@ deployment, not a fresh install. What remains unverified above must not be assum
 
       **Remaining C6 work:** Replacement-machine workflow and key rotation. C6 remains open.
 
-      **Replacement machine (C6a), stage R1:** implemented and validated locally on 2026-11-12, on branch
-      `feature/c6a-r1-replacement-authorization`. **Not merged and not deployed.**
+      **Replacement machine (C6a), stage R1:** implemented, validated locally on 2026-11-12, and merged to `main`
+      in PR #288 (`d45a2da`).
       - Adds migration `b8e2d4f61a07` (the link to the replaced installation, plus attribution columns that are
         set at authorization and can never change).
       - Adds the admin endpoints `POST …/installations/{id}/replacements` and `…/cancel-replacement`, each
@@ -820,6 +820,21 @@ deployment, not a fresh install. What remains unverified above must not be assum
       - **Deploy order:** apply `b8e2d4f61a07` to production before the code goes live. The schema guard is not
         configured yet.
       - Details: `docs/c6a-replacement-machine-design.md`, 14.9.
+
+      **Replacement machine (C6a), stage R2 (replacement redemption):** implemented and validated locally on
+      2026-11-12, on branch `feature/c6a-r2-atomic-replacement-cutover`. **Not merged and not deployed: blocked
+      until D6 (supervised-pilot use) is decided.**
+      - Redeeming a replacement code moves the branch's Contract v2 identity to the new computer in one
+        transaction: the old computer's tokens, installation and key are retired, and the new one gets a key and
+        token. The cutover and stored events are unchanged. The lock order was corrected so it cannot deadlock
+        with an upload in progress (design 14.4a).
+      - No migration, and no installer or Collector change. It needs R1's migration `b8e2d4f61a07` in production.
+      - Every R2 acceptance criterion passed in local validation (local PostgreSQL only):
+        - the full PostgreSQL suite: 1,049 passed, 0 failed;
+        - the suite without PostgreSQL: 11,320 passed, 0 failed.
+      - Machine replacement is still **not available**: R2 is unmerged, and R3 (admin UI and runbook), R4 (VM
+        qualification) and R5 (commercial gate) remain.
+      - Details: `docs/c6a-replacement-machine-design.md`, 14.4a and 14.9.
 - [ ] **C7. Self-serve commercial flow** (Stripe against the existing plans/subscriptions schema; guided signup) —
       last, and only once a second customer is real. Includes deciding customer-visible plan/subscription display
       (deferred here by D8).

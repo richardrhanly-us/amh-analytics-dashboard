@@ -10,8 +10,8 @@ applies to the key-ownership checks. What only a real server can prove:
   * at most one pending replacement per branch (D1), including under concurrency and the deactivate-authorize-reactivate
     sequence, against cancellation and against offboarding;
   * Cancel replacement retires it, revokes its unused codes and is audited; the general status change refuses to;
-  * a code can be issued for a pending replacement, ordinary enrollment restrictions are unchanged, and REDEEMING the
-    replacement's code is still refused, consuming nothing (R2 is not implemented);
+  * a code can be issued for a pending replacement, ordinary enrollment restrictions are unchanged, and the code R1
+    issues is the one R2 redeems (tests/test_replacement_redemption*.py test the redemption itself);
   * the write-once trigger, the all-or-none and not-self CHECKs and the same-branch foreign key;
   * the general installation update can no longer move an installation out of retired;
   * a failure after the audit insert rolls back the event with its authorization or cancellation;
@@ -47,7 +47,7 @@ from services import (
     tenant_service,
 )
 from services.admin_installation_service import InstallationAdminError
-from services.collector_enrollment_service import EnrollmentError, EnrollmentRefused
+from services.collector_enrollment_service import EnrollmentError
 
 pytestmark = pytest.mark.skipif(not ADMIN_URL, reason="SORTVIEW_TEST_POSTGRES_URL is not set (opt-in PostgreSQL tests)")
 
@@ -468,7 +468,7 @@ def test_the_source_still_cannot_be_retired_while_it_owns_the_active_key(db):
 
 
 # =====================================================================================================================
-# enrollment codes, and redemption still refused until R2
+# enrollment codes, and their redemption (R2)
 # =====================================================================================================================
 
 def test_a_pending_replacement_can_be_issued_a_code(db):
@@ -507,23 +507,24 @@ def test_a_cancelled_replacement_cannot_be_issued_a_code(db):
              lambda: service.issue_enrollment_code(_library("acme"), replacement, actor=ACTOR))
 
 
-def test_redeeming_a_replacement_code_is_still_refused_and_consumes_nothing(db):
+def test_a_code_issued_by_r1_is_redeemed_by_r2_and_the_replacement_is_then_no_longer_pending(db):
+    """Until R2 this code was refused (`active_ingest_key_exists`). R2 redeems it (tests/test_replacement_redemption*.py
+    cover the cutover itself); here, only the handoff from R1's state: the pending replacement now owns the branch's only
+    active key, the source is retired, and Cancel replacement no longer applies."""
     owner, runtime = db
     replacement = _authorize()["installation"]["id"]
     code = service.issue_enrollment_code(_library("acme"), replacement, actor=ACTOR)["enrollment_code"]
-    before = _credentials(owner)
 
-    with pytest.raises(EnrollmentRefused) as refused, runtime.begin() as conn:
-        collector_enrollment_service.redeem_enrollment_code(
+    with runtime.begin() as conn:
+        result = collector_enrollment_service.redeem_enrollment_code(
             conn, code, hostname="replacement-pc", collector_version="1.0.14", contract_version=2)
 
-    assert refused.value.code == collector_enrollment_service.ENROLLMENT_NOT_READY
-    assert refused.value.reason == "active_ingest_key_exists"  # the source's key, checked before the cutover
-    assert _rows(owner, "SELECT used_at FROM collector_enrollment_codes WHERE installation_id = :i", i=replacement) == [
-        {"used_at": None}]
-    assert _credentials(owner) == before
-    assert _rows(owner, "SELECT count(*) AS n FROM agent_tokens WHERE installation_id = :i", i=replacement) == [{"n": 0}]
-    assert _installation(owner, replacement)["status"] == "provisioning" and _pending(owner) == [replacement]
+    assert result["installation_id"] == replacement
+    assert _installation(owner, 101)["status"] == "retired" and _pending(owner) == []
+    assert _rows(owner, "SELECT installation_id FROM ingest_key_ids WHERE customer_id = 10 AND status = 'active'") == [
+        {"installation_id": replacement}]
+    _refused("not_a_pending_replacement",
+             lambda: service.cancel_replacement(_library("acme"), replacement, actor=ACTOR))
 
 
 def test_redeeming_a_cancelled_replacements_code_is_refused(db):

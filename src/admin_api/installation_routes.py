@@ -47,8 +47,8 @@ services.admin_installation_service's.
     cancelling what is not a pending replacement           409 not_a_pending_replacement
     a value refused                                        422 with the field and why, never the value
 
-A REPLACEMENT IS ONLY AUTHORIZED HERE (C6a R1). Its enrollment code cannot be redeemed until R2: the enrollment refuses it
-with enrollment_not_ready and consumes nothing. No old credential is retired and no replacement machine is activated.
+A REPLACEMENT IS ONLY AUTHORIZED HERE (C6a R1). Nothing here retires an old credential or activates a machine: that
+happens when the replacement's code is redeemed at POST /collector/enroll (C6a R2).
 
 THE RAW ENROLLMENT CODE AND THE RAW RECOVERY TOKEN are each in the 201 answer to the request that issued them and nowhere
 else: they are not logged, audited, stored or shown again.

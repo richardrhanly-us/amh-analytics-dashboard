@@ -313,11 +313,13 @@ def test_no_trigger_exists_on_a_v2_table(engine):
 
 
 def test_the_two_v1_sync_triggers_are_still_the_only_triggers_on_the_v1_event_tables(engine):
-    # Every trigger in the database, with its table. The only one that is not a v1 sync trigger is the append-only guard
-    # on tenant_lifecycle_events (a7c4e19d5b02), which is on no event table.
+    # Every trigger in the database, with its table: the inventory is exact, so any new trigger anywhere fails this.
+    # The only ones that are not v1 sync triggers are on no event table: the append-only guard on tenant_lifecycle_events
+    # (a7c4e19d5b02) and the write-once guard on the replacement columns of collector_installations (b8e2d4f61a07).
     assert sorted((r[0], r[1]) for r in rows(
         engine, "SELECT tgrelid::regclass::text, tgname FROM pg_trigger WHERE NOT tgisinternal")) == [
         ("checkins", "trg_sync_checkins_to_clean"),
+        ("collector_installations", "trg_collector_installations_replacement_write_once"),
         ("rejects", "trg_sync_rejects_to_clean"),
         ("tenant_lifecycle_events", "trg_tenant_lifecycle_events_append_only"),
     ]

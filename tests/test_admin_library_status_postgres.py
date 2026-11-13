@@ -52,6 +52,15 @@ def _guard(url) -> None:
         )
 
 
+# Exactly what the admin library routes read. memberships and app_users: whether a library has an active owner
+# (user_admin_service.has_active_owner, read by GET /api/admin/libraries/{slug} since the first-owner assignment). Each
+# must be something the production runtime role may SELECT (asserted below).
+ADMIN_LIBRARY_READS = (
+    "organizations", "branches", "subscriptions", "plans", "collector_installations", "pipeline_status",
+    "ingest_key_ids", "v2_cutovers", "memberships", "app_users",
+)
+
+
 def _create_runtime_role(owner_engine, role_name: str) -> None:
     """The production runtime role's attributes, with SELECT on exactly what the admin libraries read."""
     with owner_engine.begin() as conn:
@@ -63,11 +72,8 @@ def _create_runtime_role(owner_engine, role_name: str) -> None:
         """))  # nosec B608 - role_name is generated here, the password is a fresh local secret
         conn.execute(text(f"GRANT CONNECT ON DATABASE {conn.engine.url.database} TO {role_name}"))  # nosec B608
         conn.execute(text(f"GRANT USAGE ON SCHEMA public TO {role_name}"))  # nosec B608
-        conn.execute(text(
-            "GRANT SELECT ON TABLE public.organizations, public.branches, public.subscriptions, public.plans, "
-            f"public.collector_installations, public.pipeline_status, public.ingest_key_ids, public.v2_cutovers "
-            f"TO {role_name}"
-        ))  # nosec B608
+        tables = ", ".join(f"public.{table}" for table in ADMIN_LIBRARY_READS)
+        conn.execute(text(f"GRANT SELECT ON TABLE {tables} TO {role_name}"))  # nosec B608 - fixed names
 
 
 @pytest.fixture(scope="module")
@@ -105,8 +111,8 @@ def cluster():
 def _seed(conn) -> None:
     # The migrations' own plans stay; everything this test writes starts empty.
     conn.execute(text(
-        "TRUNCATE v2_cutovers, ingest_key_ids, pipeline_status, collector_installations, subscriptions, branches, "
-        "organizations, customers RESTART IDENTITY CASCADE"
+        "TRUNCATE v2_cutovers, ingest_key_ids, pipeline_status, collector_installations, subscriptions, memberships, "
+        "app_users, branches, organizations, customers RESTART IDENTITY CASCADE"
     ))
     conn.execute(text("INSERT INTO customers (id, name) VALUES (10, 'NBPL'), (11, 'Legacy')"))
     conn.execute(text(
@@ -121,6 +127,9 @@ def _seed(conn) -> None:
         "(2, 2, 'main', 'Legacy Main', TRUE, 'active', 2, 'ready'), "
         "(3, 3, 'central', 'Central', TRUE, 'active', NULL, 'pending')"
     ))
+    # NBPL has an active owner; the others have none.
+    conn.execute(text("INSERT INTO app_users (id, email, full_name) VALUES (1, 'owner@example.invalid', 'Owner')"))
+    conn.execute(text("INSERT INTO memberships (organization_id, user_id, role) VALUES (1, 1, 'owner')"))
     conn.execute(text(
         "INSERT INTO subscriptions (organization_id, plan_id, status) "
         "SELECT 1, id, 'trial' FROM plans WHERE code = 'enterprise'"
@@ -210,8 +219,18 @@ def test_the_overview_reads_the_same_current_state_and_says_identity_in_words(ap
     waiting = client.get("/api/admin/libraries/waiting", headers=COOKIE).json()
 
     assert nbpl["operational_identity"] == "assigned"
+    # Read as the runtime role through memberships and app_users.
+    assert nbpl["has_active_owner"] is True and waiting["has_active_owner"] is False
     assert [(site["name"], site["pipeline"]["state"]) for site in nbpl["sorters"]] == [("Main AMH", "degraded")]
     assert waiting["operational_identity"] == "missing"     # nothing is mapped; nothing could be read
     assert [(site["name"], site["onboarding_status"], site["pipeline"]["state"]) for site in waiting["sorters"]] == [
         ("Waiting AMH", "pending", "unknown")
     ]
+
+
+def test_the_role_reads_only_what_the_production_runtime_role_may_read():
+    """The fixture's role is a SUBSET of the recorded runtime baseline: a route that needs a table outside it fails here
+    as it would in production, and the fixture can never grant what production does not."""
+    from scripts import runtime_role_privileges as privileges
+
+    assert [t for t in ADMIN_LIBRARY_READS if "SELECT" not in privileges.BASELINE.get(t, frozenset())] == []
