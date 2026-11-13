@@ -45,6 +45,8 @@ services.admin_installation_service's.
     a code for a replacement whose source is no longer
     eligible                                               409 the same replacement_* | unbound_tokens_active codes
     cancelling what is not a pending replacement           409 not_a_pending_replacement
+    authorizing, or a code for a pending replacement,
+    while machine replacement is turned off                409 replacement_disabled (cancelling is not refused)
     a value refused                                        422 with the field and why, never the value
 
 A REPLACEMENT IS ONLY AUTHORIZED HERE (C6a R1). Nothing here retires an old credential or activates a machine: that
@@ -135,6 +137,10 @@ _MESSAGES = {
         ),
     ),
     "not_a_pending_replacement": (409, "This installation is not a pending replacement."),
+    "replacement_disabled": (
+        409,
+        "Machine replacement is turned off on this server. A pending replacement can still be cancelled.",
+    ),
 }
 
 

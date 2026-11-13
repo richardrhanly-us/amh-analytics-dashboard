@@ -816,14 +816,11 @@ deployment, not a fresh install. What remains unverified above must not be assum
         - the suite without PostgreSQL: 11,290 passed, 0 failed;
         - covered: audit rollback, the migration round trip, the exact redemption refusal, and the tenant purge of a
           replacement chain.
-      - Redeeming a replacement code is still refused until R2, so machine replacement is **not available**.
-      - **Deploy order:** apply `b8e2d4f61a07` to production before the code goes live. The schema guard is not
-        configured yet.
+      - Its migration `b8e2d4f61a07` is applied to production.
       - Details: `docs/c6a-replacement-machine-design.md`, 14.9.
 
-      **Replacement machine (C6a), stage R2 (replacement redemption):** implemented and validated locally on
-      2026-11-12, on branch `feature/c6a-r2-atomic-replacement-cutover`. **Not merged and not deployed: blocked
-      until D6 (supervised-pilot use) is decided.**
+      **Replacement machine (C6a), stage R2 (replacement redemption):** implemented, validated locally on
+      2026-11-12, merged to `main` in PR #289 (`e5d24a3`), and deployed (DigitalOcean healthy).
       - Redeeming a replacement code moves the branch's Contract v2 identity to the new computer in one
         transaction: the old computer's tokens, installation and key are retired, and the new one gets a key and
         token. The cutover and stored events are unchanged. The lock order was corrected so it cannot deadlock
@@ -832,9 +829,20 @@ deployment, not a fresh install. What remains unverified above must not be assum
       - Every R2 acceptance criterion passed in local validation (local PostgreSQL only):
         - the full PostgreSQL suite: 1,049 passed, 0 failed;
         - the suite without PostgreSQL: 11,320 passed, 0 failed.
-      - Machine replacement is still **not available**: R2 is unmerged, and R3 (admin UI and runbook), R4 (VM
-        qualification) and R5 (commercial gate) remain.
+      - **Not qualified for customer use.** A platform administrator can complete a replacement through the
+        administration API, and nothing on the server gates it yet. R4 (VM qualification), R5 (commercial gate)
+        and D6 (supervised-pilot use) remain.
       - Details: `docs/c6a-replacement-machine-design.md`, 14.4a and 14.9.
+
+      **Replacement machine (C6a), stage R3 (administration interface, feature flag, runbook):** design approved
+      2026-11-12.
+      - **Feature flag slice:** `SORTVIEW_MACHINE_REPLACEMENT_ENABLED`, off by default. Implemented as a separate
+        backend-first slice. Passed local validation on 2026-11-12 (PostgreSQL suite 1,054 passed; suite without
+        PostgreSQL 11,342 passed; 0 failed). Not merged or deployed. While off, the backend refuses replacement authorization, code issuance for pending
+        replacements and replacement redemption; cancellation and every ordinary operation are unaffected.
+      - **Administration interface:** not implemented; it is not part of the flag slice.
+      - **Support runbook:** drafted; it ships with the administration interface slice.
+      - Details: `docs/c6a-replacement-machine-design.md`, 14.11.
 - [ ] **C7. Self-serve commercial flow** (Stripe against the existing plans/subscriptions schema; guided signup) —
       last, and only once a second customer is real. Includes deciding customer-visible plan/subscription display
       (deferred here by D8).

@@ -125,6 +125,7 @@ REPLACEMENT_ALREADY_PENDING = "replacement_already_pending"
 LOST_RESPONSE_CONFIRMATION_REQUIRED = "lost_response_confirmation_required"
 NOT_A_PENDING_REPLACEMENT = "not_a_pending_replacement"
 USE_CANCEL_REPLACEMENT = "use_cancel_replacement"
+REPLACEMENT_DISABLED = replacement_eligibility.REPLACEMENT_DISABLED
 
 
 class InstallationAdminError(Exception):
@@ -474,7 +475,8 @@ def issue_enrollment_code(library: Library, installation_id: int, *, actor: dict
 
     A pending replacement (C6a R1) is the one Contract 2 installation that may have a code on an enrolled branch, and
     only while its source is still an eligible source (_require_eligible_source, under the same locks as authorization).
-    Redeeming that code stays refused until R2."""
+    Redeemed by R2. With machine replacement off (14.11), such a code is refused (`replacement_disabled`) before anything
+    is written, and the replacement's earlier codes are left as they are."""
     _refuse_cancelled(library)
     with get_engine().begin() as conn:
         # The organization first, as authorization and cancellation take it, so neither can interleave with this.
@@ -493,6 +495,8 @@ def issue_enrollment_code(library: Library, installation_id: int, *, actor: dict
                 text(_CURRENT_STATUS_SQL), {"installation_id": installation_id, "organization_id": library.id}
             ).mappings().one()["replaces_installation_id"]
             if replaces is not None and not _owns_any_key(conn, installation_id):
+                if not replacement_eligibility.replacement_enabled():
+                    raise InstallationAdminError(REPLACEMENT_DISABLED)
                 _require_eligible_source(conn, library, int(replaces))
             elif has_active_ingest_key(conn, scope.customer_id, scope.operational_branch_id) or has_any_v2_cutover(
                 conn, scope.customer_id, scope.operational_branch_id
@@ -679,7 +683,11 @@ def authorize_replacement(
     the same transaction. Nothing else changes: the source keeps running, with its tokens, key, status and cutover.
 
     `confirm_lost_response` must be True for a `provisioning` source (14.3a): the administrator confirms its enrollment
-    response was lost and setup cannot resume. Returns {"installation", "replaces_installation_id"}."""
+    response was lost and setup cannot resume. Returns {"installation", "replaces_installation_id"}.
+
+    With machine replacement off (14.11), refused (`replacement_disabled`) before anything is read or written."""
+    if not replacement_eligibility.replacement_enabled():
+        raise InstallationAdminError(REPLACEMENT_DISABLED)
     name = validate_name(name)
     _refuse_cancelled(library)
     if not v2_settings_ready(library):
