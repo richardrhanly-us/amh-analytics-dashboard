@@ -4,9 +4,9 @@
 
 **Scope:** Support-controlled replacement of an enrolled Contract v2 Collector computer, through Mode 1 controlled handoff or Mode 2 fresh-identity recovery  
 
-**Amendment A (Section 14, design approved 2026-11-12; R0 complete):** Mode 2 is implemented first, through the unchanged Collector 1.0.14 SortView Setup GUI. Where Section 14 is more specific than an earlier section, Section 14 applies to Mode 2. **R1 (authorization and cancellation) is implemented and validated locally only**, on branch `feature/c6a-r1-replacement-authorization`; it is not merged or deployed (14.9). R2–R5 are not implemented. Replacement enrollment stays refused, and machine replacement is not available to customers.
+**Amendment A (Section 14, design approved 2026-11-12; R0 complete):** Mode 2 is implemented first, through the unchanged Collector 1.0.14 SortView Setup GUI. Where Section 14 is more specific than an earlier section, Section 14 applies to Mode 2. **R1 (authorization and cancellation) is implemented and merged** (PR #288, `d45a2da`; 14.9). **R2 (replacement redemption) is implemented and validated locally, but not merged or deployed** (14.4a, 14.9): it is blocked until D6 is decided. R3–R5 are not implemented. Machine replacement is not available to customers.
 
-**Implementation status:** Replacement is not available, and Mode 1 and Mode 2 are unavailable. Mode 2 stage R1 exists only on an unmerged branch (14.9). Key ownership and the credential safeguards in Section 2 are implemented (milestones M1 and M2), as are a read-only inventory of legacy keys (milestone M3a) and safeguards in the legacy credential scripts (milestone M3b). Only the behavior listed in Section 2 and the code-inspection findings in Section 9 describe the system as it exists today; everything else here is proposed.
+**Implementation status:** Replacement is not available, and Mode 1 and Mode 2 are unavailable. Mode 2 stage R1 (authorization and cancellation only) is merged (14.9); redemption of a replacement code is still refused in `main`. R2, which redeems it, exists only on its branch until D6 is decided. Key ownership and the credential safeguards in Section 2 are implemented (milestones M1 and M2), as are a read-only inventory of legacy keys (milestone M3a) and safeguards in the legacy credential scripts (milestone M3b). Only the behavior listed in Section 2 and the code-inspection findings in Section 9 describe the system as it exists today; everything else here is proposed.
 
 ## 1. Objective
 
@@ -739,7 +739,8 @@ Apart from milestones M1 and M2, no schema migration, endpoint, or production ch
 
 - **Decided by the product owner:** items 14.1(a) and 14.1(b); D1, D2, D3, D4, D7 and D8 (14.10), subject to compatibility with the existing implementation; and the attribution representation in 14.2 and 14.2a. The installation row is the durable authorization record, and `auth_audit_log` records the lifecycle events.
 - **Still open:** D5 and D6, to be decided before R5, and the remaining technical issues at the end of 14.10.
-- **R1:** implemented, and all its acceptance criteria passed in local validation on 2026-11-12. **Not merged or deployed.** Its record is in 14.9.
+- **R1:** implemented, and all its acceptance criteria passed in local validation on 2026-11-12. Merged to `main` in PR #288 (`d45a2da`). Its record is in 14.9.
+- **R2:** implementation decisions A–H approved 2026-11-12 (14.4a). Implemented on its branch; PostgreSQL validation pending (14.9). **R2 may be developed, tested and reviewed, but must not be merged or deployed until D6 is decided.**
 - **Not implemented:** R2–R5. Redeeming a replacement code is still refused, and machine replacement is not available. Design approval does not by itself approve a production change. Each stage ships through its own reviewed PR and meets its acceptance criteria in 14.9.
 
 ### 14.1 Scope
@@ -847,6 +848,8 @@ Redemption never changes the installation's status. An installation becomes `act
 
 ### 14.4 Redemption: order and locks
 
+> **Superseded lock order.** The R2 assessment (2026-11-12) found that this table's order can deadlock with an upload already in progress from the source computer. **14.4a replaces the order below**; the actions, guards and outcomes are unchanged except where 14.4a says otherwise.
+
 Redemption of a code whose installation has `replaces_installation_id` runs in **one** transaction. It extends the existing redemption, keeps its lock order, and adds the source's credentials using the order the recovery token already uses (tokens before installation):
 
 | Step | Action | Existing or new |
@@ -875,6 +878,99 @@ An ordinary enrollment is unchanged, including both refusals that step 6 replace
 - Administrative retirement takes the branch `FOR NO KEY UPDATE`, which conflicts with step 4's lock.
 - Event inserts take the branch `FOR KEY SHARE`, so a branch's uploads wait for the redemption to commit, exactly as during an ordinary enrollment today.
 - The authorization transaction takes the organization `FOR UPDATE` and then the branch, so authorization, code issuance and redemption cannot interleave.
+
+### 14.4a R2 implementation decisions and the corrected lock order (approved 2026-11-12)
+
+**The defect in 14.4.** An upload from the source computer updates its own token row (`agent_tokens.last_used_at`, in `main._authenticate_agent`) and then inserts events. The v2 event tables reference `branches(id)`, so each insert takes the branch `FOR KEY SHARE`. The 14.4 order holds the branch `FOR UPDATE` (step 4) and then waits for the source's token (step 8): each transaction waits for the other. PostgreSQL would abort one of them. If it aborted the redemption, the setup app would get a 500, an "unknown result", although the code was not used.
+
+**Decisions:**
+
+| | Decision |
+|---|---|
+| A | The redemption takes the source's tokens and the source installation **before** the branch (order below) |
+| B | Check 6 at redemption: no **other** pending replacement at the branch, excluding the one being redeemed |
+| C | The source's status is re-read under its row lock. `provisioning`, `active` or `inactive` is accepted if every source eligibility check still passes. The lost-response confirmation belongs to the authorization and is not asked again |
+| D | The source eligibility checks move to one small shared module, used by R1 and by redemption. R1's behavior and refusal codes are unchanged |
+| E | The `collector_replacement_redeemed` event also carries `target_org_slug` and `branch_slug`. Never a code, token, hash, hostname or key secret |
+| F | Unexpected errors keep today's behavior: a 500, with everything rolled back. A deadlock, lock timeout or failed guarded update is **never** reported as an eligibility refusal |
+| G | R2 may be developed, tested and submitted for review, but is **not merged or deployed** until D6 is decided. No feature flag while deployment is blocked |
+| H | A suspended library's redemption is refused as today (generic `400`, `organization_status_suspended`), before any write. R2 tests prove it consumes no code and changes no credential |
+
+**Row-level security (pre-implementation check 1).** Only the six event tables and `ingest_key_ids` have row-level security (migration `0acba192bf69`; `scripts/runtime_role_privileges.RLS_TABLES`).
+- `agent_tokens` and `collector_installations` have none, so the runtime role can lock the source's tokens and installation with no tenant context. Its table-level UPDATE privilege is what `SELECT … FOR NO KEY UPDATE` requires.
+- The tenant context is nevertheless set right after the replacement's scope is resolved, before any lock, from the validated scope.
+- The source is at the replacement's branch, guaranteed by the same-branch foreign key, so the same context covers the source's key.
+
+**Corrected order.** A linked code takes this path; an unlinked code is today's enrollment, unchanged.
+
+| Step | Action | Lock taken |
+|---|---|---|
+| 1 | Organization of the code (`_lock_code_organization`) | organization `FOR SHARE` |
+| 2 | Code row; refuse unknown, used, revoked or expired | code `FOR UPDATE` |
+| 3 | Replacement scope (`resolve_installation_scope`), its `replaces_installation_id` (write-once, safe to read unlocked), the contract check, then the tenant context | — |
+| 4 | The source's bound agent tokens, in `id` order | each `FOR NO KEY UPDATE` |
+| 5 | The source installation row | `FOR NO KEY UPDATE` |
+| 6 | The replacement installation row; its status re-read: must be `provisioning` or `active` | `FOR NO KEY UPDATE` |
+| 7 | Branch (`_prepare_v2_enrollment`); settings, time zone and rules | branch `FOR UPDATE` |
+| 8 | Source eligibility under these locks (decision D), the source status re-read (C), and no other pending replacement (B). Any failure is `EnrollmentRefused(enrollment_not_ready, <reason>)` and consumes nothing | the eligibility module's branch `FOR NO KEY UPDATE`, weaker than the lock already held |
+| 9 | Claim the code (exactly one row) | — |
+| 10 | Deactivate the source's tokens (already locked) | — |
+| 11 | Source → `retired`, guarded on the status read in step 8 (exactly one row) | — |
+| 12 | Source key → `retired`, `retired_at` set, guarded on `key_id`, `installation_id = source` and `status = 'active'` (exactly one row) | key row (update) |
+| 13 | Issue the replacement's key (`issue_ingest_key`) and insert its bound token | `FOR KEY SHARE` on the replacement row and the branch (foreign key checks; already held more strongly) |
+| 14 | **No** cutover write | — |
+| 15 | `collector_replacement_redeemed`, a system action (14.2a, E) | — |
+| 16 | The ordinary nine-field v2 response | — |
+
+**Rows are locked `FOR NO KEY UPDATE`, not `FOR UPDATE`.** No key column is changed, so foreign key checks from other transactions (`FOR KEY SHARE`) are not blocked.
+
+**Lock dependency table (pre-implementation checks 2 and 3).** Each row is the order in which an operation takes locks that redemption also takes.
+
+| Operation | Order of locks shared with redemption | Organization lock first? |
+|---|---|---|
+| **Replacement redemption** (above) | org S → code → source tokens → source installation → replacement installation → branch U → key row → FK key-share on the replacement and branch | — |
+| v2 upload (`/v2/upload`) | its token → branch KS (event insert) → the branch's onboarding update, only while `pending` | no |
+| v2 heartbeat (`/v2/status`) | its token → its key row → its installation | no |
+| v1 upload / v1 heartbeat | its token → branch KS (insert) → its installation (heartbeat) | no |
+| Ordinary enrollment | org S → code → branch U → FK key-share on its own installation | yes (S) |
+| Recovery token | org U → the installation's tokens → that installation | yes |
+| Revoke an unbound token | org U → that token | yes |
+| Authorize / cancel / issue a code (R1) | org U → installation or branch NKU → FK key-share | yes |
+| Status change: retire | branch NKU → that installation | no |
+| Status change: deactivate, reactivate, rename | that installation | no |
+| Offboarding | org U → tokens → installations → codes → keys | yes |
+| Unowned key issue (operator) | org S → branch NKU | yes (S) |
+
+Key: S `FOR SHARE`, U `FOR UPDATE`, NKU `FOR NO KEY UPDATE`, KS `FOR KEY SHARE`.
+
+**No cycle with the corrected order:**
+- **Every operation that takes the organization `FOR UPDATE` takes it first.** Redemption holds it `FOR SHARE` from its first statement, so these operations run strictly before or after a redemption: recovery, revocation, R1 authorization, cancellation and code issuance, and offboarding.
+- **Ordinary enrollment and unowned key issue** share the organization `FOR SHARE` and touch none of the source's rows. Each waits for the branch while holding nothing redemption needs.
+- **Uploads and heartbeats** take their token first and nothing before it. Redemption takes the source's tokens before any installation, branch or key row.
+  - If the request holds the token, redemption waits while holding only the organization and the code, which no request needs.
+  - If redemption holds the token, the request waits while holding nothing.
+  - Requests with other tokens at the branch need nothing redemption holds.
+- **The status change takes no organization lock**, and holds at most the branch and one installation, branch first.
+  - Retiring the source or a pending replacement is refused after the branch lock, before any installation lock.
+  - Retiring another installation holds the branch, then that installation, which redemption never locks.
+  - Deactivating, reactivating or renaming holds one installation and nothing else.
+
+  So redemption, holding installations and waiting for the branch, never waits for a holder of something it has.
+- **Among installation rows, redemption alone holds two**, always the source before the replacement.
+- **The source's token rows** are taken in `id` order. Every other holder of a source token holds one token, or holds the organization lock.
+
+**Guarded updates and rollback (pre-implementation check 4).**
+- Steps 9–12 each require exactly one row.
+- Under the locks above, zero rows means something broke an invariant. Redemption raises an internal error, which is not an `EnrollmentRefused`. The enroll route's existing `except Exception` returns a 500, and `engine.begin()` rolls back the whole transaction, so the code stays unused and no credential changes (decision F).
+- The code claim keeps its existing `lost_redemption_race` refusal.
+- Tests force each guarded update to affect zero rows and check that nothing changed.
+
+**What is preserved (pre-implementation checks 5 and 6):**
+- The response is the ordinary nine fields (`setup-collector.ps1` `V2ResponseKeys`): `customer_id`, `branch_id`, `installation_id`, `agent_token`, `contract_version`, `contract_mode`, `key_id`, `timezone`, `classification_rules`.
+- No statement touches an event table.
+- No `v2_cutovers` row is written, so the v1 `/upload` stays closed and the boundary does not move.
+
+**Remaining limitation (14.5).** A request that read its token and checked its key before the commit can still finish. One that checks the key afterwards sees it retired and is refused with 403.
 
 ### 14.5 Atomicity and concurrency guarantees
 
@@ -957,7 +1053,7 @@ Each stage is its own PR and deploys independently. No stage adds Mode 1, key ro
 - `admin_replacement_authorized` and `admin_replacement_cancelled` are written in the same transaction as their change, contain only the fields in 14.2a, and roll back with it.
 - All existing enrollment, installation, recovery and RLS tests pass unchanged.
 
-**R1 status: implemented, and every R1 acceptance criterion above passed in local validation on 2026-11-12. Not merged and not deployed:** branch `feature/c6a-r1-replacement-authorization`. The migration has not been applied to production, and machine replacement is not available.
+**R1 status: implemented, and every R1 acceptance criterion above passed in local validation on 2026-11-12. Merged to `main` in PR #288 (`d45a2da`).** Machine replacement is not available: redeeming a replacement code is refused until R2.
 
 - **Migration `b8e2d4f61a07`** (after `c1e7a94f2b60`; single head). It adds:
   - the three columns in 14.2;
@@ -1006,14 +1102,63 @@ Each stage is its own PR and deploys independently. No stage adds Mode 1, key ro
     - downgrade to `c1e7a94f2b60`, then check that every column, constraint, index, trigger, function and row in the public schema matches its state before the upgrade;
     - upgrade to head again.
 
-**R2 — replacement redemption** (enrollment service). Acceptance:
-- 14.4 and 14.5, tested on SQLite and on PostgreSQL under the runtime role with RLS.
+**R2 — replacement redemption** (enrollment service). **Not to be merged or deployed until D6 is decided (14.4a, G).** Acceptance:
+- 14.4 as corrected by 14.4a, and 14.5, tested on SQLite and on PostgreSQL under the runtime role with RLS.
+- An upload or heartbeat from the source already in progress, holding its token, does not deadlock with redemption (14.4a, A).
+- A suspended library's redemption consumes no code and changes no credential (14.4a, H).
+- R1's tests pass unchanged after the eligibility checks move to the shared module (14.4a, D).
 - After commit: the old token is refused on both v2 endpoints, the old key is refused, the new token and key are accepted, exactly one active key exists, the cutover rows are unchanged, and event row counts are unchanged.
 - Fault injection at each step of 14.4 leaves everything unchanged with the code unused.
 - Concurrency tests cover every race in 14.5.
 - Chains work: A → B → C, and recovery from a lost response by replacing the unconfirmed installation.
 - The replacement response has exactly the ordinary v2 field set, checked against the setup engine's parser. A Contract 1 or 1.0.13 request is refused without consuming the code.
 - No code, token or secret appears in logs or audit records.
+
+**R2 status: implemented on branch `feature/c6a-r2-atomic-replacement-cutover`, and every R2 acceptance criterion above passed in local validation on 2026-11-12. Not merged and not deployed: blocked until D6 is decided (14.4a, G).** No migration, no installer or Collector change.
+
+- **Code:**
+  - `services/replacement_eligibility.py` (new): the source rules, the primary branch, the branch lock, and the pending-replacement query with an exclusion. R1's codes are unchanged.
+  - `services/admin_installation_service.py`: uses that module. R1's behavior and refusal codes are the same.
+  - `services/collector_enrollment_service.py`:
+    - `InstallationScope.replaces_installation_id`;
+    - `_redeem_replacement`, in the 14.4a order;
+    - `_prepare_v2_enrollment(replacement=True)` skips only the two "branch already enrolled" refusals;
+    - `ReplacementCutoverError` for a guarded write that changes no row;
+    - the `collector_replacement_redeemed` audit event.
+  - A linked code with a Contract 1 snapshot is refused with `enrollment_not_ready` (`replacement_requires_contract_2`). It cannot occur under R1 and is guarded anyway.
+  - `main.py` is unchanged: the enroll route's 409, 400 and 500 mapping and the ordinary enrollment are as before.
+- **Tests:**
+  - `tests/test_replacement_redemption.py` (SQLite, 30 tests).
+  - `tests/test_replacement_redemption_postgres.py` (21 PostgreSQL tests). They cover the runtime role under row-level security, the upload and heartbeat already holding the source's token (decision A), every race in the matrix, failure injection, the suspended library, and lost-response recovery through R1's real authorization.
+- **Existing tests changed, and why:**
+  - `test_admin_replacement_postgres.py`: R1's interim assertion that a replacement code is refused (`active_ingest_key_exists`) is replaced by the R1→R2 handoff. The code R1 issues is redeemed, the replacement is no longer pending, and Cancel replacement no longer applies. That refusal was R1's deliberate interim behavior, which R2 removes.
+  - `test_collector_enrollment.py`, `test_collector_enrollment_v2.py`, `test_library_offboarding.py`: their hand-written SQLite `collector_installations` tables gain the `replaces_installation_id` column the enrollment now reads, as they gained `required_contract` in A1. No assertion changed.
+  - Found by the first full PostgreSQL run of R2 (1,046 passed, 2 failed); neither failure was caused by R2:
+    - **`test_ingest_v2_postgres.py`:** its exact inventory of every trigger in the database predated R1's write-once trigger. That trigger is now listed. The inventory stays exact, so any other trigger still fails the test.
+    - **`test_admin_library_status_postgres.py`:**
+      - **Cause:** its role is granted a hand-written list of tables. `GET /api/admin/libraries/{slug}` has also read `memberships` and `app_users` since the first-owner assignment (`dbe06cd`, before R1), so the role got `InsufficientPrivilege` (42501). Production's runtime role has `SELECT` on both (`scripts/runtime_role_privileges.BASELINE`).
+      - **Fix:** the two tables are granted, and the test now checks the owner flag read through them.
+      - **New test:** every table the fixture grants must be one the production runtime role may `SELECT`.
+- **Final local validation (2026-11-12; local disposable PostgreSQL 18, never production):**
+  - **Full PostgreSQL opt-in suite: 1,049 passed, 0 failed**, after the two test-only fixes above. It includes the 21 PostgreSQL redemption tests.
+  - **Full Python suite without PostgreSQL: 11,320 passed, 1,049 skipped, 0 failed.** An earlier run had 9 failures, all from one test name that broke the repository's freshness rule (a release number in the name); the test was renamed.
+  - ruff clean; bandit clean (the CI command); `git diff --check` clean.
+- **Where each criterion is tested:**
+
+  | Criterion | Tests |
+  |---|---|
+  | 14.4a order and 14.5, SQLite and PostgreSQL runtime role under RLS | `test_replacement_redemption.py` (all); `test_the_cutover_commits_as_the_runtime_role_under_row_level_security` |
+  | An upload or heartbeat in progress is not deadlocked (A) | `test_an_upload_in_progress_holding_the_source_token_is_waited_for_not_deadlocked`, `test_a_heartbeat_in_progress_…` |
+  | Suspended library (H) | `test_a_suspended_library_…` (SQLite and PostgreSQL) |
+  | R1 unchanged after the shared module (D) | `test_admin_replacement.py`, `test_admin_replacement_postgres.py`: unchanged except R1's interim refusal, replaced by the handoff test (above) |
+  | After commit: source refused, replacement accepted, one active key, cutover and events unchanged | `test_after_cutover_the_source_is_refused_everywhere_…`, `test_after_commit_the_source_is_refused_…`, `test_redemption_moves_the_branchs_identity_…` |
+  | Fault injection, guarded writes (F) | `test_a_failure_at_any_write_…` (claim, key issue, token insert, audit), `test_a_guarded_write_that_changes_no_row_…` (source, source key), on both databases |
+  | Every race in 14.5 | every `test_redemption_racing_…` test and `test_two_redemptions_of_one_code_…` (PostgreSQL) |
+  | Chains and lost response | `test_a_chain_of_replacements_…` (SQLite); `test_a_lost_response_is_recovered_…` (both databases, a three-installation chain on PostgreSQL) |
+  | Exact v2 field set; Contract 1 refused unconsumed | `test_the_response_is_exactly_the_field_set_the_setup_engine_accepts`, `test_an_old_installer_is_refused_…` |
+  | No secret in logs or audit (E) | `test_the_redemption_is_audited_as_a_system_action_…`; the stored row on PostgreSQL |
+- **Two refusals beyond the 14.4a table**, both `enrollment_not_ready` and consuming nothing, guarding states R1 cannot produce: `replacement_requires_contract_2` and `replacement_already_owns_a_key`.
+- **Deployment, once D6 allows it:** no migration of its own, but every enrollment now reads `replaces_installation_id`, so R1's migration `b8e2d4f61a07` must already be applied in production.
 
 **R3 — administration UI and runbook.** "Replace this Collector computer" and "Cancel replacement" in the React admin app, showing a pending replacement and its source. Plus the support runbook (14.8, item 4). Acceptance: UI tests, the accessibility checks used for the rest of the admin app, and a runbook review.
 

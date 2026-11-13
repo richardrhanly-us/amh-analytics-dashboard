@@ -50,9 +50,19 @@ INTERNAL reason (for server logs and tests); the HTTP layer only ever shows
 PUBLIC_ENROLLMENT_ERROR, so a caller cannot tell an unknown code from an
 expired one, or learn anything about tenants, installations or their state.
 
-This module never modifies collector_installations (installed_at, last_seen_at,
+This module never modifies the ENROLLING installation (installed_at, last_seen_at,
 collector_version, hostname, status are all untouched): confirmed-contact
-lifecycle belongs to the authenticated heartbeat/preflight.
+lifecycle belongs to the authenticated heartbeat/preflight. The one installation
+it does change is the one a replacement replaces, which redemption retires (below).
+
+A REPLACEMENT (C6a R2, docs/c6a-replacement-machine-design.md 14.4a). A code whose
+installation names the installation it replaces (replaces_installation_id, set by
+an authorized replacement) is redeemed by _redeem_replacement instead: in the same
+single transaction it deactivates the replaced installation's tokens, retires it
+and its key, and gives the replacement a new key and a bound token, with an audit
+record. The branch's cutover is never written, no event row is touched, and the
+response is exactly the ordinary Contract v2 one. Every reason it cannot is
+`enrollment_not_ready`, and consumes nothing.
 
 THE CONTRACT IS THE SERVER'S DECISION (onboarding stage A1). An installation
 carries the ingest contract it must be enrolled on
@@ -111,7 +121,7 @@ from typing import Any
 
 from sqlalchemy import DateTime, bindparam, text
 
-from . import collector_rules
+from . import collector_rules, replacement_eligibility
 from .ingest_v2_service import (
     active_ingest_key_owners,
     has_active_ingest_key,
@@ -299,6 +309,7 @@ class InstallationScope:
     customer_id: int  # organizations.operational_customer_id
     operational_branch_id: int  # branches.operational_branch_id
     required_contract: int = CONTRACT_LEGACY  # collector_installations.required_contract
+    replaces_installation_id: int | None = None  # C6a: the installation this one replaces (write-once)
 
 
 _INSTALLATION_SCOPE_SQL = """
@@ -307,6 +318,7 @@ _INSTALLATION_SCOPE_SQL = """
         ci.name AS installation_name,
         ci.status AS installation_status,
         ci.required_contract AS required_contract,
+        ci.replaces_installation_id AS replaces_installation_id,
         ci.organization_id AS organization_id,
         ci.branch_id AS branch_id,
         o.status AS organization_status,
@@ -383,6 +395,9 @@ def resolve_installation_scope(
         customer_id=int(customer_id),
         operational_branch_id=int(operational_branch_id),
         required_contract=int(row["required_contract"]),
+        replaces_installation_id=(
+            None if row["replaces_installation_id"] is None else int(row["replaces_installation_id"])
+        ),
     )
 
 
@@ -625,9 +640,12 @@ def _aware_instant(value: object) -> datetime | None:
     return value
 
 
-def _prepare_v2_enrollment(conn: Any, scope: InstallationScope) -> _V2Site:
+def _prepare_v2_enrollment(conn: Any, scope: InstallationScope, *, replacement: bool = False) -> _V2Site:
     """Everything a contract-2 enrollment has to know and be sure of, BEFORE its first write. Reads only; raises
     EnrollmentRefused(ENROLLMENT_NOT_READY, <fixed reason>) if the site cannot be enrolled on Contract v2 now.
+
+    `replacement` (C6a R2): the branch is enrolled by design, so the "no key, no cutover" refusals do not apply; the
+    caller checks the replaced installation instead (_redeem_replacement).
 
     Takes a row lock on the branch first (PostgreSQL), so two enrollments for one branch -- two installations of it --
     cannot both pass the "no key, no cutover" checks below and each create an identity.
@@ -673,6 +691,9 @@ def _prepare_v2_enrollment(conn: Any, scope: InstallationScope) -> _V2Site:
     if cutover_at is None:
         raise EnrollmentRefused(ENROLLMENT_NOT_READY, "organization_created_at_unusable")
 
+    if replacement:
+        return _V2Site(timezone=timezone, cutover_at=cutover_at, rules=rules)
+
     # One v2 identity per branch, and never a second cutover, whoever owns the key: refused, not resolved.
     if has_active_ingest_key(conn, scope.customer_id, scope.operational_branch_id):
         raise EnrollmentRefused(ENROLLMENT_NOT_READY, "active_ingest_key_exists")
@@ -706,6 +727,36 @@ def _lock_code_organization(conn: Any, code_hash: str) -> None:
     organization_id = conn.execute(text(_CODE_ORGANIZATION_SQL), {"code_hash": code_hash}).scalar()
     if organization_id is not None:
         conn.execute(text(_LOCK_ORGANIZATION_SHARED_SQL), {"organization_id": organization_id})
+
+
+def _claim_code(conn: Any, code_row: Any, checked_at: datetime) -> None:
+    claimed = conn.execute(
+        _timestamped(_CLAIM_CODE_SQL, code_id=code_row["id"], now=checked_at)
+    ).rowcount
+    if claimed != 1:
+        raise EnrollmentError("lost_redemption_race")
+
+
+def _insert_bound_token(
+    conn: Any, scope: InstallationScope, hostname: str | None, collector_version: str | None
+) -> tuple[str, int]:
+    """A new active agent token bound to the scope's installation: the RAW token (returned once) and its row id."""
+    agent_token, token_hash = new_agent_token()
+    token_id = conn.execute(
+        text(_INSERT_TOKEN_SQL),
+        {
+            "token_hash": token_hash,
+            "customer_id": scope.customer_id,
+            "branch_id": scope.operational_branch_id,
+            "description": _token_description(
+                scope,
+                _clean_metadata(hostname, _MAX_HOSTNAME_LENGTH),
+                _clean_metadata(collector_version, _MAX_VERSION_LENGTH),
+            ),
+            "installation_id": scope.installation_id,
+        },
+    ).scalar_one()
+    return agent_token, token_id
 
 
 def redeem_enrollment_code(
@@ -759,29 +810,17 @@ def redeem_enrollment_code(
     # The code is valid and its tenant usable: from here a refusal may say why (EnrollmentRefused), and still
     # consumes nothing. The CODE's snapshot decides, not the installation's current value.
     contract = _require_permitted_contract(int(code_row["required_contract"]), contract_version)
+    if scope.replaces_installation_id is not None:
+        # C6a R2: a replacement is Contract 2 by construction (R1 creates it so, and its code snapshots that).
+        if contract != CONTRACT_V2:
+            raise EnrollmentRefused(ENROLLMENT_NOT_READY, "replacement_requires_contract_2")
+        return _redeem_replacement(
+            conn, code_row, scope, hostname=hostname, collector_version=collector_version, checked_at=checked_at
+        )
     site = _prepare_v2_enrollment(conn, scope) if contract == CONTRACT_V2 else None
 
-    claimed = conn.execute(
-        _timestamped(_CLAIM_CODE_SQL, code_id=code_row["id"], now=checked_at)
-    ).rowcount
-    if claimed != 1:
-        raise EnrollmentError("lost_redemption_race")
-
-    agent_token, token_hash = new_agent_token()
-    token_id = conn.execute(
-        text(_INSERT_TOKEN_SQL),
-        {
-            "token_hash": token_hash,
-            "customer_id": scope.customer_id,
-            "branch_id": scope.operational_branch_id,
-            "description": _token_description(
-                scope,
-                _clean_metadata(hostname, _MAX_HOSTNAME_LENGTH),
-                _clean_metadata(collector_version, _MAX_VERSION_LENGTH),
-            ),
-            "installation_id": scope.installation_id,
-        },
-    ).scalar_one()
+    _claim_code(conn, code_row, checked_at)
+    agent_token, token_id = _insert_bound_token(conn, scope, hostname, collector_version)
 
     result: dict[str, Any] = {
         "customer_id": scope.customer_id,
@@ -826,6 +865,189 @@ def redeem_enrollment_code(
         sum(len(site.rules[name]) for name in collector_rules.NAME_LISTS),
     )
     return result
+
+
+# --- replacement redemption (C6a R2) -----------------------------------------------------------------------------------
+#
+# docs/c6a-replacement-machine-design.md, 14.4a. A code whose installation names the installation it replaces moves the
+# branch's one Contract v2 identity from the source to the replacement, all in the caller's ONE transaction: the source's
+# tokens are deactivated, the source and its key retired, the replacement given a new key and a bound token, and the
+# change audited. The branch's cutover is never written and no event row is touched. Any refusal, any failure and any
+# guarded update that does not change exactly one row rolls everything back, and the code stays unused.
+#
+# LOCK ORDER (14.4a, decision A): organization FOR SHARE -> code -> the source's tokens -> the source -> the replacement
+# -> the branch FOR UPDATE. Every agent request takes its token first, so the source's tokens come before any
+# installation, branch or key row: an upload already holding its token and about to insert events (which take the
+# branch FOR KEY SHARE) is waited for, never deadlocked with. agent_tokens and collector_installations have no row level
+# security, so the locks need no tenant context; it is set anyway, from the validated scope, before any lock.
+
+REPLACEMENT_REDEEMED = "collector_replacement_redeemed"
+REPLACEMENT_ALREADY_PENDING = "replacement_already_pending"
+
+
+class ReplacementCutoverError(RuntimeError):
+    """A guarded write changed no row although the locks held should make that impossible. Not a refusal: the caller's
+    transaction rolls back and the request ends as any unexpected error does (14.4a, decision F)."""
+
+
+def _no_key_update_suffix(conn: Any) -> str:
+    return " FOR NO KEY UPDATE" if is_postgresql(conn) else ""
+
+
+_LOCK_SOURCE_TOKENS_SQL = "SELECT id FROM agent_tokens WHERE installation_id = :installation_id ORDER BY id"
+
+_LOCK_INSTALLATION_ROW_SQL = """
+    SELECT id, replacement_authorized_by_user_id
+    FROM collector_installations
+    WHERE id = :installation_id
+"""
+
+_SOURCE_ACTIVE_KEY_SQL = """
+    SELECT key_id
+    FROM ingest_key_ids
+    WHERE customer_id = :customer_id
+      AND branch_id = :branch_id
+      AND installation_id = :installation_id
+      AND status = 'active'
+"""
+
+_OWNS_ANY_KEY_SQL = "SELECT 1 FROM ingest_key_ids WHERE installation_id = :installation_id LIMIT 1"
+
+_RETIRE_SOURCE_SQL = """
+    UPDATE collector_installations
+    SET status = 'retired',
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = :installation_id
+      AND organization_id = :organization_id
+      AND status = :previous_status
+"""
+
+# Not ingest_v2_service.retire_ingest_key: that refuses an owned key by design.
+_RETIRE_SOURCE_KEY_SQL = """
+    UPDATE ingest_key_ids
+    SET status = 'retired',
+        retired_at = CURRENT_TIMESTAMP
+    WHERE key_id = :key_id
+      AND installation_id = :installation_id
+      AND status = 'active'
+"""
+
+_SITE_SLUGS_SQL = """
+    SELECT o.slug AS org_slug, b.slug AS branch_slug
+    FROM organizations o
+    JOIN branches b
+      ON b.organization_id = o.id
+    WHERE o.id = :organization_id
+      AND b.id = :branch_id
+"""
+
+
+def _exactly_one(result: Any, what: str) -> None:
+    if result.rowcount != 1:
+        raise ReplacementCutoverError(f"{what} changed {result.rowcount} rows, not 1")
+
+
+def _redeem_replacement(
+    conn: Any,
+    code_row: Any,
+    scope: InstallationScope,
+    *,
+    hostname: str | None,
+    collector_version: str | None,
+    checked_at: datetime,
+) -> dict[str, Any]:
+    """Steps 3-16 of 14.4a for a valid, unused code of a replacement installation (`scope`). The caller holds the
+    organization FOR SHARE and the code FOR UPDATE, and commits."""
+    source_id = int(scope.replaces_installation_id)  # type: ignore[arg-type]  # the caller checked it is set
+    _set_tenant_context(conn, scope)
+
+    # 4-6: the source's tokens, the source, the replacement -- before the branch.
+    nku = _no_key_update_suffix(conn)
+    conn.execute(text(_LOCK_SOURCE_TOKENS_SQL + nku), {"installation_id": source_id}).fetchall()
+    conn.execute(text(_LOCK_INSTALLATION_ROW_SQL + nku), {"installation_id": source_id}).first()
+    replacement = conn.execute(
+        text(_LOCK_INSTALLATION_ROW_SQL + nku), {"installation_id": scope.installation_id}
+    ).mappings().one()
+
+    # 7: the branch FOR UPDATE, the replacement's status re-read, the site's current settings and rules.
+    site = _prepare_v2_enrollment(conn, scope, replacement=True)
+
+    # 8: the source, under its lock (decisions C and D), and no OTHER pending replacement at the branch (decision B).
+    # The replacement itself must still be pending: it owns no key.
+    try:
+        source, _primary = replacement_eligibility.require_eligible_source(conn, scope.organization_id, source_id)
+    except replacement_eligibility.ReplacementIneligible as refused:
+        raise EnrollmentRefused(ENROLLMENT_NOT_READY, refused.code) from None
+    if replacement_eligibility.pending_replacement_at_branch(
+        conn, scope.branch_id, excluding=scope.installation_id
+    ) is not None:
+        raise EnrollmentRefused(ENROLLMENT_NOT_READY, REPLACEMENT_ALREADY_PENDING)
+    if conn.execute(text(_OWNS_ANY_KEY_SQL), {"installation_id": scope.installation_id}).first() is not None:
+        raise EnrollmentRefused(ENROLLMENT_NOT_READY, "replacement_already_owns_a_key")
+    (retired_key_id,) = conn.execute(text(_SOURCE_ACTIVE_KEY_SQL), {
+        "customer_id": scope.customer_id, "branch_id": scope.operational_branch_id, "installation_id": source_id,
+    }).scalars().all()  # exactly one: eligibility required the source to own the branch's only active key
+
+    # 9-12: the code, then the source's credentials.
+    _claim_code(conn, code_row, checked_at)
+    deactivated = [int(row[0]) for row in conn.execute(
+        text(_REVOKE_INSTALLATION_TOKENS_SQL), {"installation_id": source_id}
+    ).fetchall()]
+    _exactly_one(conn.execute(text(_RETIRE_SOURCE_SQL), {
+        "installation_id": source_id, "organization_id": scope.organization_id, "previous_status": source["status"],
+    }), "retiring the replaced installation")
+    _exactly_one(conn.execute(text(_RETIRE_SOURCE_KEY_SQL), {
+        "key_id": retired_key_id, "installation_id": source_id,
+    }), "retiring the replaced installation's key")
+
+    # 13: the replacement's key and token. 14: no cutover is written.
+    key_id = issue_ingest_key(conn, scope.customer_id, scope.operational_branch_id, installation_id=scope.installation_id)
+    agent_token, token_id = _insert_bound_token(conn, scope, hostname, collector_version)
+
+    # 15: a system action, attributed to the administrator who authorized the replacement (14.2a, 14.4a decision E).
+    # Ids and slugs only -- never the code, a token, a hash, a hostname or a key secret.
+    slugs = conn.execute(
+        text(_SITE_SLUGS_SQL), {"organization_id": scope.organization_id, "branch_id": scope.branch_id}
+    ).mappings().one()
+    # Imported here, as database is in _get_engine: main.py imports this module before `database` is importable.
+    from . import auth_service
+
+    auth_service.log_auth_event_with_connection(
+        conn,
+        event_type=REPLACEMENT_REDEEMED,
+        is_success=True,
+        message="Collector replacement redeemed.",
+        metadata={
+            "target_org_slug": slugs["org_slug"],
+            "branch_slug": slugs["branch_slug"],
+            "installation_id": scope.installation_id,
+            "replaces_installation_id": source_id,
+            "authorized_by_user_id": int(replacement["replacement_authorized_by_user_id"]),
+            "retired_key_id": retired_key_id,
+            "key_id": key_id,
+            "enrollment_code_id": int(code_row["id"]),
+            "deactivated_token_ids": deactivated,
+        },
+    )
+
+    logger.info(
+        "Collector replacement redeemed | code_id=%s token_id=%s installation_id=%s replaces_installation_id=%s "
+        "customer_id=%s branch_id=%s key_id=%s retired_key_id=%s deactivated_tokens=%s",
+        code_row["id"], token_id, scope.installation_id, source_id, scope.customer_id, scope.operational_branch_id,
+        key_id, retired_key_id, len(deactivated),
+    )
+    # 16: exactly the ordinary Contract v2 response (setup-collector.ps1 V2ResponseKeys).
+    return {
+        "customer_id": scope.customer_id,
+        "branch_id": scope.operational_branch_id,
+        "installation_id": scope.installation_id,
+        "agent_token": agent_token,
+        "contract_version": CONTRACT_V2,
+        "contract_mode": CONTRACT_MODE_V2,
+        "key_id": key_id,
+        "timezone": site.timezone,
+        "classification_rules": site.rules,
+    }
 
 
 # --- recovery (platform admin) -----------------------------------------------------------------------------------------

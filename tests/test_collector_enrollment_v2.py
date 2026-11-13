@@ -91,7 +91,7 @@ _DDL = [
     """CREATE TABLE collector_installations (
         id INTEGER PRIMARY KEY, organization_id INTEGER, branch_id INTEGER, name TEXT, hostname TEXT,
         collector_version TEXT, status TEXT, installed_at TEXT, last_seen_at TEXT, created_at TEXT, updated_at TEXT,
-        required_contract INTEGER NOT NULL DEFAULT 1)""",
+        required_contract INTEGER NOT NULL DEFAULT 1, replaces_installation_id INTEGER)""",
     """CREATE TABLE agent_tokens (
         id INTEGER PRIMARY KEY AUTOINCREMENT, token_hash TEXT NOT NULL UNIQUE, customer_id INTEGER NOT NULL,
         branch_id INTEGER NOT NULL, description TEXT, is_active BOOLEAN NOT NULL DEFAULT 1,
