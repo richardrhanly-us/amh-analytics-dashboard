@@ -4,9 +4,9 @@
 
 **Scope:** Support-controlled replacement of an enrolled Contract v2 Collector computer, through Mode 1 controlled handoff or Mode 2 fresh-identity recovery  
 
-**Amendment A (Section 14, design approved 2026-11-12; R0 complete):** Mode 2 is implemented first, through the unchanged Collector 1.0.14 SortView Setup GUI. Where Section 14 is more specific than an earlier section, Section 14 applies to Mode 2. **R1 (authorization and cancellation) is implemented and merged** (PR #288, `d45a2da`; 14.9). **R2 (replacement redemption) is implemented and validated locally, but not merged or deployed** (14.4a, 14.9): it is blocked until D6 is decided. R3–R5 are not implemented. Machine replacement is not available to customers.
+**Amendment A (Section 14, design approved 2026-11-12; R0 complete):** Mode 2 is implemented first, through the unchanged Collector 1.0.14 SortView Setup GUI. Where Section 14 is more specific than an earlier section, Section 14 applies to Mode 2. **R1 (authorization and cancellation) is implemented and merged** (PR #288, `d45a2da`; 14.9). **R2 (replacement redemption) is merged** (PR #289, `e5d24a3`) **and deployed** (14.9). R3's design is approved and its feature flag is implemented but not yet merged (14.11); the R3 interface, R4 and R5 are not implemented. Machine replacement has not been qualified for customer use (R4, R5, D6).
 
-**Implementation status:** Replacement is not available, and Mode 1 and Mode 2 are unavailable. Mode 2 stage R1 (authorization and cancellation only) is merged (14.9); redemption of a replacement code is still refused in `main`. R2, which redeems it, exists only on its branch until D6 is decided. Key ownership and the credential safeguards in Section 2 are implemented (milestones M1 and M2), as are a read-only inventory of legacy keys (milestone M3a) and safeguards in the legacy credential scripts (milestone M3b). Only the behavior listed in Section 2 and the code-inspection findings in Section 9 describe the system as it exists today; everything else here is proposed.
+**Implementation status:** Mode 1 is unavailable. Mode 2 stages R1 (authorization and cancellation) and R2 (redemption) are merged and deployed (14.9), so a platform administrator can complete a replacement through the administration API. There is no administration UI yet. The server-side gate (14.11) is implemented but not yet deployed, and replacement has not been qualified for customer use. Key ownership and the credential safeguards in Section 2 are implemented (milestones M1 and M2), as are a read-only inventory of legacy keys (milestone M3a) and safeguards in the legacy credential scripts (milestone M3b). Only the behavior listed in Section 2 and the code-inspection findings in Section 9 describe the system as it exists today; everything else here is proposed.
 
 ## 1. Objective
 
@@ -740,8 +740,9 @@ Apart from milestones M1 and M2, no schema migration, endpoint, or production ch
 - **Decided by the product owner:** items 14.1(a) and 14.1(b); D1, D2, D3, D4, D7 and D8 (14.10), subject to compatibility with the existing implementation; and the attribution representation in 14.2 and 14.2a. The installation row is the durable authorization record, and `auth_audit_log` records the lifecycle events.
 - **Still open:** D5 and D6, to be decided before R5, and the remaining technical issues at the end of 14.10.
 - **R1:** implemented, and all its acceptance criteria passed in local validation on 2026-11-12. Merged to `main` in PR #288 (`d45a2da`). Its record is in 14.9.
-- **R2:** implementation decisions A–H approved 2026-11-12 (14.4a). Implemented on its branch; PostgreSQL validation pending (14.9). **R2 may be developed, tested and reviewed, but must not be merged or deployed until D6 is decided.**
-- **Not implemented:** R2–R5. Redeeming a replacement code is still refused, and machine replacement is not available. Design approval does not by itself approve a production change. Each stage ships through its own reviewed PR and meets its acceptance criteria in 14.9.
+- **R2:** implementation decisions A–H approved 2026-11-12 (14.4a). Merged to `main` in PR #289 (`e5d24a3`) and deployed; DigitalOcean reports healthy. Its record is in 14.9.
+- **R3:** decisions approved 2026-11-12. The server-side feature flag is approved and implemented as a separate backend-first slice, not yet merged or deployed; the interface is not implemented (14.11).
+- **Not implemented:** R3–R5. Replacement has not been qualified for customer use. Design approval does not by itself approve a production change. Each stage ships through its own reviewed PR and meets its acceptance criteria in 14.9.
 
 ### 14.1 Scope
 
@@ -893,7 +894,7 @@ An ordinary enrollment is unchanged, including both refusals that step 6 replace
 | D | The source eligibility checks move to one small shared module, used by R1 and by redemption. R1's behavior and refusal codes are unchanged |
 | E | The `collector_replacement_redeemed` event also carries `target_org_slug` and `branch_slug`. Never a code, token, hash, hostname or key secret |
 | F | Unexpected errors keep today's behavior: a 500, with everything rolled back. A deadlock, lock timeout or failed guarded update is **never** reported as an eligibility refusal |
-| G | R2 may be developed, tested and submitted for review, but is **not merged or deployed** until D6 is decided. No feature flag while deployment is blocked |
+| G | R2 may be developed, tested and submitted for review, but is **not merged or deployed** until D6 is decided. No feature flag while deployment is blocked. **Superseded:** the product owner merged and deployed R2 (PR #289) before D6; the gate is now the server-side flag proposed in 14.11 |
 | H | A suspended library's redemption is refused as today (generic `400`, `organization_status_suspended`), before any write. R2 tests prove it consumes no code and changes no credential |
 
 **Row-level security (pre-implementation check 1).** Only the six event tables and `ingest_key_ids` have row-level security (migration `0acba192bf69`; `scripts/runtime_role_privileges.RLS_TABLES`).
@@ -1102,7 +1103,7 @@ Each stage is its own PR and deploys independently. No stage adds Mode 1, key ro
     - downgrade to `c1e7a94f2b60`, then check that every column, constraint, index, trigger, function and row in the public schema matches its state before the upgrade;
     - upgrade to head again.
 
-**R2 — replacement redemption** (enrollment service). **Not to be merged or deployed until D6 is decided (14.4a, G).** Acceptance:
+**R2 — replacement redemption** (enrollment service). Acceptance:
 - 14.4 as corrected by 14.4a, and 14.5, tested on SQLite and on PostgreSQL under the runtime role with RLS.
 - An upload or heartbeat from the source already in progress, holding its token, does not deadlock with redemption (14.4a, A).
 - A suspended library's redemption consumes no code and changes no credential (14.4a, H).
@@ -1114,7 +1115,7 @@ Each stage is its own PR and deploys independently. No stage adds Mode 1, key ro
 - The replacement response has exactly the ordinary v2 field set, checked against the setup engine's parser. A Contract 1 or 1.0.13 request is refused without consuming the code.
 - No code, token or secret appears in logs or audit records.
 
-**R2 status: implemented on branch `feature/c6a-r2-atomic-replacement-cutover`, and every R2 acceptance criterion above passed in local validation on 2026-11-12. Not merged and not deployed: blocked until D6 is decided (14.4a, G).** No migration, no installer or Collector change.
+**R2 status: every R2 acceptance criterion above passed in local validation on 2026-11-12. Merged to `main` in PR #289 (`e5d24a3`) and deployed; R1's migration `b8e2d4f61a07` was applied to production first. Not yet qualified for customer use (R4, R5, D6), and not yet gated (14.11).** No migration, no installer or Collector change.
 
 - **Code:**
   - `services/replacement_eligibility.py` (new): the source rules, the primary branch, the branch lock, and the pending-replacement query with an exclusion. R1's codes are unchanged.
@@ -1158,9 +1159,15 @@ Each stage is its own PR and deploys independently. No stage adds Mode 1, key ro
   | Exact v2 field set; Contract 1 refused unconsumed | `test_the_response_is_exactly_the_field_set_the_setup_engine_accepts`, `test_an_old_installer_is_refused_…` |
   | No secret in logs or audit (E) | `test_the_redemption_is_audited_as_a_system_action_…`; the stored row on PostgreSQL |
 - **Two refusals beyond the 14.4a table**, both `enrollment_not_ready` and consuming nothing, guarding states R1 cannot produce: `replacement_requires_contract_2` and `replacement_already_owns_a_key`.
-- **Deployment, once D6 allows it:** no migration of its own, but every enrollment now reads `replaces_installation_id`, so R1's migration `b8e2d4f61a07` must already be applied in production.
+- **Deployment:** no migration of its own, but every enrollment reads `replaces_installation_id`, so R1's migration `b8e2d4f61a07` had to be applied first. It was.
 
-**R3 — administration UI and runbook.** "Replace this Collector computer" and "Cancel replacement" in the React admin app, showing a pending replacement and its source. Plus the support runbook (14.8, item 4). Acceptance: UI tests, the accessibility checks used for the rest of the admin app, and a runbook review.
+**R3 — administration UI, feature flag and runbook** (14.11). "Replace this Collector computer" and "Cancel replacement" in the React admin app, showing a pending replacement and its source. The server-side replacement flag, once its design is approved. Plus the support runbook (14.8, item 4): `docs/c6a-replacement-support-runbook.md`. Acceptance:
+- With the flag off (the default): authorization, a code for a pending replacement, and redemption of a replacement code are refused, each consuming and writing nothing; cancellation still works; ordinary enrollment, code issuance, recovery tokens, uploads and heartbeats are unchanged.
+- With the flag on: R1's and R2's tests pass, with only the change that turns the flag on in their fixtures.
+- The installation list carries `replaces_installation_id`, the authoritative `pending_replacement_id` (read as the runtime role under row-level security) and `replacement_enabled`.
+- UI tests for the workflow in 14.11, including that the raw code is kept out of the query cache, storage and the page after Done or leaving.
+- The accessibility checks used for the rest of the admin app (axe), with a pending replacement and each open form.
+- A runbook review.
 
 **R4 — VM qualification with the unchanged G2 package.** Acceptance:
 - A first replacement from an active, ingesting source, using installation `9`, is documented. Afterwards:
@@ -1200,3 +1207,105 @@ Each stage is its own PR and deploys independently. No stage adds Mode 1, key ro
 3. **A constraint for one active key per branch:** still deferred until the production key inventory (14.5).
 4. **D5 and D6:** reporting discontinuity and pilot use, decided before R5.
 5. **Clean computer after a lost response:** verified in R4, not assumed (14.6).
+
+### 14.11 R3: administration interface and the replacement feature flag
+
+**Status:** decisions 1 and 3–6 approved 2026-11-12. **The feature flag (decision 2) was approved 2026-11-12 and is implemented as its own backend-first slice, on branch `feature/c6a-r3-replacement-admin-ui`, and passed local validation (record below). The administration interface is not part of that slice and is not implemented.**
+
+**Why R3 needs a flag now.** R2 was merged and deployed before D6 was decided (14.4a, G superseded). Until the flag ships, a platform administrator can authorize, issue a code for and complete a replacement through the administration API, and nothing on the server stops it. Hiding the React controls would not change that, so the gate must be on the server.
+
+**Approved decisions:**
+
+| # | Decision |
+|---|---|
+| 1 | **Read model (Option A).** The installation list gains `replaces_installation_id` on each installation and a top-level `pending_replacement_id`. The pending replacement is computed by the shared definition (`replacement_eligibility.pending_replacement_at_branch`) for the primary branch, with that branch's tenant context set and no lock taken |
+| 2 | **D6 exposure:** a server-enforced replacement flag, **off by default** (design below) |
+| 3 | Authorization and code issuance stay **two separate, explicitly confirmed actions** |
+| 4 | Confirmations are the **inline confirmations** already used on the Installations page (labelled groups, "Confirm: …" and Cancel), not modal dialogs |
+| 5 | A standalone support runbook: `docs/c6a-replacement-support-runbook.md` |
+| 6 | **Wording:** authorization itself does not disable the original computer; its credentials are retired only when redemption commits; collection may have a gap (14.7); support verifies the new computer before cleaning up the old one |
+
+**Unchanged:** one-time secret handling, screen-reader behavior, the platform-administrator check and admin Origin guard, and the API's refusal codes and messages.
+
+**Feature flag: proposed design.**
+
+*Configuration.* One backend environment variable, `SORTVIEW_MACHINE_REPLACEMENT_ENABLED`, following the pattern of `SORTVIEW_V2_INGEST_ENABLED`:
+- It is off unless the trimmed value is exactly `true`, in any case. Unset, empty or any other value is off.
+- It is set in the DigitalOcean app's environment. Changing it redeploys the backend, as for every backend variable.
+- **One function reads it:** `replacement_eligibility.replacement_enabled()`, on each call rather than once at import.
+  - The enrollment path imports `src.services.*` and the administration path imports `services.*`, so a module-level constant would exist twice, and tests would have to patch both.
+  - A per-call read keeps one rule and lets tests use `monkeypatch.setenv`.
+  - The cost is one environment lookup per guarded request.
+- There is no database setting and no admin toggle. The flag is an operator decision made at deploy time, not something a platform administrator can switch from the interface it restricts.
+
+*What it guards.*
+
+| Operation | Flag off | Where |
+|---|---|---|
+| Authorize a replacement | `409 replacement_disabled`, before any lock or write | `admin_installation_service.authorize_replacement`, first check |
+| Issue a code for a **pending replacement** | `409 replacement_disabled`, before any write; earlier unused codes are not revoked | `issue_enrollment_code`, in the existing branch for a linked installation that owns no key |
+| Redeem a replacement's code | `409 enrollment_not_ready`, internal reason `replacement_disabled`; the code is not used and nothing changes | `redeem_enrollment_code`, at the existing branch for a linked installation, before `_redeem_replacement` |
+| Cancel a pending replacement | **Allowed**: it is the cleanup path | — |
+| The general status change | Unchanged. Deactivating or reactivating a pending replacement still works; retiring one still answers `use_cancel_replacement` | — |
+| List installations | Unchanged, plus `replacement_enabled: bool`, so the UI can hide Replace and code issuance for a pending replacement and say why | list route |
+| Ordinary enrollment, ordinary codes, recovery tokens, unbound-token revocation, uploads, heartbeats | **Unaffected**: none of them reaches a guard | — |
+
+*Redemption keeps the public refusal.* SortView Setup 1.0.14 knows only the existing public codes (14.1(c)), so a disabled redemption returns the ordinary `enrollment_not_ready`. Setup reports "not ready to be enrolled" and says the code was not used. The reason `replacement_disabled` appears only in server logs.
+
+*Existing pending replacements while the flag is off.*
+- They stay as they are and appear in the list.
+- Their codes cannot be redeemed, and no new code can be issued.
+- Support can cancel them.
+- Turning the flag on again makes them usable, subject to every existing eligibility check.
+
+*Changes the flag needs* (none made yet):
+- **Backend:** the function and the three guards above; the `replacement_disabled` message in the administration routes; `replacement_enabled` in `InstallationsResponse`.
+- **Tests, with the flag off:**
+  - each guard is refused, on SQLite, and on PostgreSQL for redemption: no code used, no credential changed;
+  - cancellation is still allowed;
+  - ordinary enrollment, codes and recovery are unaffected.
+- **Tests, value parsing:** `true`, `TRUE`, ` true `, empty, `1`, `yes` and unset.
+- **Tests, existing:** R1's and R2's replacement tests turn the flag on in their fixtures and keep every assertion.
+- **Deployment and docs:** a row in `docs/deployment.md`'s variable table and in `.env.example`, and the runbook's prerequisites. No migration.
+
+*Status of the flag slice (2026-11-12).* **Implemented, and passed local validation on 2026-11-12. Not merged, not deployed. This slice does not include the R3 administration interface**, which is still to be built; until it is, replacement remains reachable only through the administration API, and only with the flag on.
+- **Code:**
+  - `replacement_eligibility.replacement_enabled()` and `REPLACEMENT_DISABLED`;
+  - the guard first in `authorize_replacement`;
+  - the guard in `issue_enrollment_code` for a linked installation that owns no key, inside its transaction, before any code is written;
+  - the guard in `redeem_enrollment_code` for a linked code, inside the caller's transaction, holding only the organization `FOR SHARE` and the code `FOR UPDATE`, before any credential is touched;
+  - the `replacement_disabled` message in the administration routes.
+- **Tests:**
+  - `tests/test_replacement_flag.py` (new): value parsing, both module identities, and authorization refused before the database is touched;
+  - flag-off tests added to `test_replacement_redemption.py`, `test_admin_replacement_postgres.py` and `test_replacement_redemption_postgres.py`: each guard writes nothing; cancellation, deactivation and reactivation still work; ordinary enrollment, codes, installation creation, unbound-token revocation, recovery tokens, uploads and heartbeats are unaffected; a refused code redeems once the flag is on;
+  - `replacement_disabled` added to the route refusal tests in `test_admin_replacement.py`;
+  - the R1 and R2 replacement fixtures turn the flag on. No existing assertion changed.
+- **Docs:** `.env.example`, `docs/deployment.md`.
+- **Local validation (2026-11-12; local disposable PostgreSQL 18, never production):**
+  - **Full PostgreSQL opt-in suite: 1,054 passed, 0 failed:** R2's 1,049 plus the five new flag-off PostgreSQL tests.
+  - **Full Python suite without PostgreSQL: 11,342 passed, 1,054 skipped, 0 failed:** R2's 11,320 plus 22 new tests (18 in `test_replacement_flag.py`, 2 in `test_replacement_redemption.py`, 2 route refusal cases in `test_admin_replacement.py`).
+  - ruff and bandit (the CI command) clean; `git diff --check` clean.
+- **Not changed:** no migration, no schema change, no change to SortView Setup 1.0.14 or the Collector.
+- **The support runbook** (`docs/c6a-replacement-support-runbook.md`) ships with the interface slice, not with this one.
+- **Differences from the design above:**
+  - `replacement_enabled` in the installation list is **deferred to the interface slice**, together with `replaces_installation_id` and `pending_replacement_id`, so the list's shape changes once. Nothing reads it before the interface exists.
+  - Authorization's name is validated by the route before the service runs, so a blank or overlong name is still `422` while the flag is off. Either way nothing is written.
+
+*Deployment order.*
+- The flag ships as R3's first backend change, before the UI, because until then replacement is ungated in production.
+- Before deploying it, confirm read-only that production has no replacement in progress (`collector_installations` rows with `replaces_installation_id`). The flag makes any pending replacement unusable until the flag is turned on.
+
+**Interface workflow** (Installations page, `/libraries/:orgSlug/installations`):
+1. **Replace this Collector computer.** Shown only when the flag is on and no replacement is pending, on an installation that:
+   - is Contract 2, at the primary branch;
+   - is Provisioning, Active or Inactive;
+   - has a used code;
+   - is not the pending replacement.
+
+   The server decides eligibility; the page only avoids offering what cannot apply. An inline form takes the new computer's name and states the decision 6 wording. For a Provisioning source, it also requires the lost-response confirmation (14.3a).
+2. **After `201`:** the list refreshes, a status message names the new installation, and focus moves to its card. The pending card reads "Pending replacement for Installation #X", and the source reads "Being replaced by Installation #Y".
+3. **Issue enrollment code** on the pending card, as for any installation. The code appears in the existing one-time code panel, with replacement instructions.
+4. **Cancel replacement** on the pending card, after an inline confirmation. It stays available while the flag is off.
+5. **After redemption:** the source reads "Retired — replaced by Installation #Y", the replacement reads "Replaces Installation #X", and Cancel is no longer offered.
+
+**Refusals:** each shows the server's message after "Nothing was changed.", keeps what was typed, and refreshes the list, so a concurrent change by another administrator is visible at once.

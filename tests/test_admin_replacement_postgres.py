@@ -62,6 +62,7 @@ UNOWNED_KEY = "3d4e5f60-7182-493a-9c4d-5e6f7a8b9ca3"
 
 @pytest.fixture
 def db(cluster, monkeypatch):  # noqa: F811 -- the imported fixture, requested by name
+    monkeypatch.setenv("SORTVIEW_MACHINE_REPLACEMENT_ENABLED", "true")  # 14.11: these tests replace machines
     owner, runtime = cluster
     with owner.begin() as conn:
         conn.execute(text(
@@ -803,3 +804,79 @@ def test_the_migration_round_trips_and_its_downgrade_removes_exactly_its_additio
             assert _alembic(db.url, "upgrade", "head").returncode == 0  # and it goes forward again
         finally:
             engine.dispose()
+
+
+# =====================================================================================================================
+# machine replacement turned off (14.11)
+# =====================================================================================================================
+
+def _installations(owner):
+    return _rows(owner, "SELECT * FROM collector_installations ORDER BY id")
+
+
+def _codes(owner):
+    return _rows(owner, "SELECT * FROM collector_enrollment_codes ORDER BY id")
+
+
+def test_while_replacement_is_off_authorization_is_refused_and_writes_nothing(db, monkeypatch):
+    owner, _ = db
+    before = (_credentials(owner), _installations(owner), _audit(owner))
+    monkeypatch.delenv("SORTVIEW_MACHINE_REPLACEMENT_ENABLED")
+
+    _refused("replacement_disabled", _authorize)
+    _refused("replacement_disabled", lambda: _authorize(confirm=True))
+
+    assert (_credentials(owner), _installations(owner), _audit(owner)) == before
+
+
+def test_while_replacement_is_off_a_pending_replacement_gets_no_code_and_keeps_its_unused_one(db, monkeypatch):
+    owner, _ = db
+    replacement = _authorize()["installation"]["id"]
+    service.issue_enrollment_code(_library("acme"), replacement, actor=ACTOR)
+    before = (_codes(owner), _audit(owner))
+    monkeypatch.delenv("SORTVIEW_MACHINE_REPLACEMENT_ENABLED")
+
+    _refused("replacement_disabled", lambda: service.issue_enrollment_code(_library("acme"), replacement, actor=ACTOR))
+
+    assert (_codes(owner), _audit(owner)) == before
+
+
+def test_while_replacement_is_off_a_pending_replacement_can_still_be_cancelled_or_deactivated(db, monkeypatch):
+    owner, _ = db
+    replacement = _authorize()["installation"]["id"]
+    service.issue_enrollment_code(_library("acme"), replacement, actor=ACTOR)
+    before = _credentials(owner)
+    monkeypatch.delenv("SORTVIEW_MACHINE_REPLACEMENT_ENABLED")
+
+    assert service.change_status(_library("acme"), replacement, status="inactive", actor=ACTOR)["status"] == "inactive"
+    assert service.change_status(_library("acme"), replacement, status="provisioning", actor=ACTOR)["status"] == (
+        "provisioning")
+    _refused("use_cancel_replacement",
+             lambda: service.change_status(_library("acme"), replacement, status="retired", actor=ACTOR))
+    cancelled = service.cancel_replacement(_library("acme"), replacement, actor=ACTOR)
+
+    assert cancelled["installation"]["status"] == "retired" and _pending(owner) == []
+    assert _rows(owner, "SELECT count(*) AS n FROM collector_enrollment_codes WHERE installation_id = :i "
+                        "AND used_at IS NULL AND revoked_at IS NULL", i=replacement) == [{"n": 0}]
+    assert _credentials(owner) == before  # the source runs on, untouched
+    assert _audit(owner)[-1]["event_type"] == "admin_replacement_cancelled"
+
+
+def test_while_replacement_is_off_ordinary_administration_is_unaffected(db, monkeypatch):
+    owner, _ = db
+    _run(owner, "INSERT INTO agent_tokens (token_hash, customer_id, branch_id, description, is_active) "
+                "VALUES (:h, 10, 1, 'legacy', TRUE)", h=hashlib.sha256(UNBOUND_TOKEN.encode()).hexdigest())
+    monkeypatch.delenv("SORTVIEW_MACHINE_REPLACEMENT_ENABLED")
+
+    assert service.issue_enrollment_code(_library("fresh"), 301, actor=ACTOR)["required_contract"] == 2
+    plain = service.create_installation(_library("acme"), name="Plain", required_contract=2, actor=ACTOR)["id"]
+    _refused("branch_already_enrolled", lambda: service.issue_enrollment_code(_library("acme"), plain, actor=ACTOR))
+    (token,) = service.list_unbound_tokens(_library("acme"))
+    service.revoke_unbound_token(_library("acme"), token["id"], actor=ACTOR)
+    recovered = service.issue_recovery_token(_library("acme"), 101, actor=ACTOR)
+
+    assert recovered["agent_token"] and recovered["revoked_previous_count"] == 1
+    assert [event["event_type"] for event in _audit(owner)] == [
+        "admin_enrollment_code_issued", "admin_installation_created", "admin_unbound_token_revoked",
+        "admin_recovery_token_issued",
+    ]

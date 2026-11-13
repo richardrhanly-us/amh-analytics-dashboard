@@ -162,7 +162,7 @@ AUTHORIZE_REFUSALS = [
     ("replacement_source_retired", 409), ("replacement_source_not_contract_2", 409),
     ("replacement_source_not_at_primary_branch", 409), ("replacement_source_not_key_owner", 409),
     ("replacement_branch_not_enrolled", 409), ("unbound_tokens_active", 409), ("replacement_already_pending", 409),
-    ("lost_response_confirmation_required", 409),
+    ("lost_response_confirmation_required", 409), ("replacement_disabled", 409),
 ]
 CANCEL_REFUSALS = [("installation_not_found", 404), ("library_cancelled", 409), ("not_a_pending_replacement", 409),
                    ("transition_not_allowed", 409)]
@@ -182,7 +182,7 @@ def test_every_refusal_is_its_fixed_code_and_message(api, monkeypatch, path, bod
 
 
 @pytest.mark.parametrize("code", ["use_cancel_replacement", "replacement_source_not_key_owner", "unbound_tokens_active",
-                                  "replacement_branch_not_enrolled"])
+                                  "replacement_branch_not_enrolled", "replacement_disabled"])
 def test_the_status_change_and_code_issue_routes_answer_the_new_refusals(api, monkeypatch, code):  # noqa: F811
     world = ReplacementWorld(monkeypatch)
     world.refuse = code

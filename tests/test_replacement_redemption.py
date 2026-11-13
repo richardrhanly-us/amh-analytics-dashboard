@@ -75,6 +75,7 @@ def _reset_rate_limiter():
 
 @pytest.fixture
 def db(monkeypatch):
+    monkeypatch.setenv("SORTVIEW_MACHINE_REPLACEMENT_ENABLED", "true")  # 14.11: these tests replace machines
     engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
 
     @event.listens_for(engine, "connect")
@@ -485,3 +486,38 @@ def test_an_unlinked_code_on_an_enrolled_branch_is_still_refused_as_before(world
 
     assert (refused.value.code, refused.value.reason) == ("enrollment_not_ready", "active_ingest_key_exists")
     assert _written(db) == before
+
+
+# =====================================================================================================================
+# machine replacement turned off (14.11): a replacement's code is refused unused; nothing else is affected
+# =====================================================================================================================
+
+def test_while_replacement_is_off_a_replacement_code_is_refused_unused_and_works_once_it_is_on(world, monkeypatch):
+    monkeypatch.delenv("SORTVIEW_MACHINE_REPLACEMENT_ENABLED")
+
+    _refused_with(world["db"], world["code"], "replacement_disabled")
+
+    monkeypatch.setenv("SORTVIEW_MACHINE_REPLACEMENT_ENABLED", "true")
+    assert _post(world["code"]).json()["installation_id"] == REPLACEMENT
+
+
+def test_while_replacement_is_off_ordinary_enrollment_uploads_and_heartbeats_are_unaffected(world, monkeypatch):
+    db, source = world["db"], world["source"]
+    monkeypatch.delenv("SORTVIEW_MACHINE_REPLACEMENT_ENABLED")
+    _run(db, "INSERT INTO customers VALUES (12)")
+    _run(db, "INSERT INTO organizations VALUES (3, 'lib-c', 'active', 12, '2025-03-04T05:06:07+00:00')")
+    _run(db, "INSERT INTO branches (id, organization_id, slug, status, operational_branch_id) "
+             "VALUES (3, 3, 'main', 'active', 3)")
+    _run(db, "INSERT INTO organization_settings (organization_id, settings_json) VALUES (3, :j)", j=json.dumps(SETTINGS_A))
+    _run(db, "INSERT INTO collector_installations (id, organization_id, branch_id, name, status, required_contract) "
+             "VALUES (301, 3, 3, 'Third Sorter', 'provisioning', 2)")
+
+    enrolled = _post(_code(db, 301))
+
+    assert enrolled.status_code == 200 and enrolled.json()["installation_id"] == 301
+    third = enrolled.json()
+    assert _status(third["agent_token"], third["key_id"]).status_code == 200
+    assert _upload(third["agent_token"], third["key_id"], n=2).status_code == 200
+    # The source of the pending replacement runs on.
+    assert _status(source["agent_token"], source["key_id"]).status_code == 200
+    assert _upload(source["agent_token"], source["key_id"], n=3).status_code == 200

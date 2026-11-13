@@ -62,7 +62,8 @@ single transaction it deactivates the replaced installation's tokens, retires it
 and its key, and gives the replacement a new key and a bound token, with an audit
 record. The branch's cutover is never written, no event row is touched, and the
 response is exactly the ordinary Contract v2 one. Every reason it cannot is
-`enrollment_not_ready`, and consumes nothing.
+`enrollment_not_ready`, and consumes nothing -- including machine replacement
+being turned off (SORTVIEW_MACHINE_REPLACEMENT_ENABLED, design 14.11).
 
 THE CONTRACT IS THE SERVER'S DECISION (onboarding stage A1). An installation
 carries the ingest contract it must be enrolled on
@@ -811,6 +812,10 @@ def redeem_enrollment_code(
     # consumes nothing. The CODE's snapshot decides, not the installation's current value.
     contract = _require_permitted_contract(int(code_row["required_contract"]), contract_version)
     if scope.replaces_installation_id is not None:
+        # C6a R3 (14.11): with machine replacement off, refused here -- inside the caller's transaction, holding only the
+        # organization FOR SHARE and the code FOR UPDATE, before any credential is touched. The code stays unused.
+        if not replacement_eligibility.replacement_enabled():
+            raise EnrollmentRefused(ENROLLMENT_NOT_READY, replacement_eligibility.REPLACEMENT_DISABLED)
         # C6a R2: a replacement is Contract 2 by construction (R1 creates it so, and its code snapshots that).
         if contract != CONTRACT_V2:
             raise EnrollmentRefused(ENROLLMENT_NOT_READY, "replacement_requires_contract_2")

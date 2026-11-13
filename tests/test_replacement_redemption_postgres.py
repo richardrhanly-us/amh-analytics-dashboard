@@ -69,6 +69,7 @@ def world(cluster, monkeypatch):  # noqa: F811 -- the imported fixture, requeste
     """lib-a (org 1, customer 10, branch 1, primary): installation 101 enrolled on Contract v2 over HTTP, Active, with
     one stored event; 102, a second Contract 2 installation at the branch; an authorized pending replacement of 101 with
     an unused code, by R1's service. lib-b (org 2, customer 11, branch 2): enrolled, and never touched."""
+    monkeypatch.setenv("SORTVIEW_MACHINE_REPLACEMENT_ENABLED", "true")  # 14.11: these tests replace machines
     owner, runtime, role = cluster
     with owner.begin() as conn:
         conn.execute(text(
@@ -497,3 +498,26 @@ def test_a_lost_response_is_recovered_without_replaying_the_code_or_a_second_act
     assert _rows(owner, "SELECT count(*) AS n FROM v2_cutovers WHERE customer_id = 10") == [{"n": 1}]
     assert _upload(lost["agent_token"], lost["key_id"]).status_code == 403
     assert _upload(recovered["agent_token"], recovered["key_id"]).status_code == 200
+
+
+# =====================================================================================================================
+# machine replacement turned off (14.11)
+# =====================================================================================================================
+
+def test_while_replacement_is_off_redemption_is_refused_unused_and_the_source_runs_on(world, monkeypatch):
+    owner, runtime, source = world["owner"], world["runtime"], world["source"]
+    before = _state(owner)
+    monkeypatch.delenv("SORTVIEW_MACHINE_REPLACEMENT_ENABLED")
+
+    with pytest.raises(EnrollmentRefused) as refused:
+        _redeem(runtime, world["code"])
+    response = client.post("/collector/enroll", json={"enrollment_code": world["code"], "contract_version": 2})
+
+    assert (refused.value.code, refused.value.reason) == ("enrollment_not_ready", "replacement_disabled")
+    assert response.status_code == 409 and response.json()["code"] == "enrollment_not_ready"
+    assert _state(owner) == before  # the code unused; no token, key, installation, cutover, event or audit row changed
+    assert _status(source["agent_token"], source["key_id"]).status_code == 200
+    assert _upload(source["agent_token"], source["key_id"], n=7).status_code == 200
+
+    monkeypatch.setenv("SORTVIEW_MACHINE_REPLACEMENT_ENABLED", "true")
+    assert _redeem(runtime, world["code"])["installation_id"] == world["replacement"]

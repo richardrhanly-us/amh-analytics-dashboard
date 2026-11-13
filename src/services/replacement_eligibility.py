@@ -7,10 +7,16 @@ it into its own error (an admin refusal, or `enrollment_not_ready` at redemption
 Free of both callers on purpose: the enrollment service cannot import the admin service, which imports it. It reads only;
 the one lock it takes is the branch FOR NO KEY UPDATE, as a retirement takes it. ingest_key_ids is under row level
 security, so it sets the branch's tenant context before reading a key, from the installation row, never from a request.
+
+THE REPLACEMENT FLAG (14.11). Machine replacement is off unless SORTVIEW_MACHINE_REPLACEMENT_ENABLED is `true` (trimmed, any
+case). Off, authorization, a code for a pending replacement and the redemption of a replacement's code are refused;
+cancellation, and everything that is not a replacement, are not affected. Read on each call, by replacement_enabled()
+alone: this module is imported both as src.services and as services, and an import-time constant would exist twice.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -29,6 +35,14 @@ REPLACEMENT_SOURCE_NOT_KEY_OWNER = "replacement_source_not_key_owner"
 REPLACEMENT_BRANCH_NOT_ENROLLED = "replacement_branch_not_enrolled"
 UNBOUND_TOKENS_ACTIVE = "unbound_tokens_active"
 INSTALLATION_NOT_FOUND = "installation_not_found"
+REPLACEMENT_DISABLED = "replacement_disabled"
+
+ENABLED_VARIABLE = "SORTVIEW_MACHINE_REPLACEMENT_ENABLED"
+
+
+def replacement_enabled() -> bool:
+    """True only when SORTVIEW_MACHINE_REPLACEMENT_ENABLED is `true`, trimmed and in any case. Unset or anything else: off."""
+    return os.getenv(ENABLED_VARIABLE, "").strip().lower() == "true"
 
 
 class ReplacementIneligible(Exception):
