@@ -1,11 +1,13 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 
 import { isApiError } from '../../../src/api/client.ts'
 import { formatInstant, isValidTimeZone } from '../../../src/time/productTime.ts'
 import {
   addInstallation,
+  authorizeReplacement,
+  cancelReplacement,
   changeInstallationStatus,
   getInstallations,
   getUnboundTokens,
@@ -18,6 +20,7 @@ import {
   type Installations,
   type IssuedCode,
   type IssuedRecoveryToken,
+  type Replacement,
   type StatusChange,
 } from './installationsApi.ts'
 import { AdminBreadcrumb } from '../AdminBreadcrumb.tsx'
@@ -60,8 +63,21 @@ function Fact({ term, children }: { term: string; children: ReactNode }) {
   )
 }
 
-/** The one place a raw enrollment code is shown: from this page's own state, gone when the page is left. */
-function CodePanel({ issued, zone, onDone }: { issued: IssuedCode; zone: string; onDone: () => void }) {
+/**
+ * The one place a raw enrollment code is shown: from this page's own state, gone when the page is left. `replaces` is the
+ * installation a pending replacement's code will replace, for the replacement's own instructions.
+ */
+function CodePanel({
+  issued,
+  zone,
+  replaces,
+  onDone,
+}: {
+  issued: IssuedCode
+  zone: string
+  replaces: number | null
+  onDone: () => void
+}) {
   const [copied, setCopied] = useState<string | null>(null)
   const expires = formatInstant(issued.expires_at, zone)
 
@@ -90,6 +106,11 @@ function CodePanel({ issued, zone, onDone }: { issued: IssuedCode; zone: string;
         Single use. Shown only now &mdash; copy it before leaving this page. It cannot be shown again. It expires at {expires} and stops working when
         used or when a new code is issued.
       </p>
+      {replaces !== null && (
+        <p className="notice" role="note">
+          {`For the replacement computer: enter this code in SortView Setup on the new computer. Installation #${replaces} keeps running until then. When Setup accepts the code, Installation #${replaces} stops being accepted: its agent token and ingest key are retired for good. Check that the new installation is Active and uploading before disabling the old computer's SortView Collector task and running tools\\uninstall.ps1.`}
+        </p>
+      )}
       {issued.revoked_previous_count > 0 && <p>The earlier unused code for this installation no longer works.</p>}
       <button type="button" className="button-secondary" onClick={onDone}>
         Done
@@ -135,7 +156,76 @@ function RecoveryTokenPanel({ issued, onDone }: { issued: IssuedRecoveryToken; o
   )
 }
 
-type Pending = { kind: 'rename' } | { kind: 'status'; to: StatusChange } | { kind: 'code' } | { kind: 'recovery' } | null
+type Pending =
+  | { kind: 'rename' }
+  | { kind: 'status'; to: StatusChange }
+  | { kind: 'code' }
+  | { kind: 'recovery' }
+  | { kind: 'replace' }
+  | { kind: 'cancel-replacement' }
+  | null
+
+/** How an installation stands in machine replacement (C6a), from the list alone. Display only: the server decides. */
+interface ReplacementView {
+  /** This installation is the library's pending replacement. */
+  pending: boolean
+  /** The installation this one was authorized to replace, if any. */
+  replaces: number | null
+  /** A replacement cancelled before its code was used. */
+  cancelled: boolean
+  /** The pending replacement that will replace this installation. */
+  beingReplacedBy: number | null
+  /** The redeemed replacement that replaced this installation. */
+  replacedBy: number | null
+  /** Whether "Replace this Collector computer" is offered: plausible here, and the server's flag is on. */
+  canReplace: boolean
+}
+
+function replacementView(installation: Installation, data: Installations): ReplacementView {
+  const id = installation.id
+  const pending = data.pending_replacement_id === id
+  const replaces = installation.replaces_installation_id
+  const pendingOne = data.installations.find((other) => other.id === data.pending_replacement_id)
+  const redeemedOne = data.installations.find(
+    (other) => other.replaces_installation_id === id && other.last_code_redeemed_at !== null,
+  )
+  const canReplace =
+    data.replacement_enabled &&
+    data.pending_replacement_id === null &&
+    installation.required_contract === 2 &&
+    installation.branch.is_primary &&
+    installation.branch.status === 'active' &&
+    installation.status !== 'retired' &&
+    installation.last_code_redeemed_at !== null
+  return {
+    pending,
+    replaces,
+    cancelled: replaces !== null && !pending && installation.status === 'retired' && installation.last_code_redeemed_at === null,
+    beingReplacedBy: pendingOne !== undefined && pendingOne.replaces_installation_id === id ? pendingOne.id : null,
+    replacedBy: redeemedOne?.id ?? null,
+    canReplace,
+  }
+}
+
+function replacementText(view: ReplacementView): string | null {
+  const parts: string[] = []
+  if (view.replaces !== null) {
+    parts.push(
+      view.pending
+        ? `Pending replacement for Installation #${view.replaces}`
+        : view.cancelled
+          ? `Cancelled replacement for Installation #${view.replaces}`
+          : `Replaces Installation #${view.replaces}`,
+    )
+  }
+  if (view.beingReplacedBy !== null) {
+    parts.push(`Being replaced by Installation #${view.beingReplacedBy}`)
+  }
+  if (view.replacedBy !== null) {
+    parts.push(`Replaced by Installation #${view.replacedBy}`)
+  }
+  return parts.length === 0 ? null : parts.join('; ')
+}
 
 const CONFIRM: Record<StatusChange, { action: string; text: (id: number) => string }> = {
   inactive: {
@@ -150,40 +240,71 @@ const CONFIRM: Record<StatusChange, { action: string; text: (id: number) => stri
   retired: {
     action: 'Retire',
     text: (id) =>
-      `Retire Installation #${id}? Its Collector's agent token stops authenticating immediately. This cannot be undone in SortView administration. Replacing a Contract 2 collector machine is not handled here.`,
+      `Retire Installation #${id}? Its Collector's agent token stops authenticating immediately. This cannot be undone in SortView administration. To replace a Contract 2 Collector computer, use Replace this Collector computer instead.`,
   },
 }
 
 function InstallationCard({
   orgSlug,
   installation,
+  view,
+  replacementEnabled,
   zone,
   readOnly,
+  focusRequested,
+  onFocused,
   onChanged,
   onIssued,
   onRecovered,
+  onReplaced,
+  onReplacementCancelled,
 }: {
   orgSlug: string
   installation: Installation
+  view: ReplacementView
+  replacementEnabled: boolean
   zone: string
   readOnly: boolean
+  focusRequested: boolean
+  onFocused: () => void
   onChanged: () => void
   onIssued: (issued: IssuedCode) => void
   onRecovered: (issued: IssuedRecoveryToken) => void
+  onReplaced: (replacement: Replacement) => void
+  onReplacementCancelled: (replacement: Replacement) => void
 }) {
   const [pending, setPending] = useState<Pending>(null)
   const [name, setName] = useState(installation.name)
   const [problem, setProblem] = useState<string | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
   const [working, setWorking] = useState(false)
+  const [replacementName, setReplacementName] = useState('')
+  const [replacementProblem, setReplacementProblem] = useState<string | null>(null)
+  const [confirmed, setConfirmed] = useState(false)
+  const [confirmationProblem, setConfirmationProblem] = useState<string | null>(null)
+  const [confirmationRequired, setConfirmationRequired] = useState(false)
+  const heading = useRef<HTMLHeadingElement>(null)
   const id = installation.id
-  const statusActions: StatusChange[] =
+  const statusActions: StatusChange[] = (
     installation.status === 'inactive' ? ['provisioning', 'retired'] : installation.status === 'retired' ? [] : ['inactive', 'retired']
-  const canIssue = installation.status === 'provisioning' || installation.status === 'active'
-  const canRecover = canIssue && installation.required_contract === 2
+  ).filter((to) => !(view.pending && to === 'retired')) as StatusChange[]
+  // A pending replacement gets a code only while the server allows replacement; it never owns a key to recover.
+  const canIssue = (installation.status === 'provisioning' || installation.status === 'active') && !(view.pending && !replacementEnabled)
+  const canRecover = canIssue && installation.required_contract === 2 && !view.pending
   const pendingCode = when(installation.pending_code_expires_at, zone)
+  // A Provisioning source needs the lost-response confirmation (design 14.3a), as does any the server says needs it.
+  const askConfirmation = installation.status === 'provisioning' || confirmationRequired
+  const relation = replacementText(view)
 
-  async function run(work: () => Promise<void>) {
+  useEffect(() => {
+    if (focusRequested) {
+      heading.current?.focus()
+      onFocused()
+    }
+  }, [focusRequested, onFocused])
+
+  /** `refused` may handle a refusal itself (returning true); otherwise it is shown as a failure. */
+  async function run(work: () => Promise<void>, refused?: (caught: unknown) => boolean) {
     if (working) {
       return
     }
@@ -193,6 +314,9 @@ function InstallationCard({
       await work()
       setPending(null)
     } catch (caught) {
+      if (refused?.(caught)) {
+        return
+      }
       const forName = pending?.kind === 'rename' ? nameProblem(caught) : null
       if (forName !== null) {
         setProblem(forName)
@@ -202,6 +326,51 @@ function InstallationCard({
     } finally {
       setWorking(false)
     }
+  }
+
+  /** A refusal of a replacement action: another administrator may have changed things, so the list is read again. */
+  function replacementRefused(caught: unknown): boolean {
+    if (isApiError(caught) && caught.status === 409) {
+      if (caught.code === 'lost_response_confirmation_required') {
+        setConfirmationRequired(true)
+      }
+      onChanged()
+    }
+    return false
+  }
+
+  function openReplace() {
+    setReplacementName('')
+    setReplacementProblem(null)
+    setConfirmed(false)
+    setConfirmationProblem(null)
+    setConfirmationRequired(false)
+    setFailure(null)
+    setPending({ kind: 'replace' })
+  }
+
+  function replace(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const nameMissing = replacementName.trim() === ''
+    const confirmationMissing = askConfirmation && !confirmed
+    setReplacementProblem(nameMissing ? 'Enter a name.' : null)
+    setConfirmationProblem(confirmationMissing ? 'Confirm that this installation’s enrollment response was lost.' : null)
+    if (nameMissing || confirmationMissing) {
+      return
+    }
+    void run(
+      async () => {
+        onReplaced(await authorizeReplacement(orgSlug, id, replacementName, askConfirmation && confirmed))
+      },
+      (caught) => {
+        const forName = nameProblem(caught)
+        if (forName !== null) {
+          setReplacementProblem(forName)
+          return true
+        }
+        return replacementRefused(caught)
+      },
+    )
   }
 
   function rename(event: FormEvent<HTMLFormElement>) {
@@ -226,7 +395,7 @@ function InstallationCard({
 
   return (
     <article className="panel" aria-labelledby={`installation-${id}-heading`}>
-      <h3 id={`installation-${id}-heading`}>
+      <h3 id={`installation-${id}-heading`} ref={heading} tabIndex={-1}>
         Installation #{id} &mdash; {installation.name}
       </h3>
       <dl className="account-facts">
@@ -246,7 +415,15 @@ function InstallationCard({
               ? `Last used ${when(installation.last_code_redeemed_at, zone)}`
               : <span className="quiet">None</span>}
         </Fact>
+        {relation !== null && <Fact term="Replacement">{relation}</Fact>}
       </dl>
+      {view.pending && pendingCode === null && !readOnly && (
+        <p className="quiet">
+          {replacementEnabled
+            ? 'No unused code. Issue one when the replacement computer is ready.'
+            : 'Machine replacement is turned off on this server, so this replacement cannot be given a code or used. It can be cancelled.'}
+        </p>
+      )}
 
       {failure !== null && (
         <p className="error-message" role="alert">
@@ -274,6 +451,98 @@ function InstallationCard({
               Issue recovery token
             </button>
           )}
+          {view.canReplace && (
+            <button type="button" className="button-secondary" onClick={openReplace}>
+              Replace this Collector computer
+            </button>
+          )}
+          {view.pending && (
+            <button type="button" className="button-secondary" onClick={() => setPending({ kind: 'cancel-replacement' })}>
+              Cancel replacement
+            </button>
+          )}
+        </div>
+      )}
+
+      {pending?.kind === 'replace' && (
+        <form onSubmit={replace} noValidate aria-label={`Replace Installation #${id}`} aria-describedby={`replace-${id}-consequences`}>
+          <p className="notice" id={`replace-${id}-consequences`}>
+            {`Authorizing adds a new Provisioning installation for the replacement computer. It does not disable this computer: Installation #${id} keeps running and uploading until the replacement's enrollment code is used in SortView Setup. Only then are this computer's agent token and ingest key retired, for good. Collected data may have a gap between this computer's last upload and the new computer's first, and items near the switch may be counted twice. Verify that the new computer is Active and uploading before cleaning up this one.`}
+          </p>
+          <div className="field">
+            <label htmlFor={`replace-${id}-name`}>Name for the replacement computer</label>
+            <input
+              id={`replace-${id}-name`}
+              type="text"
+              autoComplete="off"
+              value={replacementName}
+              aria-invalid={replacementProblem !== null}
+              aria-describedby={replacementProblem === null ? undefined : `replace-${id}-name-problem`}
+              onChange={(event) => {
+                setReplacementName(event.target.value)
+                setReplacementProblem(null)
+              }}
+            />
+            {replacementProblem !== null && (
+              <p className="field-problem" id={`replace-${id}-name-problem`}>
+                {replacementProblem}
+              </p>
+            )}
+          </div>
+          {askConfirmation && (
+            <div className="field">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={confirmed}
+                  aria-invalid={confirmationProblem !== null}
+                  aria-describedby={confirmationProblem === null ? undefined : `replace-${id}-confirm-problem`}
+                  onChange={(event) => {
+                    setConfirmed(event.target.checked)
+                    setConfirmationProblem(null)
+                  }}
+                />{' '}
+                {`Installation #${id} is still Provisioning. I confirm SortView Setup reported an unknown result and offered no Resume setup, and that Resume setup and a recovery token were tried first.`}
+              </label>
+              {confirmationProblem !== null && (
+                <p className="field-problem" id={`replace-${id}-confirm-problem`}>
+                  {confirmationProblem}
+                </p>
+              )}
+            </div>
+          )}
+          <div className="form-actions">
+            <button type="submit" aria-disabled={working}>
+              Confirm: Authorize replacement
+            </button>
+            <button type="button" className="button-secondary" onClick={() => setPending(null)}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+
+      {pending?.kind === 'cancel-replacement' && (
+        <div role="group" aria-label={`Cancel the replacement Installation #${id}`}>
+          <p className="notice">
+            {`Cancel this replacement? Installation #${id} is retired and its unused enrollment codes stop working. Installation #${view.replaces ?? ''} keeps running unchanged. This cannot be undone; a new replacement can be authorized afterwards.`}
+          </p>
+          <div className="form-actions">
+            <button
+              type="button"
+              aria-disabled={working}
+              onClick={() =>
+                void run(async () => {
+                  onReplacementCancelled(await cancelReplacement(orgSlug, id))
+                }, replacementRefused)
+              }
+            >
+              Confirm: Cancel replacement
+            </button>
+            <button type="button" className="button-secondary" onClick={() => setPending(null)}>
+              Keep replacement
+            </button>
+          </div>
         </div>
       )}
 
@@ -584,6 +853,9 @@ export function InstallationsPage() {
   const [issued, setIssued] = useState<IssuedCode | null>(null)
   // The one raw recovery token this page may hold, under the same rule.
   const [recovered, setRecovered] = useState<IssuedRecoveryToken | null>(null)
+  // What a replacement action did, announced; and the card to take focus once it is on the page.
+  const [announcement, setAnnouncement] = useState<string | null>(null)
+  const [focusId, setFocusId] = useState<number | null>(null)
   const query = useQuery({
     queryKey: ['admin', 'installations', orgSlug],
     queryFn: ({ signal }) => getInstallations(orgSlug, signal),
@@ -593,6 +865,26 @@ export function InstallationsPage() {
   const data = query.data
   const cancelled = data?.add_problems.includes('library_cancelled') ?? false
   const noPrimary = data?.add_problems.includes('no_active_primary_branch') ?? false
+  const issuedReplaces =
+    issued === null ? null : (data?.installations.find((one) => one.id === issued.installation.id)?.replaces_installation_id ?? null)
+  const focused = useCallback(() => setFocusId(null), [])
+
+  function replaced(replacement: Replacement) {
+    const source = replacement.replaces_installation_id
+    setAnnouncement(
+      `Replacement authorized: Installation #${replacement.installation.id} — ${replacement.installation.name} will replace Installation #${source}. Nothing has changed on Installation #${source} yet. Issue the replacement's enrollment code when the new computer is ready.`,
+    )
+    setFocusId(replacement.installation.id)
+    refresh()
+  }
+
+  function replacementCancelled(replacement: Replacement) {
+    setAnnouncement(
+      `Replacement cancelled: Installation #${replacement.installation.id} is retired and its unused enrollment codes no longer work. Installation #${replacement.replaces_installation_id} is unchanged.`,
+    )
+    setFocusId(replacement.installation.id)
+    refresh()
+  }
 
   return (
     <section aria-labelledby="installations-heading">
@@ -619,14 +911,24 @@ export function InstallationsPage() {
       {data !== undefined && (
         <>
           <p className="notice" role="note">
-            {`Times are shown in ${zone}. Replacing a Contract 2 collector machine is not handled here.`}
+            {`Times are shown in ${zone}.`}
           </p>
+          {!data.replacement_enabled && !cancelled && (
+            <p className="notice" role="note">
+              Machine replacement is turned off on this server. A pending replacement can still be cancelled.
+            </p>
+          )}
+          {announcement !== null && (
+            <p className="form-saved" role="status">
+              {announcement}
+            </p>
+          )}
           {cancelled && (
             <p className="notice" role="note">
               This library is cancelled. Its installations can be seen and not changed.
             </p>
           )}
-          {issued !== null && <CodePanel issued={issued} zone={zone} onDone={() => setIssued(null)} />}
+          {issued !== null && <CodePanel issued={issued} zone={zone} replaces={issuedReplaces} onDone={() => setIssued(null)} />}
           {recovered !== null && <RecoveryTokenPanel issued={recovered} onDone={() => setRecovered(null)} />}
 
           {data.installations.length === 0 ? (
@@ -637,11 +939,17 @@ export function InstallationsPage() {
                 key={installation.id}
                 orgSlug={orgSlug}
                 installation={installation}
+                view={replacementView(installation, data)}
+                replacementEnabled={data.replacement_enabled}
                 zone={zone}
                 readOnly={cancelled}
+                focusRequested={focusId === installation.id}
+                onFocused={focused}
                 onChanged={refresh}
                 onIssued={setIssued}
                 onRecovered={setRecovered}
+                onReplaced={replaced}
+                onReplacementCancelled={replacementCancelled}
               />
             ))
           )}

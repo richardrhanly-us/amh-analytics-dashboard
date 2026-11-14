@@ -236,7 +236,9 @@ def test_every_installation_is_listed_with_a_code_summary_and_nothing_that_ident
 
     assert [row["id"] for row in found] == [101, 102]
     assert set(found[0]) == {"id", "name", "branch", "status", "required_contract", "installed_at", "last_seen_at",
-                             "created_at", "pending_code_expires_at", "last_code_redeemed_at"}
+                             "created_at", "pending_code_expires_at", "last_code_redeemed_at",
+                             "replaces_installation_id"}
+    assert [row["replaces_installation_id"] for row in found] == [None, None]
     assert found[0]["pending_code_expires_at"] is not None and found[0]["last_code_redeemed_at"] is not None
     assert found[1]["pending_code_expires_at"] is None and found[1]["last_code_redeemed_at"] is None
     assert "CANARY-HOST" not in repr(found) and "9.9.9" not in repr(found) and "h-pending" not in repr(found)

@@ -257,3 +257,45 @@ def test_the_downgrade_removes_exactly_what_the_upgrade_added():
                      "DROP COLUMN replaces_installation_id"):
         assert expected in executed, expected
     assert "DROP TABLE" not in executed and "uq_collector_installations_id_branch_id" not in executed
+
+
+# =====================================================================================================================
+# the installation list's replacement fields (14.11, decision 1)
+# =====================================================================================================================
+
+@pytest.mark.parametrize(("value", "enabled"), [(None, False), ("false", False), ("true", True), (" TRUE ", True)])
+def test_the_list_says_whether_replacement_is_enabled_by_the_servers_flag_alone(api, monkeypatch, value, enabled):  # noqa: F811
+    ReplacementWorld(monkeypatch)
+    if value is None:
+        monkeypatch.delenv("SORTVIEW_MACHINE_REPLACEMENT_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("SORTVIEW_MACHINE_REPLACEMENT_ENABLED", value)
+
+    body = api.get(BASE, headers=COOKIE).json()
+
+    assert body["replacement_enabled"] is enabled
+
+
+def test_the_list_names_the_pending_replacement_and_what_each_installation_replaces(api, monkeypatch):  # noqa: F811
+    ReplacementWorld(monkeypatch)
+    source = {**INSTALLATION, "id": 101}
+    pending = {**INSTALLATION, "id": 124, "status": "provisioning", "replaces_installation_id": 101,
+               "installed_at": None, "last_seen_at": None, "last_code_redeemed_at": None}
+    monkeypatch.setattr(service, "list_installations", lambda library: [source, pending])
+    monkeypatch.setattr(service, "pending_replacement_id", lambda library: 124)
+
+    response = api.get(BASE, headers=COOKIE)
+
+    assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
+    body = response.json()
+    assert body["pending_replacement_id"] == 124
+    assert [(i["id"], i["replaces_installation_id"]) for i in body["installations"]] == [(101, None), (124, 101)]
+
+
+def test_every_installation_answer_carries_what_it_replaces(api, monkeypatch):  # noqa: F811
+    ReplacementWorld(monkeypatch)
+
+    response = _send(api, "post", AUTHORIZE, {"name": "Replacement Sorter"})
+
+    assert response.json()["installation"]["replaces_installation_id"] is None  # as the mocked service returned it
+    assert set(response.json()["installation"]) == set(INSTALLATION_JSON)

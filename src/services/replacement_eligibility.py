@@ -179,6 +179,35 @@ def require_eligible_source(conn: Any, organization_id: int, source_id: int) -> 
     return source, primary
 
 
+# The library's one primary branch with its tenant mapping, for the list's read of the pending replacement.
+_PRIMARY_TENANT_SQL = """
+    SELECT b.id, b.operational_branch_id, o.operational_customer_id
+    FROM branches b
+    JOIN organizations o
+      ON o.id = b.organization_id
+    WHERE b.organization_id = :organization_id
+      AND b.is_primary = TRUE
+    ORDER BY b.id
+    LIMIT 2
+"""
+
+
+def pending_replacement_for_library(conn: Any, organization_id: int) -> int | None:
+    """The organization's pending replacement, if it has one, for display (14.11, decision 1): read, never locked.
+
+    A replacement is authorized only at the library's primary branch, so that is where it is looked for, by the same
+    definition authorization and redemption use (pending_replacement_at_branch). ingest_key_ids is under row level
+    security, so the branch's tenant context is set first: without it every key would be hidden and a redeemed
+    replacement would look pending. A tenant that is not fully mapped has no key at all, so none is hidden from it."""
+    rows = conn.execute(text(_PRIMARY_TENANT_SQL), {"organization_id": organization_id}).mappings().all()
+    if len(rows) != 1:
+        return None
+    primary = rows[0]
+    if primary["operational_customer_id"] is not None and primary["operational_branch_id"] is not None:
+        _set_tenant_context(conn, int(primary["operational_customer_id"]), int(primary["operational_branch_id"]))
+    return pending_replacement_at_branch(conn, int(primary["id"]))
+
+
 def pending_replacement_at_branch(conn: Any, branch_id: int, *, excluding: int | None = None) -> int | None:
     """A pending replacement at the branch, other than `excluding`, or None (14.5; 14.4a decision B). The caller has set
     the branch's tenant context."""

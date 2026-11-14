@@ -44,6 +44,7 @@ from services import admin_installation_service as service
 from services import (
     collector_enrollment_service,
     platform_admin_service,
+    replacement_eligibility,
     tenant_service,
 )
 from services.admin_installation_service import InstallationAdminError
@@ -880,3 +881,72 @@ def test_while_replacement_is_off_ordinary_administration_is_unaffected(db, monk
         "admin_enrollment_code_issued", "admin_installation_created", "admin_unbound_token_revoked",
         "admin_recovery_token_issued",
     ]
+
+
+# =====================================================================================================================
+# the installation list's replacement fields (14.11, decision 1), as the runtime role under row level security
+# =====================================================================================================================
+
+def _replaces(slug="acme"):
+    return {i["id"]: i["replaces_installation_id"] for i in service.list_installations(_library(slug))}
+
+
+def test_the_list_has_no_pending_replacement_until_one_is_authorized(db):
+    assert service.pending_replacement_id(_library("acme")) is None
+    assert set(_replaces().values()) == {None}
+
+    replacement = _authorize()["installation"]["id"]
+
+    assert service.pending_replacement_id(_library("acme")) == replacement
+    assert _replaces()[replacement] == 101 and _replaces()[101] is None
+
+
+def test_a_cancelled_replacement_is_no_longer_pending_and_still_names_its_source(db):
+    replacement = _authorize()["installation"]["id"]
+
+    service.cancel_replacement(_library("acme"), replacement, actor=ACTOR)
+
+    assert service.pending_replacement_id(_library("acme")) is None
+    assert _replaces()[replacement] == 101
+
+
+def test_a_redeemed_replacement_is_no_longer_pending_because_its_key_is_read_under_the_tenant_context(db):
+    """Without the branch's tenant context, row level security would hide the replacement's new key from the runtime
+    role, and the redeemed replacement would still look pending."""
+    _, runtime = db
+    replacement = _authorize()["installation"]["id"]
+    code = service.issue_enrollment_code(_library("acme"), replacement, actor=ACTOR)["enrollment_code"]
+    with runtime.begin() as conn:
+        collector_enrollment_service.redeem_enrollment_code(conn, code, contract_version=2)
+
+    assert service.pending_replacement_id(_library("acme")) is None
+    assert _replaces()[replacement] == 101
+    with runtime.connect() as conn:  # the same read with no tenant context: the key is hidden, so it would look pending
+        assert replacement_eligibility.pending_replacement_at_branch(conn, 1) == replacement
+
+
+def test_the_pending_replacement_is_the_librarys_own_and_never_another_tenants(db):
+    other = _authorize(201, "other")["installation"]["id"]
+
+    assert service.pending_replacement_id(_library("other")) == other
+    assert service.pending_replacement_id(_library("acme")) is None
+    assert other not in _replaces("acme")
+
+    acme = _authorize()["installation"]["id"]
+    assert (service.pending_replacement_id(_library("acme")), service.pending_replacement_id(_library("other"))) == (
+        acme, other)
+
+
+def test_a_library_with_no_single_primary_branch_reports_no_pending_replacement(db):
+    owner, _ = db
+    _authorize()
+    _run(owner, "UPDATE branches SET is_primary = FALSE WHERE id = 1")
+
+    assert service.pending_replacement_id(_library("acme")) is None
+
+
+def test_the_pending_replacement_is_reported_whatever_the_flag(db, monkeypatch):
+    replacement = _authorize()["installation"]["id"]
+    monkeypatch.delenv("SORTVIEW_MACHINE_REPLACEMENT_ENABLED")
+
+    assert service.pending_replacement_id(_library("acme")) == replacement  # so it can still be found and cancelled

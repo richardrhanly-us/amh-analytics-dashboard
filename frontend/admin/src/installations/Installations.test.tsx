@@ -37,6 +37,7 @@ const ACTIVE = {
   created_at: '2026-10-01T12:00:00Z',
   pending_code_expires_at: null,
   last_code_redeemed_at: '2026-10-01T12:50:00Z',
+  replaces_installation_id: null,
 }
 const INACTIVE = { ...ACTIVE, id: 124, name: 'Old Sorter', status: 'inactive', required_contract: 1, last_code_redeemed_at: null }
 const RETIRED = { ...ACTIVE, id: 125, name: 'Gone Sorter', status: 'retired', last_code_redeemed_at: null }
@@ -44,6 +45,8 @@ const LIST = {
   library: { slug: 'acme', name: 'Acme Library', status: 'active' },
   primary_branch: { slug: 'main', name: 'Main Branch', status: 'active' },
   add_problems: [],
+  pending_replacement_id: null,
+  replacement_enabled: false,
   installations: [ACTIVE, INACTIVE, RETIRED],
 }
 const ISSUED = {
@@ -226,7 +229,7 @@ describe('Installations', () => {
     await waitFor(() => expect(bodies(fetchMock, 'PUT', `${BASE}/124/status`)).toEqual([{ status: 'provisioning' }]))
   })
 
-  it('asks before retiring, saying it is final here and does not replace a v2 machine', async () => {
+  it('asks before retiring, saying it is final here and pointing to replacement instead', async () => {
     const fetchMock = renderAt('/libraries/acme/installations', {
       [`GET ${BASE}`]: () => jsonResponse(200, LIST),
       [`PUT ${BASE}/123/status`]: () => jsonResponse(200, { ...ACTIVE, status: 'retired' }),
@@ -238,7 +241,7 @@ describe('Installations', () => {
     const warning = within(card(123)).getByText(/^Retire Installation #123\?/)
     expect(warning).toHaveTextContent('stops authenticating immediately')
     expect(warning).toHaveTextContent('cannot be undone in SortView administration')
-    expect(warning).toHaveTextContent('Replacing a Contract 2 collector machine is not handled here')
+    expect(warning).toHaveTextContent('To replace a Contract 2 Collector computer, use Replace this Collector computer instead.')
     await person.click(within(card(123)).getByRole('button', { name: 'Cancel' }))
     expect(bodies(fetchMock, 'PUT', `${BASE}/123/status`)).toEqual([])
 
@@ -313,7 +316,7 @@ describe('Installations', () => {
   })
 
   it.each([
-    ['branch_already_enrolled', 'This branch already has an enrolled Contract 2 Collector. Replacing it is not handled here.'],
+    ['branch_already_enrolled', 'This branch already has an enrolled Contract 2 Collector. To replace its computer, use Replace this Collector computer.'],
     ['installation_not_enrollable', 'This installation cannot be given an enrollment code in its current status.'],
     ['library_not_enrollable', 'This library cannot enroll a Collector in its current status.'],
     ['operational_identity_incomplete', "This library's operational identity is not complete."],
@@ -544,10 +547,361 @@ describe('Installations', () => {
   })
 })
 
+// =====================================================================================================================
+// machine replacement (C6a R3, docs/c6a-replacement-machine-design.md 14.11)
+// =====================================================================================================================
+
+const ENABLED = { ...LIST, replacement_enabled: true }
+const PENDING = {
+  ...ACTIVE,
+  id: 126,
+  name: 'New AMH PC',
+  status: 'provisioning',
+  installed_at: null,
+  last_seen_at: null,
+  created_at: '2026-11-12T15:00:00Z',
+  last_code_redeemed_at: null,
+  replaces_installation_id: 123,
+}
+const WITH_PENDING = { ...ENABLED, pending_replacement_id: 126, installations: [ACTIVE, PENDING] }
+const AUTHORIZED = { installation: PENDING, replaces_installation_id: 123 }
+const REDEEMED = {
+  ...ENABLED,
+  installations: [
+    { ...ACTIVE, status: 'retired' },
+    { ...PENDING, last_code_redeemed_at: '2026-11-12T16:00:00Z' },
+  ],
+}
+
+/** A list endpoint that answers each given body in turn, then the last one again. */
+function lists(...answers: unknown[]): () => Response {
+  let calls = 0
+  return () => jsonResponse(200, answers[Math.min(calls++, answers.length - 1)])
+}
+
+function listCalls(mock: FetchMock): number {
+  return requestedUrls(mock).filter((url) => url === BASE).length
+}
+
+function replacementOf(id: number): HTMLElement | null {
+  const term = within(card(id)).queryByText('Replacement', { selector: 'dt' })
+  return term?.nextElementSibling as HTMLElement | null
+}
+
+describe('Machine replacement', () => {
+  it('offers Replace only on an enrolled Contract 2 installation at the primary branch, and only while the server allows it', async () => {
+    const neverEnrolled = { ...ACTIVE, id: 127, name: 'Unused', status: 'provisioning', last_code_redeemed_at: null }
+    const elsewhere = { ...ACTIVE, id: 128, name: 'East', branch: { slug: 'east', name: 'East Branch', is_primary: false, status: 'active' } }
+    renderAt('/libraries/acme/installations', {
+      [`GET ${BASE}`]: () => jsonResponse(200, { ...ENABLED, installations: [ACTIVE, INACTIVE, RETIRED, neverEnrolled, elsewhere] }),
+    })
+    await loaded()
+
+    expect(buttons(card(123))).toContain('Replace this Collector computer')
+    for (const id of [124, 125, 127, 128]) {
+      expect(buttons(card(id))).not.toContain('Replace this Collector computer')
+    }
+    expect(screen.queryByText(/Machine replacement is turned off/)).not.toBeInTheDocument()
+  })
+
+  it('offers no replacement while the server has it turned off, and says so', async () => {
+    renderAt('/libraries/acme/installations', { [`GET ${BASE}`]: () => jsonResponse(200, LIST) })
+    await loaded()
+
+    expect(screen.queryByRole('button', { name: 'Replace this Collector computer' })).not.toBeInTheDocument()
+    expect(screen.getByText('Machine replacement is turned off on this server. A pending replacement can still be cancelled.')).toBeInTheDocument()
+  })
+
+  it('authorizes after stating the consequences, announces it, refreshes, and moves focus to the new installation', async () => {
+    const fetchMock = renderAt('/libraries/acme/installations', {
+      [`GET ${BASE}`]: lists(ENABLED, WITH_PENDING),
+      [`POST ${BASE}/123/replacements`]: () => jsonResponse(201, AUTHORIZED),
+    })
+    const person = userEvent.setup()
+    await loaded()
+
+    await person.click(within(card(123)).getByRole('button', { name: 'Replace this Collector computer' }))
+    const form = within(card(123)).getByRole('form', { name: 'Replace Installation #123' })
+    const consequences = within(form).getByText(/^Authorizing adds a new Provisioning installation/)
+    expect(form).toHaveAccessibleDescription(consequences.textContent ?? '')
+    expect(consequences).toHaveTextContent('It does not disable this computer: Installation #123 keeps running and uploading')
+    expect(consequences).toHaveTextContent("until the replacement's enrollment code is used in SortView Setup. Only then are this computer's agent token and ingest key retired, for good.")
+    expect(consequences).toHaveTextContent('may have a gap')
+    expect(consequences).toHaveTextContent('Verify that the new computer is Active and uploading before cleaning up this one.')
+    expect(within(form).queryByRole('checkbox')).not.toBeInTheDocument() // an Active source needs no confirmation
+
+    await person.click(within(form).getByRole('button', { name: 'Confirm: Authorize replacement' }))
+    expect(within(form).getByText('Enter a name.')).toBeInTheDocument()
+    expect(within(form).getByLabelText('Name for the replacement computer')).toHaveAttribute('aria-invalid', 'true')
+    expect(bodies(fetchMock, 'POST', `${BASE}/123/replacements`)).toEqual([])
+
+    await person.type(within(form).getByLabelText('Name for the replacement computer'), 'New AMH PC')
+    await person.click(within(form).getByRole('button', { name: 'Confirm: Authorize replacement' }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'Replacement authorized: Installation #126 — New AMH PC will replace Installation #123. Nothing has changed on Installation #123 yet.',
+    )
+    expect(bodies(fetchMock, 'POST', `${BASE}/123/replacements`)).toEqual([{ name: 'New AMH PC', confirm_lost_response: false }])
+    const heading = await screen.findByRole('heading', { level: 3, name: /^Installation #126 / })
+    await waitFor(() => expect(heading).toHaveFocus())
+    expect(replacementOf(126)).toHaveTextContent('Pending replacement for Installation #123')
+    expect(replacementOf(123)).toHaveTextContent('Being replaced by Installation #126')
+    expect(listCalls(fetchMock)).toBe(2)
+  })
+
+  it('shows a pending replacement with its own actions: a code, Cancel replacement, and no Retire or recovery token', async () => {
+    renderAt('/libraries/acme/installations', { [`GET ${BASE}`]: () => jsonResponse(200, WITH_PENDING) })
+    await loaded()
+
+    expect(buttons(card(126))).toEqual(['Rename', 'Deactivate', 'Issue enrollment code', 'Cancel replacement'])
+    expect(buttons(card(123))).not.toContain('Replace this Collector computer') // one pending replacement at a time
+    expect(within(card(126)).getByText('No unused code. Issue one when the replacement computer is ready.')).toBeInTheDocument()
+  })
+
+  it('while replacement is off, a pending replacement gets no code but can still be cancelled', async () => {
+    renderAt('/libraries/acme/installations', {
+      [`GET ${BASE}`]: () => jsonResponse(200, { ...WITH_PENDING, replacement_enabled: false }),
+    })
+    await loaded()
+
+    expect(buttons(card(126))).toEqual(['Rename', 'Deactivate', 'Cancel replacement'])
+    expect(within(card(126)).getByText(/^Machine replacement is turned off on this server, so this replacement cannot be given a code/)).toBeInTheDocument()
+  })
+
+  it('requires the lost-response confirmation for a Provisioning source, and sends it', async () => {
+    const provisioningSource = { ...ACTIVE, status: 'provisioning', last_seen_at: null, installed_at: null }
+    const fetchMock = renderAt('/libraries/acme/installations', {
+      [`GET ${BASE}`]: lists({ ...ENABLED, installations: [provisioningSource] }, WITH_PENDING),
+      [`POST ${BASE}/123/replacements`]: () => jsonResponse(201, AUTHORIZED),
+    })
+    const person = userEvent.setup()
+    await loaded()
+
+    await person.click(within(card(123)).getByRole('button', { name: 'Replace this Collector computer' }))
+    const form = within(card(123)).getByRole('form', { name: 'Replace Installation #123' })
+    await person.type(within(form).getByLabelText('Name for the replacement computer'), 'New AMH PC')
+    await person.click(within(form).getByRole('button', { name: 'Confirm: Authorize replacement' }))
+
+    const checkbox = within(form).getByRole('checkbox', { name: /SortView Setup reported an unknown result and offered no Resume setup/ })
+    expect(checkbox).toHaveAttribute('aria-invalid', 'true')
+    expect(checkbox).toHaveAccessibleDescription('Confirm that this installation’s enrollment response was lost.')
+    expect(bodies(fetchMock, 'POST', `${BASE}/123/replacements`)).toEqual([])
+
+    await person.click(checkbox)
+    await person.click(within(form).getByRole('button', { name: 'Confirm: Authorize replacement' }))
+
+    await screen.findByRole('status')
+    expect(bodies(fetchMock, 'POST', `${BASE}/123/replacements`)).toEqual([{ name: 'New AMH PC', confirm_lost_response: true }])
+  })
+
+  it('asks for the confirmation when the server says the source became Provisioning meanwhile, keeping the name', async () => {
+    const message = 'This installation is still Provisioning. Confirm that its enrollment response was lost and setup cannot resume (try Resume setup and the recovery token first).'
+    const fetchMock = renderAt('/libraries/acme/installations', {
+      [`GET ${BASE}`]: () => jsonResponse(200, ENABLED),
+      [`POST ${BASE}/123/replacements`]: () => jsonResponse(409, { code: 'lost_response_confirmation_required', message }),
+    })
+    const person = userEvent.setup()
+    await loaded()
+
+    await person.click(within(card(123)).getByRole('button', { name: 'Replace this Collector computer' }))
+    const form = within(card(123)).getByRole('form', { name: 'Replace Installation #123' })
+    await person.type(within(form).getByLabelText('Name for the replacement computer'), 'New AMH PC')
+    await person.click(within(form).getByRole('button', { name: 'Confirm: Authorize replacement' }))
+
+    expect(await within(card(123)).findByRole('alert')).toHaveTextContent(`Nothing was changed. ${message}`)
+    expect(within(form).getByRole('checkbox')).not.toBeChecked()
+    expect(within(form).getByLabelText('Name for the replacement computer')).toHaveValue('New AMH PC')
+    await waitFor(() => expect(listCalls(fetchMock)).toBe(2)) // the current state is read again
+  })
+
+  it.each([
+    ['replacement_already_pending', 'This branch already has a pending replacement. Cancel it first.'],
+    ['unbound_tokens_active', 'This branch still has an active legacy unbound token. Revoke it before authorizing a replacement.'],
+    ['replacement_source_not_key_owner', "Only the installation that owns its branch's only active ingest key can be replaced."],
+    ['replacement_disabled', 'Machine replacement is turned off on this server. A pending replacement can still be cancelled.'],
+  ])('says why authorization was refused (%s), keeps the form, and reads the list again', async (code, message) => {
+    const fetchMock = renderAt('/libraries/acme/installations', {
+      [`GET ${BASE}`]: () => jsonResponse(200, ENABLED),
+      [`POST ${BASE}/123/replacements`]: () => jsonResponse(409, { code, message }),
+    })
+    const person = userEvent.setup()
+    await loaded()
+
+    await person.click(within(card(123)).getByRole('button', { name: 'Replace this Collector computer' }))
+    const form = within(card(123)).getByRole('form', { name: 'Replace Installation #123' })
+    await person.type(within(form).getByLabelText('Name for the replacement computer'), 'New AMH PC')
+    await person.click(within(form).getByRole('button', { name: 'Confirm: Authorize replacement' }))
+
+    expect(await within(card(123)).findByRole('alert')).toHaveTextContent(`Nothing was changed. ${message}`)
+    expect(within(card(123)).getByRole('form', { name: 'Replace Installation #123' })).toBeInTheDocument()
+    await waitFor(() => expect(listCalls(fetchMock)).toBe(2))
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('shows a refused name against the field', async () => {
+    renderAt('/libraries/acme/installations', {
+      [`GET ${BASE}`]: () => jsonResponse(200, ENABLED),
+      [`POST ${BASE}/123/replacements`]: () =>
+        jsonResponse(422, { code: 'invalid_installation', message: 'The installation is not valid.', problems: [{ field: 'name', code: 'too_long' }] }),
+    })
+    const person = userEvent.setup()
+    await loaded()
+
+    await person.click(within(card(123)).getByRole('button', { name: 'Replace this Collector computer' }))
+    const form = within(card(123)).getByRole('form', { name: 'Replace Installation #123' })
+    await person.type(within(form).getByLabelText('Name for the replacement computer'), 'x')
+    await person.click(within(form).getByRole('button', { name: 'Confirm: Authorize replacement' }))
+
+    expect(await within(form).findByText('Enter a name of at most 120 characters.')).toBeInTheDocument()
+    expect(within(form).getByLabelText('Name for the replacement computer')).toHaveAccessibleDescription('Enter a name of at most 120 characters.')
+  })
+
+  it('issues the replacement code through the ordinary endpoint, with its own instructions, shown once and kept out of every cache', async () => {
+    const fetchMock = renderAt('/libraries/acme/installations', {
+      [`GET ${BASE}`]: () => jsonResponse(200, WITH_PENDING),
+      [`POST ${BASE}/126/enrollment-codes`]: () =>
+        jsonResponse(201, { ...ISSUED, installation: { id: 126, name: 'New AMH PC' } }),
+    })
+    const person = userEvent.setup()
+    await loaded()
+
+    await person.click(within(card(126)).getByRole('button', { name: 'Issue enrollment code' }))
+
+    expect(await screen.findByText(CANARY_CODE)).toBeInTheDocument()
+    expect(bodies(fetchMock, 'POST', `${BASE}/126/enrollment-codes`)).toEqual([undefined])
+    const instructions = screen.getByText(/^For the replacement computer:/)
+    expect(instructions).toHaveTextContent('Installation #123 keeps running until then.')
+    expect(instructions).toHaveTextContent('When Setup accepts the code, Installation #123 stops being accepted: its agent token and ingest key are retired for good.')
+    expect(instructions).toHaveTextContent('tools\\uninstall.ps1')
+    const cached = clients.flatMap((client) => [
+      ...client.getQueryCache().getAll().map((query) => JSON.stringify(query.state.data ?? null)),
+      ...client.getMutationCache().getAll().map((mutation) => JSON.stringify(mutation.state.data ?? null)),
+    ])
+    expect(cached.join('')).not.toContain(CANARY_CODE)
+    expect(JSON.stringify({ ...localStorage })).not.toContain(CANARY_CODE)
+    expect(JSON.stringify({ ...sessionStorage })).not.toContain(CANARY_CODE)
+    expect(requestedUrls(fetchMock).join(' ')).not.toContain(CANARY_CODE)
+    expect(window.location.href).not.toContain(CANARY_CODE)
+
+    await person.click(screen.getByRole('button', { name: 'Done' }))
+    expect(document.body.textContent).not.toContain(CANARY_CODE)
+  })
+
+  it('an ordinary code has no replacement instructions', async () => {
+    renderAt('/libraries/acme/installations', {
+      [`GET ${BASE}`]: () => jsonResponse(200, ENABLED),
+      [`POST ${BASE}/123/enrollment-codes`]: () => jsonResponse(201, ISSUED),
+    })
+    const person = userEvent.setup()
+    await loaded()
+
+    await person.click(within(card(123)).getByRole('button', { name: 'Issue enrollment code' }))
+
+    expect(await screen.findByText(CANARY_CODE)).toBeInTheDocument()
+    expect(screen.queryByText(/^For the replacement computer:/)).not.toBeInTheDocument()
+  })
+
+  it('cancels after a warning that the source is unaffected, announces it, and keeps focus on the cancelled installation', async () => {
+    const cancelledPending = { ...PENDING, status: 'retired' }
+    const fetchMock = renderAt('/libraries/acme/installations', {
+      [`GET ${BASE}`]: lists(WITH_PENDING, { ...ENABLED, installations: [ACTIVE, cancelledPending] }),
+      [`POST ${BASE}/126/cancel-replacement`]: () => jsonResponse(200, { installation: cancelledPending, replaces_installation_id: 123 }),
+    })
+    const person = userEvent.setup()
+    await loaded()
+
+    await person.click(within(card(126)).getByRole('button', { name: 'Cancel replacement' }))
+    const group = within(card(126)).getByRole('group', { name: 'Cancel the replacement Installation #126' })
+    expect(within(group).getByText(/^Cancel this replacement\?/)).toHaveTextContent(
+      'Installation #126 is retired and its unused enrollment codes stop working. Installation #123 keeps running unchanged.',
+    )
+    await person.click(within(group).getByRole('button', { name: 'Keep replacement' }))
+    expect(bodies(fetchMock, 'POST', `${BASE}/126/cancel-replacement`)).toEqual([])
+
+    await person.click(within(card(126)).getByRole('button', { name: 'Cancel replacement' }))
+    await person.click(within(card(126)).getByRole('button', { name: 'Confirm: Cancel replacement' }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'Replacement cancelled: Installation #126 is retired and its unused enrollment codes no longer work. Installation #123 is unchanged.',
+    )
+    expect(bodies(fetchMock, 'POST', `${BASE}/126/cancel-replacement`)).toEqual([undefined])
+    await waitFor(() => expect(replacementOf(126)).toHaveTextContent('Cancelled replacement for Installation #123'))
+    expect(screen.getByRole('heading', { level: 3, name: /^Installation #126 / })).toHaveFocus()
+    expect(buttons(card(126))).toEqual(['Rename'])
+    expect(buttons(card(123))).toContain('Replace this Collector computer')
+  })
+
+  it('when the replacement was redeemed meanwhile, says cancelling was refused and shows the new state', async () => {
+    const message = 'This installation is not a pending replacement.'
+    renderAt('/libraries/acme/installations', {
+      [`GET ${BASE}`]: lists(WITH_PENDING, REDEEMED),
+      [`POST ${BASE}/126/cancel-replacement`]: () => jsonResponse(409, { code: 'not_a_pending_replacement', message }),
+    })
+    const person = userEvent.setup()
+    await loaded()
+
+    await person.click(within(card(126)).getByRole('button', { name: 'Cancel replacement' }))
+    await person.click(within(card(126)).getByRole('button', { name: 'Confirm: Cancel replacement' }))
+
+    expect(await within(card(126)).findByRole('alert')).toHaveTextContent(`Nothing was changed. ${message}`)
+    await waitFor(() => expect(replacementOf(126)).toHaveTextContent('Replaces Installation #123'))
+    expect(replacementOf(123)).toHaveTextContent('Replaced by Installation #126')
+    expect(within(card(123)).getByText('Retired')).toBeInTheDocument()
+    expect(buttons(card(126))).not.toContain('Cancel replacement')
+  })
+
+  it('shows a chain: an installation that replaced one computer and was itself replaced', async () => {
+    const first = { ...ACTIVE, id: 101, name: 'First', status: 'retired' }
+    const second = { ...ACTIVE, id: 102, name: 'Second', status: 'retired', replaces_installation_id: 101 }
+    const third = { ...ACTIVE, id: 103, name: 'Third', replaces_installation_id: 102 }
+    renderAt('/libraries/acme/installations', { [`GET ${BASE}`]: () => jsonResponse(200, { ...ENABLED, installations: [first, second, third] }) })
+    await loaded()
+
+    expect(replacementOf(101)).toHaveTextContent('Replaced by Installation #102')
+    expect(replacementOf(102)).toHaveTextContent('Replaces Installation #101; Replaced by Installation #103')
+    expect(replacementOf(103)).toHaveTextContent('Replaces Installation #102')
+    expect(buttons(card(103))).toContain('Replace this Collector computer')
+  })
+
+  it('a cancelled library shows its replacements and offers nothing', async () => {
+    renderAt('/libraries/acme/installations', {
+      [`GET ${BASE}`]: () =>
+        jsonResponse(200, { ...WITH_PENDING, library: { ...LIST.library, status: 'cancelled' }, add_problems: ['library_cancelled'] }),
+    })
+    await loaded()
+
+    expect(replacementOf(126)).toHaveTextContent('Pending replacement for Installation #123')
+    expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['Log out'])
+  })
+})
+
 describe('accessibility', () => {
   it('axe finds no violation on the installations page', async () => {
     renderAt('/libraries/acme/installations', { [`GET ${BASE}`]: () => jsonResponse(200, LIST) })
     await loaded()
+    expect(await axeViolations()).toEqual([])
+  })
+
+  it('axe finds no violation with a pending replacement, the replacement form with its confirmation, and the cancel warning', async () => {
+    const provisioningSource = { ...ACTIVE, id: 129, name: 'Lost Response', status: 'provisioning' }
+    renderAt('/libraries/acme/installations', {
+      [`GET ${BASE}`]: () =>
+        jsonResponse(200, { ...WITH_PENDING, pending_replacement_id: 126, installations: [ACTIVE, PENDING, provisioningSource] }),
+    })
+    const person = userEvent.setup()
+    await loaded()
+    await person.click(within(card(126)).getByRole('button', { name: 'Cancel replacement' }))
+    expect(await axeViolations()).toEqual([])
+  })
+
+  it('axe finds no violation with the replacement form and its confirmation open', async () => {
+    const provisioningSource = { ...ACTIVE, status: 'provisioning' }
+    renderAt('/libraries/acme/installations', { [`GET ${BASE}`]: () => jsonResponse(200, { ...ENABLED, installations: [provisioningSource] }) })
+    const person = userEvent.setup()
+    await loaded()
+    await person.click(within(card(123)).getByRole('button', { name: 'Replace this Collector computer' }))
+    await person.click(within(card(123)).getByRole('button', { name: 'Confirm: Authorize replacement' }))
+    expect(within(card(123)).getByRole('checkbox')).toBeInTheDocument()
     expect(await axeViolations()).toEqual([])
   })
 })

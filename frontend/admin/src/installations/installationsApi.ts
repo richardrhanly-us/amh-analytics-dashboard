@@ -7,6 +7,10 @@ import { count, list, oneOf, orNull, record, text } from '../libraries/libraries
  *
  * The raw enrollment code is returned by issueEnrollmentCode alone and the raw recovery token by issueRecoveryToken alone --
  * once. Neither is ever put in the query cache.
+ *
+ * Machine replacement (C6a, docs/c6a-replacement-machine-design.md 14.11): `replaces_installation_id`, the list's
+ * `pending_replacement_id` and `replacement_enabled` decide only what the page offers. The server checks every rule again,
+ * and refuses replacement entirely while its flag is off, whatever is shown here.
  */
 
 export const STATUSES = ['provisioning', 'active', 'inactive', 'retired'] as const
@@ -26,13 +30,21 @@ export interface Installation {
   created_at: string
   pending_code_expires_at: string | null
   last_code_redeemed_at: string | null
+  replaces_installation_id: number | null
 }
 
 export interface Installations {
   library: { slug: string; name: string; status: string }
   primary_branch: { slug: string; name: string; status: string } | null
   add_problems: AddProblem[]
+  pending_replacement_id: number | null
+  replacement_enabled: boolean
   installations: Installation[]
+}
+
+export interface Replacement {
+  installation: Installation
+  replaces_installation_id: number
 }
 
 export interface IssuedCode {
@@ -88,7 +100,13 @@ function installation(value: unknown): Installation {
     created_at: text(body.created_at),
     pending_code_expires_at: orNull(body.pending_code_expires_at, text),
     last_code_redeemed_at: orNull(body.last_code_redeemed_at, text),
+    replaces_installation_id: orNull(body.replaces_installation_id, count),
   }
+}
+
+function replacement(value: unknown): Replacement {
+  const body = record(value)
+  return { installation: installation(body.installation), replaces_installation_id: count(body.replaces_installation_id) }
 }
 
 const base = (orgSlug: string) => `/api/admin/libraries/${encodeURIComponent(orgSlug)}/installations`
@@ -104,6 +122,8 @@ export async function getInstallations(orgSlug: string, signal?: AbortSignal): P
       return { slug: text(branch.slug), name: text(branch.name), status: text(branch.status) }
     }),
     add_problems: list(body.add_problems).map((problem) => oneOf(problem, ADD_PROBLEMS)),
+    pending_replacement_id: orNull(body.pending_replacement_id, count),
+    replacement_enabled: flag(body.replacement_enabled),
     installations: list(body.installations).map(installation),
   }
 }
@@ -166,4 +186,28 @@ export async function getUnboundTokens(orgSlug: string, signal?: AbortSignal): P
 /** POST .../unbound-tokens/{id}/revoke: revokes one of them. */
 export async function revokeUnboundToken(orgSlug: string, id: number): Promise<void> {
   await apiRequest(`${base(orgSlug)}/unbound-tokens/${id}/revoke`, { method: 'POST' })
+}
+
+/**
+ * POST .../{source_id}/replacements: authorizes replacing the source's computer (C6a). A new Provisioning installation
+ * that names the source; nothing about the source changes until the new installation's code is redeemed.
+ * `confirmLostResponse` is required by the server for a Provisioning source (design 14.3a).
+ */
+export async function authorizeReplacement(
+  orgSlug: string,
+  sourceId: number,
+  name: string,
+  confirmLostResponse: boolean,
+): Promise<Replacement> {
+  return replacement(
+    await apiRequest(`${base(orgSlug)}/${sourceId}/replacements`, {
+      method: 'POST',
+      body: { name, confirm_lost_response: confirmLostResponse },
+    }),
+  )
+}
+
+/** POST .../{id}/cancel-replacement: retires a pending replacement and revokes its unused codes. The source is untouched. */
+export async function cancelReplacement(orgSlug: string, id: number): Promise<Replacement> {
+  return replacement(await apiRequest(`${base(orgSlug)}/${id}/cancel-replacement`, { method: 'POST' }))
 }
