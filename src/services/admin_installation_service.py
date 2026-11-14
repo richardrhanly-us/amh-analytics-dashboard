@@ -196,6 +196,7 @@ _PRIMARY_BRANCH_SQL = """
 _INSTALLATIONS_SQL = """
     SELECT
         ci.id, ci.name, ci.status, ci.required_contract, ci.installed_at, ci.last_seen_at, ci.created_at,
+        ci.replaces_installation_id,
         b.slug AS branch_slug, b.name AS branch_name, b.status AS branch_status, b.is_primary AS branch_is_primary,
         (SELECT MAX(c.expires_at) FROM collector_enrollment_codes c
           WHERE c.installation_id = ci.id AND c.used_at IS NULL AND c.revoked_at IS NULL AND c.expires_at > :now)
@@ -243,6 +244,9 @@ def _installation(row: Any) -> dict[str, Any]:
         "created_at": row["created_at"],
         "pending_code_expires_at": row["pending_code_expires_at"],
         "last_code_redeemed_at": row["last_code_redeemed_at"],
+        "replaces_installation_id": (
+            None if row["replaces_installation_id"] is None else int(row["replaces_installation_id"])
+        ),
     }
 
 
@@ -259,6 +263,13 @@ def _installations(conn: Any, organization_id: int, *, installation_id: int | No
 def list_installations(library: Library) -> list[dict[str, Any]]:
     with get_engine().connect() as conn:
         return _installations(conn, library.id)
+
+
+def pending_replacement_id(library: Library) -> int | None:
+    """The library's pending replacement, if any (14.11): the shared definition, read under the primary branch's tenant
+    context, never locked. For display only; every operation re-checks under its own locks."""
+    with get_engine().connect() as conn:
+        return replacement_eligibility.pending_replacement_for_library(conn, library.id)
 
 
 def _one(conn: Any, library: Library, installation_id: int) -> dict[str, Any]:

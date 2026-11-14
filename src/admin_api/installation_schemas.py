@@ -43,7 +43,8 @@ class InstallationBranch(_Model):
 
 class Installation(_Model):
     """One installation. `pending_code_expires_at`: when its unused enrollment code expires (null if it has none);
-    `last_code_redeemed_at`: when a code of its was last redeemed (null if never)."""
+    `last_code_redeemed_at`: when a code of its was last redeemed (null if never); `replaces_installation_id`: the
+    installation it was authorized to replace (C6a; null for an ordinary installation), a support reference."""
 
     id: int
     name: str
@@ -55,15 +56,22 @@ class Installation(_Model):
     created_at: datetime
     pending_code_expires_at: datetime | None
     last_code_redeemed_at: datetime | None
+    replaces_installation_id: int | None
 
 
 class InstallationsResponse(_Model):
     """Every installation of the library, whatever its status or its branch's. `add_problems` is what stops an
-    installation being added now; `collector_settings_not_ready` concerns contract 2 alone."""
+    installation being added now; `collector_settings_not_ready` concerns contract 2 alone.
+
+    C6a (14.11): `pending_replacement_id` is the library's pending replacement, if any, by the shared definition;
+    `replacement_enabled` is whether this server allows machine replacement now. Both are for display: the server
+    refuses what they rule out whatever a client shows."""
 
     library: InstallationsLibrary
     primary_branch: PrimaryBranchSummary | None
     add_problems: list[AddProblem]
+    pending_replacement_id: int | None
+    replacement_enabled: bool
     installations: list[Installation]
 
 

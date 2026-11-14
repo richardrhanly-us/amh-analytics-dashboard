@@ -836,12 +836,17 @@ deployment, not a fresh install. What remains unverified above must not be assum
 
       **Replacement machine (C6a), stage R3 (administration interface, feature flag, runbook):** design approved
       2026-11-12.
-      - **Feature flag slice:** `SORTVIEW_MACHINE_REPLACEMENT_ENABLED`, off by default. Implemented as a separate
-        backend-first slice. Passed local validation on 2026-11-12 (PostgreSQL suite 1,054 passed; suite without
-        PostgreSQL 11,342 passed; 0 failed). Not merged or deployed. While off, the backend refuses replacement authorization, code issuance for pending
-        replacements and replacement redemption; cancellation and every ordinary operation are unaffected.
-      - **Administration interface:** not implemented; it is not part of the flag slice.
-      - **Support runbook:** drafted; it ships with the administration interface slice.
+      - **Feature flag slice:** `SORTVIEW_MACHINE_REPLACEMENT_ENABLED`, off by default. Merged to `main` in PR #290
+        (`0eb6f4d`) after local validation (PostgreSQL suite 1,054 passed; suite without PostgreSQL 11,342 passed;
+        0 failed). While off, the backend refuses replacement authorization, code issuance for pending replacements
+        and replacement redemption; cancellation and every ordinary operation are unaffected.
+      - **Administration interface:** implemented on `feature/c6a-r3-replacement-ui`, not merged or deployed.
+        "Replace this Collector computer" and "Cancel replacement" on the Installations page, with the installation
+        list's new `replaces_installation_id`, `pending_replacement_id` and `replacement_enabled`. Passed full
+        local validation on 2026-11-13: PostgreSQL suite 1,060 passed; suite without PostgreSQL 11,348 passed;
+        frontend 2,665 passed; 0 failed. The flag stays off. Deploy the backend before the admin app.
+      - **Support runbook:** `docs/c6a-replacement-support-runbook.md`, reviewed against the interface; it ships
+        with the interface slice.
       - Details: `docs/c6a-replacement-machine-design.md`, 14.11.
 - [ ] **C7. Self-serve commercial flow** (Stripe against the existing plans/subscriptions schema; guided signup) —
       last, and only once a second customer is real. Includes deciding customer-visible plan/subscription display

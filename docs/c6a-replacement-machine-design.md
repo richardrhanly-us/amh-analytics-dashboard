@@ -4,9 +4,9 @@
 
 **Scope:** Support-controlled replacement of an enrolled Contract v2 Collector computer, through Mode 1 controlled handoff or Mode 2 fresh-identity recovery  
 
-**Amendment A (Section 14, design approved 2026-11-12; R0 complete):** Mode 2 is implemented first, through the unchanged Collector 1.0.14 SortView Setup GUI. Where Section 14 is more specific than an earlier section, Section 14 applies to Mode 2. **R1 (authorization and cancellation) is implemented and merged** (PR #288, `d45a2da`; 14.9). **R2 (replacement redemption) is merged** (PR #289, `e5d24a3`) **and deployed** (14.9). R3's design is approved and its feature flag is implemented but not yet merged (14.11); the R3 interface, R4 and R5 are not implemented. Machine replacement has not been qualified for customer use (R4, R5, D6).
+**Amendment A (Section 14, design approved 2026-11-12; R0 complete):** Mode 2 is implemented first, through the unchanged Collector 1.0.14 SortView Setup GUI. Where Section 14 is more specific than an earlier section, Section 14 applies to Mode 2. **R1 (authorization and cancellation) is implemented and merged** (PR #288, `d45a2da`; 14.9). **R2 (replacement redemption) is merged** (PR #289, `e5d24a3`) **and deployed** (14.9). R3's feature flag is merged (PR #290, `0eb6f4d`) and off by default; the R3 administration interface is implemented on its branch, not merged (14.11). R4 and R5 are not implemented. Machine replacement has not been qualified for customer use (R4, R5, D6).
 
-**Implementation status:** Mode 1 is unavailable. Mode 2 stages R1 (authorization and cancellation) and R2 (redemption) are merged and deployed (14.9), so a platform administrator can complete a replacement through the administration API. There is no administration UI yet. The server-side gate (14.11) is implemented but not yet deployed, and replacement has not been qualified for customer use. Key ownership and the credential safeguards in Section 2 are implemented (milestones M1 and M2), as are a read-only inventory of legacy keys (milestone M3a) and safeguards in the legacy credential scripts (milestone M3b). Only the behavior listed in Section 2 and the code-inspection findings in Section 9 describe the system as it exists today; everything else here is proposed.
+**Implementation status:** Mode 1 is unavailable. Mode 2 stages R1 (authorization and cancellation) and R2 (redemption) are merged and deployed (14.9), so a platform administrator can complete a replacement through the administration API. The server-side gate (14.11) is merged and off by default. The administration interface is implemented on its branch, not merged or deployed. Replacement has not been qualified for customer use. Key ownership and the credential safeguards in Section 2 are implemented (milestones M1 and M2), as are a read-only inventory of legacy keys (milestone M3a) and safeguards in the legacy credential scripts (milestone M3b). Only the behavior listed in Section 2 and the code-inspection findings in Section 9 describe the system as it exists today; everything else here is proposed.
 
 ## 1. Objective
 
@@ -741,7 +741,7 @@ Apart from milestones M1 and M2, no schema migration, endpoint, or production ch
 - **Still open:** D5 and D6, to be decided before R5, and the remaining technical issues at the end of 14.10.
 - **R1:** implemented, and all its acceptance criteria passed in local validation on 2026-11-12. Merged to `main` in PR #288 (`d45a2da`). Its record is in 14.9.
 - **R2:** implementation decisions A–H approved 2026-11-12 (14.4a). Merged to `main` in PR #289 (`e5d24a3`) and deployed; DigitalOcean reports healthy. Its record is in 14.9.
-- **R3:** decisions approved 2026-11-12. The server-side feature flag is approved and implemented as a separate backend-first slice, not yet merged or deployed; the interface is not implemented (14.11).
+- **R3:** decisions approved 2026-11-12. The server-side feature flag is merged (PR #290, `0eb6f4d`). The administration interface and the support runbook are implemented on `feature/c6a-r3-replacement-ui`, not merged or deployed (14.11).
 - **Not implemented:** R3–R5. Replacement has not been qualified for customer use. Design approval does not by itself approve a production change. Each stage ships through its own reviewed PR and meets its acceptance criteria in 14.9.
 
 ### 14.1 Scope
@@ -1210,7 +1210,7 @@ Each stage is its own PR and deploys independently. No stage adds Mode 1, key ro
 
 ### 14.11 R3: administration interface and the replacement feature flag
 
-**Status:** decisions 1 and 3–6 approved 2026-11-12. **The feature flag (decision 2) was approved 2026-11-12 and is implemented as its own backend-first slice, on branch `feature/c6a-r3-replacement-admin-ui`, and passed local validation (record below). The administration interface is not part of that slice and is not implemented.**
+**Status:** decisions 1 and 3–6 approved 2026-11-12. **The feature flag (decision 2) is merged to `main` in PR #290 (`0eb6f4d`), off by default. The administration interface is implemented on `feature/c6a-r3-replacement-ui` and passed full local validation on 2026-11-13; not merged or deployed (records below).**
 
 **Why R3 needs a flag now.** R2 was merged and deployed before D6 was decided (14.4a, G superseded). Until the flag ships, a platform administrator can authorize, issue a code for and complete a replacement through the administration API, and nothing on the server stops it. Hiding the React controls would not change that, so the gate must be on the server.
 
@@ -1268,7 +1268,7 @@ Each stage is its own PR and deploys independently. No stage adds Mode 1, key ro
 - **Tests, existing:** R1's and R2's replacement tests turn the flag on in their fixtures and keep every assertion.
 - **Deployment and docs:** a row in `docs/deployment.md`'s variable table and in `.env.example`, and the runbook's prerequisites. No migration.
 
-*Status of the flag slice (2026-11-12).* **Implemented, and passed local validation on 2026-11-12. Not merged, not deployed. This slice does not include the R3 administration interface**, which is still to be built; until it is, replacement remains reachable only through the administration API, and only with the flag on.
+*Status of the flag slice (2026-11-12).* **Implemented, passed local validation on 2026-11-12, and merged to `main` in PR #290 (`0eb6f4d`). This slice does not include the R3 administration interface**, which is a separate slice (record below); until that is deployed, replacement remains reachable only through the administration API, and only with the flag on.
 - **Code:**
   - `replacement_eligibility.replacement_enabled()` and `REPLACEMENT_DISABLED`;
   - the guard first in `authorize_replacement`;
@@ -1309,3 +1309,52 @@ Each stage is its own PR and deploys independently. No stage adds Mode 1, key ro
 5. **After redemption:** the source reads "Retired — replaced by Installation #Y", the replacement reads "Replaces Installation #X", and Cancel is no longer offered.
 
 **Refusals:** each shows the server's message after "Nothing was changed.", keeps what was typed, and refreshes the list, so a concurrent change by another administrator is visible at once.
+
+*Status of the interface slice (2026-11-12).* **Implemented on `feature/c6a-r3-replacement-ui`, and passed full local validation on 2026-11-13, including PostgreSQL. Not merged, not deployed. The flag stays off.**
+
+- **Backend read model** (decision 1):
+  - `replacement_eligibility.pending_replacement_for_library`: the library's single primary branch, its tenant context set when the tenant is mapped, then the shared `pending_replacement_at_branch`. Read, never locked.
+  - `admin_installation_service.pending_replacement_id`, and `replaces_installation_id` on every installation the service returns.
+  - `InstallationsResponse` gains `pending_replacement_id` and `replacement_enabled`; `Installation` gains `replaces_installation_id`. Every installation answer (list, add, rename, status, authorize, cancel) carries it.
+  - The `branch_already_enrolled` message now points to Replace this Collector computer.
+- **Interface** (`frontend/admin/src/installations/`):
+  - `installationsApi.ts`: the three fields, strictly checked like every other field, and `authorizeReplacement` and `cancelReplacement`.
+  - `InstallationsPage.tsx`: the workflow above, with these details:
+    - a **Replacement** fact on each card: "Pending replacement for", "Cancelled replacement for", "Replaces", "Being replaced by" and "Replaced by", joined for a chain;
+    - Replace is offered only when the flag is on, no replacement is pending, and the installation is Contract 2, at the active primary branch, not retired, and has a used code;
+    - the authorization form states decision 6's wording and is described by it; a Provisioning source, or a `lost_response_confirmation_required` refusal, adds the required confirmation checkbox;
+    - a pending replacement shows no Retire and no recovery token; while the flag is off, no code either, and it says why;
+    - the code panel adds replacement instructions for a pending replacement's code;
+    - every replacement refusal shows the server's message after "Nothing was changed.", keeps what was typed, and reads the list again;
+    - authorization and cancellation are announced in a status message, and focus moves to the affected installation's heading;
+    - the page no longer says replacement is "not handled here"; while the flag is off it says replacement is turned off and a pending one can still be cancelled.
+- **Tests:**
+  - **Backend:**
+    - route tests for the list's three fields and the flag's parsing in the list;
+    - PostgreSQL tests as the runtime role, covering: no pending replacement until one is authorized; none after cancellation or redemption, with the redemption test showing that the same read without the tenant context would wrongly report one; tenant isolation between two libraries; no single primary branch; reported whatever the flag;
+    - the existing list-shape tests updated for the new fields: the route test, and the PostgreSQL test of the service's exact field set, which also asserts `replaces_installation_id` is `None` for ordinary installations and keeps its machine-identity and secret checks;
+    - the customer-model boundary test now also forbids `replaces_installation_id`, `pending_replacement_id` and `replacement_enabled` in every customer API model.
+  - **Frontend** (`Installations.test.tsx`), 20 new tests:
+    - where Replace is and is not offered, with the flag on and off;
+    - authorization: its consequences, validation, request, announcement, refresh and focus;
+    - the lost-response confirmation, from the start and after the server asks for it;
+    - four refusals, and a refused name;
+    - a pending replacement's actions, with the flag on and off;
+    - the replacement code: its instructions, and kept out of the query and mutation caches, storage, request URLs and the page URL, and gone after Done; an ordinary code has no replacement text;
+    - cancellation: its warning, Keep replacement, the request, announcement and focus;
+    - cancellation refused because the replacement was redeemed meanwhile, then showing the new state;
+    - a chain of three, and a cancelled library;
+    - two axe checks: a pending replacement with the cancel warning open, and the form with the confirmation open.
+  - **Existing tests:** list fixtures gain the three fields. The Retire warning's assertion follows its new text. No other assertion changed.
+- **Runbook:** `docs/c6a-replacement-support-runbook.md`, reviewed against this interface: the labels, buttons and messages it quotes are the interface's own.
+- **Local validation (2026-11-12 and 2026-11-13; local disposable PostgreSQL, never production):**
+  - **Full PostgreSQL opt-in suite: 1,060 passed, 0 failed:** the flag slice's 1,054 plus the six new PostgreSQL tests. The first full run found one failure: the existing exact field-set test did not yet expect `replaces_installation_id`. Only that test changed; no application code changed.
+  - **Full Python suite without PostgreSQL: 11,348 passed, 1,060 skipped.** Two installer staging tests failed once with a Windows file lock (`error 32`) while the frontend build ran alongside; all 108 tests of that module pass when run alone. No installer file is changed.
+  - **Frontend:** 56 test files, 2,665 tests passed; ESLint clean; `tsc` and both production builds pass.
+  - ruff and bandit (the CI command) clean; `git diff --check` clean.
+- **Differences from the design above:**
+  - The pending replacement is read in its own connection, next to the installation list rather than in the same transaction, so after a concurrent change the two can briefly disagree. Both are display only, every action re-checks under its own locks, and every refusal re-reads the list.
+  - Added beyond the design: the "Cancelled replacement" and chain labels; focus also moves after a cancellation; a pending replacement hides the recovery token, which the server would refuse.
+  - The cancel warning's dismiss button reads **Keep replacement** rather than **Cancel**, so it is not confused with the action itself.
+  - After redemption, the source's status reads **Retired** and its Replacement fact reads "Replaced by Installation #Y", rather than the single label "Retired — replaced by Installation #Y" in step 5 above.
+- **Deployment:** no migration. **The backend must be deployed before this admin app:** the app requires the three new fields and shows a load error without them. The previous admin app ignores the new fields, so the backend can go first safely.

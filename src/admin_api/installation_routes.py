@@ -89,6 +89,7 @@ from customer_api.errors import (
     logger,
 )
 from services import admin_installation_service as service
+from services import replacement_eligibility
 from services.admin_installation_service import InstallationAdminError, Library
 
 PlatformAdmin = Annotated[dict[str, Any], Depends(require_platform_admin)]
@@ -105,7 +106,7 @@ _MESSAGES = {
     "library_not_enrollable": (409, "This library cannot enroll a Collector in its current status."),
     "operational_identity_incomplete": (409, "This library's operational identity is not complete."),
     "branch_already_enrolled": (
-        409, "This branch already has an enrolled Contract 2 Collector. Replacing it is not handled here.",
+        409, "This branch already has an enrolled Contract 2 Collector. To replace its computer, use Replace this Collector computer.",
     ),
     "installation_owns_active_key": (
         409, "This installation owns its branch's active ingest key, so it cannot be retired here. Deactivate it instead.",
@@ -178,6 +179,7 @@ def _installation(found: dict[str, Any]) -> Installation:
         created_at=found["created_at"],
         pending_code_expires_at=found["pending_code_expires_at"],
         last_code_redeemed_at=found["last_code_redeemed_at"],
+        replaces_installation_id=found["replaces_installation_id"],
     )
 
 
@@ -198,6 +200,8 @@ def create_installation_router() -> APIRouter:
                 slug=primary.slug, name=primary.name, status=primary.status,
             ),
             add_problems=service.add_problems(library, primary),
+            pending_replacement_id=service.pending_replacement_id(library),
+            replacement_enabled=replacement_eligibility.replacement_enabled(),
             installations=[_installation(found) for found in service.list_installations(library)],
         )
         return _json(body)

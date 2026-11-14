@@ -63,6 +63,7 @@ INSTALLATION = {
     "created_at": CREATED,
     "pending_code_expires_at": None,
     "last_code_redeemed_at": CREATED + timedelta(minutes=50),
+    "replaces_installation_id": None,
 }
 INSTALLATION_JSON = {
     "id": 123,
@@ -75,6 +76,7 @@ INSTALLATION_JSON = {
     "created_at": "2026-10-01T12:00:00Z",
     "pending_code_expires_at": None,
     "last_code_redeemed_at": "2026-10-01T12:50:00Z",
+    "replaces_installation_id": None,
 }
 UNBOUND_TOKEN = {"id": 55, "description": "Canonical agent", "branch_name": "Main Branch", "created_at": CREATED, "last_used_at": None}
 FORBIDDEN_KEYS = {"organization_id", "branch_id", "customer_id", "operational_branch_id", "operational_customer_id",
@@ -88,6 +90,7 @@ def api(monkeypatch):
     monkeypatch.setenv("SORTVIEW_CUSTOMER_ALLOWED_ORIGINS", CUSTOMER_ORIGIN)
     monkeypatch.setenv("SORTVIEW_ADMIN_ALLOWED_ORIGINS", ADMIN_ORIGIN)
     monkeypatch.delenv("SORTVIEW_CUSTOMER_COOKIE_SECURE", raising=False)
+    monkeypatch.delenv("SORTVIEW_MACHINE_REPLACEMENT_ENABLED", raising=False)  # off, whatever the shell has
     main.limiter.reset()
     yield TestClient(main.app)
     main.limiter.reset()
@@ -107,6 +110,7 @@ class World:
         monkeypatch.setattr(service, "get_primary_branch", lambda library: PRIMARY)
         monkeypatch.setattr(service, "add_problems", lambda library, primary: ["collector_settings_not_ready"])
         monkeypatch.setattr(service, "list_installations", lambda library: [dict(INSTALLATION)])
+        monkeypatch.setattr(service, "pending_replacement_id", lambda library: None)
         monkeypatch.setattr(service, "create_installation", self._write("create"))
         monkeypatch.setattr(service, "rename_installation", self._write("rename"))
         monkeypatch.setattr(service, "change_status", self._write("status"))
@@ -243,6 +247,8 @@ def test_the_list_is_exactly_these_fields(api, monkeypatch):
         "library": {"slug": "acme", "name": "Acme Library", "status": "active"},
         "primary_branch": {"slug": "main", "name": "Main Branch", "status": "active"},
         "add_problems": ["collector_settings_not_ready"],
+        "pending_replacement_id": None,
+        "replacement_enabled": False,
         "installations": [INSTALLATION_JSON],
     }
     assert not _keys(response.json()) & FORBIDDEN_KEYS
@@ -487,7 +493,8 @@ def test_no_customer_model_carries_installation_admin_or_enrollment_fields():
     import customer_api
 
     named = {"enrollment_code", "pending_code_expires_at", "last_code_redeemed_at", "required_contract",
-             "installation_id", "add_problems", "revoked_previous_count"}
+             "installation_id", "add_problems", "revoked_previous_count",
+             "replaces_installation_id", "pending_replacement_id", "replacement_enabled"}
     found = []
     for module_info in pkgutil.iter_modules(customer_api.__path__):
         module = importlib.import_module(f"customer_api.{module_info.name}")
