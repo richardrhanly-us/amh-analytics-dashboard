@@ -122,6 +122,15 @@ The installer follows section 5 of the customer guide. Be ready to:
 - [ ] confirm the installation number shown in the final result matches Installation #N from step 5;
 - [ ] if setup stops, ask for the text from **Copy details** and follow **What to do now** (customer guide, section
       7). **Contact SortView support** results are engineering's to look at before anyone retries.
+- [ ] **Setup log (later packages only).** The approved G2 package does not save a setup log. A later package (I1b,
+      not yet approved) saves one to `C:\ProgramData\SortViewSetup\Logs`, where only Administrators and SYSTEM can
+      read it. That package's **Copy details** also names the log file, or gives the reason no log was saved, such as
+      "log folder not trusted". Ask for the full log only when engineering needs it. The installer sends it by using
+      **Save a copy of the setup log…** and choosing a plain local folder or USB drive. Network locations, OneDrive
+      online folders and folders reached through a junction or link are refused. The log never contains the enrollment code, but
+      it can contain folder paths and computer settings. Treat it as confidential. Never post it in chat or tickets.
+      If the reason is "log folder not trusted", someone other than an administrator created or changed
+      `C:\ProgramData\SortViewSetup`. Installation is unaffected; tell engineering.
 
 ## 9. Verify
 
@@ -142,7 +151,9 @@ Record these in the library's onboarding record (outside this repository; never 
 - [ ] Library and slug; installation number; date and time of installation.
 - [ ] Who installed it, and who from SortView assisted.
 - [ ] Time of the first data, and the date onboarding was confirmed Ready.
-- [ ] Any stop during setup: the **Copy details** text, what was done, and the outcome.
+- [ ] Any stop during setup: the **Copy details** text (with a later package, it includes the setup log's file name),
+      what was done, and the outcome. If a full setup log was received, record where it is kept. Do not paste its
+      contents into the record.
 - [ ] Any follow-up owed to the library.
 
 ## Stop and escalate if

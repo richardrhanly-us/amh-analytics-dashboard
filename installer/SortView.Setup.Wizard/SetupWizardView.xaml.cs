@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
+using System.Linq;
 using System.Security;
 using System.Threading.Tasks;
 using System.Windows;
@@ -30,6 +31,11 @@ namespace SortView.Setup.Wizard
     ///
     /// Progress is shown as seven customer steps (<see cref="SetupProgress"/>), worked out only from the engine's events
     /// as they arrive; the engine's own events and console text stay available under "Show details".
+    ///
+    /// Each run is also written, as it goes, to a setup log the host provides (<see cref="DiagnosticsLogFactory"/>): the
+    /// same events and console text, which question was asked and how it was answered (yes or no, otherwise only that it
+    /// was answered -- never what was typed), and the result. The log can never stop or change a run: if it cannot be
+    /// saved, setup runs exactly as it would without it.
     /// </summary>
     public partial class SetupWizardView : UserControl, IPromptView
     {
@@ -48,11 +54,20 @@ namespace SortView.Setup.Wizard
         // What to do after a run that did not complete, from the same events; and when that run ended.
         private readonly StopGuidance guidance = new StopGuidance();
         private DateTimeOffset endedAt;
+        // The current (or last) run's setup log. Never null once a run has started.
+        private SetupDiagnosticsLog runLog;
         // The status said while the enrollment step runs. It is retired once progress moves past that step.
         private const string EnrollingStatus = "Enrolling this computer with SortView… This cannot be interrupted.";
         private bool enrollingStatusShown;
         // The title of a question this version has no view for: plain words, never the engine's internal identifier.
         internal const string UnknownQuestionTitle = "Setup asked a question this version of SortView Setup cannot show. Select Cancel setup.";
+        // The questions the log may name: the engine's own closed list. Anything else is logged as "unknown".
+        private static readonly string[] LoggedQuestions = { "enrollment_code", "sources_confirm", "source_path", "resume_confirm", "legacy_task_enable" };
+
+        /// <summary>Said next to Save a copy (and as its help text): the full log can hold sensitive system information.</summary>
+        public const string SaveLogWarningText =
+            "The full setup log can contain sensitive system information, such as folder paths and computer settings. It never holds " +
+            "the enrollment code. Save a copy only to a place you trust, and send it only to SortView support if they ask for it.";
 
         public SetupWizardView()
         {
@@ -114,6 +129,10 @@ namespace SortView.Setup.Wizard
             set => AutomationProperties.SetName(CodeBox, value);
         }
 
+        /// <summary>Opens the setup log for each run (the host's own folder and rules), or null for none. Called on the UI
+        /// thread when a run starts; whatever it does, the run starts the same way.</summary>
+        public Func<SetupDiagnosticsLog> DiagnosticsLogFactory { get; set; }
+
         /// <summary>Where the file picker starts when a source file is asked for.</summary>
         public string SourceBrowseFolder { get; set; } = @"C:\TLCFinalDlls";
 
@@ -166,12 +185,33 @@ namespace SortView.Setup.Wizard
             enrollingStatusShown = false;
             ShowProgress(progress.Reset());
             guidance.Reset();
-            session =SetupRunSession.Start(runner, Dispatcher, this, OnSetupEvent, text => consoleText.Add(text));
+            runLog?.Dispose();
+            runLog = OpenRunLog();
+            runLog.Note("Setup run started.");
+            SetupDiagnosticsLog log = runLog;
+            session = SetupRunSession.Start(runner, Dispatcher, this, OnSetupEvent, text =>
+            {
+                consoleText.Add(text);
+                log.ConsoleText(text);
+            });
             SetupRunSession started = session;
             session.Completion.ContinueWith(task => Dispatcher.BeginInvoke(new Action(() => OnFinished(started, task))),
                 TaskScheduler.Default);
             StatusText.Text = string.IsNullOrEmpty(runningMessage) ? "Running setup…" : runningMessage;
             UpdateControls();
+        }
+
+        /// <summary>The host's log for this run; a log that was not saved if there is none or it could not be opened.</summary>
+        private SetupDiagnosticsLog OpenRunLog()
+        {
+            try
+            {
+                return DiagnosticsLogFactory?.Invoke() ?? SetupDiagnosticsLog.NotSaved(SetupLogProblem.NotConfigured);
+            }
+            catch (Exception)
+            {
+                return SetupDiagnosticsLog.NotSaved(SetupLogProblem.UnexpectedError);
+            }
         }
 
         // ---- running -------------------------------------------------------------------------------------------
@@ -209,7 +249,9 @@ namespace SortView.Setup.Wizard
             {
                 return;
             }
-            switch (session.RequestCancel())
+            CancelRequestOutcome outcome = session.RequestCancel();
+            runLog?.Note("Cancel setup selected: " + outcome);
+            switch (outcome)
             {
                 case CancelRequestOutcome.CancelledAtQuestion:
                     StatusText.Text = "Cancelled: setup stops safely at this question.";
@@ -235,6 +277,7 @@ namespace SortView.Setup.Wizard
             closeWhenFinished = true;
             bool enrollmentBegun = session.EnrollmentMayHaveBegun;
             session.DeferClose();
+            runLog?.Note("Window close requested: it closes when setup has returned.");
             StatusText.Text = enrollmentBegun
                 ? "This window will close when setup has finished. Setup cannot be interrupted now: the enrollment may already have been sent."
                 : "This window will close as soon as setup stops at its next question.";
@@ -255,13 +298,24 @@ namespace SortView.Setup.Wizard
             {
                 Exception error = task.Exception.GetBaseException();
                 StatusText.Text = "Setup could not run: " + error.GetType().Name + ": " + error.Message;
+                // The type only: an exception's message is free text that could hold anything.
+                runLog?.Note("Setup could not run: " + error.GetType().Name + " (message not logged)");
             }
             else
             {
                 SetupRunResult result = task.Result;
                 StatusText.Text = "Finished: exit code " + (result.ExitCode?.ToString() ?? "(none)") + " — " + Describe(result.ExitCode) + ".";
+                runLog?.Note(StatusText.Text);
+                // Their count only: PowerShell's error records are free text that is shown nowhere.
+                runLog?.Note("Engine error records: " + result.Diagnostics.Count);
             }
             ShowOutcome(task);
+            if (guidance.Category != StopCategory.None)
+            {
+                runLog?.Note("What to do now: " + guidance.CategoryLabel);
+            }
+            runLog?.Note("Setup run ended.");
+            runLog?.Dispose(); // closed; it stays on disk and can still be copied
             UpdateControls();
             if (closeWhenFinished)
             {
@@ -277,6 +331,7 @@ namespace SortView.Setup.Wizard
             InstallationNotice.Visibility = installationEnabled ? Visibility.Collapsed : Visibility.Visible;
             bool enrollmentBegun = running && session.EnrollmentMayHaveBegun;
             CancelButton.IsEnabled = running && !enrollmentBegun;
+            SaveLogButton.IsEnabled = !running && runLog != null && runLog.WasCreated;
             UpdateBusy();
             CancelNote.Text = enrollmentBegun
                 ? "Setup can no longer be cancelled safely: the enrollment may already have been sent. It will run to the end on its own; closing the window waits for it."
@@ -350,10 +405,12 @@ namespace SortView.Setup.Wizard
                     finishEvent = setupEvent;
                     break;
             }
-            foreach (string line in Format(setupEvent))
+            foreach (string line in Format(setupEvent, false))
             {
                 events.Add(line);
             }
+            // The same lines, except that an unexpected error's free-text message is left out (its type is kept).
+            runLog?.Event(Format(setupEvent, true).ToList());
             ShowProgress(progress.Apply(setupEvent));
             guidance.Apply(setupEvent);
             SetupEventReceived?.Invoke(setupEvent);
@@ -361,7 +418,7 @@ namespace SortView.Setup.Wizard
             UpdateControls();
         }
 
-        private static IEnumerable<string> Format(SetupEvent e)
+        private static IEnumerable<string> Format(SetupEvent e, bool forLog)
         {
             string head = "#" + e.Sequence + "  ";
             switch (e.Type)
@@ -396,7 +453,7 @@ namespace SortView.Setup.Wizard
                     yield return "      What to do: " + Field(e, "fix");
                     break;
                 case "run_failed_unexpected":
-                    yield return head + "■ UNEXPECTED ERROR: " + Field(e, "exception_type") + ": " + Field(e, "message");
+                    yield return head + "■ UNEXPECTED ERROR: " + Field(e, "exception_type") + ": " + (forLog ? "(message not logged)" : Field(e, "message"));
                     foreach (string line in Lines(e, "advice"))
                     {
                         yield return "      " + line;
@@ -497,6 +554,7 @@ namespace SortView.Setup.Wizard
             }
             UpdatePromptButtons();
             PromptPanel.Visibility = Visibility.Visible;
+            runLog?.Note("Question asked: " + LoggedQuestion(request));
             StatusText.Text = "Waiting for your answer.";
             ShowProgress(progress.SetWaiting(true));
         }
@@ -537,6 +595,10 @@ namespace SortView.Setup.Wizard
 
         private void PromptCancel_Click(object sender, RoutedEventArgs e)
         {
+            if (current != null)
+            {
+                runLog?.Note("Question cancelled (" + LoggedQuestion(current) + ")");
+            }
             current?.TryCancel();
             ClearPrompt();
         }
@@ -617,6 +679,10 @@ namespace SortView.Setup.Wizard
                 StatusText.Text = "That question had already been settled; the answer was not used.";
                 return false;
             }
+            // Only yes or no is ever named. A path or a code is logged as "answered", never its value.
+            string said = answer is string text && (text == PromptAnswers.Yes || text == PromptAnswers.No) ? text : "answered";
+            // (Never "enrollment_code: ..." -- the log's redaction would rightly take that for a secret.)
+            runLog?.Note("Answer given (" + LoggedQuestion(request) + "): " + said);
             StatusText.Text = "Running setup…";
             UpdateControls();
             return true;
@@ -630,6 +696,13 @@ namespace SortView.Setup.Wizard
             PromptPanel.Visibility = Visibility.Collapsed;
             UpdatePromptButtons();
             ShowProgress(progress.SetWaiting(false));
+        }
+
+        /// <summary>The question's name for the log: one of the engine's own, or "unknown".</summary>
+        private static string LoggedQuestion(PromptRequest request)
+        {
+            string id = request.Prompt.PromptId;
+            return Array.IndexOf(LoggedQuestions, id) >= 0 ? id : "unknown";
         }
 
         private static string SourceLabel(string source)
@@ -773,22 +846,70 @@ namespace SortView.Setup.Wizard
                 text.Text = "";
             }
             CopyStatus.Text = "";
+            SaveLogStatus.Text = "";
             CopyDetailsPanel.Visibility = Visibility.Collapsed;
             OutcomePanel.Visibility = Visibility.Collapsed;
         }
 
-        /// <summary>Copies the guidance's own summary (fixed text and checked values only) -- never the engine's words, the
-        /// setup log, or anything typed.</summary>
+        /// <summary>Copies the guidance's own summary (fixed text and checked values only) and the setup log's file name --
+        /// never the engine's words, the setup log's contents or folder, or anything typed.</summary>
         private void CopyDetailsButton_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-                Clipboard.SetText(guidance.DiagnosticSummary(endedAt));
+                Clipboard.SetText(guidance.DiagnosticSummary(endedAt, runLog));
                 CopyStatus.Text = "Copied. Paste it into your message to SortView support.";
             }
             catch (Exception)
             {
                 CopyStatus.Text = "The details could not be copied. Try again.";
+            }
+        }
+
+        /// <summary>Saves a copy of the setup log only where the person chooses, as a new file (never replacing one), after
+        /// the warning shown beside the button. Nothing is ever saved without that choice.</summary>
+        private void SaveLogButton_Click(object sender, RoutedEventArgs e)
+        {
+            SetupDiagnosticsLog log = runLog;
+            if (IsRunning || log == null || !log.WasCreated)
+            {
+                SaveLogStatus.Text = "No setup log was saved on this computer, so there is nothing to copy.";
+                return;
+            }
+            var dialog = new SaveFileDialog
+            {
+                Title = "Save a copy of the setup log (it can contain sensitive system information)",
+                FileName = log.FileName,
+                DefaultExt = ".log",
+                AddExtension = true,
+                Filter = "Setup log (*.log)|*.log",
+                OverwritePrompt = false, // a new file only: an existing one is never replaced
+                InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            };
+            if (dialog.ShowDialog(Window.GetWindow(this)) != true)
+            {
+                SaveLogStatus.Text = "No copy was saved.";
+                return;
+            }
+            SaveLogStatus.Text = SaveCopyMessage(log.SaveCopyTo(dialog.FileName));
+        }
+
+        /// <summary>What Save a copy says: fixed text for each outcome, never the path or an error's own words.</summary>
+        internal static string SaveCopyMessage(SaveCopyResult result)
+        {
+            switch (result)
+            {
+                case SaveCopyResult.Saved:
+                    return "A copy of the setup log was saved where you chose.";
+                case SaveCopyResult.AlreadyExists:
+                    return "Nothing was saved: a file or folder with that name already exists there, and setup never replaces one. Choose another name.";
+                case SaveCopyResult.UnsafeLocation:
+                    return "Nothing was saved: that location is not a plain folder on a drive of this computer (it goes through a link, " +
+                           "a redirected or online-only folder, or a network location). Choose a folder on this computer or a USB drive.";
+                case SaveCopyResult.NoLog:
+                    return "No setup log was saved on this computer, so there is nothing to copy.";
+                default:
+                    return "Nothing was saved: the copy could not be made there. Choose another folder.";
             }
         }
     }

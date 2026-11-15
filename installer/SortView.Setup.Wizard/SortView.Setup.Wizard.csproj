@@ -55,6 +55,8 @@
     <Compile Include="PrerequisiteChecks.cs" />
     <Compile Include="SetupProgress.cs" />
     <Compile Include="StopGuidance.cs" />
+    <Compile Include="SetupDiagnosticsLog.cs" />
+    <Compile Include="SafeNewFile.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

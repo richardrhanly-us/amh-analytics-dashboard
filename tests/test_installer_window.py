@@ -94,13 +94,18 @@ def test_the_question_identifier_is_never_shown_or_given_to_assistive_technology
     assert 'x:Name="PromptId"' not in xaml and "PromptId." not in wizard
     for code in PROMPT_CODES:
         assert code not in re.sub(r"<!--.*?-->", "", xaml, flags=re.DOTALL), code
-    # The wizard reads the identifier only to choose a view and to recognise the enrollment code question -- never to show it.
+    # The wizard reads the identifier only to choose a view, to recognise the enrollment code question, and (I1b) to name the
+    # question in the setup log -- one of the engine's own identifiers, or "unknown" -- never to show it.
     uses = re.findall(r"[^\n]*\.Prompt\.PromptId[^\n]*", wizard)
     assert [use.strip() for use in uses] == [
         "switch (request.Prompt.PromptId)",
         'if (current == null || current.Prompt.PromptId != "enrollment_code")',
         'EnrollButton.IsEnabled = current != null && current.Prompt.PromptId == "enrollment_code" && typed.Length > 0;',
+        "string id = request.Prompt.PromptId;",
     ]
+    logged = wizard[wizard.index("private static string LoggedQuestion"):wizard.index("private static string SourceLabel")]
+    assert 'return Array.IndexOf(LoggedQuestions, id) >= 0 ? id : "unknown";' in logged
+    assert re.search(r"LoggedQuestions = \{ ([^}]*) \};", wizard).group(1) == ", ".join(f'"{c}"' for c in PROMPT_CODES)
     show_prompt = wizard[wizard.index("public void ShowPrompt(PromptRequest request)"):wizard.index("public void DismissPrompt")]
     assert "PromptTitle.Text = UnknownQuestionTitle;" in show_prompt
     title = re.search(r'internal const string UnknownQuestionTitle = "([^"]*)";', wizard).group(1)
@@ -128,9 +133,10 @@ def test_the_window_never_handles_the_code_as_text_or_writes_secrets_anywhere():
                           "SetEnvironmentVariable"):
             assert forbidden not in source, forbidden
     # The clipboard is reached once, by Copy details, with StopGuidance's own summary only (fixed text and checked values:
-    # see test_installer_stop_guidance.py) -- never a typed answer, the engine's words or the setup log.
+    # see test_installer_stop_guidance.py) and the setup log's checked file name -- never a typed answer, the engine's words
+    # or the setup log's contents.
     assert "Clipboard" not in window
-    assert re.findall(r"Clipboard\.\w+\([^;]*;", wizard) == ["Clipboard.SetText(guidance.DiagnosticSummary(endedAt));"]
+    assert re.findall(r"Clipboard\.\w+\([^;]*;", wizard) == ["Clipboard.SetText(guidance.DiagnosticSummary(endedAt, runLog));"]
     assert wizard.count("Clipboard") == 1
     # The code goes from the wizard's PasswordBox to the run as a read-only SecureString copy; the box is cleared at once.
     assert "SecureString code = CodeBox.SecurePassword;" in wizard and "code.MakeReadOnly();" in wizard and "CodeBox.Clear();" in wizard
@@ -166,8 +172,9 @@ def window_exe() -> Path:
 
 
 # Steps: select/toggle/click/text (by AutomationId), wait_prompt, wait_status, wait_text, wait_disabled, snapshot, read_clipboard,
-# close, wait_exit, sleep. "{workspace}" in a value is the simulated machine the window shows. While waiting, the driver measures how fast
-# the UI thread answers, and counts the window's child processes and visible console windows.
+# close, wait_exit, sleep, make_file (a plain file at a path), make_junction (a junction at a path, to target), save_dialog (the Save dialog: a file name, or cancel). "{workspace}" in a
+# value is the simulated machine the window shows. While waiting, the driver measures how fast the UI thread answers, and counts the
+# window's child processes and visible console windows.
 _UIA_DRIVER = r"""
 param([string]$ExePath, [string]$StepsPath, [string]$OutPath)
 $ErrorActionPreference = 'Stop'
@@ -194,7 +201,8 @@ $AE = [System.Windows.Automation.AutomationElement]
 $TS = [System.Windows.Automation.TreeScope]
 $steps = @(Get-Content -LiteralPath $StepsPath -Raw | ConvertFrom-Json | ForEach-Object { $_ })
 $out = [ordered]@{ error = $null; error_stack = $null; snapshots = @(); prompts_seen = @(); prompt_history = @(); max_children = 0; max_console_windows = 0
-                   latencies = @(); exited = $false; workspace = $null; command_line = $null; second_clicks = @(); clipboard = @() }
+                   latencies = @(); exited = $false; workspace = $null; command_line = $null; second_clicks = @(); clipboard = @()
+                   dialog_titles = @() }
 $proc = Start-Process -FilePath $ExePath -PassThru
 $window = $null
 for ($i = 0; $i -lt 300 -and $null -eq $window; $i++) {
@@ -349,6 +357,52 @@ try {
                 $to = ([string]$step.to).Replace('{workspace}', $out.workspace)
                 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $to) | Out-Null
                 Copy-Item -LiteralPath ([string]$step.from).Replace('{workspace}', $out.workspace) -Destination $to
+            }
+            'make_file' {
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $value) | Out-Null
+                Set-Content -LiteralPath $value -Value 'not a folder' -Encoding ASCII
+            }
+            'make_junction' {
+                $target = ([string]$step.target).Replace('{workspace}', $out.workspace)
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $value), $target | Out-Null
+                cmd /c mklink /J "$value" "$target" | Out-Null
+            }
+            'save_dialog' {
+                # The Windows Save dialog the window opened (owned by it, so a child of it in the tree): a file name typed in
+                # its file name box (1001) and Enter, or Esc -- as someone using the keyboard would.
+                $dialog = $null
+                $isDialog = New-Object System.Windows.Automation.AndCondition(
+                    (New-Object System.Windows.Automation.PropertyCondition($AE::ProcessIdProperty, $proc.Id)),
+                    (New-Object System.Windows.Automation.PropertyCondition($AE::ControlTypeProperty, [System.Windows.Automation.ControlType]::Window)))
+                Wait-Until {
+                    $script:dialog = @($window.FindAll($TS::Children, $isDialog)) + @($AE::RootElement.FindAll($TS::Children, $isDialog)) |
+                        Where-Object { $_.Current.Name -like "$($step.title)*" } | Select-Object -First 1
+                    $null -ne $script:dialog
+                } 30 "the Save dialog"
+                $dialog = $script:dialog
+                $out.dialog_titles += $dialog.Current.Name
+                # (Its inner controls are not reliably exposed with patterns, so only the keyboard is used: Alt+N is the
+                # file name box.)
+                Add-Type -AssemblyName System.Windows.Forms
+                Start-Sleep -Milliseconds 800  # let the dialog finish opening
+                if (-not ('ForegroundProbe' -as [type])) {
+                    Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class ForegroundProbe { [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h); [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h); }'
+                }
+                $dialogHandle = [IntPtr]$dialog.Current.NativeWindowHandle
+                $null = [ForegroundProbe]::SetForegroundWindow($dialogHandle)
+                try { $dialog.SetFocus() } catch { }
+                if ($step.cancel) {
+                    [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+                } else {
+                    $typed = [regex]::Replace($value, '[+^%~(){}\[\]]', '{$0}')
+                    [System.Windows.Forms.SendKeys]::SendWait('%n')
+                    [System.Windows.Forms.SendKeys]::SendWait('^a')
+                    [System.Windows.Forms.SendKeys]::SendWait($typed)
+                    [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+                }
+                # Done only once this dialog has closed, so a later step never finds it again (a dialog that is still
+                # closing has the same title as the next one).
+                Wait-Until { -not [ForegroundProbe]::IsWindow($dialogHandle) } 30 "the Save dialog to close"
             }
             'text' { (Find $step.id).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value) }
             'wait_prompt' {

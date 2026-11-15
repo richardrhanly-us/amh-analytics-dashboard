@@ -379,7 +379,16 @@ namespace SortView.Setup.Wizard
         /// the engine's closed vocabularies or of its checked kinds (numbers, yes/no, an installation number, a version, an
         /// error's type name). Never an engine message, a path, the setup log, a code, a token or a secret.
         /// </summary>
-        public string DiagnosticSummary(DateTimeOffset at)
+        public string DiagnosticSummary(DateTimeOffset at) => Summary(at, false, null);
+
+        /// <summary>
+        /// The same summary, followed by the setup log's FILE NAME only (never its folder or its contents) once it was
+        /// saved -- checked against the one form a setup log's name takes -- or a line saying that no log was saved, with
+        /// the fixed reason.
+        /// </summary>
+        public string DiagnosticSummary(DateTimeOffset at, SetupDiagnosticsLog log) => Summary(at, true, log);
+
+        private string Summary(DateTimeOffset at, bool withLog, SetupDiagnosticsLog log)
         {
             var text = new StringBuilder();
             text.AppendLine("SortView Setup: diagnostic summary");
@@ -414,6 +423,10 @@ namespace SortView.Setup.Wizard
             Line(text, "Collector release", release != null && VersionPattern.IsMatch(release) ? release : null);
             string errorType = stopType == "run_failed_unexpected" ? Text(stopFields, "exception_type") : null;
             Line(text, "Unexpected error type", errorType != null && TypeNamePattern.IsMatch(errorType) ? errorType : null);
+            if (withLog)
+            {
+                text.AppendLine("Setup log: " + LogLine(log));
+            }
             text.Append("This summary holds no enrollment code, API token, secret, file path or setup log.");
             return text.ToString();
         }
@@ -423,6 +436,30 @@ namespace SortView.Setup.Wizard
             if (!string.IsNullOrEmpty(value))
             {
                 text.AppendLine(name + ": " + value);
+            }
+        }
+
+        private static string LogLine(SetupDiagnosticsLog log)
+        {
+            string name = log?.FileName;
+            if (name != null && SetupDiagnosticsLog.FileNamePattern.IsMatch(name))
+            {
+                return name + (log.IsTruncated ? " (incomplete: size limit reached)" : log.Problem != SetupLogProblem.None ? " (incomplete: writing stopped)" : "");
+            }
+            SetupLogProblem problem = log == null ? SetupLogProblem.NotConfigured : log.Problem;
+            return "not saved" + (problem == SetupLogProblem.None ? "" : " (" + LogProblemLabel(problem) + ")");
+        }
+
+        private static string LogProblemLabel(SetupLogProblem problem)
+        {
+            switch (problem)
+            {
+                case SetupLogProblem.NotConfigured: return "no log folder";
+                case SetupLogProblem.FolderUntrusted: return "log folder not trusted";
+                case SetupLogProblem.FolderNotCreated: return "log folder could not be created";
+                case SetupLogProblem.FileNotCreated: return "log file could not be created";
+                case SetupLogProblem.WriteFailed: return "log could not be written";
+                default: return "unexpected error";
             }
         }
 

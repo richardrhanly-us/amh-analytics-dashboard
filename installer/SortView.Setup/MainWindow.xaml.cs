@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using System.Windows;
 using SortView.Setup.Core;
+using SortView.Setup.Wizard;
 using SortView.Setup.Wpf;
 
 namespace SortView.Setup
@@ -44,6 +45,9 @@ namespace SortView.Setup
             // The Welcome and Ready notices follow the same decision: they say installation is disabled only when it is.
             WelcomeView.IsInstallationEnabled = ReadyView.IsInstallationEnabled = Wizard.IsInstallationEnabled;
             Wizard.StartRequested += OnStartRequested;
+            // Each run's setup log: C:\ProgramData\SortViewSetup\Logs (SetupLogPolicy.Production), never anywhere else.
+            Wizard.DiagnosticsLogFactory = () => SetupDiagnosticsLog.Open(SetupLogPolicy.Production,
+                "Collector release (pinned): " + (pin.IsConfigured ? pin.Version : "none"));
             preparation = new PreparationStep(PrepareView, Dispatcher, () => PreparationFactory());
             PrerequisitesView.StateChanged += (s, e) => UpdateButtons();
             Wizard.RunStateChanged += (s, e) => UpdateButtons();
