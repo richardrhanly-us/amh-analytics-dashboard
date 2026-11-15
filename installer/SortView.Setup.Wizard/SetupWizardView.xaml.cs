@@ -51,6 +51,8 @@ namespace SortView.Setup.Wizard
         // The status said while the enrollment step runs. It is retired once progress moves past that step.
         private const string EnrollingStatus = "Enrolling this computer with SortView… This cannot be interrupted.";
         private bool enrollingStatusShown;
+        // The title of a question this version has no view for: plain words, never the engine's internal identifier.
+        internal const string UnknownQuestionTitle = "Setup asked a question this version of SortView Setup cannot show. Select Cancel setup.";
 
         public SetupWizardView()
         {
@@ -436,7 +438,6 @@ namespace SortView.Setup.Wizard
         {
             current = request;
             IReadOnlyDictionary<string, object> context = request.Prompt.Context;
-            PromptId.Text = request.Prompt.PromptId;
             PathBox.Text = "";
             CodeBox.Clear();
             ShowView(null);
@@ -490,7 +491,8 @@ namespace SortView.Setup.Wizard
                     ShowView(TaskEnableView);
                     break;
                 default:
-                    PromptTitle.Text = "An unknown question: " + request.Prompt.PromptId;
+                    // Never the engine's internal identifier: a question this version has no view for can only be cancelled.
+                    PromptTitle.Text = UnknownQuestionTitle;
                     break;
             }
             UpdatePromptButtons();
@@ -625,7 +627,6 @@ namespace SortView.Setup.Wizard
             current = null;
             CodeBox.Clear();
             PathBox.Text = "";
-            PromptId.Text = "none";
             PromptPanel.Visibility = Visibility.Collapsed;
             UpdatePromptButtons();
             ShowProgress(progress.SetWaiting(false));

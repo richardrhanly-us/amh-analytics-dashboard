@@ -5,8 +5,9 @@ namespace SortView.Setup.Wizard
     /// <summary>The first screen: what SortView Setup does. Its host window owns the Next and Exit buttons.</summary>
     public partial class WelcomePage : UserControl
     {
-        /// <summary>The notice in a build that may install: a test build, never presented as a released one.</summary>
-        public const string EnabledNotice = "Test build: this version can install SortView Collector, but it is not a released version of SortView Setup. Use it only on a computer where you have been asked to test it. To check the package, setup copies it to a protected folder and removes that copy when you go back or close setup.";
+        /// <summary>The notice in a build that may install: a supervised-pilot version, never presented as signed, generally
+        /// released or approved.</summary>
+        public const string EnabledNotice = "Supervised pilot version: this version can install SortView Collector, and is meant to be used with help from SortView. It is not digitally signed and is not a generally released version of SortView Setup. To check the package, setup copies it to a protected folder and removes that copy when you go back or close setup.";
 
         private readonly string disabledNotice;
         private bool installationEnabled;

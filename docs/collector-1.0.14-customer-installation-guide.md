@@ -73,12 +73,13 @@ Collector.
    needs the `bundle` folder that sits beside it, so do not run it from inside the ZIP and do not move it out of its
    folder.
 
-**About the "Test build" notice and Windows warnings.** This version of SortView Setup is a package for a
-**supervised pilot**, installed with SortView's help. It is **not** a publicly released, digitally signed version of
-SortView Setup, and its first pages say so: they call it a *test build* that is *not a released version of SortView
-Setup*. That is expected for this package. Windows might also show a warning when you start an unsigned program like
-this one; whether it does depends on how your computer and network are set up. Continue only with a package whose
-fingerprint matched, and follow your IT department's rules for unsigned software.
+**About the pilot notice and Windows warnings.** This version of SortView Setup is a package for a **supervised
+pilot**, installed with SortView's help. It is **not** a generally released, digitally signed version of SortView
+Setup, and its first pages say so in a highlighted notice. Depending on the package SortView sent you, the notice
+begins *Supervised pilot version* or *Test build*; either is expected for this package. Windows might also show a
+warning when you start an unsigned program like this one; whether it does depends on how your computer and network are
+set up. Continue only with a package whose fingerprint matched, and follow your IT department's rules for unsigned
+software.
 
 ## 4. The enrollment code
 

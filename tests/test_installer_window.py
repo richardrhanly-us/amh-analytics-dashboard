@@ -40,6 +40,8 @@ WIZARD_CODE = REPO_ROOT / "installer" / "SortView.Setup.Wizard" / "SetupWizardVi
 SPIKE_SOURCES = [WINDOW_CODE, WORKSPACE_CODE, SPIKE_DIR / "MainWindow.xaml", SPIKE_DIR / "App.xaml"]
 
 DUMMY_CODE = "SIM-UIA-DUMMY-CODE-7Q2X"  # synthetic: never a real enrollment code
+#: The setup engine's internal question identifiers (setup-collector.ps1, $script:SetupEventFieldRules prompt_id).
+PROMPT_CODES = ("enrollment_code", "sources_confirm", "source_path", "resume_confirm", "legacy_task_enable")
 SIMULATION_API = "https://sortview-api.invalid"
 LEGACY_TOOLS = ["install-verify", "runtime-version", "http:GET", "http:POST", "http:POST", "set-api-token", "install", "finish-install"]
 
@@ -81,6 +83,31 @@ def test_the_window_can_only_run_a_generated_simulation():
     assert 'Path.Combine(Path.GetTempPath(), "SortViewSetupSimulation"' in workspace
     assert f'public const string SimulationApiUrl = "{SIMULATION_API}";' in workspace
     assert 'File.Copy(Path.Combine(deploy, "setup-collector.ps1"), Path.Combine(BundleRoot, "setup.ps1"));' in workspace  # the REAL engine
+
+
+def test_the_question_identifier_is_never_shown_or_given_to_assistive_technology():
+    engine = (REPO_ROOT / "collector" / "deploy" / "setup-collector.ps1").read_text(encoding="utf-8")
+    assert f'prompt_id          = @("{PROMPT_CODES[0]}", "{PROMPT_CODES[1]}", "{PROMPT_CODES[2]}", "{PROMPT_CODES[3]}", "{PROMPT_CODES[4]}")' in engine
+    xaml = (WIZARD_CODE.parent / "SetupWizardView.xaml").read_text(encoding="utf-8")
+    wizard = _code(WIZARD_CODE)
+    # The identifier's text element is gone, and nothing on the window is given it as text, a name or help text.
+    assert 'x:Name="PromptId"' not in xaml and "PromptId." not in wizard
+    for code in PROMPT_CODES:
+        assert code not in re.sub(r"<!--.*?-->", "", xaml, flags=re.DOTALL), code
+    # The wizard reads the identifier only to choose a view and to recognise the enrollment code question -- never to show it.
+    uses = re.findall(r"[^\n]*\.Prompt\.PromptId[^\n]*", wizard)
+    assert [use.strip() for use in uses] == [
+        "switch (request.Prompt.PromptId)",
+        'if (current == null || current.Prompt.PromptId != "enrollment_code")',
+        'EnrollButton.IsEnabled = current != null && current.Prompt.PromptId == "enrollment_code" && typed.Length > 0;',
+    ]
+    show_prompt = wizard[wizard.index("public void ShowPrompt(PromptRequest request)"):wizard.index("public void DismissPrompt")]
+    assert "PromptTitle.Text = UnknownQuestionTitle;" in show_prompt
+    title = re.search(r'internal const string UnknownQuestionTitle = "([^"]*)";', wizard).group(1)
+    assert "Cancel setup" in title and not any(code in title for code in PROMPT_CODES)
+    # Every view the window can show is recognised by the test driver through its own named answer control.
+    for control in ("UseStandardFilesButton", "UsePathButton", "ResumeButton", "EnrollButton", "EnableTaskButton"):
+        assert f'x:Name="{control}"' in xaml and control in _UIA_DRIVER, control
 
 
 def test_the_enrolling_status_is_shown_only_for_a_code_actually_handed_over():
@@ -185,6 +212,29 @@ function Shown([string]$id) {
     if ($null -ne $e -and -not $e.Current.IsOffscreen) { $e } else { $null }
 }
 function OnScreen($elements) { @($elements | Where-Object { -not $_.Current.IsOffscreen }) }
+# The question on screen, from the view that shows it -- the window never shows the engine's own identifier. Each view is a
+# plain panel, which WPF leaves out of the UI Automation tree, so it is recognised by its own named answer control.
+$PromptViews = [ordered]@{ UseStandardFilesButton = 'sources_confirm'; UsePathButton = 'source_path'; ResumeButton = 'resume_confirm'
+                           EnrollButton = 'enrollment_code'; EnableTaskButton = 'legacy_task_enable' }
+function ShownPrompt {
+    if ($null -eq (Shown 'PromptPanel')) { return $null }
+    foreach ($control in $PromptViews.Keys) { if ($null -ne (Shown $control)) { return $PromptViews[$control] } }
+    return $null
+}
+# Every element in the tree, on screen or not, as "AutomationId=Name" -- except the lines of the two "Show details" lists,
+# which repeat the engine's own technical record for support.
+function TreeEntries {
+    $skip = @{}
+    foreach ($list in 'EventList', 'DiagnosticList') {
+        $element = Find $list
+        if ($null -ne $element) {
+            foreach ($item in $element.FindAll($TS::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) { $skip[($item.GetRuntimeId() -join '.')] = $true }
+        }
+    }
+    @($window.FindAll($TS::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
+      Where-Object { -not $skip.ContainsKey(($_.GetRuntimeId() -join '.')) } |
+      ForEach-Object { $_.Current.AutomationId + '=' + $_.Current.Name })
+}
 function Sample {
     $kids = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $($proc.Id)")
     if ($kids.Count -gt $out.max_children) { $out.max_children = $kids.Count }
@@ -197,10 +247,9 @@ function Sample {
         $null = (Find 'StatusText').Current.Name   # answered by the window's UI thread
         $out.latencies += $watch.ElapsedMilliseconds
         # Every question that appears on screen, in order (a new entry each time a different one shows).
-        # (While no question is showing, the panel is collapsed: its id is not shown -- whether or not it is in the tree.)
-        $promptElement = Shown 'PromptId'
-        $prompt = if ($null -ne $promptElement) { $promptElement.Current.Name } else { $null }
-        if (-not [string]::IsNullOrEmpty($prompt) -and $prompt -ne 'none' -and
+        # (While no question is showing, the panel is collapsed: no question is shown -- whether or not it is in the tree.)
+        $prompt = ShownPrompt
+        if (-not [string]::IsNullOrEmpty($prompt) -and
             ($out.prompt_history.Count -eq 0 -or $out.prompt_history[-1] -ne $prompt)) { $out.prompt_history += $prompt }
     } catch {
         # Only while the window is closing (wait_exit): UI Automation cannot reach a window that is going away.
@@ -233,7 +282,7 @@ function Snapshot([string]$label) {
         status = (Find 'StatusText').Current.Name
         cancel_enabled = $cancel.Current.IsEnabled
         cancel_note = (Find 'CancelNote').Current.Name
-        prompt = (Shown 'PromptId').Current.Name
+        prompt = ShownPrompt
         details = PanelText 'PromptPanel'
         outcome = PanelText 'OutcomePanel'
         use_path_enabled = Enabled 'UsePathButton'
@@ -249,6 +298,7 @@ function Snapshot([string]$label) {
         details_expanded = ((Find 'DetailsExpander').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Current.ExpandCollapseState -eq 'Expanded')
         all_text = (@(OnScreen $window.FindAll($TS::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name }) -join "`n")
         offscreen = @(Offscreen)
+        tree = @(TreeEntries)
     }
 }
 function Wait-Until([scriptblock]$condition, [int]$seconds, [string]$what) {
@@ -302,7 +352,7 @@ try {
             }
             'text' { (Find $step.id).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($value) }
             'wait_prompt' {
-                Wait-Until { (Shown 'PromptId').Current.Name -eq $step.prompt } 90 "the question $($step.prompt)"
+                Wait-Until { (ShownPrompt) -eq $step.prompt } 90 "the question $($step.prompt)"
                 Sample   # record it in prompt_history even when it was already showing
                 $out.prompts_seen += $step.prompt
             }
@@ -397,6 +447,18 @@ def assert_window_invariants(result: dict) -> None:
     for call in workspace_calls(result):
         if call["tool"] == "http":
             assert call["url"].startswith(SIMULATION_API + "/"), call["url"]
+    assert_no_question_code_exposed(result)
+
+
+def assert_no_question_code_exposed(result: dict) -> None:
+    """No element of the window -- on screen or not -- is the removed question identifier, or has a question code as its
+    name or AutomationId. Only the two "Show details" lists (the engine's own technical record, for support) may hold one."""
+    for shot in result["snapshots"]:
+        assert shot["tree"], shot["label"]
+        for entry in shot["tree"]:
+            assert not entry.startswith("PromptId="), (shot["label"], entry)
+            for code in PROMPT_CODES:
+                assert code not in entry, (shot["label"], entry)
 
 
 ENROLLING_STATUS = "Enrolling this computer with SortView… This cannot be interrupted."

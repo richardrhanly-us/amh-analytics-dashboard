@@ -92,7 +92,8 @@ Do not use the earlier G3 package (`e932200f…`, built from `de858df`); it pred
 - [ ] Ask the installer to check the fingerprint of the file they received before opening it (customer guide,
       section 3).
 - [ ] Remind them that this is a **supervised-pilot** package, not a publicly signed release: it is not code-signed,
-      its first pages show "Test build" notices, and Windows might warn about it.
+      its first pages show a pilot notice, and Windows might warn about it. The approved G2 package's notice begins
+      "Test build"; a later package (not yet approved) says "Supervised pilot version" instead.
 
 ## 7. Issue the enrollment code during the session
 

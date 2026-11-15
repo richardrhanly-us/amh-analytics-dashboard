@@ -55,10 +55,10 @@
             <ProgressBar x:Name="BusyIndicator" Height="6" Margin="0,6,0,0" Visibility="Collapsed" AutomationProperties.Name="Setup is working" />
 
             <!-- One question at a time, asked by the setup engine. Each kind of question has its own view; the engine
-                 decides when it is asked, whether an answer is acceptable and what it means. -->
+                 decides when it is asked, whether an answer is acceptable and what it means. The engine's internal question
+                 identifier is never shown or given to assistive technology: the title and the view say what is asked. -->
             <GroupBox x:Name="PromptPanel" Header="Setup needs your answer" Margin="0,8,0,0" Padding="8" BorderBrush="#1F4E79" BorderThickness="2" Visibility="Collapsed">
                 <StackPanel>
-                    <TextBlock x:Name="PromptId" Foreground="#888" FontSize="10" Text="none" />
                     <TextBlock x:Name="PromptTitle" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
 
                     <!-- sources_confirm -->
