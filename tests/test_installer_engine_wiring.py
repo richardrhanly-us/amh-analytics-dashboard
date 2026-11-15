@@ -89,11 +89,27 @@ def test_the_welcome_and_ready_notices_follow_the_wizards_own_installation_decis
         for forbidden in ("InstallationGate", "TrustedBundlePin", "Environment.", "Registry", "File.", "GetCommandLineArgs"):
             assert forbidden not in code, (page, forbidden)
         disabled, enabled = _disabled_notice(page).lower(), _enabled_notice(page).lower()
-        assert "not enabled" in disabled or "cannot install" in disabled
-        # Enabled: no claim that installation is disabled, and no claim of a released (production) version.
-        for claim in ("not enabled", "cannot install", "development build", "nothing will be installed"):
+        # Disabled: the development-build warning, unchanged.
+        assert disabled.startswith("development build:") and ("not enabled" in disabled or "cannot install" in disabled)
+        # Enabled: a supervised-pilot version. No claim that installation is disabled, no "test build", and no claim that it
+        # is signed, generally released or approved -- it says the opposite of the first two.
+        for claim in ("not enabled", "cannot install", "development build", "nothing will be installed", "test build", "approved",
+                      "production"):
             assert claim not in enabled, (page, claim)
-        assert enabled.startswith("test build:") and "not a released version" in enabled
+        assert enabled.startswith("supervised pilot version:") and "with help from sortview" in enabled
+        assert "it is not digitally signed and is not a generally released version of sortview setup." in enabled
+        assert "signed" not in enabled.replace("not digitally signed", "")
+
+
+def test_the_ready_notice_names_the_setup_pages_own_button():
+    # The Ready page says nothing is installed until a button is selected: that button is the Setup page's Install.
+    ready = _enabled_notice("ReadyPage")
+    assert ready.endswith("Nothing is installed or enrolled until you select Install.")
+    assert "Start" not in ready
+    wizard = (WIZARD_DIR / "SetupWizardView.xaml").read_text(encoding="utf-8")
+    assert re.search(r'<Button x:Name="StartButton" Content="_Install"', wizard)
+    for xaml in WIZARD_DIR.glob("*.xaml"):
+        assert 'Content="_Start"' not in xaml.read_text(encoding="utf-8"), xaml.name
 
 
 def test_the_window_asks_for_a_runner_only_from_start_over_the_prepared_bundle():
@@ -420,7 +436,7 @@ def test_an_enabled_build_runs_the_engine_over_the_staged_copy_and_keeps_it_unti
     report = _run(tmp_path, enabled_build)
     steps = report["steps"]
     assert report["installation_enabled"] is True and report["start_enabled"] is True
-    # ...and the Welcome and Ready pages no longer say it is disabled (they say it is a test build instead).
+    # ...and the Welcome and Ready pages no longer say it is disabled (they say it is a supervised-pilot version instead).
     assert (report["welcome_notice"], report["ready_notice"]) == (_enabled_notice("WelcomePage"), _enabled_notice("ReadyPage"))
     assert _nav(steps["idle"]) == ("Setup", False, True, False, True, True, True, 0)
     # Start: the engine is asked once, for the staged copy (under the protected root, not the source) and the fixed roots.

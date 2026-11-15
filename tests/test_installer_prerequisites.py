@@ -573,22 +573,48 @@ def test_ready_comes_between_prerequisites_and_prepare_without_re_reading(naviga
         assert steps[name]["reads"] == reads, name  # no page after Prerequisites re-reads this computer
 
 
-#: What the Ready page must say: what setup will do, in the order it does it, and that this build installs nothing.
+#: What the Ready page must say: what setup will do, in the order the setup engine does it (setup.ps1: the package and this
+#: computer, where an unfinished setup is offered for resume; the Tech Logic files; the connection and enrollment; installing
+#: and verifying; the Scheduled Task last), and that this build installs nothing.
 READY_STATEMENTS = [
     "Ready to install",
     "You're almost ready to install SortView Collector.",
     "When setup runs, it will:",
-    "1. Install SortView Collector on this computer.",
+    ("1. Check the installation package and this computer. If an earlier setup was interrupted, offer to resume it using its "
+     "saved enrollment, so no new enrollment code is needed."),
     "2. Identify the Tech Logic sorter files the Collector reads, and ask you to confirm them or select them yourself.",
-    "3. Ask for the one-time enrollment code from your SortView administrator, only if this computer needs to be enrolled.",
-    "4. Offer to resume an earlier setup that was interrupted, using its saved enrollment. No new enrollment code is needed.",
-    "5. Verify the installation before the Collector's Scheduled Task is enabled.",
+    ("3. Connect to SortView, then ask for the one-time enrollment code from your SortView administrator, only if this "
+     "computer needs to be enrolled."),
+    "4. Install SortView Collector on this computer and verify the installation.",
+    "5. Turn on the Collector's Scheduled Task, only once the installation checks are complete.",
     "Setup requires administrator rights on this computer.",
     ("You can cancel setup at any of its questions until the enrollment code is sent. Once enrollment may have begun, setup "
      "cannot be interrupted and finishes on its own."),
     ("Development build: installation is not enabled in this version. Select Next to check the installation package and copy it "
      "to a protected folder; that copy is removed when you go back or close setup. Nothing will be installed or enrolled."),
 ]
+
+
+def test_the_ready_pages_order_is_the_setup_engines_own():
+    # The Ready page's five steps follow setup.ps1: its machine check (where an unfinished setup is offered for resume),
+    # then the Tech Logic files, the connection, the enrollment, installing, and verifying and the Scheduled Task last.
+    engine = (REPO_ROOT / "collector" / "deploy" / "setup-collector.ps1").read_text(encoding="utf-8")
+    order = [
+        engine.index('"=== Step 2: checking this machine ==="'),
+        engine.index('Request-SetupAnswer -Id "resume_confirm"'),
+        engine.index('"=== Step 3: Tech Logic source files ==="'),
+        engine.index('"=== Step 4: connecting to SortView ==="'),
+        engine.index('"=== Step 5: enrolling this computer ==="'),
+        engine.index('"=== Step 7: installing the Collector ==="'),
+        engine.index('"=== Step 8: verifying and registering (preflight, bootstrap, Scheduled Task) ==="'),
+        engine.index("                Enable-SortViewTask"),
+    ]
+    assert order == sorted(order)
+    steps = [text for text in READY_STATEMENTS if re.match(r"\d\. ", text)]
+    assert [text[:2] for text in steps] == ["1.", "2.", "3.", "4.", "5."]
+    assert "resume" in steps[0] and "Tech Logic" in steps[1] and "enrollment code" in steps[2]
+    assert "Install SortView Collector" in steps[3] and "Scheduled Task" in steps[4]
+    assert not any("Scheduled Task" in text for text in steps[:4]) and not any("resume" in text for text in steps[1:])
 
 
 def test_the_ready_page_says_what_setup_will_do_and_claims_nothing_was_checked():
