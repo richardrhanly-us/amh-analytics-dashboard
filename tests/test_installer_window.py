@@ -93,7 +93,7 @@ def test_the_question_identifier_is_never_shown_or_given_to_assistive_technology
     # The identifier's text element is gone, and nothing on the window is given it as text, a name or help text.
     assert 'x:Name="PromptId"' not in xaml and "PromptId." not in wizard
     for code in PROMPT_CODES:
-        assert code not in re.sub(r"<!--.*?-->", "", xaml, flags=re.S), code
+        assert code not in re.sub(r"<!--.*?-->", "", xaml, flags=re.DOTALL), code
     # The wizard reads the identifier only to choose a view and to recognise the enrollment code question -- never to show it.
     uses = re.findall(r"[^\n]*\.Prompt\.PromptId[^\n]*", wizard)
     assert [use.strip() for use in uses] == [
