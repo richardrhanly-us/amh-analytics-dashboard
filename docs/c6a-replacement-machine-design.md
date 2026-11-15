@@ -4,9 +4,9 @@
 
 **Scope:** Support-controlled replacement of an enrolled Contract v2 Collector computer, through Mode 1 controlled handoff or Mode 2 fresh-identity recovery  
 
-**Amendment A (Section 14, design approved 2026-11-12; R0 complete):** Mode 2 is implemented first, through the unchanged Collector 1.0.14 SortView Setup GUI. Where Section 14 is more specific than an earlier section, Section 14 applies to Mode 2. **R1 (authorization and cancellation) is implemented and merged** (PR #288, `d45a2da`; 14.9). **R2 (replacement redemption) is merged** (PR #289, `e5d24a3`) **and deployed** (14.9). R3's feature flag is merged (PR #290, `0eb6f4d`) and off by default; the R3 administration interface is implemented on its branch, not merged (14.11). R4 and R5 are not implemented. Machine replacement has not been qualified for customer use (R4, R5, D6).
+**Amendment A (Section 14, design approved 2026-11-12; R0 complete):** Mode 2 is implemented first, through the unchanged Collector 1.0.14 SortView Setup GUI. Where Section 14 is more specific than an earlier section, Section 14 applies to Mode 2. **R1 (authorization and cancellation) is implemented and merged** (PR #288, `d45a2da`; 14.9). **R2 (replacement redemption) is merged** (PR #289, `e5d24a3`) **and deployed** (14.9). R3 is merged (flag: PR #290, `0eb6f4d`; interface: PR #291, `46ac69a`) and deployed, with the flag off (14.11). R4 has begun: its stage 0 baseline passed on 2026-11-13, and no replacement has been qualified yet (14.9, `docs/c6a-r4-qualification.md`). R5 is not started. Machine replacement has not been qualified for customer use (R4, R5, D6).
 
-**Implementation status:** Mode 1 is unavailable. Mode 2 stages R1 (authorization and cancellation) and R2 (redemption) are merged and deployed (14.9), so a platform administrator can complete a replacement through the administration API. The server-side gate (14.11) is merged and off by default. The administration interface is implemented on its branch, not merged or deployed. Replacement has not been qualified for customer use. Key ownership and the credential safeguards in Section 2 are implemented (milestones M1 and M2), as are a read-only inventory of legacy keys (milestone M3a) and safeguards in the legacy credential scripts (milestone M3b). Only the behavior listed in Section 2 and the code-inspection findings in Section 9 describe the system as it exists today; everything else here is proposed.
+**Implementation status:** Mode 1 is unavailable. Mode 2 stages R1 (authorization and cancellation) and R2 (redemption) are merged and deployed (14.9), so a platform administrator can complete a replacement through the administration API. The server-side gate (14.11) is merged and deployed, and off in production. The administration interface is merged (PR #291) and deployed. Replacement has not been qualified for customer use: R4 has passed only its stage 0 baseline. Key ownership and the credential safeguards in Section 2 are implemented (milestones M1 and M2), as are a read-only inventory of legacy keys (milestone M3a) and safeguards in the legacy credential scripts (milestone M3b). Only the behavior listed in Section 2 and the code-inspection findings in Section 9 describe the system as it exists today; everything else here is proposed.
 
 ## 1. Objective
 
@@ -741,7 +741,8 @@ Apart from milestones M1 and M2, no schema migration, endpoint, or production ch
 - **Still open:** D5 and D6, to be decided before R5, and the remaining technical issues at the end of 14.10.
 - **R1:** implemented, and all its acceptance criteria passed in local validation on 2026-11-12. Merged to `main` in PR #288 (`d45a2da`). Its record is in 14.9.
 - **R2:** implementation decisions A–H approved 2026-11-12 (14.4a). Merged to `main` in PR #289 (`e5d24a3`) and deployed; DigitalOcean reports healthy. Its record is in 14.9.
-- **R3:** decisions approved 2026-11-12. The server-side feature flag is merged (PR #290, `0eb6f4d`). The administration interface and the support runbook are implemented on `feature/c6a-r3-replacement-ui`, not merged or deployed (14.11).
+- **R3:** decisions approved 2026-11-12. The server-side feature flag (PR #290, `0eb6f4d`), and the administration interface with the support runbook (PR #291, `46ac69a`), are merged and deployed. The flag is off in production (14.11).
+- **R4:** stage 0 baseline passed 2026-11-13; the staging rehearsal (stage 1) is proposed. Its record is in 14.9 and `docs/c6a-r4-qualification.md`.
 - **Not implemented:** R3–R5. Replacement has not been qualified for customer use. Design approval does not by itself approve a production change. Each stage ships through its own reviewed PR and meets its acceptance criteria in 14.9.
 
 ### 14.1 Scope
@@ -1178,6 +1179,17 @@ Each stage is its own PR and deploys independently. No stage adds Mode 1, key ro
 - A second replacement (replacement → third computer) works.
 - One interrupted-after-redemption resume works, and a lost response is recovered.
 
+**R4 status: in progress. No acceptance criterion above has been tested yet.** The full record is in `docs/c6a-r4-qualification.md`.
+- **Stage 0, the baseline, passed on 2026-11-13. It verified only the starting state:**
+  - the G2 package's SHA-256 matches the release record;
+  - production shows the flag off, with no Replace button;
+  - installation `9` is Active and healthy on its VM;
+  - a clean Windows snapshot is available;
+  - a read-only production query recorded the source's one active key (#8), token (#21), cutover (#6), and 13 events with their fingerprints.
+  These are what a production replacement must leave unchanged.
+- **Stage 1, a rehearsal on an isolated staging backend with the flag on there only, is proposed.** It uses the same bundle through Setup's console engine (`-ApiUrl`), because the GUI is fixed to the production address.
+- **Open decision:** the acceptance above names installation `9` and the unchanged GUI, which need the flag on in production for one supervised session. The alternative is to accept the staging evidence and amend this text.
+
 **R5 — commercial gate.** Everything in 14.8 is implemented, tested and approved.
 
 ### 14.10 Decisions needed before R1
@@ -1210,7 +1222,7 @@ Each stage is its own PR and deploys independently. No stage adds Mode 1, key ro
 
 ### 14.11 R3: administration interface and the replacement feature flag
 
-**Status:** decisions 1 and 3–6 approved 2026-11-12. **The feature flag (decision 2) is merged to `main` in PR #290 (`0eb6f4d`), off by default. The administration interface is implemented on `feature/c6a-r3-replacement-ui` and passed full local validation on 2026-11-13; not merged or deployed (records below).**
+**Status:** decisions 1 and 3–6 approved 2026-11-12. **The feature flag (decision 2) is merged to `main` in PR #290 (`0eb6f4d`), off by default. The administration interface passed full local validation on 2026-11-13, was merged in PR #291 (`46ac69a`) and is deployed; R4's stage 0 confirmed it in production on 2026-11-13, with the flag off (records below).**
 
 **Why R3 needs a flag now.** R2 was merged and deployed before D6 was decided (14.4a, G superseded). Until the flag ships, a platform administrator can authorize, issue a code for and complete a replacement through the administration API, and nothing on the server stops it. Hiding the React controls would not change that, so the gate must be on the server.
 
@@ -1310,7 +1322,7 @@ Each stage is its own PR and deploys independently. No stage adds Mode 1, key ro
 
 **Refusals:** each shows the server's message after "Nothing was changed.", keeps what was typed, and refreshes the list, so a concurrent change by another administrator is visible at once.
 
-*Status of the interface slice (2026-11-12).* **Implemented on `feature/c6a-r3-replacement-ui`, and passed full local validation on 2026-11-13, including PostgreSQL. Not merged, not deployed. The flag stays off.**
+*Status of the interface slice (2026-11-12).* **Passed full local validation on 2026-11-13, including PostgreSQL. Merged to `main` in PR #291 (`46ac69a`) and deployed, backend first. Production shows the flag off (R4 stage 0, 2026-11-13).**
 
 - **Backend read model** (decision 1):
   - `replacement_eligibility.pending_replacement_for_library`: the library's single primary branch, its tenant context set when the tenant is mapped, then the shared `pending_replacement_at_branch`. Read, never locked.
