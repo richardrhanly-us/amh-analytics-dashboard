@@ -165,8 +165,20 @@ SortView; you do not need to understand it.
 summary that SortView needs: which step stopped, what kind of problem it was, and the installation's status. It
 contains no enrollment code, password, secret, file path or setup log, so it is safe to send.
 
-Keep SortView Setup open until you have copied the details: the setup log under **Show details** is not saved after
-the window closes.
+**The setup log.** What happens to the setup log depends on your version of SortView Setup:
+
+- **If the Result area has a "Save a copy of the setup log" button,** SortView Setup also saves its setup log on this
+  computer, in `C:\ProgramData\SortViewSetup\Logs`, where only administrators can open it. It keeps the 20 most recent
+  logs. **Copy details** then also gives the log's file name (for example `setup-20261114-153012-1a2b3c4d.log`), or
+  says that no log was saved. It gives only the name, never the log itself. Send the full log only if SortView support
+  asks for it. To do that, select **Save a copy of the setup log…**, then choose a folder you trust on this
+  computer or on a USB drive. SortView Setup never saves a copy anywhere on its own, and never replaces an existing
+  file. For safety it refuses network locations, OneDrive online folders and folders reached through a link. If
+  that happens, choose a plain folder such as a new folder on `C:\` or a USB drive. The full log never contains the
+  enrollment code, but it can contain sensitive system information, such as folder paths and computer settings.
+  If SortView Setup cannot save its log, installation still works the same way.
+- **If there is no such button,** keep SortView Setup open until you have copied the details. In that version, the
+  setup log under **Show details** is not saved after the window closes.
 
 **Some situations to know:**
 

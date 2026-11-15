@@ -1,8 +1,11 @@
 using System;
+using System.IO;
+using System.Security.Principal;
 using System.Windows;
 using SortView.Setup.Core;
 using SortView.Setup.Core.Testing;
 using SortView.Setup.Spike.Simulation;
+using SortView.Setup.Wizard;
 
 namespace SortView.Setup.Spike
 {
@@ -23,6 +26,8 @@ namespace SortView.Setup.Spike
             Wizard.StartRequested += OnStartRequested;
             Wizard.RunStateChanged += (sender, e) => UpdateSimulationControls();
             Wizard.SetupEventReceived += OnSetupEvent;
+            // The setup log, as production writes it, but inside the simulated machine's scratch folder (never ProgramData).
+            Wizard.DiagnosticsLogFactory = OpenSimulationLog;
             try
             {
                 repositoryRoot = SimulationWorkspace.FindRepositoryRoot();
@@ -73,6 +78,18 @@ namespace SortView.Setup.Spike
             {
                 workspace.MarkCodeUsed(); // the simulated server will refuse this code from now on, as the real one does
             }
+        }
+
+        private SetupDiagnosticsLog OpenSimulationLog()
+        {
+            SecurityIdentifier user = WindowsIdentity.GetCurrent().User;
+            var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+            var administrators = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+            var trustedInstaller = new SecurityIdentifier("S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"); // owns C:\
+            string root = Path.Combine(workspace.Root, "SortViewSetup");
+            var policy = new SetupLogPolicy(root, Path.Combine(root, "Logs"), new[] { user, system, administrators, trustedInstaller },
+                new[] { user, system, administrators }, null);
+            return SetupDiagnosticsLog.Open(policy, "SIMULATION ONLY: not a real installation");
         }
 
         private void NewMachineButton_Click(object sender, RoutedEventArgs e)

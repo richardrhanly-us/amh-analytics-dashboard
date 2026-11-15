@@ -1,6 +1,7 @@
 <UserControl x:Class="SortView.Setup.Wizard.SetupWizardView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:SortView.Setup.Wizard">
     <DockPanel>
         <!-- The seven customer steps, worked out from the engine's events (SetupProgress). Each says its state in words;
              a screen reader reads each step as one line ("Step 4 of 7: Enroll this computer, Working"). -->
@@ -149,10 +150,20 @@
                     <TextBlock x:Name="OutcomeUnchanged" Margin="0,4,0,0" TextWrapping="Wrap" />
                     <TextBlock x:Name="OutcomeAdvice" Margin="0,4,0,0" TextWrapping="Wrap" />
                     <TextBlock x:Name="OutcomeFix" Margin="0,4,0,0" TextWrapping="Wrap" />
-                    <StackPanel x:Name="CopyDetailsPanel" Orientation="Horizontal" Margin="0,10,0,0" Visibility="Collapsed">
-                        <Button x:Name="CopyDetailsButton" Content="C_opy details" Padding="12,4" Click="CopyDetailsButton_Click"
-                                AutomationProperties.HelpText="Copies a summary for SortView support. It holds no enrollment code, token, secret, file path or setup log." />
-                        <TextBlock x:Name="CopyStatus" Margin="8,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+                    <StackPanel x:Name="CopyDetailsPanel" Margin="0,10,0,0" Visibility="Collapsed">
+                        <StackPanel Orientation="Horizontal">
+                            <Button x:Name="CopyDetailsButton" Content="C_opy details" Padding="12,4" Click="CopyDetailsButton_Click"
+                                    AutomationProperties.HelpText="Copies a summary for SortView support, with the setup log's file name. It holds no enrollment code, token, secret, file path or setup log contents." />
+                            <TextBlock x:Name="CopyStatus" Margin="8,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+                        </StackPanel>
+                        <!-- Save a copy: only ever to a place the person chooses, after this warning. Never saved anywhere on its own. -->
+                        <TextBlock x:Name="SaveLogWarning" Margin="0,10,0,0" TextWrapping="Wrap"
+                                   Text="{x:Static local:SetupWizardView.SaveLogWarningText}" />
+                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                            <Button x:Name="SaveLogButton" Content="_Save a copy of the setup log…" Padding="12,4" Click="SaveLogButton_Click"
+                                    AutomationProperties.HelpText="{x:Static local:SetupWizardView.SaveLogWarningText}" />
+                            <TextBlock x:Name="SaveLogStatus" Margin="8,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+                        </StackPanel>
                     </StackPanel>
                 </StackPanel>
             </GroupBox>
@@ -170,7 +181,7 @@
                 <ListBox x:Name="EventList" AutomationProperties.Name="Setup events" VirtualizingPanel.IsVirtualizing="False" />
             </DockPanel>
             <DockPanel Grid.Column="1" Margin="6,0,0,0">
-                <TextBlock DockPanel.Dock="Top" FontWeight="SemiBold" Text="Details: setup log (kept in memory only)" />
+                <TextBlock DockPanel.Dock="Top" FontWeight="SemiBold" Text="Details: setup log" />
                 <ListBox x:Name="DiagnosticList" AutomationProperties.Name="Console text" VirtualizingPanel.IsVirtualizing="False" />
             </DockPanel>
         </Grid>
