@@ -829,9 +829,8 @@ deployment, not a fresh install. What remains unverified above must not be assum
       - Every R2 acceptance criterion passed in local validation (local PostgreSQL only):
         - the full PostgreSQL suite: 1,049 passed, 0 failed;
         - the suite without PostgreSQL: 11,320 passed, 0 failed.
-      - **Not qualified for customer use.** A platform administrator can complete a replacement through the
-        administration API, and nothing on the server gates it yet. R4 (VM qualification), R5 (commercial gate)
-        and D6 (supervised-pilot use) remain.
+      - **Not qualified for customer use.** Since R3, the server-side flag gates replacement, and it is off in
+        production. R4 (VM qualification), R5 (commercial gate) and D6 (supervised-pilot use) remain.
       - Details: `docs/c6a-replacement-machine-design.md`, 14.4a and 14.9.
 
       **Replacement machine (C6a), stage R3 (administration interface, feature flag, runbook):** design approved
@@ -840,14 +839,26 @@ deployment, not a fresh install. What remains unverified above must not be assum
         (`0eb6f4d`) after local validation (PostgreSQL suite 1,054 passed; suite without PostgreSQL 11,342 passed;
         0 failed). While off, the backend refuses replacement authorization, code issuance for pending replacements
         and replacement redemption; cancellation and every ordinary operation are unaffected.
-      - **Administration interface:** implemented on `feature/c6a-r3-replacement-ui`, not merged or deployed.
+      - **Administration interface:** merged in PR #291 (`46ac69a`) and deployed, with the flag off in production.
         "Replace this Collector computer" and "Cancel replacement" on the Installations page, with the installation
         list's new `replaces_installation_id`, `pending_replacement_id` and `replacement_enabled`. Passed full
         local validation on 2026-11-13: PostgreSQL suite 1,060 passed; suite without PostgreSQL 11,348 passed;
-        frontend 2,665 passed; 0 failed. The flag stays off. Deploy the backend before the admin app.
-      - **Support runbook:** `docs/c6a-replacement-support-runbook.md`, reviewed against the interface; it ships
-        with the interface slice.
+        frontend 2,665 passed; 0 failed.
+      - **Support runbook:** `docs/c6a-replacement-support-runbook.md`, reviewed against the interface; merged with it.
       - Details: `docs/c6a-replacement-machine-design.md`, 14.11.
+
+      **Replacement machine (C6a), stage R4 (VM qualification):** in progress; **no replacement qualified yet.**
+      - **Stage 0 (baseline), passed 2026-11-13:**
+        - the G2 package hash matches the release record;
+        - production shows the flag off and no Replace button;
+        - installation `9` is Active and healthy;
+        - a clean Windows snapshot is available;
+        - a read-only production query recorded the source's key, token, cutover, and 13 events with their
+          fingerprints, which a replacement must leave unchanged.
+      - **Stage 1 (isolated staging rehearsal):** proposed, not started.
+      - **Product-owner decision:** whether the production qualification may turn the flag on for one supervised
+        session, or whether staging evidence is accepted instead.
+      - Details: `docs/c6a-r4-qualification.md`; design 14.9.
 - [ ] **C7. Self-serve commercial flow** (Stripe against the existing plans/subscriptions schema; guided signup) —
       last, and only once a second customer is real. Includes deciding customer-visible plan/subscription display
       (deferred here by D8).

@@ -8,7 +8,8 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     // The customer app (src/) and the separate admin app (admin/, A2 item 1) share this one test run.
-    include: ['src/**/*.test.{ts,tsx}', 'admin/**/*.test.{ts,tsx}'],
+    // devApiProxy.test.ts covers the admin app's development-only /api proxy (vite.admin.config.ts).
+    include: ['src/**/*.test.{ts,tsx}', 'admin/**/*.test.{ts,tsx}', 'devApiProxy.test.ts'],
     // Left off, Vitest hands every stylesheet to the tests as an empty string -- and the scope tests read index.css.
     css: true,
     // Every test starts from clean mocks, environment variables and globals.
