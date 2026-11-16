@@ -189,6 +189,14 @@ DEPLOY_TOOL_FILES: tuple[tuple[str, str], ...] = (
     # install.ps1/tools/update.ps1 also call its Test-InstalledManifest
     # function directly (dot-sourced) right after they write that file.
     ("collector/deploy/verify-install.ps1", "tools/verify-install.ps1"),
+    # 1.0.15: restricted, verified upgrade backups -- the library tools/update.ps1
+    # and tools/restore-backup.ps1 dot-source (creates a backup folder already
+    # restricted, refuses redirected or pre-existing paths, verifies the copy) --
+    # and the verified rollback that replaces the old printed bare copy: it
+    # restores a frozen backup only after matching it to a trusted release
+    # MANIFEST.json hash obtained outside the backup.
+    ("collector/deploy/CollectorBackup.ps1", "tools/CollectorBackup.ps1"),
+    ("collector/deploy/restore-backup.ps1", "tools/restore-backup.ps1"),
 )
 
 # (repo-relative source, bundle-relative destination) for files that land
