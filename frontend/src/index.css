@@ -1055,6 +1055,45 @@ button[aria-disabled='true'] {
   white-space: nowrap;
 }
 
+/*
+ * An organization report's tables (OrganizationReportSections' DataTable), whose every column says what it holds:
+ * words read from the left; figures -- counts, rates, "6 of 7" -- from the right, in digits of equal width, so a
+ * column of them lines up and its heading sits over its own values. The table is as wide as its columns need, not
+ * the page: a short table's figures stay next to their names. A long figure heading ("Share of check-ins") wraps
+ * onto a second line rather than widening its column. The figures themselves never wrap; a table with more
+ * columns than the page has room for scrolls sideways (.table-scroll).
+ */
+.data-table.report-table {
+  width: auto;
+}
+
+.data-table.report-table :is(th, td) {
+  padding: 0.5rem 0.75rem;
+}
+
+.data-table.report-table thead th {
+  vertical-align: bottom;
+}
+
+.data-table.report-table :is(th, td).col-text {
+  text-align: left;
+}
+
+.data-table.report-table :is(th, td).col-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.data-table.report-table thead th.col-num {
+  white-space: normal;
+}
+
+/* In a box that scrolls sideways, a figure's column is never narrower than a short heading ("Check-ins" stays whole). */
+.table-scroll .data-table.report-table thead th.col-num {
+  width: 6rem;
+}
+
 .page-links {
   display: flex;
   flex-wrap: wrap;

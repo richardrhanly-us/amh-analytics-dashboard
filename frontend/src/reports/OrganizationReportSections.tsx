@@ -70,6 +70,16 @@ function UnavailableNote() {
 }
 
 /**
+ * A column's heading, and what it holds: words, read from the left, or
+ * figures -- a count, a rate, "6 of 7" -- set to the right in digits of equal
+ * width, so a column of them lines up under its own heading.
+ */
+type Column = { label: string; figures: boolean }
+const words = (label: string): Column => ({ label, figures: false })
+const figures = (label: string): Column => ({ label, figures: true })
+const alignment = (column: Column | undefined) => (column?.figures ? 'col-num' : 'col-text')
+
+/**
  * A table whose first column names each row. `wide` lets it scroll sideways
  * inside its own box, which the keyboard can reach, when it has more columns
  * than the page has room for.
@@ -81,17 +91,17 @@ function DataTable({
   wide = false,
 }: {
   labelledBy: string
-  columns: readonly string[]
+  columns: readonly Column[]
   rows: ReadonlyArray<{ key: string; cells: readonly ReactNode[] }>
   wide?: boolean
 }) {
   const table = (
-    <table className="data-table" aria-labelledby={labelledBy}>
+    <table className="data-table report-table" aria-labelledby={labelledBy}>
       <thead>
         <tr>
           {columns.map((column, index) => (
-            <th key={index} scope="col">
-              {column}
+            <th key={index} scope="col" className={alignment(column)}>
+              {column.label}
             </th>
           ))}
         </tr>
@@ -99,9 +109,13 @@ function DataTable({
       <tbody>
         {rows.map((row) => (
           <tr key={row.key}>
-            <th scope="row">{row.cells[0]}</th>
+            <th scope="row" className={alignment(columns[0])}>
+              {row.cells[0]}
+            </th>
             {row.cells.slice(1).map((cell, index) => (
-              <td key={index}>{cell}</td>
+              <td key={index} className={alignment(columns[index + 1])}>
+                {cell}
+              </td>
             ))}
           </tr>
         ))}
@@ -254,16 +268,16 @@ export function SorterComparisonSection({
               wide
               labelledBy="org-comparison-heading"
               columns={[
-                'Sorter',
-                'Location',
-                'Status',
-                'Check-ins',
-                'Share of check-ins',
-                ...(transits ? ['In transit', 'Transit rate'] : []),
-                'Rejects',
-                'Reject rate',
-                'Active days',
-                'Collectors',
+                words('Sorter'),
+                words('Location'),
+                words('Status'),
+                figures('Check-ins'),
+                figures('Share of check-ins'),
+                ...(transits ? [figures('In transit'), figures('Transit rate')] : []),
+                figures('Rejects'),
+                figures('Reject rate'),
+                figures('Active days'),
+                figures('Collectors'),
               ]}
               rows={report.sorters.map((sorter) => {
                 const status = sorterStatusLabel(sorter.status)
@@ -380,7 +394,14 @@ export function RoutingNetworkSection({ read }: { read: ReportRead<RoutingNetwor
             <h5 id="org-routing-sources-heading">Routing by sorter</h5>
             <DataTable
               labelledBy="org-routing-sources-heading"
-              columns={['Sorter', 'Check-ins', 'Kept at home', 'In transit', 'Transit rate', 'Other routing']}
+              columns={[
+                words('Sorter'),
+                figures('Check-ins'),
+                figures('Kept at home'),
+                figures('In transit'),
+                figures('Transit rate'),
+                figures('Other routing'),
+              ]}
               rows={sources.map((source) => ({
                 key: source.sorter.slug,
                 cells: [
@@ -419,7 +440,7 @@ export function RoutingNetworkSection({ read }: { read: ReportRead<RoutingNetwor
                 )}
                 <DataTable
                   labelledBy="org-routing-destinations-heading"
-                  columns={['Destination', 'Check-ins routed', 'Sorters with this destination']}
+                  columns={[words('Destination'), figures('Check-ins routed'), figures('Sorters with this destination')]}
                   rows={destinations.map((destination) => ({
                     key: destination.key,
                     cells: [
@@ -542,7 +563,7 @@ export function SystemReliabilitySection({ read }: { read: ReportRead<Organizati
             ) : (
               <DataTable
                 labelledBy="org-reasons-heading"
-                columns={['Reason', 'Rejects', 'Share of rejects']}
+                columns={[words('Reason'), figures('Rejects'), figures('Share of rejects')]}
                 rows={reasons.map((entry) => ({
                   key: entry.reason,
                   cells: [reasonLabel(entry.reason), formatCount(entry.reject_count), rate(entry.reject_count, totals.reject_count)],
@@ -567,7 +588,7 @@ export function SystemReliabilitySection({ read }: { read: ReportRead<Organizati
             <h5 id="org-reliability-sorters-heading">Rejects by sorter</h5>
             <DataTable
               labelledBy="org-reliability-sorters-heading"
-              columns={['Sorter', 'Check-ins', 'Rejects', 'Reject rate', 'Most frequent reason']}
+              columns={[words('Sorter'), figures('Check-ins'), figures('Rejects'), figures('Reject rate'), words('Most frequent reason')]}
               rows={report.sorters.map((entry) => {
                 const [top] = topRejectReasons(entry.reasons)
                 return {

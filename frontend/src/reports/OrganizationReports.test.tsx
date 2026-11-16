@@ -27,6 +27,7 @@ import {
   serveApi,
 } from '../test/http.ts'
 import { renderApp } from '../test/render.tsx'
+import styles from '../index.css?raw'
 
 const ORGANIZATION = '/organizations/northbridge'
 const REPORTS = `${ORGANIZATION}/reports`
@@ -450,6 +451,51 @@ describe('the figures of an organization with two sorters', () => {
       ['Westside', '108', '2 of 2'],
       ['Library Express', '35', '1 of 2'],
     ])
+  })
+
+  it('report tables: words to the left and figures to the right, every heading over its own values', () => {
+    // What each header and each cell is set as: the heading of a column and everything under it must agree.
+    const kinds = (cells: Element[]) =>
+      cells.map((cell) => (cell.classList.contains('col-num') ? 'figures' : cell.classList.contains('col-text') ? 'words' : 'unset'))
+    function expectAligned(name: string, expected: string[]) {
+      const shown = table(name)
+      expect(shown).toHaveClass('data-table', 'report-table')
+      expect(kinds(within(shown).getAllByRole('columnheader'))).toEqual(expected)
+      for (const row of within(shown).getAllByRole('row').slice(1)) {
+        expect(kinds(Array.from(row.children))).toEqual(expected)
+      }
+    }
+    const figureColumns = (n: number) => Array<string>(n).fill('figures')
+
+    // Sorter, Location, Status; then Check-ins, Share, In transit, Transit rate, Rejects, Reject rate, Active days, Collectors.
+    expectAligned('Sorter comparison', ['words', 'words', 'words', ...figureColumns(8)])
+    expectAligned('Destination totals', ['words', ...figureColumns(2)])
+    expectAligned('Routing by sorter', ['words', ...figureColumns(5)])
+    expectAligned('Rejects by sorter', ['words', ...figureColumns(3), 'words'])
+    // The row names are still row headers, and the columns' headings column headers.
+    expect(within(table('Destination totals')).getAllByRole('rowheader').map((cell) => cell.getAttribute('scope'))).toEqual(['row', 'row', 'row'])
+    // The wide comparison still scrolls sideways in its own box, which the keyboard can reach.
+    const box = table('Sorter comparison').parentElement as HTMLElement
+    expect(box).toHaveClass('table-scroll')
+    expect(box).toHaveAttribute('tabindex', '0')
+    expect(box).toHaveAccessibleName('Sorter comparison')
+  })
+
+  it('report tables: the style that sets them (figures right-aligned in equal-width digits, long headings wrapping)', () => {
+    const rule = (selector: string) => {
+      const at = styles.indexOf(`${selector} {`)
+      expect(at, selector).toBeGreaterThan(-1)
+      return styles.slice(at, styles.indexOf('}', at))
+    }
+    expect(rule('.data-table.report-table')).toContain('width: auto;')
+    expect(rule('.data-table.report-table :is(th, td).col-text')).toContain('text-align: left;')
+    const figures = rule('.data-table.report-table :is(th, td).col-num')
+    expect(figures).toContain('text-align: right;')
+    expect(figures).toContain('font-variant-numeric: tabular-nums;')
+    expect(figures).toContain('white-space: nowrap;')
+    expect(rule('.data-table.report-table thead th.col-num')).toContain('white-space: normal;')
+    // A floor for a figure's heading only where the table scrolls sideways: elsewhere it could widen the page.
+    expect(rule('.table-scroll .data-table.report-table thead th.col-num')).toContain('width: 6rem;')
   })
 
   it('routing network: a matrix of sorter by destination, with a dash where a sorter has no such destination', () => {
