@@ -2099,10 +2099,10 @@ describe('the sorter at a glance', () => {
   const drawing = () => screen.getByRole('region', { name: 'Sorter at a glance' })
   /** One station of the drawing: the stretch of the drawing under its heading. */
   const station = (name: string) => within(drawing()).getByRole('heading', { level: 4, name }).parentElement as HTMLElement
-  /** The bin bank's tiles, each as [bin, count, rank]. */
+  /** The sort line's bin cells, each as [bin, count, rank]. */
   const tiles = () =>
-    Array.from(drawing().querySelectorAll('.bin-tile')).map((tile) =>
-      ['.bin-tile-name', '.bin-tile-count', '.bin-tile-rank'].map((part) => tile.querySelector(part)?.textContent ?? ''),
+    Array.from(drawing().querySelectorAll('.bin-cell')).map((cell) =>
+      ['.bin-cell-name', '.bin-cell-count', '.bin-cell-rank'].map((part) => cell.querySelector(part)?.textContent ?? ''),
     )
   /** A station's outlets, each as [name, figure]. */
   const outlets = (name: string) =>
@@ -2127,7 +2127,7 @@ describe('the sorter at a glance', () => {
       }),
   }
 
-  it('comes after today’s figures and before the hourly check-ins, as stations in the sorter’s order', async () => {
+  it('comes after today’s figures and before the hourly check-ins, as one machine laid out like the sorter’s screen', async () => {
     serve()
     renderApp(CENTRAL)
     await loaded()
@@ -2139,11 +2139,17 @@ describe('the sorter at a glance', () => {
     expect(drawing().compareDocumentPosition(hourly) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(within(drawing()).getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent)).toEqual([
       'Induction',
-      'Bins',
-      'Routed',
       'Reject chute',
+      'Sort line',
+      'Routed',
     ])
     expect(drawing()).toHaveTextContent('A summary of the day, not a live view.')
+    // One machine: the intake end (induction and the reject chute), the sort line, and the outflow rail.
+    expect(Array.from(drawing().querySelectorAll('.machine > *')).map((part) => part.className)).toEqual([
+      'machine-intake',
+      'machine-line',
+      'machine-rail',
+    ])
   })
 
   it('shows the day’s check-ins at the induction point, with this hour and the peak hour so far', async () => {
@@ -2156,7 +2162,7 @@ describe('the sorter at a glance', () => {
     expect(station('Induction')).toHaveTextContent('Peak hour so far: 11 AM–12 PM, 40')
   })
 
-  it('lays out the bins that received check-ins in bin order, and names the three busiest in words', async () => {
+  it('lays out the bins that received check-ins along the sort line in bin order, and names the three busiest in words', async () => {
     serve({}, live({ bins: [['1', 30], ['2', 12], ['4', 50], ['7', 8], ['10', 20]] }))
     renderApp(CENTRAL)
     await loaded()
@@ -2165,14 +2171,22 @@ describe('the sorter at a glance', () => {
     expect(tiles()).toEqual([
       ['Bin 1', '30 check-ins', '2nd busiest'],
       ['Bin 2', '12 check-ins', ''],
-      ['Bin 4', '50 check-ins', 'Busiest'],
+      ['Bin 4', '50 check-ins', '1st busiest'],
       ['Bin 7', '8 check-ins', ''],
       ['Bin 10', '20 check-ins', '3rd busiest'],
     ])
-    // Each gauge is the bin's count against the busiest bin's: a picture of the figure beside it, hidden from reading.
-    const gauges = Array.from(drawing().querySelectorAll('.bin-tile-gauge'))
-    expect(gauges.every((gauge) => gauge.getAttribute('aria-hidden') === 'true')).toBe(true)
-    expect(gauges.map((gauge) => (gauge.firstElementChild as HTMLElement).style.height)).toEqual(['60%', '24%', '100%', '16%', '40%'])
+    // Each bin's fill and shading are its count against the busiest bin's: a picture of the figure in it, hidden from reading.
+    const fills = Array.from(drawing().querySelectorAll('.bin-cell-fill'))
+    expect(fills.every((fill) => fill.getAttribute('aria-hidden') === 'true')).toBe(true)
+    expect(fills.map((fill) => (fill.firstElementChild as HTMLElement).style.width)).toEqual(['60%', '24%', '100%', '16%', '40%'])
+    expect(Array.from(drawing().querySelectorAll<HTMLElement>('.bin-cell')).map((cell) => cell.style.getPropertyValue('--heat'))).toEqual([
+      '0.600',
+      '0.240',
+      '1.000',
+      '0.160',
+      '0.400',
+    ])
+    expect(station('Sort line')).toHaveTextContent('each bin’s check-ins against the busiest bin’s')
     // Every check-in had a bin: nothing without one to mention.
     expect(drawing()).not.toHaveTextContent('No bin recorded')
   })
@@ -2182,7 +2196,7 @@ describe('the sorter at a glance', () => {
     renderApp(CENTRAL)
     await loaded()
 
-    await waitFor(() => expect(station('Bins')).toHaveTextContent('No bin recorded for 6 check-ins.'))
+    await waitFor(() => expect(station('Sort line')).toHaveTextContent('No bin recorded for 6 check-ins.'))
     expect(tiles()).toHaveLength(3)
   })
 
@@ -2218,8 +2232,8 @@ describe('the sorter at a glance', () => {
     )
     expect(within(drawing()).getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent)).toEqual([
       'Induction',
-      'Bins',
       'Reject chute',
+      'Sort line',
       'Holds',
     ])
   })
@@ -2232,9 +2246,9 @@ describe('the sorter at a glance', () => {
     await waitFor(() => expect(outlets('Holds')).toHaveLength(2))
     expect(within(drawing()).getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent)).toEqual([
       'Induction',
-      'Bins',
-      'Routed',
       'Reject chute',
+      'Sort line',
+      'Routed',
       'Holds',
     ])
   })
@@ -2244,11 +2258,11 @@ describe('the sorter at a glance', () => {
     renderApp(CENTRAL)
     await loaded()
 
-    await waitFor(() => expect(station('Bins')).toHaveTextContent('Nothing has reached a bin yet today.'))
+    await waitFor(() => expect(station('Sort line')).toHaveTextContent('Nothing has reached a bin yet today.'))
     expect(station('Induction')).toHaveTextContent('0 checked in')
     expect(station('Induction')).not.toHaveTextContent('Peak hour')
     await waitFor(() => expect(outlets('Routed')[0]).toEqual(['Kept at Main', '0']))
-    expect(drawing().querySelector('.outflow-bar')).toBeNull()
+    expect(drawing().querySelector('.outflow-meter')).toBeNull()
     expect(station('Reject chute')).toHaveTextContent('0 rejected')
     expect(drawing()).not.toHaveTextContent(/%|NaN|Infinity/)
   })
@@ -2258,7 +2272,7 @@ describe('the sorter at a glance', () => {
     renderApp(CENTRAL)
     await loaded()
 
-    await waitFor(() => expect(station('Bins')).toHaveTextContent('Could not load'))
+    await waitFor(() => expect(station('Sort line')).toHaveTextContent('Could not load'))
     expect(tiles()).toEqual([])
     expect(station('Induction')).toHaveTextContent('120 checked in')
     expect(screen.getAllByRole('alert')).toHaveLength(1)
@@ -2274,10 +2288,10 @@ describe('the sorter at a glance', () => {
       expect(within(drawing()).queryByRole(role)).not.toBeInTheDocument()
     }
     expect(drawing().querySelectorAll('a, button, [tabindex], [aria-live]')).toHaveLength(0)
-    // The conveyor and the routing bar are drawing only.
-    for (const part of ['.sorter-conveyor', '.outflow-bar']) {
-      expect(drawing().querySelector(part)).toHaveAttribute('aria-hidden', 'true')
-    }
+    // The fills and the routing bars are drawing only; the conveyor and the stubs are pseudo-elements, not content.
+    const drawn = Array.from(drawing().querySelectorAll('.bin-cell-fill, .outflow-meter'))
+    expect(drawn.length).toBeGreaterThan(0)
+    expect(drawn.every((part) => part.getAttribute('aria-hidden') === 'true')).toBe(true)
     expect(within(drawing()).getByRole('list', { name: 'Bins that received check-ins today, in bin order' })).toBeInTheDocument()
   })
 })
