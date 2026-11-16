@@ -1025,11 +1025,18 @@ button[aria-disabled='true'] {
 }
 
 @media (min-width: 75rem) {
+  /*
+   * A bin on the line is --bin-long across and about --bin-short high (its label, count and fill set its height);
+   * the end bin is the same rectangle stood on end: --bin-short across and --bin-long high.
+   */
   .machine-bins:not(.machine-bins-long) {
+    --bin-long: 5.5rem;
+    --bin-short: 3.5rem;
+
     position: relative;
     grid-template-columns: none;
     grid-template-rows: auto auto;
-    grid-auto-columns: minmax(0, 5.5rem);
+    grid-auto-columns: minmax(0, var(--bin-long));
     grid-auto-flow: column;
     align-self: center;
     gap: 1.25rem 0.375rem;
@@ -1041,7 +1048,7 @@ button[aria-disabled='true'] {
 
   /* The end bin's own column: narrower than the others, which take the automatic columns after it. */
   .machine-bins-with-end:not(.machine-bins-long) {
-    grid-template-columns: 3.5rem;
+    grid-template-columns: var(--bin-short);
   }
 
   /* The conveyor: a belt of chevrons between the two rows, from the left end of the machine to just past its last bin. */
@@ -1077,14 +1084,17 @@ button[aria-disabled='true'] {
   }
 
   /*
-   * Bin 0, the end bin: upright at the left end of the machine -- narrower than the others and as tall as both rows
-   * and the belt between them, which it stands on, so it has no stub. Its label and count are set to fit its width,
-   * and its fill rises from the bottom instead of running across.
+   * Bin 0, the end bin: at the left end of the machine, a bin's rectangle turned upright -- as narrow as the others
+   * are high, and as high as they are wide -- centred on the belt, which it stands on, so it has no stub. Its label
+   * and count are set to fit its width, and its fill rises from the bottom instead of running across.
    */
   .machine-bins:not(.machine-bins-long) > .bin-cell-end {
     grid-row: 1 / span 2;
     grid-column: 1;
     grid-template-rows: auto auto 1fr;
+    align-self: center;
+    box-sizing: border-box;
+    height: var(--bin-long);
     justify-items: center;
     padding: 0.375rem 0.3125rem;
     text-align: center;
@@ -1108,7 +1118,7 @@ button[aria-disabled='true'] {
     align-items: flex-end;
     width: 0.375rem;
     height: auto;
-    min-height: 1.5rem;
+    min-height: 0.75rem;
     margin-top: 0.375rem;
   }
 
