@@ -1,6 +1,6 @@
 """The response model for the customer API's holds report.
 
-Two integer counts and the range they cover -- nothing else. The rows they are worked out from carry patron ids, raw
+Two integer counts, how many days had data, and the range they cover -- nothing else. The rows they are worked out from carry patron ids, raw
 messages and, for the legacy era, the library's lists of its own service accounts; none of it, and none of the other
 kinds of hold the classifiers count, has a field here.
 """
@@ -19,12 +19,15 @@ class HoldsReportResponse(BaseModel):
     one of the library's own service accounts, or for an interlibrary loan, is not a public hold; how many holds there
     are of any other kind is not given, so the two numbers do not add up to all holds.
 
-    They are totals for the whole range: each counts an item's latest record in the range, so a range's figure is not
-    the sum of its days' figures, and no per-day figure is given. Which destination an interlibrary loan went to is
-    not given either."""
+    They are SUMS OF DAILY COUNTS (UI2 v7): each day counts an item at most once, by its latest record that day, and the
+    days are added -- so over several days they are summed daily hold classifications, not distinct holds or items. A
+    one-day range is that day's count. `days_with_data` is how many of the range's days had any record to count: fewer
+    than `range.days` means part of the range has no data, not that nothing happened. Which destination an interlibrary
+    loan went to is not given."""
 
     model_config = ConfigDict(extra="forbid")
 
     range: ReportRange
     public_hold_count: int
     ill_hold_count: int
+    days_with_data: int

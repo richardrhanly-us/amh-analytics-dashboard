@@ -26,8 +26,8 @@ const HELP = 'Holds for library patrons. Holds for the library’s own service a
 const SERVER_ERROR = () => jsonResponse(500, { code: 'internal_error', message: 'Internal server error.' })
 const WITH_HOLDS = { ...NORTHBRIDGE_DETAIL.entitlements, internal_workflow: { enabled: true, limit_value: null } }
 
-/** The answer for whatever range `url` asks for. */
-function holds(publicHolds: number, illHolds: number) {
+/** The answer for whatever range `url` asks for. `daysWithData` left out: every day of the range had data. */
+function holds(publicHolds: number, illHolds: number, daysWithData?: number) {
   return (url: string) => {
     const params = new URL(url, 'http://test.invalid').searchParams
     const [from, to] = [params.get('from'), params.get('to')]
@@ -36,6 +36,7 @@ function holds(publicHolds: number, illHolds: number) {
       range: { from, to, days, timezone: 'America/Chicago', includes_today: to === '2026-10-05' },
       public_hold_count: publicHolds,
       ill_hold_count: illHolds,
+      days_with_data: daysWithData ?? days,
     })
   }
 }

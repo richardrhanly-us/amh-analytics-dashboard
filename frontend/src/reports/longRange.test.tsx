@@ -23,8 +23,8 @@ import { renderApp } from '../test/render.tsx'
 /**
  * Reports R9D2: a range longer than 92 days. Its daily figures are SHOWN a
  * calendar month at a time -- and only shown: every card, average and
- * "busiest day" is still the days'. The Holds report keeps 92 days and says
- * so instead of asking. "Year to date" is offered when the plan's window
+ * "busiest day" is still the days'. The Holds report takes any range the
+ * others take (UI2 v7). "Year to date" is offered when the plan's window
  * reaches 1 January.
  */
 
@@ -33,7 +33,6 @@ const NOW = '2026-10-05T18:50:00Z'
 const SORTER_REPORTS = '/organizations/northbridge/sorters/central/reports'
 const ORG_REPORTS = '/organizations/northbridge/reports'
 const HOLDS = `GET ${livePath('northbridge', 'central')}/reports/holds?from=*&to=*`
-const HOLDS_NOTE = 'Holds reporting is currently available for ranges up to 92 days.'
 
 // Ten check-ins and one reject every day: a month's figures are its days times ten, and times one.
 const STEADY: ReportFixture = { ...REPORT, checkins: () => 10, rejects: () => 1 }
@@ -48,6 +47,8 @@ function holds(url: string): Response {
     range: { from, to, days, timezone: 'America/Chicago', includes_today: to === '2026-10-05' },
     public_hold_count: 41,
     ill_hold_count: 3,
+    // Data on the most recent 60 days of the range, at most: the rest of a long range has none.
+    days_with_data: Math.min(days, 60),
   })
 }
 
@@ -160,22 +161,53 @@ describe('the Holds report over a long range', () => {
     expect(requestedUrls(fetchMock).some((url) => url.includes('/reports/holds?from=2026-07-06&to=2026-10-05'))).toBe(true)
   })
 
-  it('over 92 days is not asked for: the section says so, and every other report is there', async () => {
+  it.each([
+    ['100 days', '2026-06-28', '100'],
+    ['180 days', '2026-04-09', '180'],
+    ['365 days', '2025-10-06', '365'],
+    ['three years', '2023-10-06', '1,096'],
+    ['the longest report', '2016-09-28', '3,660'],
+  ])('over %s is asked for and shown, with how much of it had data (UI2 v7)', async (_label, from, days) => {
     const fetchMock = serve(withHolds)
     await loaded()
-    await applyDates('2026-06-28', '2026-10-05')            // 100 days
+    await applyDates(from, '2026-10-05')
 
-    expect(region('Holds')).toHaveTextContent(HOLDS_NOTE)
-    expect(within(region('Holds')).queryByText('Public holds')).not.toBeInTheDocument()
-    expect(within(region('Holds')).queryByRole('button', { name: /Try again/ })).not.toBeInTheDocument()
-    expect(requestedUrls(fetchMock).filter((url) => url.includes('/reports/holds?from=2026-06-28'))).toEqual([])
-    expect(metric('Overview', 'Check-ins')).toBe('1,000')
-    // Not a plan's limit: the note does not say the plan, the organization or its history decides it.
-    expect(region('Holds')).not.toHaveTextContent(/plan|subscription|history|organization/i)
-
-    // Back to a short range, and it is asked for again.
-    await userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) }).click(screen.getByRole('button', { name: 'Last 30 days' }))
     await within(region('Holds')).findByText('Public holds')
+    expect(metric('Holds', 'Public holds')).toBe('41')
+    expect(metric('Holds', 'Interlibrary loan (ILL) holds')).toBe('3')
+    expect(requestedUrls(fetchMock).filter((url) => url.includes(`/reports/holds?from=${from}&to=2026-10-05`))).toHaveLength(1)
+    expect(within(region('Holds')).getByRole('note')).toHaveTextContent(`Sorter records were found on 60 of the ${days} days in this date range.`)
+    expect(region('Holds')).not.toHaveTextContent(/up to 92 days|currently available for ranges/)
+  })
+
+  it('says what the totals are, and what the days before Contract 2 are classified with', async () => {
+    serve(withHolds)
+    await loaded()
+    await applyDates('2025-10-06', '2026-10-05')
+
+    await within(region('Holds')).findByText('Public holds')
+    expect(region('Holds')).toHaveTextContent('Each day counts an item at most once, by its last record that day, and the days are added together.')
+    expect(region('Holds')).toHaveTextContent('not the number of distinct holds placed or distinct items')
+    expect(region('Holds')).toHaveTextContent('classified using the library’s current lists of its own service accounts')
+  })
+
+  it('says plainly when no day of the range had data, and shows no note when every day did', async () => {
+    serve(withHolds, {
+      [HOLDS]: (url) => {
+        const params = new URL(url, 'http://test.invalid').searchParams
+        const [from, to] = [params.get('from'), params.get('to')]
+        const days = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000 + 1
+        return jsonResponse(200, { range: { from, to, days, timezone: 'America/Chicago', includes_today: true },
+                                   public_hold_count: 0, ill_hold_count: 0, days_with_data: from === '2025-10-06' ? 0 : days })
+      },
+    })
+    await loaded()
+    await applyDates('2025-10-06', '2026-10-05')
+    await within(region('Holds')).findByText('Public holds')
+    expect(within(region('Holds')).getByRole('note')).toHaveTextContent('No sorter records were found for any day in this date range')
+
+    await userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) }).click(screen.getByRole('button', { name: 'Last 30 days' }))
+    await waitFor(() => expect(within(region('Holds')).queryByRole('note')).not.toBeInTheDocument())
   })
 })
 

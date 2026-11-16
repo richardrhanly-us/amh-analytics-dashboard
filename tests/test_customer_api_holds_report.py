@@ -64,7 +64,7 @@ class Counts:
 
     def __init__(self, monkeypatch):
         self.asked: list[tuple] = []
-        self.answer = HoldsReport(public_hold_count=12, ill_hold_count=3)
+        self.answer = HoldsReport(public_hold_count=12, ill_hold_count=3, days_with_data=4)
         monkeypatch.setattr(holds_report_routes, "get_holds_report", self.report)
 
     def report(self, conn, tenant, window):
@@ -95,20 +95,20 @@ def _refused(response, status, body):
 # The answer
 # =====================================================================================================================
 
-def test_the_answer_is_the_range_and_two_counts_and_nothing_else(api, db, plan, counts):
+def test_the_answer_is_the_range_the_two_counts_and_the_days_with_data_and_nothing_else(api, db, plan, counts):
     response = _get(api)
 
     assert response.status_code == 200, response.text
     assert response.headers["cache-control"] == "no-store"
-    assert response.json() == {"range": RANGE, "public_hold_count": 12, "ill_hold_count": 3}
+    assert response.json() == {"range": RANGE, "public_hold_count": 12, "ill_hold_count": 3, "days_with_data": 4}
     # Asked about the site in the address, for the range in the request -- nothing else.
     assert counts.asked == [("acme", "main", organization_reports.ACME, date(2026, 6, 8), date(2026, 6, 12))]
 
 
 def test_zero_is_an_answer_like_any_other(api, db, plan, counts):
-    counts.answer = HoldsReport(public_hold_count=0, ill_hold_count=0)
+    counts.answer = HoldsReport(public_hold_count=0, ill_hold_count=0, days_with_data=0)
 
-    assert _get(api).json() == {"range": RANGE, "public_hold_count": 0, "ill_hold_count": 0}
+    assert _get(api).json() == {"range": RANGE, "public_hold_count": 0, "ill_hold_count": 0, "days_with_data": 0}
 
 
 def test_today_is_a_range_of_one_day_that_says_it_includes_today(api, db, plan, counts):
@@ -120,10 +120,10 @@ def test_today_is_a_range_of_one_day_that_says_it_includes_today(api, db, plan, 
                                         "includes_today": True}
 
 
-def test_the_response_model_has_exactly_the_three_fields_and_refuses_any_other():
-    assert set(holds_report_schemas.HoldsReportResponse.model_fields) == {"range", "public_hold_count", "ill_hold_count"}
+def test_the_response_model_has_exactly_the_four_fields_and_refuses_any_other():
+    assert set(holds_report_schemas.HoldsReportResponse.model_fields) == {"range", "public_hold_count", "ill_hold_count", "days_with_data"}
     with pytest.raises(ValueError):
-        holds_report_schemas.HoldsReportResponse(range=organization_reports_range(), public_hold_count=1, ill_hold_count=0, programming_total=1)
+        holds_report_schemas.HoldsReportResponse(range=organization_reports_range(), public_hold_count=1, ill_hold_count=0, days_with_data=1, programming_total=1)
 
 
 def organization_reports_range():
@@ -295,10 +295,8 @@ def test_the_handler_counts_nothing_itself_and_the_route_module_imports_no_dashb
 
 
 # =====================================================================================================================
-# Reports R9D2: the holds report keeps 92 days, whatever the plan's history allows
+# UI2 v7: the holds report takes every range the other reports take -- the plan's window and the shared guard
 # =====================================================================================================================
-
-HOLDS_TOO_LONG = {"code": "holds_range_too_long", "message": "Holds reporting is currently available for ranges up to 92 days."}
 
 
 def _days(count: int, ending: str = "2026-06-20") -> dict:
@@ -306,44 +304,53 @@ def _days(count: int, ending: str = "2026-06-20") -> dict:
     return {"from": (end - timedelta(days=count - 1)).isoformat(), "to": end.isoformat()}
 
 
-def test_92_days_of_holds_are_counted_and_93_are_refused_before_anything_is_read(api, db, plan, counts):
-    plan.history = None                                     # the plan would allow any length: the 92 is the report's
+def test_ranges_longer_than_92_days_are_counted_up_to_the_shared_guard_of_3660(api, db, plan, counts):
+    plan.history = None                                     # the plan allows any start: only the shared guard limits length
 
-    assert _get(api, params=_days(92)).status_code == 200
-    assert len(counts.asked) == 1
-    for longer in (93, 365, 3660):
-        _refused(_get(api, params=_days(longer)), 422, HOLDS_TOO_LONG)
-    assert len(counts.asked) == 1                           # the service was never asked about a longer range
+    lengths = (1, 7, 92, 93, 180, 365, 1096, 3660)
+    for days in lengths:
+        response = _get(api, params=_days(days))
+        assert response.status_code == 200, (days, response.text)
+        assert response.json()["range"]["days"] == days
+    # Each was counted over exactly the range asked for: its first and last day, nothing added or cut.
+    assert [(asked[3], asked[4]) for asked in counts.asked] == [
+        (date(2026, 6, 20) - timedelta(days=days - 1), date(2026, 6, 20)) for days in lengths]
+    # One more than the shared guard is every report's ordinary 422, and nothing is counted.
+    assert _get(api, params=_days(3661)).json()["detail"][0]["type"] == "report_range_too_long"
+    assert len(counts.asked) == len(lengths)
 
 
-def test_the_other_reports_take_the_same_long_range_under_the_same_plan(api, db, plan, counts):
-    plan.history = None
-
-    _refused(_get(api, params=_days(365)), 422, HOLDS_TOO_LONG)
+def test_the_plans_history_window_still_limits_the_holds_report_like_the_others(api, db, plan, counts):
+    plan.history = 90
+    assert _get(api, params=_days(90)).status_code == 200
+    assert _get(api, params=_days(91)).json()["code"] == "range_before_history"
     for report in ("overview", "volume", "routing", "reliability"):
-        response = api.get(f"/api/organizations/acme/branches/main/reports/{report}", headers=COOKIE, params=_days(365))
-        assert response.status_code == 200, report
+        response = api.get(f"/api/organizations/acme/branches/main/reports/{report}", headers=COOKIE, params=_days(91))
+        assert response.json()["code"] == "range_before_history", report
+    plan.history = 3650                                     # NBPL's plan: ten years
+    assert _get(api, params=_days(3650)).status_code == 200
 
 
-def test_the_holds_length_comes_after_the_feature_and_every_rule_every_range_has(api, db, plan, counts):
-    # The feature first: a plan without the report is told so, whatever the range.
+def test_the_feature_still_comes_first_and_then_the_shared_range_rules(api, db, plan, counts):
     plan.enabled.discard("acme")
     _refused(_get(api, params=_days(365)), 403, NOT_AVAILABLE)
     plan.enabled.add("acme")
-    # Then the shared range: its order, the future, the plan's window ...
     assert _get(api, params={"from": "2026-06-12", "to": "2026-06-08"}).json()["detail"][0]["type"] == "report_range_order"
-    plan.history = 30
-    assert _get(api, params=_days(93)).json()["code"] == "range_before_history"
-    # ... and only then the holds report's own length.
-    plan.history = 3650
-    _refused(_get(api, params=_days(93)), 422, HOLDS_TOO_LONG)
+    assert _get(api, params={"from": "2026-06-20", "to": "2026-06-21"}).json()["detail"][0]["type"] == "report_range_in_future"
     assert counts.asked == []
 
 
-def test_the_holds_length_is_the_holds_reports_own_and_no_plan_name_or_other_report_knows_it():
-    assert holds_report_routes.HOLDS_MAX_RANGE_DAYS == 92
+def test_there_is_no_holds_only_length_and_no_plan_name_in_the_route():
     source = inspect.getsource(holds_report_routes)
-    assert "def require_holds_range(requested: Range) -> RequestedRange:" in source
-    assert "requested: HoldsRange" in source
+    assert not hasattr(holds_report_routes, "HOLDS_MAX_RANGE_DAYS")
+    assert "holds_range_too_long" not in source and "92 days" not in source
+    assert "HoldsRange" not in source and "requested: Range" in source
     for plan in ("starter", "enterprise", '"pro"'):
         assert plan not in source.lower()
+
+
+def test_another_organizations_site_is_never_counted_whatever_the_range(api, db, plan, counts):
+    plan.history = None
+    for org, branch in (("beta", "north"), ("nowhere", "main")):
+        assert _get(api, org=org, branch=branch, params=_days(3660)).status_code == 404
+    assert counts.asked == []

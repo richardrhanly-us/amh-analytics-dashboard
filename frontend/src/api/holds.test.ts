@@ -13,6 +13,7 @@ const ANSWER: Body = {
   range: { from: FROM, to: TO, days: 7, timezone: 'America/Chicago', includes_today: false },
   public_hold_count: 41,
   ill_hold_count: 3,
+  days_with_data: 6,
 }
 
 const read = () => getHoldsReport('northbridge', 'central', FROM, TO)
@@ -86,6 +87,11 @@ describe('the answer', () => {
     expect([report.public_hold_count, report.ill_hold_count]).toEqual([0, 0])
   })
 
+  it('accepts a range with no days of data, and one where every day had data', async () => {
+    expect((await changed((body) => void (body.days_with_data = 0))).days_with_data).toBe(0)
+    expect((await changed((body) => void (body.days_with_data = 7))).days_with_data).toBe(7)
+  })
+
   it('drops fields the contract does not have', async () => {
     const result = await changed((body) => {
       body.customer_id = 41
@@ -106,6 +112,9 @@ describe('the answer', () => {
     ['a range that was not asked for', (body: Body) => void ((body.range as Body).from = '2026-09-27')],
     ['a range whose days do not add up', (body: Body) => void ((body.range as Body).days = 8)],
     ['a body that is not an object', () => [41, 3]],
+    ['days with data that are missing', (body: Body) => void delete body.days_with_data],
+    ['more days with data than the range has', (body: Body) => void (body.days_with_data = 8)],
+    ['days with data that are not whole', (body: Body) => void (body.days_with_data = 2.5)],
   ])('refuses %s', async (_label, change) => {
     await expect(changed(change)).rejects.toMatchObject(UNEXPECTED)
   })

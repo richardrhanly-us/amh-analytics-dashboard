@@ -125,6 +125,8 @@ export interface HoldsReport {
   public_hold_count: number
   /** Holds for interlibrary loans. */
   ill_hold_count: number
+  /** How many of the range's days had any sorter record to count. Fewer than `range.days`: part of the range has no data. */
+  days_with_data: number
 }
 
 export const REPORT_KINDS = ['overview', 'volume', 'routing', 'bins', 'reliability', 'holds'] as const
@@ -399,7 +401,7 @@ export async function getBinVolumeReport(
   return report
 }
 
-/** GET .../reports/holds?from=YYYY-MM-DD&to=YYYY-MM-DD -- exactly the range and two counts. */
+/** GET .../reports/holds?from=YYYY-MM-DD&to=YYYY-MM-DD -- exactly the range, two counts and how many days had data. */
 export async function getHoldsReport(
   orgSlug: string,
   branchSlug: string,
@@ -409,5 +411,14 @@ export async function getHoldsReport(
 ): Promise<HoldsReport> {
   const body = record(await apiRequest(reportPath(orgSlug, branchSlug, 'holds', from, to), { signal }))
   // Only these: anything else in the answer is dropped here and reaches no screen.
-  return { range: range(body, from, to), public_hold_count: count(body.public_hold_count), ill_hold_count: count(body.ill_hold_count) }
+  const report = {
+    range: range(body, from, to),
+    public_hold_count: count(body.public_hold_count),
+    ill_hold_count: count(body.ill_hold_count),
+    days_with_data: count(body.days_with_data),
+  }
+  if (report.days_with_data > report.range.days) {
+    throw unexpectedResponse(200)
+  }
+  return report
 }
