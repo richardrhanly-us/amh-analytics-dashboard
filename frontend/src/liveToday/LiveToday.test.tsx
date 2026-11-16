@@ -2094,3 +2094,190 @@ describe('holds and bin volume today', () => {
     expect(asked(fetchMock, 'reports/holds')[1]).toBe(`${API}/reports/holds?from=2026-10-06&to=2026-10-06`)
   })
 })
+
+describe('the sorter at a glance', () => {
+  const drawing = () => screen.getByRole('region', { name: 'Sorter at a glance' })
+  /** One station of the drawing: the stretch of the drawing under its heading. */
+  const station = (name: string) => within(drawing()).getByRole('heading', { level: 4, name }).parentElement as HTMLElement
+  /** The bin bank's tiles, each as [bin, count, rank]. */
+  const tiles = () =>
+    Array.from(drawing().querySelectorAll('.bin-tile')).map((tile) =>
+      ['.bin-tile-name', '.bin-tile-count', '.bin-tile-rank'].map((part) => tile.querySelector(part)?.textContent ?? ''),
+    )
+  /** A station's outlets, each as [name, figure]. */
+  const outlets = (name: string) =>
+    Array.from(station(name).querySelectorAll('.outflow-item')).map((item) => [
+      item.querySelector('.outflow-name')?.textContent,
+      item.querySelector('.outflow-count')?.textContent,
+    ])
+  const WITH_HOLDS = {
+    'GET /api/organizations/northbridge': () =>
+      jsonResponse(200, { ...NORTHBRIDGE_DETAIL, entitlements: { ...NORTHBRIDGE_DETAIL.entitlements, internal_workflow: { enabled: true, limit_value: null } } }),
+  }
+  /** Northbridge with holds on and transit routing off. */
+  const HOLDS_WITHOUT_TRANSITS = {
+    'GET /api/organizations/northbridge': () =>
+      jsonResponse(200, {
+        ...NORTHBRIDGE_DETAIL,
+        entitlements: {
+          ...NORTHBRIDGE_DETAIL.entitlements,
+          internal_workflow: { enabled: true, limit_value: null },
+          transits: { enabled: false, limit_value: null },
+        },
+      }),
+  }
+
+  it('comes after today’s figures and before the hourly check-ins, as stations in the sorter’s order', async () => {
+    serve()
+    renderApp(CENTRAL)
+    await loaded()
+    await waitFor(() => expect(station('Routed')).toHaveTextContent(/Kept at Main/))
+
+    const today = screen.getByRole('region', { name: 'Today' })
+    const hourly = screen.getByRole('region', { name: 'Hourly check-ins' })
+    expect(today.compareDocumentPosition(drawing()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(drawing().compareDocumentPosition(hourly) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(within(drawing()).getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent)).toEqual([
+      'Induction',
+      'Bins',
+      'Routed',
+      'Reject chute',
+    ])
+    expect(drawing()).toHaveTextContent('A summary of the day, not a live view.')
+  })
+
+  it('shows the day’s check-ins at the induction point, with this hour and the peak hour so far', async () => {
+    serve()
+    renderApp(CENTRAL)
+    await loaded()
+
+    await waitFor(() => expect(station('Induction')).toHaveTextContent('120 checked in'))
+    expect(station('Induction')).toHaveTextContent('This hour (1–2 PM): 17')
+    expect(station('Induction')).toHaveTextContent('Peak hour so far: 11 AM–12 PM, 40')
+  })
+
+  it('lays out the bins that received check-ins in bin order, and names the three busiest in words', async () => {
+    serve({}, live({ bins: [['1', 30], ['2', 12], ['4', 50], ['7', 8], ['10', 20]] }))
+    renderApp(CENTRAL)
+    await loaded()
+
+    await waitFor(() => expect(tiles()).toHaveLength(5))
+    expect(tiles()).toEqual([
+      ['Bin 1', '30 check-ins', '2nd busiest'],
+      ['Bin 2', '12 check-ins', ''],
+      ['Bin 4', '50 check-ins', 'Busiest'],
+      ['Bin 7', '8 check-ins', ''],
+      ['Bin 10', '20 check-ins', '3rd busiest'],
+    ])
+    // Each gauge is the bin's count against the busiest bin's: a picture of the figure beside it, hidden from reading.
+    const gauges = Array.from(drawing().querySelectorAll('.bin-tile-gauge'))
+    expect(gauges.every((gauge) => gauge.getAttribute('aria-hidden') === 'true')).toBe(true)
+    expect(gauges.map((gauge) => (gauge.firstElementChild as HTMLElement).style.height)).toEqual(['60%', '24%', '100%', '16%', '40%'])
+    // Every check-in had a bin: nothing without one to mention.
+    expect(drawing()).not.toHaveTextContent('No bin recorded')
+  })
+
+  it('counts check-ins with no recorded bin apart from the bins', async () => {
+    serve({}, live({ bins: [['1', 60], ['2', 36], ['7', 18]] }))
+    renderApp(CENTRAL)
+    await loaded()
+
+    await waitFor(() => expect(station('Bins')).toHaveTextContent('No bin recorded for 6 check-ins.'))
+    expect(tiles()).toHaveLength(3)
+  })
+
+  it('shows where the day was routed, each outcome with its share, and the reject chute with its rate and top reason', async () => {
+    serve()
+    renderApp(CENTRAL)
+    await loaded()
+
+    await waitFor(() => expect(outlets('Routed')).toHaveLength(3))
+    // 106 kept + 12 + 2 in transit = the 120 checked in.
+    expect(outlets('Routed')).toEqual([
+      ['Kept at Main', '106 · 88.3%'],
+      ['Westside', '12 · 10.0%'],
+      ['Library Express', '2 · 1.7%'],
+    ])
+    // Routing is drawn beside the bins, never wired to them: the logs do not link the two.
+    expect(station('Routed')).toHaveTextContent('the logs do not link the two')
+    expect(station('Reject chute')).toHaveTextContent('6 rejected')
+    expect(station('Reject chute')).toHaveTextContent('5.0% of check-ins')
+    expect(station('Reject chute')).toHaveTextContent('Most often: Item not found (3)')
+  })
+
+  it('draws holds only where the plan has them, and routing only where the plan has transits', async () => {
+    serve(HOLDS_WITHOUT_TRANSITS)
+    renderApp(CENTRAL)
+    await loaded()
+
+    await waitFor(() =>
+      expect(outlets('Holds')).toEqual([
+        ['Public', '9'],
+        ['Interlibrary loan', '2'],
+      ]),
+    )
+    expect(within(drawing()).getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent)).toEqual([
+      'Induction',
+      'Bins',
+      'Reject chute',
+      'Holds',
+    ])
+  })
+
+  it('draws routing and holds both for a plan that has both, in that order', async () => {
+    serve(WITH_HOLDS)
+    renderApp(CENTRAL)
+    await loaded()
+
+    await waitFor(() => expect(outlets('Holds')).toHaveLength(2))
+    expect(within(drawing()).getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent)).toEqual([
+      'Induction',
+      'Bins',
+      'Routed',
+      'Reject chute',
+      'Holds',
+    ])
+  })
+
+  it('shows no shares, no rate and no peak on a day with no check-ins, and says nothing reached a bin', async () => {
+    serve({}, live({ hours: hoursWith({}), reasons: [0, 0, 0, 0, 0, 0, 0, 0] }))
+    renderApp(CENTRAL)
+    await loaded()
+
+    await waitFor(() => expect(station('Bins')).toHaveTextContent('Nothing has reached a bin yet today.'))
+    expect(station('Induction')).toHaveTextContent('0 checked in')
+    expect(station('Induction')).not.toHaveTextContent('Peak hour')
+    await waitFor(() => expect(outlets('Routed')[0]).toEqual(['Kept at Main', '0']))
+    expect(drawing().querySelector('.outflow-bar')).toBeNull()
+    expect(station('Reject chute')).toHaveTextContent('0 rejected')
+    expect(drawing()).not.toHaveTextContent(/%|NaN|Infinity/)
+  })
+
+  it('says a station could not load where it is, and leaves the others drawn', async () => {
+    serve({ [BINS]: SERVER_ERROR })
+    renderApp(CENTRAL)
+    await loaded()
+
+    await waitFor(() => expect(station('Bins')).toHaveTextContent('Could not load'))
+    expect(tiles()).toEqual([])
+    expect(station('Induction')).toHaveTextContent('120 checked in')
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+  })
+
+  it('adds nothing to follow, tab to or announce, no image and no figure term: it is read as text', async () => {
+    serve()
+    renderApp(CENTRAL)
+    await loaded()
+    await waitFor(() => expect(station('Routed')).toHaveTextContent(/Kept at Main/))
+
+    for (const role of ['link', 'button', 'img', 'term', 'status', 'alert']) {
+      expect(within(drawing()).queryByRole(role)).not.toBeInTheDocument()
+    }
+    expect(drawing().querySelectorAll('a, button, [tabindex], [aria-live]')).toHaveLength(0)
+    // The conveyor and the routing bar are drawing only.
+    for (const part of ['.sorter-conveyor', '.outflow-bar']) {
+      expect(drawing().querySelector(part)).toHaveAttribute('aria-hidden', 'true')
+    }
+    expect(within(drawing()).getByRole('list', { name: 'Bins that received check-ins today, in bin order' })).toBeInTheDocument()
+  })
+})
