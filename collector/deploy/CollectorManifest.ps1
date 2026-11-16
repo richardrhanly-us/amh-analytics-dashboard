@@ -173,17 +173,16 @@ function Test-CollectorManifestPathSafe {
     return -not ($RelativePath -match '(^|[\\/])\.\.([\\/]|$)' -or $RelativePath -match '^[\\/]' -or $RelativePath -match '^[A-Za-z]:')
 }
 
-function New-InstalledManifest {
+function Get-CollectorInstalledLayout {
     <#
-    Writes -InstallRoot/MANIFEST.json (unmodified copy of the bundle's)
-    and -InstallRoot/MANIFEST.installed.json (the installed-layout view),
-    from a $Manifest already parsed and verified by Test-ReleaseManifest.
-    $BundleKind is "frozen" or "source" -- must match the branch the
-    caller actually took when copying files, not re-detected here.
+    The installed-layout view of a bundle manifest: which of its files a
+    $BundleKind install places under -InstallRoot, at which path, with which
+    SHA-256 (taken from the manifest, never recomputed), and the
+    release-managed zones. The ONE definition: New-InstalledManifest writes
+    it, and tools\restore-backup.ps1 (CollectorBackup.ps1) checks a backup
+    against it.
     #>
     param(
-        [Parameter(Mandatory)][string]$BundleRoot,
-        [Parameter(Mandatory)][string]$InstallRoot,
         [Parameter(Mandatory)]$Manifest,
         [Parameter(Mandatory)][ValidateSet("frozen", "source")][string]$BundleKind
     )
@@ -215,6 +214,28 @@ function New-InstalledManifest {
         $zones += [ordered]@{ root = "collector"; recurse = $false }
         $zones += [ordered]@{ root = "agent"; recurse = $true }
     }
+
+    return [pscustomobject]@{ Files = $installed; Zones = $zones }
+}
+
+function New-InstalledManifest {
+    <#
+    Writes -InstallRoot/MANIFEST.json (unmodified copy of the bundle's)
+    and -InstallRoot/MANIFEST.installed.json (the installed-layout view),
+    from a $Manifest already parsed and verified by Test-ReleaseManifest.
+    $BundleKind is "frozen" or "source" -- must match the branch the
+    caller actually took when copying files, not re-detected here.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$BundleRoot,
+        [Parameter(Mandatory)][string]$InstallRoot,
+        [Parameter(Mandatory)]$Manifest,
+        [Parameter(Mandatory)][ValidateSet("frozen", "source")][string]$BundleKind
+    )
+
+    $layout = Get-CollectorInstalledLayout -Manifest $Manifest -BundleKind $BundleKind
+    $installed = @($layout.Files)
+    $zones = @($layout.Zones)
 
     $installedManifest = [ordered]@{
         bundle_kind   = $BundleKind

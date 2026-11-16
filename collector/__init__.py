@@ -176,4 +176,14 @@ from __future__ import annotations
 # collector/build_release.py's NEVER_BUNDLED. A scheduled v1 or v2 run, the
 # wire contracts, the identity algorithm and the privacy boundary are
 # unchanged. See docs/releases/collector-1.0.14.md.
-__version__ = "1.0.14"
+# 1.0.15 secures upgrade backups and rollback (NBPL finding, 2026-11-16: a
+# backup beside the install inherited Authenticated Users Modify from
+# C:\SortView). tools\update.ps1 now creates its backup folder already
+# restricted to SYSTEM+Administrators, refuses a pre-existing or redirected
+# (junction/link) path, and verifies the copy -- ACL, ownership, file hashes
+# -- before the install is removed; tools\restore-backup.ps1 replaces the
+# printed bare-copy rollback and restores only a restricted backup whose
+# MANIFEST.json matches a trusted hash from outside it. Deployment tooling
+# only: the runtime, wire contracts and data root are unchanged. See
+# docs/releases/collector-1.0.15.md.
+__version__ = "1.0.15"

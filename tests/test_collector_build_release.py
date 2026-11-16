@@ -1020,16 +1020,17 @@ def test_update_release_frozen_preflight_uses_exe_subcommand():
     assert "& $InstalledFrozenExe preflight --config $ConfigPath" in body
 
 
-def test_update_release_frozen_rollback_is_remove_then_copy():
+def test_update_release_frozen_rollback_is_the_verified_restore_not_a_bare_copy():
+    # 1.0.15: the printed frozen rollback used to be a bare Copy-Item of the backup into the folder a SYSTEM task
+    # runs -- and NBPL's backup was found inheriting Authenticated Users Modify (2026-11-16). It is now
+    # tools\restore-backup.ps1, anchored to a hash from the release record, never to the backup itself.
     body = _executable_body(_read_ps1("update-release.ps1"))
     rollback_section = body[body.index("UPDATE FAILED VERIFICATION"):body.index("Restore-DisabledTaskAndFail", body.index("UPDATE FAILED VERIFICATION"))]
-    frozen_rollback = rollback_section[rollback_section.index("elseif ($isFrozen)"):]
-    # Whole-InstallRoot rollback (not exe+_internal-specific) -- $BackupRoot
-    # is a full copy of the prior InstallRoot (see the backup step), so
-    # restoring it in full is what covers ANY file the failed update added.
-    remove_idx = frozen_rollback.index('Remove-Item -Recurse -Force `"$InstallRoot`"')
-    copy_idx = frozen_rollback.index('Copy-Item `"$BackupRoot`" `"$InstallRoot`" -Recurse -Force')
-    assert remove_idx < copy_idx
+    frozen_rollback = rollback_section[rollback_section.index("elseif ($isFrozen)"):rollback_section.index("} else {", rollback_section.index("elseif ($isFrozen)"))]
+    assert "restore-backup.ps1" in frozen_rollback
+    assert "-ExpectedManifestSha256" in frozen_rollback
+    assert "release record" in frozen_rollback
+    assert 'Copy-Item `"$BackupRoot`"' not in frozen_rollback
     code_only = _code_only(frozen_rollback)
     assert "SortViewCollector.exe" not in code_only
     assert "_internal" not in code_only
@@ -1050,11 +1051,16 @@ def test_update_release_task_disabled_before_frozen_mutation_too():
     assert disable_idx < backup_idx < frozen_replace_idx
 
 
-def test_update_release_frozen_backup_happens_before_replacement():
+def test_update_release_frozen_backup_is_created_restricted_copied_and_verified_before_replacement():
+    # 1.0.15 order: create the backup folder ALREADY restricted -> copy -> restrict, re-own, read back and compare
+    # (Complete-ProtectedCollectorBackup) -> only then remove the install.
     body = _executable_body(_read_ps1("update-release.ps1"))
-    backup_idx = body.index('Copy-Item $InstallRoot -Destination $BackupRoot -Recurse -Force')
-    replace_idx = body.index('Remove-Item -Recurse -Force $InstallRoot')
-    assert backup_idx < replace_idx
+    create_idx = body.index("New-ProtectedCollectorDirectory -Path $BackupRoot")
+    copy_idx = body.index("Copy-Item -LiteralPath $item.FullName -Destination $BackupRoot -Recurse -Force")
+    verify_idx = body.index("Complete-ProtectedCollectorBackup -SourceRoot $InstallRoot -BackupRoot $BackupRoot -RequireReleaseManifest")
+    replace_idx = body.index("Remove-Item -Recurse -Force $InstallRoot")
+    assert create_idx < copy_idx < verify_idx < replace_idx
+    assert "Copy-Item $InstallRoot -Destination $BackupRoot" not in body  # the old unrestricted backup is gone
 
 
 # --- static checks on register-task.ps1's frozen branch -------------------
@@ -1263,10 +1269,14 @@ def test_update_release_ambiguous_check_precedes_no_install_found_check():
 
 def test_update_release_frozen_backup_covers_whole_installroot():
     body = _executable_body(_read_ps1("update-release.ps1"))
-    backup_section = body[body.index("=== 2. Back up current runtime files ==="):body.index("function Restore-DisabledTaskAndFail")]
-    frozen_backup = backup_section[:backup_section.index("} else {")]
-    assert 'Copy-Item $InstallRoot -Destination $BackupRoot -Recurse -Force' in frozen_backup
-    assert "BackupRoot must NOT already exist" in frozen_backup  # documents the nesting-avoidance precondition
+    start = body.index("=== 2. Back up current runtime files ===")
+    backup_section = body[start:body.index("BACKUP FAILED", start)]
+    frozen_backup = backup_section[backup_section.index("if ($isFrozen)"):backup_section.index("} else {")]
+    # Every top-level item of InstallRoot (hidden ones too), copied INTO the already-created backup folder -- not
+    # the folder itself, which onto an existing destination would nest.
+    assert "foreach ($item in @(Get-ChildItem -LiteralPath $InstallRoot -Force))" in frozen_backup
+    assert "Copy-Item -LiteralPath $item.FullName -Destination $BackupRoot -Recurse -Force" in frozen_backup
+    assert "would nest it inside instead" in frozen_backup  # documents the nesting-avoidance reason
 
 
 # --- Installer-B: first-stage installer hardening ---------------------------

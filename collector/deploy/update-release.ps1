@@ -61,7 +61,23 @@
       6. On preflight failure, the task is left DISABLED regardless of its
          prior state, with exact rollback instructions printed -- nothing
          is auto-reverted, and nothing is left able to fire on a
-         half-updated runtime.
+         half-updated runtime. For a frozen install the rollback is
+         tools\restore-backup.ps1, which verifies the backup first.
+
+    BACKUP SECURITY (1.0.15; CollectorBackup.ps1): the backup sits beside
+    -InstallRoot, in a parent that may be user-writable (NBPL's C:\SortView
+    grants Authenticated Users Modify, and a 1.0.13-era backup there was
+    found inheriting it). So the backup folder is CREATED restricted to
+    SYSTEM+Administrators -- never restricted afterwards -- and a path that
+    already exists (folder, file, junction, link) or is reached through a
+    junction or link is refused, before the task is touched and again at
+    creation. After the copy every item is restricted, owned by
+    Administrators, read back, and compared file by file with the install
+    (a frozen backup's recorded release files are checked too). Any failure
+    stops the update BEFORE -InstallRoot is removed or replaced. A
+    source-mode rebuild's "-full" folder is restricted and verified the
+    same way, and a frozen -InstallRoot is recreated restricted, so a
+    folder planted in the parent is refused rather than reused.
 
     RUNTIME REPLACEMENT: for a SOURCE install, uses the existing
     dependency-hash fast path (requirements.txt unchanged -> code-only
@@ -117,6 +133,7 @@ $ErrorActionPreference = "Stop"
 # those files' own docstrings.
 . (Join-Path $PSScriptRoot "CollectorAcl.ps1")
 . (Join-Path $PSScriptRoot "CollectorManifest.ps1")
+. (Join-Path $PSScriptRoot "CollectorBackup.ps1")
 
 function Test-ReleaseManifest {
     <# See install.ps1's identical copy of this function for the full
@@ -282,6 +299,25 @@ Write-Host "Update kind: $(if ($isFrozen) { 'FROZEN (no Python required)' } else
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $BackupRoot = "$InstallRoot.backup-$timestamp"
 
+# Refuse a redirected install root, or a backup path that is already taken (folder, file, junction, link -- e.g.
+# planted in a user-writable parent), BEFORE the task is touched. Checked again when the backup is created.
+Assert-CollectorPathNotRedirected -Path $InstallRoot
+Assert-CollectorBackupPathAvailable -Path $BackupRoot
+if (-not $isFrozen) {
+    Assert-CollectorBackupPathAvailable -Path "$BackupRoot-full"
+}
+
+function Restore-DisabledTaskAndFail([string]$Message) {
+    Write-Host ""
+    Write-Host $Message -ForegroundColor Red
+    if ($wasRegistered) {
+        Write-Host "The task is left DISABLED (regardless of its prior state) -- re-enable manually" -ForegroundColor Red
+        Write-Host "only once you're satisfied the runtime is in a good state:" -ForegroundColor Red
+        Write-Host "  Enable-ScheduledTask -TaskName '$TaskName'"
+    }
+    exit 1
+}
+
 Write-Host "=== 1. Snapshot and disable the task before touching anything ===" -ForegroundColor Cyan
 $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 $wasRegistered = $null -ne $existingTask
@@ -319,43 +355,49 @@ if ($wasRegistered) {
 }
 
 Write-Host "=== 2. Back up current runtime files ===" -ForegroundColor Cyan
-if ($isFrozen) {
-    # The WHOLE InstallRoot IS the frozen application runtime (DataRoot is
-    # entirely separate) -- back up its COMPLETE current contents, not
-    # just the two paths today's build happens to produce
-    # (SortViewCollector.exe + _internal\), so any future frozen release
-    # that adds a new top-level file/folder is still fully covered
-    # without this script needing to be updated in lockstep.
-    #
-    # $BackupRoot must NOT already exist before this call (it's a fresh
-    # timestamped path, so it never does in practice) -- verified
-    # empirically, same finding as elsewhere in this file: Copy-Item onto
-    # an EXISTING destination nests the source folder inside it instead
-    # of copying its contents in place; onto a destination that does not
-    # yet exist, it copies the contents flat, which is what's wanted here.
-    Copy-Item $InstallRoot -Destination $BackupRoot -Recurse -Force
-    Write-Host "Backed up complete current frozen runtime ($InstallRoot) to $BackupRoot"
-} else {
-    New-Item -ItemType Directory -Path (Join-Path $BackupRoot "collector") -Force | Out-Null
-    Copy-Item (Join-Path $InstallRoot "collector\*.py") -Destination (Join-Path $BackupRoot "collector") -Force
-    Write-Host "Backed up current collector\*.py to $BackupRoot\collector"
+# The backup folder is CREATED restricted to SYSTEM+Administrators (New-ProtectedCollectorDirectory), so nothing
+# copied into it ever inherits the parent's ACL; it is then restricted item by item, owned by Administrators, read
+# back and compared with the install (Complete-ProtectedCollectorBackup). Any failure stops here: -InstallRoot has
+# not been touched.
+try {
+    New-ProtectedCollectorDirectory -Path $BackupRoot
+    if ($isFrozen) {
+        # The WHOLE InstallRoot IS the frozen application runtime (DataRoot is
+        # entirely separate) -- back up its COMPLETE current contents, not
+        # just the two paths today's build happens to produce
+        # (SortViewCollector.exe + _internal\), so any future frozen release
+        # that adds a new top-level file/folder is still fully covered
+        # without this script needing to be updated in lockstep.
+        #
+        # $BackupRoot already exists (created restricted, above), so its
+        # CONTENTS are copied in item by item: Copy-Item of the folder itself
+        # onto an existing destination would nest it inside instead.
+        foreach ($item in @(Get-ChildItem -LiteralPath $InstallRoot -Force)) {
+            Copy-Item -LiteralPath $item.FullName -Destination $BackupRoot -Recurse -Force
+        }
+        Complete-ProtectedCollectorBackup -SourceRoot $InstallRoot -BackupRoot $BackupRoot -RequireReleaseManifest
+        Write-Host "Backed up complete current frozen runtime ($InstallRoot) to $BackupRoot (restricted and verified)."
+    } else {
+        New-Item -ItemType Directory -Path (Join-Path $BackupRoot "collector") -Force | Out-Null
+        Copy-Item (Join-Path $InstallRoot "collector\*.py") -Destination (Join-Path $BackupRoot "collector") -Force
+        Write-Host "Backed up current collector\*.py to $BackupRoot\collector"
+        $backedUp = @(Get-ChildItem -LiteralPath (Join-Path $InstallRoot "collector") -Filter "*.py" -File -Force |
+            ForEach-Object { "collector/$($_.Name)" })
 
-    if (Test-Path (Join-Path $InstallRoot "agent")) {
-        New-Item -ItemType Directory -Path (Join-Path $BackupRoot "agent") -Force | Out-Null
-        Copy-Item (Join-Path $InstallRoot "agent\*") -Destination (Join-Path $BackupRoot "agent") -Recurse -Force
-        Write-Host "Backed up current canonical parser runtime to $BackupRoot\agent"
+        if (Test-Path (Join-Path $InstallRoot "agent")) {
+            New-Item -ItemType Directory -Path (Join-Path $BackupRoot "agent") -Force | Out-Null
+            Copy-Item (Join-Path $InstallRoot "agent\*") -Destination (Join-Path $BackupRoot "agent") -Recurse -Force
+            Write-Host "Backed up current canonical parser runtime to $BackupRoot\agent"
+            $backedUp += @(Get-ChildItem -LiteralPath (Join-Path $InstallRoot "agent") -Recurse -File -Force |
+                ForEach-Object { Get-CollectorRelativePath -Root $InstallRoot -FullPath $_.FullName })
+        }
+        Complete-ProtectedCollectorBackup -SourceRoot $InstallRoot -BackupRoot $BackupRoot -RelativePaths $backedUp
+        Write-Host "Backup restricted to SYSTEM + Administrators and verified." -ForegroundColor Green
     }
-}
-
-function Restore-DisabledTaskAndFail([string]$Message) {
-    Write-Host ""
-    Write-Host $Message -ForegroundColor Red
-    if ($wasRegistered) {
-        Write-Host "The task is left DISABLED (regardless of its prior state) -- re-enable manually" -ForegroundColor Red
-        Write-Host "only once you're satisfied the runtime is in a good state:" -ForegroundColor Red
-        Write-Host "  Enable-ScheduledTask -TaskName '$TaskName'"
-    }
-    exit 1
+} catch {
+    Restore-DisabledTaskAndFail ("BACKUP FAILED -- the update stopped before changing the installed runtime at " +
+        "'$InstallRoot'. $($_.Exception.Message)`nAny partial backup at '$BackupRoot' is left for inspection; it is " +
+        "not a rollback source.")
 }
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -372,7 +414,15 @@ if ($isFrozen) {
     # survive as a stale leftover, regardless of what a future release
     # happens to add.
     Remove-Item -Recurse -Force $InstallRoot
-    New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
+    # Recreated RESTRICTED, never with New-Item -Force: in a user-writable parent, a folder planted at this path
+    # between the removal and here would otherwise be reused -- and its owner could later reopen its ACL.
+    try {
+        New-ProtectedCollectorDirectory -Path $InstallRoot
+    } catch {
+        Restore-DisabledTaskAndFail ("Could not recreate '$InstallRoot' safely: $($_.Exception.Message)`n" +
+            "The prior runtime is in the verified backup '$BackupRoot'. Restore it with:`n" +
+            "  & `"$PSScriptRoot\restore-backup.ps1`" -BackupRoot `"$BackupRoot`" -ExpectedManifestSha256 <the prior release's Bundle MANIFEST.json SHA-256, from its release record>")
+    }
     Copy-Item (Join-Path $FrozenRuntimeDir "*") -Destination $InstallRoot -Recurse -Force
     Write-Host "Replaced frozen runtime from $FrozenRuntimeDir"
 } else {
@@ -403,7 +453,16 @@ if ($isFrozen) {
     } else {
         Write-Host "requirements.txt changed (or no prior record) -- rebuilding the runtime." -ForegroundColor Yellow
         Write-Host "Renaming the entire current install aside to $BackupRoot (not deleting)..."
+        Assert-CollectorBackupPathAvailable -Path "$BackupRoot-full"
         Move-Item -Path $InstallRoot -Destination "$BackupRoot-full" -Force
+        try {
+            Protect-CollectorBackupTree -Path "$BackupRoot-full"
+            Write-Host "Restricted $BackupRoot-full to SYSTEM + Administrators (verified)." -ForegroundColor Green
+        } catch {
+            Restore-DisabledTaskAndFail ("Could not restrict '$BackupRoot-full': $($_.Exception.Message)`n" +
+                "Nothing has been rebuilt yet. Return the prior runtime with:`n" +
+                "  Move-Item `"$BackupRoot-full`" `"$InstallRoot`"")
+        }
 
         New-Item -ItemType Directory -Path (Join-Path $InstallRoot "collector") -Force | Out-Null
         Copy-Item (Join-Path $SourceCollectorDir "*.py") -Destination (Join-Path $InstallRoot "collector") -Force
@@ -446,16 +505,17 @@ if ($preflightExitCode -ne 0) {
         Write-Host "  Remove-Item -Recurse -Force `"$InstallRoot`""
         Write-Host "  Move-Item `"$BackupRoot-full`" `"$InstallRoot`""
     } elseif ($isFrozen) {
-        # The COMPLETE prior frozen InstallRoot, not just
-        # SortViewCollector.exe/_internal specifically -- $BackupRoot IS a
-        # full copy of the whole prior InstallRoot (see step 2's backup
-        # above), so restoring it in full is what actually guarantees
-        # nothing from the failed update (any file the new release added,
-        # anywhere under InstallRoot) can survive. Remove first, then copy
-        # the backup in -- same exact-restoration property as the
-        # source-mode branch below.
-        Write-Host "  Remove-Item -Recurse -Force `"$InstallRoot`""
-        Write-Host "  Copy-Item `"$BackupRoot`" `"$InstallRoot`" -Recurse -Force"
+        # Never a bare copy of the backup into the folder a SYSTEM task
+        # runs: tools\restore-backup.ps1 first proves the backup is
+        # restricted, not redirected, and identical to a release whose
+        # MANIFEST.json hash the operator takes from its release record --
+        # never from the backup -- then restores only the verified release
+        # files into a restricted folder, runs preflight, and only then
+        # re-enables the task. Whole-InstallRoot, like the backup itself.
+        Write-Host "  & `"$PSScriptRoot\restore-backup.ps1`" -BackupRoot `"$BackupRoot`" -ExpectedManifestSha256 <SHA-256>"
+        Write-Host "  where <SHA-256> is the PRIOR release's Bundle MANIFEST.json SHA-256 from its release record" -ForegroundColor Yellow
+        Write-Host "  (or pass -TrustedManifestPath with the MANIFEST.json of its verified canonical ZIP). Never take it" -ForegroundColor Yellow
+        Write-Host "  from the backup. Do not copy the backup into '$InstallRoot' by hand." -ForegroundColor Yellow
     } else {
         # EXACT restoration, not an overlay: the failed new runtime may
         # have introduced a file that does not exist in the backup (a
@@ -519,7 +579,9 @@ if ($wasRegistered -and $wasEnabled) {
 Write-Host ""
 Write-Host "UPDATE COMPLETE." -ForegroundColor Green
 if ($isFrozen) {
-    Write-Host "Prior runtime preserved at: $BackupRoot"
+    Write-Host "Prior runtime preserved at: $BackupRoot (SYSTEM + Administrators only, verified)."
+    Write-Host "To roll back, use tools\restore-backup.ps1 with the prior release's MANIFEST.json SHA-256 from its"
+    Write-Host "release record -- never copy the backup into '$InstallRoot' by hand."
 } else {
     Write-Host "Prior runtime preserved at: $(if (Test-Path "$BackupRoot-full") { "$BackupRoot-full" } else { "$BackupRoot\collector (code only)" })"
 }

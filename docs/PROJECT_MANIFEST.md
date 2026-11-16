@@ -3,7 +3,8 @@
 The big picture, kept in one place so a single task does not swallow the plan. Read this before starting any
 non-trivial task, and check the task against it before widening scope.
 
-Last reviewed: 2026-11-12 (G2 qualification entries only; the rest as of 2026-10-28). Facts marked **(verify)** were not confirmed against production or the person who
+Last reviewed: 2026-11-16 (NBPL production sorter profile, Collector 1.0.15 backup security and the upgrade status; G2 qualification entries
+2026-11-12; the rest as of 2026-10-28). Facts marked **(verify)** were not confirmed against production or the person who
 knows; everything else was checked in the repository on that date.
 
 ---
@@ -466,6 +467,11 @@ planning come first and decide which C milestones they cover. Nothing below is r
 - First ingest moves a branch from `pending` to `ready`, on both contracts (PRs #183, #190).
 - **Release record:** `docs/releases/collector-1.0.14.md`. The canonical Collector 1.0.14 bundle was built
   2026-10-24 and is **not yet published**; that record's "Before this release is published" checks are still open.
+- **Collector 1.0.15 (planned, 2026-11-16):** it supersedes 1.0.14 for upgrading existing installations (NBPL), with
+  restricted, verified upgrade backups and a verified rollback.
+  - Implemented on the working tree; **not built or released**.
+  - Record: `docs/releases/collector-1.0.15.md`.
+  - Status and blockers: *NBPL 1.0.13 → 1.0.15 upgrade status* below.
 - **G3, real-API GUI installation, passed 2026-10-25** on a fresh Windows 10 LTSC 2019 VM: all seven stages, SYSTEM
   task run with result 0, synthetic data reached the real API. It used the setup program package built from
   `de858df` (ZIP SHA-256 `e932200f…`), which is **not** the customer package.
@@ -506,8 +512,83 @@ planning come first and decide which C milestones they cover. Nothing below is r
   1.0.14 bundle and the G2 package (above). Bundles 1.0.6 to 1.0.13 contain one library's classification rules and
   are not stored there. Not yet demonstrated: storing an artifact on one machine and verifying it from the other.
 
-**Target machine baseline — NBPL's AMH PC, `NEWBRAUNFELSSOR`** (the real Tech Logic sorter computer at New Braunfels
-Public Library, where the SortView Collector runs). Build and test installer work against this, not a developer PC.
+#### Canonical NBPL production sorter profile — `NEWBRAUNFELSSOR`
+
+**This is the one profile of NBPL's AMH PC** (the real Tech Logic sorter computer at New Braunfels Public Library,
+where the SortView Collector runs). Build and test installer work against this, not a developer PC.
+
+**Consult this profile before asking the operator for any machine command.** Do not ask for a check recorded here to be
+rerun unless there is a specific reason: the installation changed (an upgrade, repair or rollback), an observation
+conflicts with this record, or a new validation requirement needs a value not captured here. Add every new machine
+observation here with its date; mark superseded values rather than deleting them.
+
+Verification history: 2026-08-31 (superseded capture, below), 2026-10-02 (1.0.13 production update,
+`docs/releases/collector-1.0.13.md`), 2026-10-22 (read-only baseline), 2026-10-28 (executable hash, recovery ZIP,
+cleanup), **2026-11-16 (installed manifest, scheduled task, ACLs and data root; latest)**.
+
+**Verified on the machine, 2026-11-16** (product owner's read-only checks; nothing was changed):
+
+| Area | Verified value |
+|---|---|
+| Installed product | SortView Collector, bundle version **1.0.13** (production is **not** on 1.0.14) |
+| Installed manifest | `C:\SortView\Collector\MANIFEST.installed.json`: bundle built `2026-10-02T00:33:47.407285Z`, installed `2026-10-02T13:18:55.030162Z` (08:18:55 CDT, matching the 1.0.13 production update and the backup's name) |
+| Executable | `C:\SortView\Collector\SortViewCollector.exe` (hash last checked 2026-10-28: the 1.0.13 executable, `BFCBBFE7…`) |
+| Runtime backup | `C:\SortView\Collector.backup-20261002-081805` still present (made by the 1.0.13 update) |
+| Scheduled task | `SortView Collector`; runs as SYSTEM; run level **Highest**; arguments `run --config "C:\ProgramData\SortViewCollector\config\collector_config.json"`; working directory `C:\SortView\Collector`; nominal interval 15 minutes |
+| Last and next run | Last run 2026-11-16 2:12:12 PM local, `LastTaskResult` `0`; next run 2:27:27 PM local |
+| Persistent data root | `C:\ProgramData\SortViewCollector`, with `config`, `data`, `logs`, `secrets`. Persistent state is **not** under `C:\SortView\runtime` |
+
+ACLs, 2026-11-16:
+
+| Path | Verified ACL |
+|---|---|
+| `C:\SortView` (parent) | **Authenticated Users Modify**; BUILTIN\Users Read & Execute; Administrators and SYSTEM Full Control |
+| `C:\SortView\Collector` | Administrators and SYSTEM Full Control only |
+| `C:\SortView\Collector\SortViewCollector.exe` | Administrators and SYSTEM Full Control only |
+| `C:\ProgramData\SortViewCollector` | Administrators and SYSTEM Full Control only |
+| `C:\ProgramData\SortViewCollector\config` | Administrators and SYSTEM Full Control only |
+| `C:\ProgramData\SortViewCollector\data` | Administrators and SYSTEM Full Control only |
+| `C:\ProgramData\SortViewCollector\logs` | Administrators and SYSTEM Full Control only |
+| `C:\ProgramData\SortViewCollector\secrets` | Administrators and SYSTEM Full Control only |
+| `C:\SortView\Collector.backup-20261002-081805` | **Inherited from `C:\SortView`:** Administrators and SYSTEM Full Control, BUILTIN\Users Read & Execute, **Authenticated Users Modify**, all inherited by child files and folders |
+
+What these show, and do not show:
+- The task last **completed** with exit code 0. That does not prove that every upload reached the API. Delivery is
+  checked server-side (heartbeat, pipeline health), not by another machine command.
+- `MANIFEST.json` is an exact copy of the bundle's manifest. `MANIFEST.installed.json` is the installed-layout view
+  that `Test-InstalledManifest` verifies against (`collector/deploy/CollectorManifest.ps1`). This settles the
+  2026-10-22 question about the two manifests.
+- The restricted ACL on `C:\SortView\Collector` matches what `tools\update.ps1` applies after an update
+  (`Protect-CollectorPath`, `collector/deploy/update-release.ps1`). It is consistent with B12's repair having been
+  applied, but not proof that `tools\repair-permissions.ps1` itself was run.
+
+**Security conclusion (2026-11-16):** the production Collector (`C:\SortView\Collector`, its executable) and every
+persistent-data directory (`C:\ProgramData\SortViewCollector` and its `config`, `data`, `logs`, `secrets`) are
+restricted to Administrators and SYSTEM.
+
+**Confirmed backup-permissions vulnerability (open).**
+- The existing backup `C:\SortView\Collector.backup-20261002-081805` inherits `C:\SortView`'s ACL, so any
+  authenticated user can modify it.
+- **Cause:** `tools\update.ps1` (`collector/deploy/update-release.ps1`) creates every backup as
+  `C:\SortView\Collector.backup-<timestamp>` (and, in source mode, `…-full`) by copying into the parent. It never
+  restricts the copy, so **every future upgrade backup will have the same exposure** until the script is fixed.
+- **Why it matters:** the rollback the script prints copies that backup, unverified, back into the folder the SYSTEM
+  task runs from. A user-modified backup restored that way would run as SYSTEM.
+- **Tampering:** none was observed or established. The finding is that the backup *could* have been modified, not
+  that it was.
+- **Fix:** implemented for Collector 1.0.15 (2026-11-16) but **not released, rehearsed or deployed**. NBPL still runs
+  1.0.13, and its existing backup is unchanged. See *NBPL 1.0.13 → 1.0.15 upgrade status* below.
+- **Consequences:**
+  - This backup **must not be treated as a trusted rollback source** without integrity verification.
+  - It is also not a 1.0.13 rollback source at all: it holds the runtime from *before* the 2026-10-02 update to
+    1.0.13.
+  - A 1.0.13 rollback should come from the canonical recovery ZIP `C:\SortViewCollector-1.0.13.zip`
+    (hash-verified 2026-10-28), checked against `docs/releases/collector-1.0.13.md` again before use.
+- **Still to review:** whether a non-administrator can rename, replace or pre-create entries beside
+  `C:\SortView\Collector` in the parent folder. For example, they might pre-create a predictable backup path or a
+  junction before an update.
+
+The sections below are the earlier captures, kept as recorded; where 2026-11-16 adds to or supersedes them, they say so.
 
 **Compatibility constraint (product owner, 2026-10-22):** SortView's production installer must support the existing
 NEWBRAUNFELSSOR environment, including Windows 10 build 17763 and .NET Framework 4.7.2, without requiring a .NET
@@ -662,7 +743,8 @@ existing conditions: nothing here is an instruction to change the production mac
 *Existing Collector installation*
 
 - `C:\SortView\Collector` holds `SortViewCollector.exe`, `_internal\`, `logs\`, `MANIFEST.json` and
-  `MANIFEST.installed.json`. Both manifests are present; their purpose, structure and origin are not established.
+  `MANIFEST.installed.json`. Both manifests are present. *(2026-11-16: their purpose is established from
+  `collector/deploy/CollectorManifest.ps1`; see the profile above.)*
 - `C:\SortViewAgent` does not exist.
 - **Active Collector: 1.0.13** (verified 2026-10-28; **not** 1.0.14). The running `SortViewCollector.exe` has SHA-256
   `BFCBBFE7D982CE2654C2CC9A069DCF1ABFDD00076A41C5A782149A74BAC66882`, the 1.0.13 release's executable
@@ -687,7 +769,8 @@ Scheduled Task:
 | Action | `C:\SortView\Collector\SortViewCollector.exe run` with the configuration `C:\ProgramData\SortViewCollector\config\collector_config.json`, working directory `C:\SortView\Collector` |
 | Trigger | Time trigger from 2026-09-18 08:42:40, repeating every 15 minutes (`PT15M`), no repetition duration |
 | Settings | MultipleInstances IgnoreNew; execution time limit 1 hour; restart 3 times at 5-minute intervals; StartWhenAvailable True; DisallowStartIfOnBatteries False; StopIfGoingOnBatteries False |
-| Last run | 2026-10-28 09:27:27, result `0` (2026-10-22: 09:27:27, result `0`, missed runs 0) |
+| Last run | 2026-11-16 2:12:12 PM, result `0` (2026-10-28: 09:27:27, result `0`; 2026-10-22: 09:27:27, result `0`, missed runs 0) |
+| Run level | Highest (first recorded 2026-11-16) |
 
 A last result of 0 shows the task ran and the program exited cleanly. It does not show that uploads to the API
 succeeded; the 2026-10-28 checks did not establish data delivery.
@@ -702,7 +785,9 @@ succeeded; the 2026-10-28 checks did not establish data delivery.
 
 **Security consideration for installer planning (not a change request for this machine):** Authenticated Users
 can modify `C:\SortView`, the parent of the folder holding the program a SYSTEM task runs. Future installer and upgrade
-design must account for this existing condition. The ACL of `C:\SortView\Collector` itself was not captured (see B12).
+design must account for this existing condition. *(2026-11-16: the ACLs of `C:\SortView\Collector`, its executable and
+`…\config` were captured, all Administrators and SYSTEM only; the parent-folder concern stays open, see the profile
+above.)*
 
 *Network*
 
@@ -717,12 +802,19 @@ design must account for this existing condition. The ACL of `C:\SortView\Collect
 - Path exclusions: `C:\Program Files (x86)\stunnel`, `C:\Program Files\TLCSoftwareLibrary\`, `C:\TLCFinalDlls\`,
   `C:\VoiceMessages\`. Neither `C:\SortView` nor `C:\ProgramData\SortViewCollector` is excluded.
 
-**Still unverified** (no further machine profiling is planned for now; nothing here may be assumed):
+**Still unverified** (updated 2026-11-16; nothing here may be assumed):
 
-- The Collector configuration file's structure (its path, `C:\ProgramData\SortViewCollector\config\collector_config.json`,
-  is the one the task passes; its contents were not inspected).
-- Whether the existing Collector uses any direct database connection.
-- Permissions on the individual Tech Logic log files, and on `C:\SortView\Collector`.
+- The Collector configuration file's contents (its path, `C:\ProgramData\SortViewCollector\config\collector_config.json`,
+  is the one the task passes; its contents were not inspected). NBPL's Contract v2 cutover (2026-09-28) and the
+  1.0.13 dashboard's "Contract v2 collector reporting healthy" say it runs v2. Its `contract_mode` was not read on the
+  machine.
+- Whether the existing Collector uses any direct database connection. *(The 1.0.13 production update on 2026-10-02
+  recorded "HTTPS-only / no direct database dependency: PASS", `docs/releases/collector-1.0.13.md`.)*
+- Permissions on the individual Tech Logic log files. *(`C:\SortView\Collector`: captured 2026-11-16.)*
+- *(Captured 2026-11-16: the ACLs of `…\secrets`, `…\data`, `…\logs` and the 2026-10-02 backup; see the profile.)*
+- Whether a non-administrator can rename, replace or pre-create entries in `C:\SortView` (the open review item above).
+- Whether the 2026-10-02 backup's contents still match what was copied. Its own `MANIFEST.installed.json`, if it
+  has one, sits in the same user-modifiable tree and cannot vouch for it.
 - Python runtime dependencies, if any (the 2026-08-31 per-user Python 3.14.3 was not re-checked).
 - Successful authenticated API communication.
 - The full code-integrity policy state.
@@ -759,6 +851,192 @@ Collector deployment at `C:\SortView\Collector` and its SYSTEM `SortView Collect
 directory; and the existing Windows security and permissions environment (Defender real-time protection with no
 SortView exclusions, the broad write access on `C:\SortView`). At NBPL, installing is an upgrade of that existing
 deployment, not a fresh install. What remains unverified above must not be assumed from the installer's design.
+
+**NBPL 1.0.13 → 1.0.15 upgrade status (updated 2026-11-16). Production remains on 1.0.13. The upgrade is NOT ready.**
+
+**Planned release 1.0.15 (decided 2026-11-16, product owner): it supersedes 1.0.14 as the release for NBPL's upgrade.**
+It carries the backup-permissions fix (blocker 3 below). Release notes: `docs/releases/collector-1.0.15.md`.
+- **Implemented on the working tree 2026-11-16, not committed, merged, built or released. No 1.0.15 artifact or hash
+  exists.**
+- `collector.__version__` is `1.0.15`.
+- **What changed:**
+  - `tools\update.ps1` (`collector/deploy/update-release.ps1`): the backup folder is created already restricted,
+    pre-existing or redirected paths are refused, and the copy is restricted, re-owned and verified before the install
+    is removed. The frozen install root is recreated restricted.
+  - New `tools\restore-backup.ps1`: a verified rollback, anchored to a `MANIFEST.json` hash obtained outside the backup.
+  - New shared library `tools\CollectorBackup.ps1`.
+  - `CollectorManifest.ps1` gains `Get-CollectorInstalledLayout`.
+- **Automated validation, 2026-11-16, on the development PC** (Windows PowerShell 5.1, **not elevated**):
+  - see *1.0.15 validation evidence* below.
+- **NBPL's existing 2026-10-02 backup** is not restricted, so `restore-backup.ps1` refuses it by design.
+- **Rollback anchor for 1.0.13:** the 1.0.13 release record has no *Bundle `MANIFEST.json` SHA-256*. A rollback to
+  1.0.13 uses `-TrustedManifestPath` with the `MANIFEST.json` of the verified `SortViewCollector-1.0.13.zip`.
+
+The 1.0.14 records below are kept as they were. **Do not use the 1.0.14 bundle to upgrade an existing installation:**
+its `tools\update.ps1` has the backup vulnerability.
+
+*1.0.14 artifacts, existing and hash-recorded (unchanged):*
+- **Canonical bundle:** `SortViewCollector-1.0.14.zip`, SHA-256 `75e7830a…501f5`.
+- **G2 setup program package:** `SortView-Setup-1.0.14.zip`, SHA-256 `6f91da7d…3193`.
+- Both matched their recorded hashes when stored in `sortview-artifacts` at `0bf2964…` on 2026-10-28, from
+  `DESKTOP-DORG9IO`. G2's hash was verified again before the 2026-10-29 test and in R4 Stage 0 (2026-11-13).
+- Not done: retrieving either artifact on another machine (the NBPL PC included) and verifying it there. Neither is on
+  NBPL (2026-10-28).
+- The bundle is **unpublished**, and G2 is an unsigned supervised-pilot package.
+
+*Upgrade path:*
+- For an existing install it is `tools\update.ps1` (= `collector/deploy/update-release.ps1`) from the canonical
+  bundle: the **1.0.15** bundle once built.
+- Release notes, *Compatibility*: it keeps an existing Contract v2 install's config, secret, rules and cursor.
+- 1.0.15's `tools\update.ps1` refuses a frozen install without `MANIFEST.json` and `MANIFEST.installed.json`. NBPL
+  has both.
+- **The G2 setup program is not an upgrade path for NBPL.** 1.0.14's setup refuses a machine that already holds an API
+  token, a v2 secret, a cursor or a rules file (release notes, *A first install starts from a clean machine*).
+
+*Tests that have passed, none of them a 1.0.13 → 1.0.14 or 1.0.15 upgrade:*
+- G3 (2026-10-25) and G2 (2026-10-29 and 2026-11-12): **fresh** installations on VMs.
+- M2c-3 and M2d-1 (2026-10-22): installer staging, and a stop before enrollment.
+- The M2d-4 P0C/P1/P1R VM tests used an earlier, pre-PR #266 1.0.14 runtime. Their scope is not recorded in the
+  repository, so they are not upgrade evidence for the canonical bundle.
+- The one recorded in-place production update is **to 1.0.13 on NBPL, 2026-10-02**, from the canonical 1.0.13 ZIP
+  (`docs/releases/collector-1.0.13.md`; the record does not name the prior version). Its backup naming matches
+  `tools\update.ps1`. That proves the mechanism for that release, not for 1.0.14.
+
+*Not done:*
+- **No 1.0.13 → 1.0.14 or 1.0.15 upgrade test is recorded anywhere.**
+- **No rollback test** is recorded. The 2026-10-02 update's backup was never restored.
+
+*1.0.15 validation evidence (2026-11-16, development PC, Windows PowerShell 5.1, not elevated):*
+- **New `tests/test_collector_backup_security.py`: 40 passed, 2 skipped.** It covers:
+  - order: the backup is created restricted, then copied, then verified, all before the install is removed;
+  - the backup path is checked before the task is touched;
+  - backup failure aborts before any change;
+  - the source `-full` folder and the frozen install root are recreated restricted;
+  - redirect checks: junctions, paths under a junction, and junctions inside a backup;
+  - pre-existing folder, file, junction and dangling-junction paths are refused and left alone;
+  - copy and recorded-file integrity, with NBPL's parser logs allowed;
+  - the trust anchor:
+    - an altered file is refused;
+    - a manifest rewritten to match is refused;
+    - wrong or malformed anchors are refused;
+    - a missing file is refused;
+    - a source-kind backup is refused;
+    - the backup's own `MANIFEST.installed.json` is never trusted;
+  - an NBPL-shaped backup reads as insecure;
+  - the restore order, its failure path (task left disabled) and its verified-only copies;
+  - a non-elevated restore refuses and changes nothing;
+  - the data root (config, secrets, rules, cursors) is never touched.
+
+  **Skipped:**
+  - creating a symbolic link (this account lacks the privilege);
+  - the real restricted backup in an NBPL-shaped parent (needs an elevated session).
+- **Existing installer tests:** three in `tests/test_collector_build_release.py` that pinned the old bare-copy backup
+  and rollback were rewritten for the new behavior.
+- **Collector, installer and release suites** (`tests/test_collector_*.py`, `test_installer_*.py`, `test_release_*.py`,
+  `test_v2_pilot_release_prep.py`, `test_configure_v2.py`, `test_parser_logging_ownership.py`,
+  `test_data_lifecycle_policy.py`, `test_server_containment.py`): **3,238 passed, 62 skipped, 25 failed, 487 errors**
+  in 14 min 21 s.
+  - **Environmental (24 failures, all 487 errors):** MSBuild MSB3644, because the .NET Framework 4.7.2 reference
+    assemblies are not installed on this PC. That is the known gap in the .NET 4.7.2 section above, in the WPF
+    installer build tests (`test_installer_*`, unchanged C# code).
+  - **Expected until commit (1 failure):** `test_installer_release_packaging.py::test_the_committed_record_is_read_from_head_and_names_the_commit`.
+    The packager reads `docs/releases/collector-1.0.15.md` only from `HEAD`, by design.
+- `ruff check collector tests src`: clean. `mypy collector/build_release.py collector/__init__.py`: clean.
+- All four changed or new PowerShell scripts parse with no errors under Windows PowerShell 5.1.
+- **Not run here (need an elevated session or the representative VM):**
+  - the real update and restore scripts, with a real task, a real frozen runtime and preflight;
+  - elevated restricted-backup creation;
+  - symbolic links.
+
+*1.0.15 test additions (2026-11-16, approved):*
+- **New elevated test, implemented and NOT yet executed:**
+  `test_a_rollback_that_fails_after_moving_the_install_aside_keeps_it_intact_and_collection_disabled`.
+  - **Disposable:** the install, backup and config path are under pytest's temporary folder. The Scheduled Task
+    cmdlets are replaced by recording stand-ins that report an *enabled* task, and the task name is unique and
+    nonexistent.
+  - **The failure is real:** the restored runtime cannot run, so preflight fails *after* the original install was moved
+    aside and the backup restored.
+  - **It requires:**
+    - exit code 1;
+    - the task disabled and never re-enabled or started;
+    - the original install byte-for-byte intact in its single `.replaced-*` folder;
+    - the printed recovery commands, run exactly as printed, bringing the original back, with `verify-install.ps1`
+      passing on it;
+    - the backup kept;
+    - the real `C:\SortView` and `C:\ProgramData\SortViewCollector` top levels and ACLs, and the real `SortView
+      Collector` task state, unchanged before and after.
+- **Changed elevated test, implemented and NOT yet executed:**
+  `test_a_backup_made_in_an_nbpl_shaped_parent_is_restricted_owned_and_verified` now also requires that making the
+  backup leaves the source installation byte-for-byte unchanged.
+- **Fix found while writing the test:** `restore-backup.ps1`'s printed recovery ran `verify-install.ps1` without
+  `-InstallRoot`. With a non-default install root it would have verified `C:\SortView\Collector` instead (read-only,
+  but the wrong folder). It now passes `-InstallRoot`, and a static test pins this.
+- **Executed (non-elevated, development PC LIB-L26, 2026-11-16):**
+  - `tests/test_collector_backup_security.py`: **40 passed, 3 skipped**. The 3 skips are the symbolic-link test and the
+    two elevated tests; none of the three has been executed.
+  - `tests/test_collector_build_release.py`, `test_collector_acl_and_manifest.py` and
+    `test_collector_deploy_strictmode_counts.py`: **378 passed, 1 skipped**.
+  - `ruff` clean.
+- **Executed (elevated), 2026-11-16, on LIB-L26: all three previously skipped tests PASSED, 3 passed in 19.33 s, 0
+  failed, 0 skipped.** Run by the product owner in an elevated Windows PowerShell 5.1 administrator session (Python
+  3.11.9, pytest 8.4.2), temporary folders only. The tests:
+  1. `test_redirect_check_refuses_a_symbolic_link`: a symbolic link is refused as a redirected path.
+  2. `test_a_backup_made_in_an_nbpl_shaped_parent_is_restricted_owned_and_verified`: in a parent granting
+     Authenticated Users Modify, the backup is SYSTEM+Administrators only on every item and Administrators- or
+     SYSTEM-owned. Its copy and recorded files verify, the source install is byte-for-byte unchanged, and the fake data
+     root (config, rules, secret, cursor) is unchanged.
+  3. `test_a_rollback_that_fails_after_moving_the_install_aside_keeps_it_intact_and_collection_disabled`: a restore
+     failing at preflight exits 1. The task is disabled and never re-enabled, the original install is intact in
+     `.replaced-*`, the printed recovery restores it and `verify-install.ps1` passes, and the real paths and the real
+     task are unchanged.
+- **So every test in `tests/test_collector_backup_security.py` has now been executed and passed:** 40 non-elevated and
+  3 elevated, on LIB-L26.
+- **What these tests do not cover:** a real frozen runtime, a real Scheduled Task, a real 1.0.13 install, or a built
+  1.0.15 bundle. Those are the VM rehearsal (blockers 1 and 2).
+
+*Blockers before a production upgrade, open. **The upgrade is not ready until 1 and 2 pass with the 1.0.15 bundle.***
+1. **Upgrade rehearsal, 1.0.13 → 1.0.15,** on a VM that reproduces this profile:
+   - a 1.0.13 Contract v2 install at the same paths, with parser logs under the install root;
+   - the SYSTEM task at run level Highest;
+   - the same ACLs, including Authenticated Users Modify on `C:\SortView`.
+
+   Upgrade it with the 1.0.15 bundle's `tools\update.ps1`, then show:
+   - the backup is restricted and Administrators-owned;
+   - the config, secret, rules and cursor are unchanged;
+   - the installed manifest verifies;
+   - the SYSTEM preflight passes;
+   - a scheduled run uploads with no gap or duplicate.
+2. **Rollback rehearsal** with `tools\restore-backup.ps1` to 1.0.13 (anchor: `-TrustedManifestPath` from the
+   verified 1.0.13 ZIP). Show that:
+   - it refuses an unrestricted, altered, redirected or wrong-anchor backup, changing nothing;
+   - it restores a good backup;
+   - after a forced failure, the task stays disabled and the printed recovery works.
+
+   Also rehearse restoring 1.0.13 from the canonical ZIP. This is the only rollback path for NBPL's existing
+   2026-10-02 backup.
+3. **Backup-permissions vulnerability (confirmed 2026-11-16): fix implemented for 1.0.15, not yet released or
+   rehearsed.** The fix is to restrict the backup at creation and verify the rollback (above). It is closed when 1 and
+   2 pass with the built 1.0.15 bundle.
+   - **Elevated security tests: COMPLETE (2026-11-16).** All three passed in an elevated session on LIB-L26 (symbolic
+     link, restricted backup, rollback failure recovery); see *1.0.15 test additions* below. The fix is still not
+     released or rehearsed, so blocker 3 stays open until 1 and 2 pass.
+   - **Still open separately:** the wider `C:\SortView` parent-folder review (profile above).
+4. **Build the canonical 1.0.15 bundle:**
+   - record its hashes and storage in `docs/releases/collector-1.0.15.md`;
+   - retrieve it from `sortview-artifacts` on the machine that will carry it to NBPL and verify it there;
+   - decide whether a 1.0.15 setup program (G2-style) package is needed. NBPL does not need one.
+5. Decide which of the release's *Before this release is published* checks gate an NBPL upgrade (those of
+   `docs/releases/collector-1.0.14.md` carry over to 1.0.15). The SYSTEM-context preflight is relevant. Resume,
+   non-ASCII rules and bootstrap concern fresh installs.
+6. After any upgrade, confirm delivery server-side (heartbeat, pipeline health, events arriving), not only
+   `LastTaskResult` 0.
+7. **Build-environment checks, unresolved:**
+   - LIB-L26 lacks the .NET Framework 4.7.2 reference assemblies (MSBuild MSB3644), so the WPF installer build tests
+     (`tests/test_installer_*`) error or fail there. Run them on a machine with the targeting pack, or install it, before
+     packaging.
+   - `test_installer_release_packaging.py::test_the_committed_record_is_read_from_head_and_names_the_commit` passes
+     only once `docs/releases/collector-1.0.15.md` is committed.
+   - The 1.0.15 bundle must be built on the documented build machine and toolchain, with its hashes recorded.
 
 **Milestones:**
 
@@ -870,6 +1148,47 @@ deployment, not a fresh install. What remains unverified above must not be assum
 ---
 
 ## 5. Done recently (newest first)
+
+- 2026-11-16 — Collector 1.0.15 elevated security tests **passed** on LIB-L26 (elevated Windows PowerShell 5.1,
+  Python 3.11.9, pytest 8.4.2): 3 passed in 19.33 s, 0 failed, 0 skipped. Those were the symbolic-link refusal, the
+  restricted backup in an NBPL-shaped parent, and the rollback failure recovery.
+  - The whole backup-security test file has now passed: 40 non-elevated and 3 elevated.
+  - **1.0.15 is not production-ready.** Still to do: the 1.0.13 → 1.0.15 upgrade and rollback rehearsal on a
+    representative VM, building the 1.0.15 bundle, recording and verifying its hashes, and the build-environment
+    checks (section 4, C).
+
+- 2026-11-16 — Collector 1.0.15 tests extended (not committed):
+  - a new elevated rollback failure-recovery test, and a source-unchanged assertion in the elevated backup test. Both
+    are **implemented, not executed**;
+  - a fix so the restore's printed `verify-install.ps1` step targets the right install.
+  - Non-elevated run: 40 passed, 3 skipped (the elevated and symbolic-link tests).
+  - Next: run the 3 in an elevated session on LIB-L26, then the VM upgrade and rollback rehearsal (section 4, C).
+
+- 2026-11-16 — Collector 1.0.15 backup security **implemented on the working tree (not committed, built or released)**.
+  - `tools\update.ps1` creates its backup restricted, refuses pre-existing or redirected paths, and verifies the copy
+    (ACL, owner, hashes) before replacing the install.
+  - New `tools\restore-backup.ps1` restores only a restricted backup matching a trusted `MANIFEST.json` hash obtained
+    outside it.
+  - New tests: 40 passed, 2 skipped (they need elevation or the symbolic-link privilege). The broader suite's failures
+    are the known missing .NET 4.7.2 targeting pack, plus one packaging test that passes once the 1.0.15 release
+    record is committed.
+  - **NBPL stays on 1.0.13. The upgrade is not ready** until a real 1.0.13 → 1.0.15 upgrade and rollback rehearsal
+    passes (section 4, C).
+
+- 2026-11-16 — NBPL profile, second capture: `C:\ProgramData\SortViewCollector\data`, `logs` and `secrets` are
+  Administrators and SYSTEM only. The 2026-10-02 backup inherits Authenticated Users Modify from `C:\SortView`. This is
+  now a **confirmed backup-permissions vulnerability** (no tampering observed): `tools\update.ps1` creates every backup
+  that way. It is recorded as 1.0.14 upgrade blocker 3, and the proposed fix is in Parked. No installer change made;
+  production unchanged.
+
+- 2026-11-16 — NBPL production sorter profile consolidated (section 4, C, *Canonical NBPL production sorter
+  profile*). It records the product owner's read-only checks: installed bundle 1.0.13 (built 2026-10-02T00:33:47Z,
+  installed 2026-10-02T13:18:55Z), the SYSTEM task at run level Highest with last result `0` at 2:12:12 PM, the data
+  root `C:\ProgramData\SortViewCollector`, and ACLs. The install folder, executable, data root and config are
+  Administrators and SYSTEM only. `C:\SortView` gives Authenticated Users Modify, an **open** security concern.
+  The 1.0.14 upgrade status was reconciled: the artifacts are stored and hash-recorded. **No 1.0.13 → 1.0.14 upgrade
+  or rollback test exists**; every 1.0.14 validation was a fresh install. The G2 setup program cannot upgrade NBPL;
+  `tools\update.ps1` is the path. Its backup is created unhardened under `C:\SortView`. Production unchanged.
 
 - 2026-11-16 — UI2 v7, full-history Holds report: **implemented on branch `feature/ui2-v7-historical-holds`, not
   merged or deployed.** The 92-day holds-only limit is removed (it was technical, not a plan limit; NBPL's plan already
@@ -1031,6 +1350,36 @@ One line each, dated. Pick up only when a milestone needs it, or when it is prom
 - 2026-10-01 — `ruleset_id`: `docs/contract-v2-design.md` §5 contradicts the deliberate code behavior; fix the doc or the code.
 - 2026-10-27 — The G3 test installation (`SortView G3 Installer Test`, installation 7) is still `active` while its task is disabled, so the scheduled pipeline-health check fails on its stale heartbeat. Fix: set that installation to Inactive in React admin; no code change (**verify** whether done).
 - 2026-11-16 — Bin-layout management UI (UI2 v6 follow-up): a sorter's `bin_layout` (`branch_settings.settings_json`) can only be set by an operator with `scripts/set_sorter_bin_layout.py` (procedure: `docs/sorter-bin-layout-procedure.md`). A Super Admin / React admin screen to view, set and clear a sorter's layout, reusing `services.bin_layout` validation, writing only that key, with an audit of who changed it. Also undecided: sorters with an odd number of bins along the belt (a layout column is exactly two bins today).
+- 2026-11-16 — **Approved and implemented the same day for 1.0.15 (section 4, C, upgrade blocker 3); kept here as the
+  record of the proposal.** The implementation also creates the backup folder already restricted (closing the moment
+  between creating and restricting it) and re-owns every backup item to Administrators.
+  Original proposal: **restricted upgrade backups and a verified rollback.**
+  - **In `collector/deploy/update-release.ps1` step 2:**
+    - refuse if the backup path already exists or is a reparse point;
+    - create it empty and `Protect-CollectorPath` it *before* copying, so every copied child inherits Administrators
+      and SYSTEM only from the moment it exists;
+    - copy the install root's contents into it;
+    - then re-verify with `Test-CollectorPathProtected -Recurse` and `Test-InstalledManifest -InstallRoot <backup>`
+      before the install root is removed;
+    - harden the source-mode `…-full` path after its `Move-Item` the same way.
+  - **New `tools\restore-backup.ps1`**, replacing the printed manual `Copy-Item` rollback. It requires elevation and a
+    disabled task, then:
+    - refuses reparse points and refuses a backup that is not exactly protected;
+    - runs `Test-InstalledManifest` on the backup, plus an optional operator-supplied expected `MANIFEST.json` SHA-256
+      from the release record;
+    - copies into a fresh, protected install root and runs `Test-InstalledManifest` again on the result, then
+      preflight;
+    - re-enables the task only after all of that passes.
+  - **Tests:** static order checks in `tests/test_collector_build_release.py` and
+    `tests/test_collector_acl_and_manifest.py`, plus PowerShell-gated behavioral tests (a parent folder granting
+    Authenticated Users Modify still yields an exactly protected backup; restore refuses an unprotected, tampered or
+    junctioned backup).
+  - **Needs:** a new canonical bundle and its qualification.
+- 2026-11-16 — `tools\update.ps1`, **source-mode** full rebuild only (requirements changed): after the install is moved
+  aside to `…-full`, the new install root is recreated with `New-Item -Force` in the (possibly user-writable) parent,
+  so a folder planted there would be reused. The frozen path (all customer installs, NBPL included) was fixed in
+  1.0.15; the source path is developer/QA only. Use `New-ProtectedCollectorDirectory` there too if source installs
+  ever reach a customer.
 
 ---
 
