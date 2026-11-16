@@ -33,6 +33,8 @@ const share = (part: number, whole: number) => {
 }
 /** A bin longer than this many bins is set as a compact grid, not as one two-sided line: the line would be too fine. */
 const LONGEST_LINE = 24
+/** The bin at the left end of the line, on its own, as the sorter's screen draws it. */
+const END_BIN = '0'
 
 /** A part whose read has not answered, or could not be read: words, never a placeholder figure. */
 function Pending({ section }: { section: Section<unknown> }) {
@@ -131,6 +133,9 @@ function SortLine({ live }: { live: LiveToday }) {
   }
   const most = Math.max(0, ...bins.map((bin) => bin.checkin_count))
   const ranked = ranks(bins)
+  // In ascending bin order, as the API client guarantees. Bin 0 is the end bin: it stands alone at the left end of
+  // the line, as on the sorter's own screen, and the rest follow in pairs, one on each side of the belt.
+  const along = bins.filter((bin) => bin.key !== END_BIN)
   return (
     <>
       {bins.length > 0 && (
@@ -141,10 +146,11 @@ function SortLine({ live }: { live: LiveToday }) {
           {bins.map((bin) => {
             const rank = ranked.get(bin.key)
             const relative = most > 0 ? bin.checkin_count / most : 0
+            const side = bin.key === END_BIN ? 'bin-cell-end' : along.indexOf(bin) % 2 === 0 ? 'bin-cell-upper' : 'bin-cell-lower'
             return (
               <li
                 key={bin.key}
-                className={rank === undefined ? 'bin-cell' : `bin-cell bin-cell-top bin-cell-rank-${rank}`}
+                className={['bin-cell', side, ...(rank === undefined ? [] : ['bin-cell-top', `bin-cell-rank-${rank}`])].join(' ')}
                 // Shading: the bin's count against the busiest bin's. A picture of the figure in it, not of capacity.
                 style={{ '--heat': relative.toFixed(3) } as CSSProperties}
               >

@@ -24,6 +24,7 @@ import {
   textResponse,
 } from '../test/http.ts'
 import { renderApp } from '../test/render.tsx'
+import styles from '../index.css?raw'
 import { REFRESH_INTERVAL_MS } from './useLiveToday.ts'
 
 const CENTRAL = '/organizations/northbridge/sorters/central'
@@ -2293,5 +2294,60 @@ describe('the sorter at a glance', () => {
     expect(drawn.length).toBeGreaterThan(0)
     expect(drawn.every((part) => part.getAttribute('aria-hidden') === 'true')).toBe(true)
     expect(within(drawing()).getByRole('list', { name: 'Bins that received check-ins today, in bin order' })).toBeInTheDocument()
+  })
+})
+
+describe('the sort line’s end bin', () => {
+  const drawing = () => screen.getByRole('region', { name: 'Sorter at a glance' })
+  /** Each bin cell in list order, as [bin, where it is drawn on the line]. */
+  const placed = () =>
+    Array.from(drawing().querySelectorAll('.bin-cell')).map((cell) => [
+      cell.querySelector('.bin-cell-name')?.textContent,
+      ['bin-cell-end', 'bin-cell-upper', 'bin-cell-lower'].find((side) => cell.classList.contains(side)),
+    ])
+
+  it('puts Bin 0 alone at the left end of the line, then the rest in ascending order on alternate sides', async () => {
+    serve({}, live({ bins: [['0', 30], ['1', 20], ['2', 12], ['3', 5], ['10', 8]] }))
+    renderApp(CENTRAL)
+    await loaded()
+
+    await waitFor(() => expect(placed()).toHaveLength(5))
+    expect(placed()).toEqual([
+      ['Bin 0', 'bin-cell-end'],
+      ['Bin 1', 'bin-cell-upper'],
+      ['Bin 2', 'bin-cell-lower'],
+      ['Bin 3', 'bin-cell-upper'],
+      ['Bin 10', 'bin-cell-lower'],
+    ])
+    // Its figures, badge, shading and fill are a bin's like any other: here it is the busiest.
+    const end = drawing().querySelector('.bin-cell-end') as HTMLElement
+    expect(end).toHaveTextContent('30 check-ins')
+    expect(end.querySelector('.bin-cell-rank')).toHaveTextContent('1st busiest')
+    expect(end.style.getPropertyValue('--heat')).toBe('1.000')
+    expect((end.querySelector('.bin-cell-fill > span') as HTMLElement).style.width).toBe('100%')
+    // Read in the same order as it is seen: Bin 0 first.
+    expect(within(drawing()).getByRole('list', { name: 'Bins that received check-ins today, in bin order' }).firstElementChild).toBe(end)
+  })
+
+  it('has no end bin on a day Bin 0 received nothing: the line starts with the lowest bin that did', async () => {
+    serve({}, live({ bins: [['1', 60], ['2', 36], ['7', 24]] }))
+    renderApp(CENTRAL)
+    await loaded()
+
+    await waitFor(() => expect(placed()).toHaveLength(3))
+    expect(placed()).toEqual([
+      ['Bin 1', 'bin-cell-upper'],
+      ['Bin 2', 'bin-cell-lower'],
+      ['Bin 7', 'bin-cell-upper'],
+    ])
+  })
+
+  it('stands the end bin across both rows of the line, on the belt, in the stylesheet', () => {
+    const at = styles.indexOf('.machine-bins:not(.machine-bins-long) > .bin-cell-end {')
+    expect(at).toBeGreaterThan(-1)
+    const rule = styles.slice(at, styles.indexOf('}', at))
+    expect(rule).toContain('grid-row: 1 / span 2;')
+    expect(rule).toContain('grid-column: 1;')
+    expect(rule).toContain('align-self: center;')
   })
 })
