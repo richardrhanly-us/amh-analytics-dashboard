@@ -93,7 +93,6 @@ describe('the structure of a page', () => {
       'H4 Rejects',
       'H3 Sorter at a glance',
       'H4 Induction',
-      'H4 Reject chute',
       'H4 Sort line',
       'H4 Routed',
       'H3 Hourly check-ins',
