@@ -196,6 +196,8 @@ def _seed(conn) -> None:
     conn.execute(text("INSERT INTO plans (id, code, name) VALUES (1, 'with-holds', 'With holds'), (2, 'without', 'Without holds')"))
     conn.execute(text("INSERT INTO feature_entitlements (plan_id, feature_key, enabled) VALUES (1, 'internal_workflow', TRUE), "
                       "(2, 'internal_workflow', FALSE)"))
+    # UI2 v7: ten years of history, as NBPL's plan has, so a multi-year holds range can be asked for.
+    conn.execute(text("INSERT INTO feature_entitlements (plan_id, feature_key, enabled, limit_value) VALUES (1, 'history_days', TRUE, 3650)"))
     for org_id, slug, customer, branch, plan in ((1, "acme", ACME, ACME_MAIN, 1), (2, "beta", BETA, BETA_MAIN, 1), (3, "gamma", GAMMA, GAMMA_MAIN, 2)):
         conn.execute(text("INSERT INTO customers (id, name) VALUES (:c, :n)"), {"c": customer, "n": slug})
         conn.execute(text("INSERT INTO organizations (id, slug, name, status, operational_customer_id) VALUES (:o, :s, :s, 'active', :c)"),
@@ -264,7 +266,7 @@ def _counts(api, org="acme", user=OWNER, params=JUNE_8_TO_12) -> tuple[int, int]
     response = _get(api, org, user, params)
     assert response.status_code == 200, response.text
     body = response.json()
-    assert set(body) == {"range", "public_hold_count", "ill_hold_count"}
+    assert set(body) == {"range", "public_hold_count", "ill_hold_count", "days_with_data"}
     return body["public_hold_count"], body["ill_hold_count"]
 
 
@@ -317,3 +319,29 @@ def test_no_patron_account_or_identifier_reaches_the_answer(api):
     for forbidden in (ACCOUNT, DEPARTMENT, "SAMPLE PATRON", "p1", "b2", "101YNY", "Synthetic Title", str(ACME), str(ACME_MAIN),
                       "internal_routing", "branch_services", "collection", "programming", "destination"):
         assert forbidden not in text_, forbidden
+
+
+def test_a_multi_year_range_across_the_cutover_is_the_sum_of_its_days_on_the_real_database(api):
+    # UI2 v7: three years ending today, read a block at a time. Only 8-11 June have records, so the counts are those
+    # days' -- the cutover day split between its eras -- and four days had data.
+    three_years = {"from": "2023-06-21", "to": "2026-06-20"}
+    response = _get(api, params=three_years)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["range"]["days"] == 1096
+    assert (body["public_hold_count"], body["ill_hold_count"]) == _counts(api) == (3, 2)
+    assert body["days_with_data"] == 4
+    # Each day on its own adds up to the whole: a range is the sum of its one-day reports.
+    days = [_counts(api, params={"from": day, "to": day}) for day in ("2026-06-08", "2026-06-09", "2026-06-10", "2026-06-11", "2026-06-12")]
+    assert tuple(map(sum, zip(*days, strict=True))) == (3, 2)
+
+
+def test_an_empty_stretch_of_years_is_zero_with_no_days_of_data(api):
+    body = _get(api, params={"from": "2023-06-21", "to": "2026-05-31"}).json()
+    assert (body["public_hold_count"], body["ill_hold_count"], body["days_with_data"]) == (0, 0, 0)
+
+
+def test_a_one_day_range_finds_its_holds_patron_records_from_earlier_days_on_the_real_database(api):
+    # 9 June alone: b3's ILL patron and b4's department were recorded on the 8th, before the range. They are found by
+    # the patron-only lookback read, so b3 is ILL and b4 is not public -- as in any longer range containing the 9th.
+    assert _counts(api, params={"from": "2026-06-09", "to": "2026-06-09"}) == (0, 1)

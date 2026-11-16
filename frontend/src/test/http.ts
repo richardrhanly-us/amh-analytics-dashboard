@@ -239,6 +239,7 @@ export const liveBody = {
     range: { from, to, days: 1, timezone: live.timezone, includes_today: true },
     public_hold_count: live.holds?.public ?? 9,
     ill_hold_count: live.holds?.ill ?? 2,
+    days_with_data: 1,
   }),
 }
 

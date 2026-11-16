@@ -15,9 +15,17 @@ is not for one of the library's own service accounts. ILL holds are the holds fl
 for a service account; it then counts as ILL and is still not public. Both numbers are each classifier's own output,
 taken as it gives them: nothing is subtracted from anything here.
 
-They are RANGE TOTALS. Each era keeps only the latest record of each item inside its own part of the range, so the
-total for a range is not the sum of its days' totals, and no per-day figure is given. An item with records on both
-sides of the cutover is counted once in each era: a legacy barcode and a current item key cannot be connected.
+They are SUMS OF DAILY COUNTS (UI2 v7). Each local calendar day is classified on its own -- each item counted at most
+once that day, by its latest record that day -- and the days' counts are added. So a range's total is exactly the sum
+of its days' one-day reports, and a one-day range is what Live Today's "Holds today" shows. A multi-day total is
+summed daily hold classifications, NOT the number of distinct holds placed or distinct items: an item held on three
+days counts three times. On a cutover day each era's part is classified alone. A legacy day pairs its holds with the
+patron records of that day and of the V1_PATRON_LOOKBACK before it (a fixed window per day), so it is classified the
+same in every range that contains it. That lookback is how far back a patron's identity is found, not a report limit.
+
+Memory is bounded: rows are read DAYS_PER_READ days at a time, each day classified and its rows dropped, so a long
+range never holds more than one block of days (and, in the legacy era, one patron record per patron). No row is read
+twice: the patron records before a range are read once, and later ones are carried forward from the blocks read.
 
 THE ERAS are the other range reports' (services.operational_report_service.ReportWindow): a legacy row (naive local
 wall-clock time) counts strictly before the cutover, a current row (an instant) at or after it. An era that owns none
@@ -37,8 +45,11 @@ never returned as the whole.
 
 from __future__ import annotations
 
+import bisect
+import itertools
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
 import pandas as pd
@@ -63,6 +74,18 @@ _V1_ROWS = text("""
       AND event_time >= :span_start
       AND event_time < :span_end
       AND (raw_message LIKE '101%' OR btrim(message_code) = '64')
+    ORDER BY event_time
+""").bindparams(bindparam("span_start", type_=DateTime(timezone=False)), bindparam("span_end", type_=DateTime(timezone=False)))
+
+# The legacy PATRON records alone, same columns: read once, for the lookback before a range's first legacy day.
+_V1_PATRONS = text("""
+    SELECT event_time, message_code, barcode, destination, patron_id, raw_message
+    FROM acs_events
+    WHERE customer_id = :customer_id
+      AND branch_id = :branch_id
+      AND event_time >= :span_start
+      AND event_time < :span_end
+      AND btrim(message_code) = '64'
     ORDER BY event_time
 """).bindparams(bindparam("span_start", type_=DateTime(timezone=False)), bindparam("span_end", type_=DateTime(timezone=False)))
 
@@ -104,10 +127,26 @@ _V1_RULES = text("""
 
 @dataclass(frozen=True, slots=True)
 class HoldsReport:
-    """A sorter site's two hold counts over a range. Nothing else of what was read."""
+    """A sorter site's two hold counts over a range, and on how many of its days there was anything to count. Nothing
+    else of what was read."""
 
     public_hold_count: int
     ill_hold_count: int
+    days_with_data: int
+
+
+# At most this many days' rows are read at once. A day is classified on its own and its rows are dropped, so memory is
+# bounded by one block of days however long the range: a ten-year report reads about 120 blocks, never all ten years.
+DAYS_PER_READ = 31
+
+# A legacy hold names its patron only by id; who the patron is (an ILL library, a service account) is in a patron
+# record (message 64) that need not be on the same day. A legacy day is therefore classified with the patron records of
+# that day AND of this long before it -- a fixed window per day, so a day's count never depends on the range around it.
+# Only patron records are taken from before the day; items are always the day's own. This is how far back a patron's
+# identity is looked for, NOT how far back a report may go (the plan's history window says that).
+# 180 days: in NBPL's production data (2026-11-16) the longest gap between a legacy hold and its patron's earlier record
+# was 175 days, across a legacy era of 182 days; 31 days would have left 1,313 of 35,605 such holds unclassified.
+V1_PATRON_LOOKBACK = timedelta(days=180)
 
 
 def _scope(tenant: ResolvedOperationalTenant, span: tuple[Any, Any]) -> dict[str, Any]:
@@ -144,26 +183,105 @@ def legacy_hold_rules(conn: Connection, tenant: ResolvedOperationalTenant) -> V1
     return v1_hold_rules(effective.get(INTERNAL_ROUTING_KEY))
 
 
-def get_holds_report(conn: Connection, tenant: ResolvedOperationalTenant, window: ReportWindow) -> HoldsReport:
-    """The site's public and ILL hold counts over the window: each era by its own classifier, then the two added."""
+def _days_of(span: tuple[Any, Any], boundaries: tuple[Any, ...]) -> list[tuple[int, Any, Any]]:
+    """The local days of the range, each cut to the era's span: (the day's index in the range, start, end), in order,
+    each [start, end). A day the span does not reach is left out; the cutover's day is cut at the cutover, its other
+    part being the other era's."""
+    days = []
+    for index, (start, end) in enumerate(itertools.pairwise(boundaries)):
+        cut_start, cut_end = max(start, span[0]), min(end, span[1])
+        if cut_start < cut_end:
+            days.append((index, cut_start, cut_end))
+    return days
+
+
+def _is_v1_patron(row: Any) -> bool:
+    """A legacy patron record (message 64): who a patron is, not what happened to an item."""
+    return str(row[1] or "").strip() == "64"
+
+
+def _count_days(
+    conn: Connection,
+    tenant: ResolvedOperationalTenant,
+    statement: Any,
+    columns: tuple[str, ...],
+    days: list[tuple[int, Any, Any]],
+    classify: Any,
+    counted: set[int],
+    *,
+    patron_lookback: timedelta | None = None,
+) -> tuple[int, int]:
+    """Public and ILL holds summed over `days`, each day classified alone by `classify`. Rows are read a block of
+    DAYS_PER_READ days at a time and split at the day boundaries, so no more than one block is held at once and no row
+    is read twice. The range index of each day that had any row of its own is added to `counted`.
+
+    `patron_lookback` (the legacy era): each day is classified with, besides its own rows, the latest earlier patron
+    record of each patron its items name, if that record is within the lookback before the day -- the same patron
+    record a one-day report of that day would find, so a day is classified alike in every range. The records before the
+    first day are read ONCE (patron records only); after that, each patron's latest record is carried forward from the
+    days already read. Only one record per patron is kept, and none is returned."""
     public = ill = 0
+    latest: dict[Any, Any] = {}                              # patron id -> that patron's latest patron record so far
+    if patron_lookback is not None and days:
+        first_start = days[0][1]
+        for row in conn.execute(_V1_PATRONS, _scope(tenant, (first_start - patron_lookback, first_start))).all():
+            latest[row[4]] = row                             # in event_time order: the last one is the latest
+    for first in range(0, len(days), DAYS_PER_READ):
+        block = days[first:first + DAYS_PER_READ]
+        rows = conn.execute(statement, _scope(tenant, (block[0][1], block[-1][2]))).all()
+        times = [row[0] for row in rows]                     # in event_time order, as each statement orders them
+        for index, start, end in block:
+            today = list(rows[bisect.bisect_left(times, start):bisect.bisect_left(times, end)])
+            if not today:
+                continue
+            counted.add(index)
+            before = []
+            if patron_lookback is not None:
+                named = {row[4] for row in today if not _is_v1_patron(row)}
+                before = [latest[patron] for patron in named
+                          if patron in latest and latest[patron][0] >= start - patron_lookback]
+            summary = classify(_frame(before + today, columns))
+            public, ill = public + int(summary["holds_total"]), ill + int(summary["ill_total"])
+            if patron_lookback is not None:
+                for row in today:
+                    if _is_v1_patron(row):
+                        latest[row[4]] = row
+    return public, ill
+
+
+def get_holds_report(conn: Connection, tenant: ResolvedOperationalTenant, window: ReportWindow) -> HoldsReport:
+    """The site's public and ILL holds over the window: the SUM OF ITS DAYS. Each local calendar day is classified on
+    its own, exactly as a one-day report of that day is (Live Today's "Holds today" is one), and the days' counts are
+    added. An item held on several days counts on each; corrections within a day still count once.
+
+    A day of the cutover is two parts, each its own era's, classified alone. `days_with_data` is how many of the range's
+    days had at least one record of either era to count."""
+    public = ill = 0
+    counted: set[int] = set()
+    local = window.local_range
 
     if window.v1_span is not None:
         rules = legacy_hold_rules(conn, tenant)
-        rows = conn.execute(_V1_ROWS, _scope(tenant, window.v1_span)).all()
-        legacy = metrics.build_acs_item_summary(
-            _frame(rows, _V1_COLUMNS),
-            [],  # transit labels: they only split ILL by destination, which this report does not give
-            rules.branch_services_names,
-            rules.collection_services_names,
-            rules.branch_services_da_patterns,
-            rules.collection_services_da_patterns,
-        )
-        public, ill = public + int(legacy["holds_total"]), ill + int(legacy["ill_total"])
+
+        def legacy(frame: pd.DataFrame) -> Mapping[str, Any]:
+            return metrics.build_acs_item_summary(
+                frame,
+                [],  # transit labels: they only split ILL by destination, which this report does not give
+                rules.branch_services_names,
+                rules.collection_services_names,
+                rules.branch_services_da_patterns,
+                rules.collection_services_da_patterns,
+            )
+
+        days = _days_of(window.v1_span, local.v1_day_boundaries_local)
+        era = _count_days(conn, tenant, _V1_ROWS, _V1_COLUMNS, days, legacy, counted, patron_lookback=V1_PATRON_LOOKBACK)
+        public, ill = public + era[0], ill + era[1]
 
     if window.v2_span is not None:
-        rows = conn.execute(_V2_ROWS, _scope(tenant, window.v2_span)).all()
-        current = metrics_v2.build_acs_item_summary_v2(_frame(rows, _V2_COLUMNS), [])
-        public, ill = public + int(current["holds_total"]), ill + int(current["ill_total"])
+        days = _days_of(window.v2_span, local.v2_day_boundaries_utc)
+        era = _count_days(
+            conn, tenant, _V2_ROWS, _V2_COLUMNS, days, lambda frame: metrics_v2.build_acs_item_summary_v2(frame, []), counted
+        )
+        public, ill = public + era[0], ill + era[1]
 
-    return HoldsReport(public_hold_count=public, ill_hold_count=ill)
+    return HoldsReport(public_hold_count=public, ill_hold_count=ill, days_with_data=len(counted))

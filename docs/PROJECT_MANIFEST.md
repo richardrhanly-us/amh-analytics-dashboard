@@ -871,6 +871,21 @@ deployment, not a fresh install. What remains unverified above must not be assum
 
 ## 5. Done recently (newest first)
 
+- 2026-11-16 — UI2 v7, full-history Holds report: **implemented on branch `feature/ui2-v7-historical-holds`, not
+  merged or deployed.** The 92-day holds-only limit is removed (it was technical, not a plan limit; NBPL's plan already
+  allows 3,650 days). Holds are now the sum of daily counts (each item at most once a day, by its latest record that
+  day), read 31 days at a time; a one-day range equals Live Today's "Holds today" (Live Today unchanged). Legacy days
+  take each patron's latest record from a fixed 180-day lookback (an internal classification window, not a report
+  limit), read once and carried forward so no row is read twice. The API adds `days_with_data`, and the page explains
+  the counting, the coverage and the pre-Contract-2 limits. **Behaviour change:** totals for multi-day ranges change wherever an item was
+  held on more than one day.
+  **NBPL production coverage (read-only Neon SQL Editor queries, 2026-11-16):** NBPL is operational customer 1,
+  branch 1 ("Main AMH Sorter"); cutover 2026-09-28 18:03:41 Chicago time. Legacy `acs_events`: 2026-03-31 to the cutover,
+  177 days with records, 43,602 hold records. Contract 2 `acs_item_events`: from 2026-08-31 (parallel running before
+  the cutover, ignored by the report) to today. No gaps of 7+ days. Legacy holds with a patron id (35,605): patron
+  record same day 52.8%, 1–31 days earlier 22.1%, more than 31 days 3.7% (1,313), none before 21.4% (7,613); longest
+  gap 175 days. **Decided 2026-11-16:** `V1_PATRON_LOOKBACK` is 180 days, covering every observed case. Still
+  unclassifiable either way: the 7,613 legacy holds with no earlier patron record (counted public; stated on the page).
 - 2026-11-12 — G2 fresh installation and end-to-end ingestion passed on a clean VM (installation `9`, library
   `sortview-g2-qualification-2`, left active); PostgreSQL holds 13 events, including 2 from a corrected test-harness
   error. Recorded in `docs/releases/collector-1.0.14.md` (section 4, C).

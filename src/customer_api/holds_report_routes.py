@@ -37,7 +37,7 @@ from customer_api.entitlement_dependencies import OrganizationEntitlements
 from customer_api.errors import NO_STORE_HEADERS, CustomerApiError, CustomerApiRoute
 from customer_api.holds_report_schemas import HoldsReportResponse
 from customer_api.operational_routes import ResolvedTenant
-from customer_api.report_routes import Range, RequestedRange
+from customer_api.report_routes import Range
 from customer_api.tenant_scope import open_customer_tenant_connection
 from services import entitlement_service
 from services.hold_report_service import get_holds_report
@@ -59,24 +59,9 @@ def require_holds_feature(entitlements: OrganizationEntitlements) -> None:
 # Declared after the tenant and before the range in the route below: 401, then 404, then 403, then 422.
 HoldsFeature = Annotated[None, Depends(require_holds_feature)]
 
-# The longest range the holds report covers, both ends included -- whatever the plan's history allows. Each item is
-# counted by its latest record within the WHOLE range, so over a long range the two counts stop meaning "holds
-# handled": an item held many times counts once, and not at all if its last record was not a hold. Until the metric
-# is redesigned it stays at the length every report had before Reports R9D2. Not a plan limit.
-HOLDS_MAX_RANGE_DAYS = 92
-
-
-def require_holds_range(requested: Range) -> RequestedRange:
-    """The shared range -- every rule every report has, the plan's history window included -- and then the holds
-    report's own length, or 422 holds_range_too_long. Nothing is read before it is decided."""
-    if requested.local_range.days > HOLDS_MAX_RANGE_DAYS:
-        raise CustomerApiError(
-            422, "holds_range_too_long", "Holds reporting is currently available for ranges up to 92 days."
-        )
-    return requested
-
-
-HoldsRange = Annotated[RequestedRange, Depends(require_holds_range)]
+# UI2 v7: the holds report takes the same ranges as every other report (`Range`) -- the plan's history window and the
+# shared engineering guard (MAX_REPORT_RANGE_DAYS). Its counts are sums of daily counts, so they mean the same over any
+# length, and the service reads a bounded block of days at a time. There is no holds-only limit any more.
 
 
 def create_holds_report_router() -> APIRouter:
@@ -86,15 +71,16 @@ def create_holds_report_router() -> APIRouter:
     )
 
     @router.get("/holds")
-    def get_site_holds_report(tenant: ResolvedTenant, _feature: HoldsFeature, requested: HoldsRange) -> Response:
+    def get_site_holds_report(tenant: ResolvedTenant, _feature: HoldsFeature, requested: Range) -> Response:
         with open_customer_tenant_connection(tenant) as conn:
             report = get_holds_report(conn, tenant, report_window(conn, tenant, requested.local_range))
 
-        # The connection is closed. Two counts: nothing that was read to work them out.
+        # The connection is closed. Three counts: nothing that was read to work them out.
         body = HoldsReportResponse(
             range=requested.response(),
             public_hold_count=report.public_hold_count,
             ill_hold_count=report.ill_hold_count,
+            days_with_data=report.days_with_data,
         )
         return JSONResponse(content=body.model_dump(mode="json", by_alias=True), headers=NO_STORE_HEADERS)
 

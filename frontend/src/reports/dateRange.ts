@@ -13,9 +13,6 @@
  */
 export const MAX_RANGE_DAYS = 3660
 
-/** The longest range the Holds report covers, whatever the plan allows (the API's HOLDS_MAX_RANGE_DAYS). */
-export const HOLDS_MAX_RANGE_DAYS = 92
-
 export interface DateRange {
   from: string
   to: string

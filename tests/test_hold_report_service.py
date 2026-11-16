@@ -14,7 +14,7 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import itertools
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -91,12 +91,21 @@ class Connection:
         self.asked: list[tuple[str, dict]] = []
 
     def execute(self, statement, parameters):
+        # As the statements do: only the rows in [span_start, span_end), in event_time order. The sort is stable, so
+        # rows of one instant keep the order given (the tie tests vary it).
+        def within(rows):
+            return _Result(sorted((row for row in rows if parameters["span_start"] <= row[0] < parameters["span_end"]),
+                                  key=lambda row: row[0]))
+
         if statement is hold_report_service._V1_ROWS:
             self.asked.append(("v1", parameters))
-            return _Result(self.v1)
+            return within(self.v1)
+        if statement is hold_report_service._V1_PATRONS:
+            self.asked.append(("v1 patrons", parameters))
+            return within([row for row in self.v1 if str(row[1]).strip() == "64"])
         if statement is hold_report_service._V2_ROWS:
             self.asked.append(("v2", parameters))
-            return _Result(self.v2)
+            return within(self.v2)
         if statement is hold_report_service._V1_RULES:
             self.asked.append(("rules", parameters))
             return _Result(self.rules)
@@ -118,9 +127,12 @@ def test_a_legacy_only_range_reads_the_legacy_rows_and_rules_and_classifies_them
 
     # b1 is for a configured service account, b3 is not a hold: one public hold.
     assert counts(report) == (1, 0)
-    assert [what for what, _ in conn.asked] == ["rules", "v1"]
-    rules_asked, rows_asked = conn.asked[0][1], conn.asked[1][1]
+    assert [what for what, _ in conn.asked] == ["rules", "v1 patrons", "v1"]
+    rules_asked, patrons_asked, rows_asked = (parameters for _, parameters in conn.asked)
     assert rules_asked == {"customer_id": 8101, "branch_id": 11}
+    # The patron records of the lookback before the span, once; then the span's own rows.
+    lookback = hold_report_service.V1_PATRON_LOOKBACK
+    assert patrons_asked == {"customer_id": 8101, "branch_id": 11, "span_start": V1_SPAN[0] - lookback, "span_end": V1_SPAN[0]}
     assert rows_asked == {"customer_id": 8101, "branch_id": 11, "span_start": V1_SPAN[0], "span_end": V1_SPAN[1]}
 
 
@@ -143,7 +155,7 @@ def test_a_range_across_the_cutover_counts_each_era_by_its_own_classifier_and_ad
 
     # Legacy: b2 public, b3 ILL. Current: 1 and 2 public, 4 ILL.
     assert counts(report) == (3, 2)
-    assert [what for what, _ in conn.asked] == ["rules", "v1", "v2"]
+    assert [what for what, _ in conn.asked] == ["rules", "v1 patrons", "v1", "v2"]
 
 
 def test_the_legacy_rules_reach_legacy_holds_only():
@@ -174,11 +186,11 @@ def test_no_window_no_rows_and_no_holds_are_zero_and_an_era_that_owns_nothing_is
     assert nothing.asked == []
 
 
-def test_the_latest_record_of_an_item_in_its_era_decides_and_a_range_total_is_not_a_sum_of_days():
-    # The same item held on the 3rd and released on the 4th is no hold over the range, whatever each day said.
+def test_a_range_total_is_the_sum_of_its_days_each_day_decided_by_its_own_latest_record():
+    # UI2 v7. Held on the 3rd, released on the 4th: a hold on the 3rd, none on the 4th -- one over the range.
     conn = Connection(v1=[v1_hold("b1", when=wall(2026, 9, 3, 10)), v1_hold("b1", when=wall(2026, 9, 4, 10), hold=False)])
 
-    assert counts(get_holds_report(conn, TENANT, window(v2=False))) == (0, 0)
+    assert counts(get_holds_report(conn, TENANT, window(v2=False))) == (1, 0)
 
 
 # =====================================================================================================================
@@ -221,6 +233,130 @@ def test_the_current_statement_selects_the_summarys_columns_in_order_and_orders_
 
 
 # =====================================================================================================================
+# UI2 v7: a sum of days, read a block of days at a time
+# =====================================================================================================================
+
+def _span_window(first: date, last: date, *, cutover: datetime | None = None) -> ReportWindow:
+    """A window over first..last, all legacy (no cutover) or split at an aware `cutover` instant."""
+    local = local_range(first, last, ZONE)
+    v1_start, v1_end = local.v1_day_boundaries_local[0], local.v1_day_boundaries_local[-1]
+    v2_start, v2_end = local.v2_day_boundaries_utc[0], local.v2_day_boundaries_utc[-1]
+    if cutover is None:
+        return ReportWindow(local_range=local, v1_span=(v1_start, v1_end), v2_span=None)
+    cut_local = cutover.astimezone(ZONE).replace(tzinfo=None)
+    return ReportWindow(local_range=local, v1_span=(v1_start, min(v1_end, cut_local)) if v1_start < cut_local else None,
+                        v2_span=(max(v2_start, cutover), v2_end) if cutover < v2_end else None)
+
+
+def test_an_item_held_on_several_days_counts_on_each_day_and_a_correction_within_a_day_counts_once():
+    rows = [
+        v2_hold(1, datetime(2026, 9, 16, 15, tzinfo=UTC), row_id=1),
+        v2_hold(1, datetime(2026, 9, 16, 16, tzinfo=UTC), row_id=2, is_ill=True),   # corrected the same day: ILL, once
+        v2_hold(1, datetime(2026, 9, 18, 15, tzinfo=UTC), row_id=3),                # held again two days later: public
+        v2_hold(1, datetime(2026, 9, 22, 15, tzinfo=UTC), row_id=4),
+        v2_retraction(1, row_id=5, when=datetime(2026, 9, 22, 18, tzinfo=UTC)),     # retracted the same day: nothing
+    ]
+
+    report = get_holds_report(Connection(v2=rows), TENANT, window(v1=False))
+
+    assert counts(report) == (1, 1) and report.days_with_data == 3
+
+
+def test_a_one_day_range_is_that_days_count_and_a_range_is_the_sum_of_its_one_day_reports():
+    rows = [v2_hold(n, datetime(2026, 9, day, 15, tzinfo=UTC), is_ill=n % 3 == 0) for n, day in enumerate([16, 16, 17, 20, 20, 20], 1)]
+    rows += [v2_hold(1, datetime(2026, 9, 17, 15, 30, tzinfo=UTC))]                  # item 1 again on the 17th
+
+    whole = counts(get_holds_report(Connection(v2=rows), TENANT, _span_window(date(2026, 9, 16), date(2026, 9, 20), cutover=V2_SPAN[0])))
+    days = [counts(get_holds_report(Connection(v2=rows), TENANT, _span_window(day, day, cutover=V2_SPAN[0])))
+            for day in (date(2026, 9, 16), date(2026, 9, 17), date(2026, 9, 18), date(2026, 9, 19), date(2026, 9, 20))]
+
+    assert whole == tuple(map(sum, zip(*days, strict=True)))
+    assert whole == (5, 2)
+
+
+def test_a_multi_year_range_is_read_in_contiguous_blocks_of_at_most_the_block_length():
+    first, last = date(2023, 1, 1), date(2025, 12, 31)                              # 1,096 days, two clock changes a year
+    rows = [v1_hold(f"b{n}", when=wall(2023, 1, 1, 10) + timedelta(days=n * 10)) for n in range(110)]
+
+    conn = Connection(v1=rows)
+    report = get_holds_report(conn, TENANT, _span_window(first, last))
+
+    reads = [parameters for what, parameters in conn.asked if what == "v1"]
+    patron_reads = [parameters for what, parameters in conn.asked if what == "v1 patrons"]
+    assert counts(report) == (110, 0) and report.days_with_data == 110
+    assert len(reads) == -(-1096 // hold_report_service.DAYS_PER_READ)
+    assert reads[0]["span_start"] == wall(2023, 1, 1) and reads[-1]["span_end"] == wall(2026, 1, 1)
+    for before, after in itertools.pairwise(reads):
+        assert before["span_end"] == after["span_start"]                            # nothing skipped, nothing read twice
+    for read in reads:
+        assert read["span_end"] - read["span_start"] <= timedelta(days=hold_report_service.DAYS_PER_READ, hours=1)
+    # The lookback before the range is read once, and only for patron records: overlapping windows read nothing again.
+    lookback = hold_report_service.V1_PATRON_LOOKBACK
+    assert patron_reads == [{"customer_id": 8101, "branch_id": 11, "span_start": wall(2023, 1, 1) - lookback, "span_end": wall(2023, 1, 1)}]
+
+
+def test_a_legacy_hold_is_classified_by_its_patrons_record_from_an_earlier_day_and_alike_in_every_range():
+    # The ILL patron's record is on the 1st; its hold on the 20th. The service account's record is a month before its hold.
+    rows = [v1_patron("p1", "SAMPLE PATRON", kind="ILL", when=wall(2026, 9, 1, 8)), v1_hold("b1", "p1", when=wall(2026, 9, 20, 9)),
+            v1_patron("p2", ACCOUNT, when=wall(2026, 8, 25, 8)), v1_hold("b2", "p2", when=wall(2026, 9, 21, 9)),
+            v1_hold("b3", when=wall(2026, 9, 21, 10))]
+    one_day = [counts(get_holds_report(Connection(v1=rows), TENANT, _span_window(day, day)))
+               for day in (date(2026, 9, 20), date(2026, 9, 21))]
+    month = counts(get_holds_report(Connection(v1=rows), TENANT, _span_window(date(2026, 9, 1), date(2026, 9, 30))))
+
+    assert one_day == [(0, 1), (1, 0)]                                              # b1 ILL; b2 the account's; b3 public
+    assert month == (1, 1) == tuple(map(sum, zip(*one_day, strict=True)))
+
+
+def test_a_patron_record_older_than_the_lookback_is_not_used_and_patron_records_never_count_as_a_day_with_data():
+    lookback = hold_report_service.V1_PATRON_LOOKBACK
+    rows = [v1_patron("p1", "SAMPLE PATRON", kind="ILL", when=wall(2026, 9, 20, 8) - lookback - timedelta(days=1)),
+            v1_hold("b1", "p1", when=wall(2026, 9, 20, 9))]
+    report = get_holds_report(Connection(v1=rows), TENANT, _span_window(date(2026, 3, 1), date(2026, 9, 30)))
+
+    assert counts(report) == (1, 0)                                                 # its patron is too long ago: public
+    assert report.days_with_data == 2                                               # the patron's own day had a record
+
+
+def test_patron_records_carried_across_blocks_classify_each_day_as_its_own_one_day_report_does():
+    # Patron records 175 days before their holds (NBPL's longest), one inside the lookback and one just outside it,
+    # a patron whose newer record changes its type, and holds spread over many blocks.
+    rows = [
+        v1_patron("p1", "SAMPLE ILL", kind="ILL", when=wall(2026, 3, 31, 8)),
+        v1_hold("b1", "p1", when=wall(2026, 9, 22, 9)),                             # 175 days later: ILL
+        v1_patron("p2", ACCOUNT, when=wall(2026, 3, 1, 8)),
+        v1_hold("b2", "p2", when=wall(2026, 9, 1, 9)),                              # 184 days later: too old, public
+        v1_patron("p3", "SAMPLE ILL 3", kind="ILL", when=wall(2026, 4, 2, 8)),
+        v1_hold("b3", "p3", when=wall(2026, 5, 2, 9)),                              # ILL then
+        v1_patron("p3", "SAMPLE PATRON 3", kind="ADULT", when=wall(2026, 6, 1, 8)),
+        v1_hold("b4", "p3", when=wall(2026, 7, 2, 9)),                              # its newer record: public
+        *[v1_hold(f"x{n}", when=wall(2026, 4, 1, 10) + timedelta(days=n * 3)) for n in range(55)],
+    ]
+    whole = get_holds_report(Connection(v1=rows), TENANT, _span_window(date(2026, 3, 1), date(2026, 9, 30)))
+    days = [day for day in (wall(2026, 3, 1) + timedelta(days=n) for n in range(214))]
+    one_day = [counts(get_holds_report(Connection(v1=rows), TENANT, _span_window(day.date(), day.date()))) for day in days]
+
+    assert counts(whole) == tuple(map(sum, zip(*one_day, strict=True)))
+    assert counts(whole) == (55 + 2, 2)                                             # x*, b2, b4 public; b1, b3 ILL
+
+
+def test_the_cutover_day_is_two_parts_each_counted_by_its_own_era_and_once_as_a_day_with_data():
+    cutover = datetime(2026, 9, 15, 17, tzinfo=UTC)                                  # noon on the 15th in Chicago
+    conn = Connection(v1=[v1_hold("b1", when=wall(2026, 9, 15, 9))], v2=[v2_hold(1, datetime(2026, 9, 15, 20, tzinfo=UTC))])
+
+    report = get_holds_report(conn, TENANT, _span_window(date(2026, 9, 14), date(2026, 9, 16), cutover=cutover))
+
+    assert counts(report) == (2, 0) and report.days_with_data == 1
+
+
+def test_empty_and_partly_filled_ranges_say_how_many_days_had_data():
+    assert get_holds_report(Connection(), TENANT, _span_window(date(2024, 1, 1), date(2025, 12, 31))).days_with_data == 0
+    partly = Connection(v1=[v1_hold("b1", when=wall(2025, 6, 2, 10)), v1_hold("b2", when=wall(2025, 6, 2, 11), hold=False)])
+    report = get_holds_report(partly, TENANT, _span_window(date(2025, 1, 1), date(2025, 12, 31)))
+    assert counts(report) == (1, 0) and report.days_with_data == 1                   # a day with only a non-hold still had data
+
+
+# =====================================================================================================================
 # The legacy rules of the site
 # =====================================================================================================================
 
@@ -251,12 +387,12 @@ def test_a_resolved_tenant_without_exactly_one_settings_row_is_a_fault_not_an_em
 # What comes out
 # =====================================================================================================================
 
-def test_the_report_is_two_integers_and_nothing_else_read():
+def test_the_report_is_three_integers_and_nothing_else_read():
     conn = Connection(v1=[v1_patron("p1", ACCOUNT), v1_hold("b1", "p1"), v1_hold("b2")], v2=[v2_hold(1, is_branch_services=True)])
 
     report = get_holds_report(conn, TENANT, window())
 
-    assert [field.name for field in dataclasses.fields(HoldsReport)] == ["public_hold_count", "ill_hold_count"]
+    assert [field.name for field in dataclasses.fields(HoldsReport)] == ["public_hold_count", "ill_hold_count", "days_with_data"]
     assert all(type(value) is int for value in dataclasses.astuple(report))
     text = repr(report)
     for private in (ACCOUNT, "p1", "b2", "101YNY", "Synthetic Title", "programming", "collection", "branch_services", "0" * 63):

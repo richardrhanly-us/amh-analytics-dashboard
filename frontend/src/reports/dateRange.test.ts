@@ -6,7 +6,6 @@ import {
   daysInRange,
   DEFAULT_PRESET_DAYS,
   earliestDate,
-  HOLDS_MAX_RANGE_DAYS,
   isCalendarDate,
   lastDays,
   MAX_RANGE_DAYS,
@@ -162,10 +161,9 @@ describe('year to date (R9D2)', () => {
   })
 })
 
-describe('the Holds report (R9D2)', () => {
-  it('covers up to 92 days, whatever a plan allows the other reports', () => {
-    expect(HOLDS_MAX_RANGE_DAYS).toBe(92)
-    expect(HOLDS_MAX_RANGE_DAYS).toBeLessThan(MAX_RANGE_DAYS)
+describe('the Holds report (UI2 v7)', () => {
+  it('has no length of its own: it takes every range the other reports take', async () => {
+    expect(Object.keys(await import('./dateRange.ts'))).not.toContain('HOLDS_MAX_RANGE_DAYS')
   })
 })
 
