@@ -2100,10 +2100,10 @@ describe('the sorter at a glance', () => {
   const drawing = () => screen.getByRole('region', { name: 'Sorter at a glance' })
   /** One station of the drawing: the stretch of the drawing under its heading. */
   const station = (name: string) => within(drawing()).getByRole('heading', { level: 4, name }).parentElement as HTMLElement
-  /** The sort line's bin cells, each as [bin, count, rank]. */
+  /** The sort line's bin cells, each as [bin, count]. */
   const tiles = () =>
     Array.from(drawing().querySelectorAll('.bin-cell')).map((cell) =>
-      ['.bin-cell-name', '.bin-cell-count', '.bin-cell-rank'].map((part) => cell.querySelector(part)?.textContent ?? ''),
+      ['.bin-cell-name', '.bin-cell-count'].map((part) => cell.querySelector(part)?.textContent ?? ''),
     )
   /** A station's outlets, each as [name, figure]. */
   const outlets = (name: string) =>
@@ -2140,12 +2140,12 @@ describe('the sorter at a glance', () => {
     expect(drawing().compareDocumentPosition(hourly) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(within(drawing()).getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent)).toEqual([
       'Induction',
-      'Reject chute',
       'Sort line',
       'Routed',
     ])
     expect(drawing()).toHaveTextContent('A summary of the day, not a live view.')
-    // One machine: the intake end (induction and the reject chute), the sort line, and the outflow rail.
+    // One machine: the intake end (induction), the sort line, and the outflow rail. Rejects are Today's, above.
+    expect(drawing()).not.toHaveTextContent(/reject/i)
     expect(Array.from(drawing().querySelectorAll('.machine > *')).map((part) => part.className)).toEqual([
       'machine-intake',
       'machine-line',
@@ -2163,24 +2163,30 @@ describe('the sorter at a glance', () => {
     expect(station('Induction')).toHaveTextContent('Peak hour so far: 11 AM–12 PM, 40')
   })
 
-  it('lays out the bins that received check-ins along the sort line in bin order, and names the three busiest in words', async () => {
+  it('lays out the bins that received check-ins along the sort line in bin order, each with its count, and ranks none', async () => {
     serve({}, live({ bins: [['1', 30], ['2', 12], ['4', 50], ['7', 8], ['10', 20]] }))
     renderApp(CENTRAL)
     await loaded()
 
     await waitFor(() => expect(tiles()).toHaveLength(5))
     expect(tiles()).toEqual([
-      ['Bin 1', '30 check-ins', '2nd busiest'],
-      ['Bin 2', '12 check-ins', ''],
-      ['Bin 4', '50 check-ins', '1st busiest'],
-      ['Bin 7', '8 check-ins', ''],
-      ['Bin 10', '20 check-ins', '3rd busiest'],
+      ['Bin 1', '30 check-ins'],
+      ['Bin 2', '12 check-ins'],
+      ['Bin 4', '50 check-ins'],
+      ['Bin 7', '8 check-ins'],
+      ['Bin 10', '20 check-ins'],
     ])
+    // No bin is ranked or badged: its count says how busy it was, and the shading pictures that.
+    // (The one "busiest" left is the legend's: "against the busiest bin's".)
+    expect(drawing()).not.toHaveTextContent(/\b(1st|2nd|3rd)\b|busiest(?! bin)/)
+    expect(drawing().querySelectorAll('.bin-cell-rank, .bin-cell-top')).toHaveLength(0)
     // Each bin's fill and shading are its count against the busiest bin's: a picture of the figure in it, hidden from reading.
     const fills = Array.from(drawing().querySelectorAll('.bin-cell-fill'))
     expect(fills.every((fill) => fill.getAttribute('aria-hidden') === 'true')).toBe(true)
-    expect(fills.map((fill) => (fill.firstElementChild as HTMLElement).style.width)).toEqual(['60%', '24%', '100%', '16%', '40%'])
-    expect(Array.from(drawing().querySelectorAll<HTMLElement>('.bin-cell')).map((cell) => cell.style.getPropertyValue('--heat'))).toEqual([
+    const cells = Array.from(drawing().querySelectorAll<HTMLElement>('.bin-cell'))
+    expect(cells.map((cell) => cell.style.getPropertyValue('--fill'))).toEqual(['60%', '24%', '100%', '16%', '40%'])
+    // The busier the bin, the heavier its shading: 1 for the busiest, and each other bin its share of that.
+    expect(cells.map((cell) => cell.style.getPropertyValue('--heat'))).toEqual([
       '0.600',
       '0.240',
       '1.000',
@@ -2201,7 +2207,7 @@ describe('the sorter at a glance', () => {
     expect(tiles()).toHaveLength(3)
   })
 
-  it('shows where the day was routed, each outcome with its share, and the reject chute with its rate and top reason', async () => {
+  it('shows where the day was routed, each outcome with its share', async () => {
     serve()
     renderApp(CENTRAL)
     await loaded()
@@ -2215,9 +2221,10 @@ describe('the sorter at a glance', () => {
     ])
     // Routing is drawn beside the bins, never wired to them: the logs do not link the two.
     expect(station('Routed')).toHaveTextContent('the logs do not link the two')
-    expect(station('Reject chute')).toHaveTextContent('6 rejected')
-    expect(station('Reject chute')).toHaveTextContent('5.0% of check-ins')
-    expect(station('Reject chute')).toHaveTextContent('Most often: Item not found (3)')
+    // Rejects are not drawn here. Today's reject figures are still above, as they were.
+    expect(within(drawing()).queryByRole('heading', { name: 'Reject chute' })).not.toBeInTheDocument()
+    expect(metric('Rejects today')).toHaveTextContent(/^6$/)
+    expect(metric('Reject rate')).toHaveTextContent(/^5\.0%$/)
   })
 
   it('draws holds only where the plan has them, and routing only where the plan has transits', async () => {
@@ -2233,7 +2240,6 @@ describe('the sorter at a glance', () => {
     )
     expect(within(drawing()).getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent)).toEqual([
       'Induction',
-      'Reject chute',
       'Sort line',
       'Holds',
     ])
@@ -2247,7 +2253,6 @@ describe('the sorter at a glance', () => {
     await waitFor(() => expect(outlets('Holds')).toHaveLength(2))
     expect(within(drawing()).getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent)).toEqual([
       'Induction',
-      'Reject chute',
       'Sort line',
       'Routed',
       'Holds',
@@ -2264,7 +2269,6 @@ describe('the sorter at a glance', () => {
     expect(station('Induction')).not.toHaveTextContent('Peak hour')
     await waitFor(() => expect(outlets('Routed')[0]).toEqual(['Kept at Main', '0']))
     expect(drawing().querySelector('.outflow-meter')).toBeNull()
-    expect(station('Reject chute')).toHaveTextContent('0 rejected')
     expect(drawing()).not.toHaveTextContent(/%|NaN|Infinity/)
   })
 
@@ -2319,12 +2323,13 @@ describe('the sort line’s end bin', () => {
       ['Bin 3', 'bin-cell-upper'],
       ['Bin 10', 'bin-cell-lower'],
     ])
-    // Its figures, badge, shading and fill are a bin's like any other: here it is the busiest.
+    // Its count, shading and fill are a bin's like any other: here it is the busiest, so fully shaded and filled.
     const end = drawing().querySelector('.bin-cell-end') as HTMLElement
     expect(end).toHaveTextContent('30 check-ins')
-    expect(end.querySelector('.bin-cell-rank')).toHaveTextContent('1st busiest')
+    expect(end.querySelector('.bin-cell-rank')).toBeNull()
     expect(end.style.getPropertyValue('--heat')).toBe('1.000')
-    expect((end.querySelector('.bin-cell-fill > span') as HTMLElement).style.width).toBe('100%')
+    expect(end.style.getPropertyValue('--fill')).toBe('100%')
+    expect(end.querySelector('.bin-cell-fill')).toHaveAttribute('aria-hidden', 'true')
     // Read in the same order as it is seen: Bin 0 first.
     expect(within(drawing()).getByRole('list', { name: 'Bins that received check-ins today, in bin order' }).firstElementChild).toBe(end)
   })
@@ -2342,12 +2347,44 @@ describe('the sort line’s end bin', () => {
     ])
   })
 
-  it('stands the end bin across both rows of the line, on the belt, in the stylesheet', () => {
-    const at = styles.indexOf('.machine-bins:not(.machine-bins-long) > .bin-cell-end {')
-    expect(at).toBeGreaterThan(-1)
-    const rule = styles.slice(at, styles.indexOf('}', at))
-    expect(rule).toContain('grid-row: 1 / span 2;')
-    expect(rule).toContain('grid-column: 1;')
-    expect(rule).toContain('align-self: center;')
+  /**
+   * The body of the stylesheet's rule for `selector`, exactly as written: a rule that starts a line (indented, inside
+   * a media query), never the tail of a longer selector.
+   */
+  function rule(selector: string): string {
+    const text = styles.replace(/\r\n/g, '\n')
+    const at = [`\n${selector} {`, `\n  ${selector} {`].map((form) => text.indexOf(form)).find((index) => index > -1) ?? -1
+    expect(at, selector).toBeGreaterThan(-1)
+    return text.slice(at, text.indexOf('}', at))
+  }
+  const LINE = '.machine-bins:not(.machine-bins-long)'
+
+  it('stands the end bin upright: across both rows and the belt, in a column narrower than the others', () => {
+    const end = rule(`${LINE} > .bin-cell-end`)
+    expect(end).toContain('grid-row: 1 / span 2;')
+    expect(end).toContain('grid-column: 1;')
+    // It stretches to the height of both rows (no alignment of its own), in its own narrow column.
+    expect(end).not.toContain('align-self')
+    expect(rule(`.machine-bins-with-end${LINE.replace('.machine-bins', '')}`)).toContain('grid-template-columns: 3.5rem;')
+    expect(rule(LINE)).toContain('grid-auto-columns: minmax(0, 5.5rem);')
+    // Its fill rises from the bottom, by the same --fill the other bins use across.
+    expect(rule(`${LINE} > .bin-cell-end .bin-cell-fill > span`)).toContain('height: var(--fill, 0%);')
+    expect(rule('.bin-cell-fill > span')).toContain('width: var(--fill, 0%);')
+  })
+
+  it('draws one compact machine, centred, with a belt only as long as its bins', () => {
+    // The machine is as wide as its bins (never wider than its column), centred both ways in the sort line's column.
+    const line = rule(LINE)
+    expect(line).toContain('width: fit-content;')
+    expect(line).toContain('max-width: 100%;')
+    expect(line).toContain('align-self: center;')
+    const stage = rule('.machine-stage')
+    expect(stage).toContain('align-items: center;')
+    expect(stage).toContain('justify-content: center;')
+    // The belt runs from the machine's left end to just past its last bin -- not across the column.
+    const belt = rule(`${LINE}::before`)
+    expect(belt).toContain('left: 0;')
+    expect(belt).toContain('right: 0;')
+    expect(line).toContain('padding-right: 0.75rem;')
   })
 })

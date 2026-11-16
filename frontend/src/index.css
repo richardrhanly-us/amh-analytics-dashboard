@@ -813,10 +813,10 @@ button[aria-disabled='true'] {
 
 /*
  * Sorter at a glance: today on one panel laid out like the sorter's own monitor. On a wide screen it is one machine
- * in three columns, divided by hairlines -- the intake end (induction, with the reject chute beneath it), the sort
- * line (the bins in sequence on both sides of a conveyor), and the outflow rail (routed, holds). On a narrow screen
- * the same parts stack in the same order. Each part is labelled like a part of a machine: a small heading with a
- * marker in its accent. Nothing moves; the shading, fills and bars sit beside the figures they picture.
+ * in three columns, divided by hairlines -- the intake end (induction), the sort line (one compact machine, centred
+ * in its column both ways), and the outflow rail (routed, holds). On a narrow screen the same parts stack in the
+ * same order. Each part is labelled like a part of a machine: a small heading with a marker in its accent. Nothing
+ * moves; the shading, fills and bars sit beside the figures they picture.
  */
 .sorter-map {
   margin-top: 1.5rem;
@@ -828,7 +828,7 @@ button[aria-disabled='true'] {
   flex-wrap: wrap;
   align-items: baseline;
   gap: 0.25rem 1rem;
-  padding: 0.75rem 1rem;
+  padding: 0.625rem 1rem;
   border-bottom: 1px solid var(--line);
 }
 
@@ -848,7 +848,6 @@ button[aria-disabled='true'] {
   grid-template-columns: minmax(0, 1fr);
 }
 
-.machine-intake,
 .machine-rail {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
@@ -864,18 +863,17 @@ button[aria-disabled='true'] {
 
 @media (min-width: 60rem) {
   .machine {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 3fr) minmax(0, 1.3fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2.6fr) minmax(0, 1.3fr);
   }
 
   .machine-no-rail {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 4fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 3.9fr);
   }
 
   .machine > * {
     border-bottom: 0;
   }
 
-  .machine-intake,
   .machine-rail {
     grid-template-columns: minmax(0, 1fr);
     align-content: start;
@@ -891,10 +889,9 @@ button[aria-disabled='true'] {
 }
 
 .machine-part {
-  padding: 0.75rem 1rem 0.875rem;
+  padding: 0.625rem 0.875rem 0.75rem;
 }
 
-.machine-intake > .machine-part + .machine-part,
 .machine-rail > .machine-part + .machine-part {
   border-top: 1px solid var(--line);
 }
@@ -937,13 +934,6 @@ button[aria-disabled='true'] {
   --part: var(--accent);
 }
 
-/* The reject chute is set apart within the intake end: an edge and a faint wash in the rejects accent. */
-.machine-part-rejects {
-  --part: var(--zone-rejects);
-  border-left: 3px solid var(--zone-rejects);
-  background: color-mix(in srgb, var(--zone-rejects) 6%, var(--surface));
-}
-
 .machine-figure {
   margin: 0;
   font-size: 2rem;
@@ -952,10 +942,6 @@ button[aria-disabled='true'] {
   line-height: 1.1;
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
-}
-
-.machine-figure-small {
-  font-size: 1.5rem;
 }
 
 .machine-unit {
@@ -995,37 +981,76 @@ button[aria-disabled='true'] {
 }
 
 /*
- * The sort line. On a narrow screen, and for a long machine, the bins are a compact grid in bin order. On a wide
- * screen they stand in sequence along both sides of the conveyor, as on the sorter's monitor: Bin 0 alone at the
- * left end, then the rest in ascending order, alternating sides, each joined to the belt by a short stub. Which side
- * a bin is drawn on is layout, not where it stands on the machine.
+ * The sort line's column: its label at the top, and the machine centred in the rest of it, across and down, so that
+ * it sits balanced between the intake and the rail however many bins it has.
+ */
+.machine-line {
+  display: flex;
+}
+
+.machine-part-bins {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.machine-stage {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.machine-stage > .machine-quiet {
+  margin: 0;
+  text-align: center;
+}
+
+/*
+ * The sort line. On a narrow screen, and for a long machine, the bins are a compact grid in bin order, the width of
+ * the column. On a wide screen they are one compact machine, only as wide as its bins: Bin 0 upright at the left
+ * end, then the rest in ascending order, alternating sides of a belt that runs under them and a little past the
+ * last, each joined to it by a short stub. Which side a bin is drawn on is layout, not where it stands.
  */
 .machine-bins {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 5rem), 1fr));
+  align-self: stretch;
   gap: 0.375rem;
-  margin: 0.25rem 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
 
-@media (min-width: 60rem) {
+@media (min-width: 75rem) {
   .machine-bins:not(.machine-bins-long) {
     position: relative;
     grid-template-columns: none;
     grid-template-rows: auto auto;
     grid-auto-columns: minmax(0, 5.5rem);
     grid-auto-flow: column;
-    gap: 1.375rem 0.375rem;
+    align-self: center;
+    gap: 1.25rem 0.375rem;
+    width: fit-content;
+    max-width: 100%;
+    /* Room for the belt to run on a little past the last bin. */
+    padding-right: 0.75rem;
   }
 
-  /* The conveyor: a belt of chevrons between the two rows, from the intake end to the rail. */
+  /* The end bin's own column: narrower than the others, which take the automatic columns after it. */
+  .machine-bins-with-end:not(.machine-bins-long) {
+    grid-template-columns: 3.5rem;
+  }
+
+  /* The conveyor: a belt of chevrons between the two rows, from the left end of the machine to just past its last bin. */
   .machine-bins:not(.machine-bins-long)::before {
     content: '';
     position: absolute;
     top: 50%;
-    right: -1rem;
-    left: -1rem;
+    right: 0;
+    left: 0;
     height: 0.5rem;
     border-top: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
@@ -1039,7 +1064,7 @@ button[aria-disabled='true'] {
     position: absolute;
     left: 50%;
     width: 2px;
-    height: 0.4375rem;
+    height: 0.375rem;
     background: var(--border);
   }
 
@@ -1052,34 +1077,61 @@ button[aria-disabled='true'] {
   }
 
   /*
-   * Bin 0, the end bin: alone at the left end of the line, across both rows and centred on the belt, as the
-   * sorter's own screen draws it. It sits on the belt, so it has no stub. The other bins follow from the next column.
+   * Bin 0, the end bin: upright at the left end of the machine -- narrower than the others and as tall as both rows
+   * and the belt between them, which it stands on, so it has no stub. Its label and count are set to fit its width,
+   * and its fill rises from the bottom instead of running across.
    */
   .machine-bins:not(.machine-bins-long) > .bin-cell-end {
     grid-row: 1 / span 2;
     grid-column: 1;
-    align-self: center;
+    grid-template-rows: auto auto 1fr;
+    justify-items: center;
+    padding: 0.375rem 0.3125rem;
+    text-align: center;
   }
 
   .machine-bins:not(.machine-bins-long) > .bin-cell-end::after {
     content: none;
   }
+
+  .machine-bins:not(.machine-bins-long) > .bin-cell-end .bin-cell-name {
+    font-size: 0.625rem;
+  }
+
+  .machine-bins:not(.machine-bins-long) > .bin-cell-end .bin-cell-count {
+    font-size: 0.9375rem;
+    overflow-wrap: anywhere;
+  }
+
+  .machine-bins:not(.machine-bins-long) > .bin-cell-end .bin-cell-fill {
+    display: flex;
+    align-items: flex-end;
+    width: 0.375rem;
+    height: auto;
+    min-height: 1.5rem;
+    margin-top: 0.375rem;
+  }
+
+  .machine-bins:not(.machine-bins-long) > .bin-cell-end .bin-cell-fill > span {
+    width: 100%;
+    height: var(--fill, 0%);
+  }
 }
 
 /*
  * A bin cell: its number, its count, and a fill bar -- shaded, and filled, by its check-ins against the busiest
- * bin's (--heat, 0 to 1, set by the bin). The three busiest carry a badge that says so, and a stronger edge.
+ * bin's (--heat, 0 to 1, and --fill, a percentage, both set by the bin). The count is always written out: the
+ * shading only pictures it.
  */
 .bin-cell {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-areas:
-    'name rank'
-    'count count'
-    'fill fill';
-  align-items: baseline;
-  gap: 0 0.25rem;
+    'name'
+    'count'
+    'fill';
+  align-content: start;
   padding: 0.3125rem 0.4375rem 0.375rem;
   border: 1px solid var(--line);
   border-radius: 0.1875rem;
@@ -1102,16 +1154,6 @@ button[aria-disabled='true'] {
   font-variant-numeric: tabular-nums;
 }
 
-.bin-cell-rank {
-  grid-area: rank;
-  padding: 0 0.25rem;
-  border-radius: 0.125rem;
-  background: var(--chart-bar);
-  color: var(--accent-text);
-  font-size: 0.6875rem;
-  font-weight: 700;
-}
-
 .bin-cell-fill {
   grid-area: fill;
   height: 0.1875rem;
@@ -1121,16 +1163,9 @@ button[aria-disabled='true'] {
 
 .bin-cell-fill > span {
   display: block;
+  width: var(--fill, 0%);
   height: 100%;
   background: var(--chart-bar);
-}
-
-.bin-cell-top {
-  border-color: var(--chart-bar);
-}
-
-.bin-cell-rank-1 {
-  box-shadow: inset 0 0 0 1px var(--chart-bar);
 }
 
 /* The outflow rail: each outcome a row -- swatch and name, count and share -- with its share of the day as a bar. */
