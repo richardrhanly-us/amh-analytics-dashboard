@@ -996,9 +996,9 @@ button[aria-disabled='true'] {
 
 /*
  * The sort line. On a narrow screen, and for a long machine, the bins are a compact grid in bin order. On a wide
- * screen they stand in sequence along both sides of the conveyor, as on the sorter's monitor -- bin order runs left
- * to right, alternating sides -- each joined to it by a short stub. Which side a bin is drawn on is layout, not
- * where it stands on the machine.
+ * screen they stand in sequence along both sides of the conveyor, as on the sorter's monitor: Bin 0 alone at the
+ * left end, then the rest in ascending order, alternating sides, each joined to the belt by a short stub. Which side
+ * a bin is drawn on is layout, not where it stands on the machine.
  */
 .machine-bins {
   display: grid;
@@ -1043,12 +1043,26 @@ button[aria-disabled='true'] {
     background: var(--border);
   }
 
-  .machine-bins:not(.machine-bins-long) > .bin-cell:nth-child(odd)::after {
+  .machine-bins:not(.machine-bins-long) > .bin-cell-upper::after {
     top: 100%;
   }
 
-  .machine-bins:not(.machine-bins-long) > .bin-cell:nth-child(even)::after {
+  .machine-bins:not(.machine-bins-long) > .bin-cell-lower::after {
     bottom: 100%;
+  }
+
+  /*
+   * Bin 0, the end bin: alone at the left end of the line, across both rows and centred on the belt, as the
+   * sorter's own screen draws it. It sits on the belt, so it has no stub. The other bins follow from the next column.
+   */
+  .machine-bins:not(.machine-bins-long) > .bin-cell-end {
+    grid-row: 1 / span 2;
+    grid-column: 1;
+    align-self: center;
+  }
+
+  .machine-bins:not(.machine-bins-long) > .bin-cell-end::after {
+    content: none;
   }
 }
 
