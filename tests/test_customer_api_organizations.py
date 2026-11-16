@@ -26,10 +26,12 @@ from fastapi.testclient import TestClient
 import main
 from services import (
     access_service,
+    bin_layout_service,
     entitlement_service,
     session_service,
     sorter_inventory_service,
 )
+from services.bin_layout import BinLayout
 from services.sorter_inventory_service import SorterSite
 
 COOKIE = {"Cookie": "__Host-sortview_api_session=synthetic-opaque-session-token"}
@@ -51,7 +53,7 @@ BRANCHES = [
 SORTERS = [SorterSite(slug="main", name="Main Library AMH", host_branch_slug="main", host_branch_name="Main",
                       status="active", collector_count=1, onboarding_status="ready")]
 SORTERS_JSON = [{"slug": "main", "name": "Main Library AMH", "host_branch": {"slug": "main", "name": "Main"},
-                 "status": "active", "collector_count": 1, "onboarding_status": "ready"}]
+                 "status": "active", "collector_count": 1, "onboarding_status": "ready", "bin_layout": None}]
 SUBSCRIPTION = {"id": 500001, "status": "active", "started_at": None, "ends_at": None,
                 "plan_id": 400001, "plan_code": "pro", "plan_name": "Pro"}
 ENTITLEMENTS = {"exports": {"enabled": True, "limit_value": None},
@@ -78,7 +80,8 @@ class Services:
     services, with per-organization answers."""
 
     def __init__(self, monkeypatch, *, user=USER, memberships=(ACME, BETA), modes=None, roles=None,
-                 subscription=SUBSCRIPTION, entitlements=ENTITLEMENTS, branches=BRANCHES, sorters=SORTERS):
+                 subscription=SUBSCRIPTION, entitlements=ENTITLEMENTS, branches=BRANCHES, sorters=SORTERS,
+                 layouts=None):
         self.calls: list[tuple] = []
         self.user = user
         self.memberships = [dict(m) for m in memberships]
@@ -88,6 +91,7 @@ class Services:
         self.entitlements = entitlements
         self.branches = branches
         self.sorters = list(sorters)
+        self.layouts = dict(layouts or {})
         self.raise_on: dict[str, Exception] = {}
 
         monkeypatch.setattr(session_service, "validate_session", self._validate_session)
@@ -96,6 +100,7 @@ class Services:
         monkeypatch.setattr(access_service, "get_org_branches", self._get_org_branches)
         monkeypatch.setattr(entitlement_service, "build_entitlement_context", self._build_entitlement_context)
         monkeypatch.setattr(sorter_inventory_service, "list_sorter_sites", self._list_sorter_sites)
+        monkeypatch.setattr(bin_layout_service, "read_bin_layouts", self._read_bin_layouts)
 
     def _record(self, name, *args):
         self.calls.append((name, *args))
@@ -121,6 +126,10 @@ class Services:
     def _list_sorter_sites(self, org_slug):
         self._record("list_sorter_sites", org_slug)
         return list(self.sorters)
+
+    def _read_bin_layouts(self, org_slug):
+        self._record("read_bin_layouts", org_slug)
+        return dict(self.layouts)
 
     def _build_entitlement_context(self, user_id, org_slug):
         self._record("build_entitlement_context", user_id, org_slug)
@@ -278,6 +287,7 @@ def test_the_detail_returns_the_organization_its_branches_and_its_entitlements(a
         ("build_entitlement_context", 7, "acme"),
         ("get_org_branches", "acme"),
         ("list_sorter_sites", "acme"),
+        ("read_bin_layouts", "acme"),
     ]
 
 
@@ -397,7 +407,8 @@ def test_a_blocked_organization_is_refused_before_its_entitlements_are_read(api,
 
 @pytest.mark.parametrize(
     "failing",
-    ["get_user_memberships", "get_org_access_mode", "build_entitlement_context", "get_org_branches", "list_sorter_sites"],
+    ["get_user_memberships", "get_org_access_mode", "build_entitlement_context", "get_org_branches", "list_sorter_sites",
+     "read_bin_layouts"],
 )
 def test_a_database_failure_in_the_detail_is_500_never_404(api, monkeypatch, failing):
     services = Services(monkeypatch)
@@ -487,6 +498,7 @@ def _real_core(monkeypatch, results) -> FakeEngine:
     monkeypatch.setattr(access_service, "get_engine", lambda: engine)
     monkeypatch.setattr(entitlement_service, "get_engine", lambda: engine)
     monkeypatch.setattr(sorter_inventory_service, "get_engine", lambda: engine)
+    monkeypatch.setattr(bin_layout_service, "get_engine", lambda: engine)
     return engine
 
 
@@ -499,6 +511,7 @@ def _detail_results():
         FakeQueryResult(all_rows=[{"feature_key": "exports", "enabled": True, "limit_value": None}]),
         FakeQueryResult(all_rows=[dict(b) for b in BRANCHES]),                       # get_org_branches
         FakeQueryResult(all_rows=[dict(row) for row in INSTALLATION_ROWS]),          # list_sorter_sites
+        FakeQueryResult(all_rows=[]),                                                # read_bin_layouts
     ]
 
 
@@ -520,9 +533,11 @@ def test_the_detail_runs_the_core_queries_scoped_to_the_session_user_and_the_pat
         {"plan_id": 400001},
         {"org_slug": "acme"},
         {"org_slug": "acme"},
+        {"org_slug": "acme"},
     ]
     assert "b.status = 'active'" in engine.calls[5]["sql"]  # only active branches, as the dashboard offers
     assert "FROM collector_installations" in engine.calls[6]["sql"]
+    assert "settings_json -> 'bin_layout'" in engine.calls[7]["sql"]
     assert response.json()["sorters"] == SORTERS_JSON
 
 
@@ -533,7 +548,7 @@ def test_nothing_is_cached_between_requests(api, monkeypatch):
     second = api.get("/api/organizations/acme", headers=COOKIE)
 
     assert first.status_code == second.status_code == 200
-    assert len(engine.calls) == 14  # every lookup ran again for the second request
+    assert len(engine.calls) == 16  # every lookup ran again for the second request
 
 
 def test_the_list_reads_each_organizations_status_fresh(api, monkeypatch):
@@ -592,13 +607,14 @@ def test_the_detail_lists_the_organizations_sorters_separately_from_its_branches
     assert [sorter["slug"] for sorter in body["sorters"]] == ["main"]
 
 
-def test_a_sorter_carries_exactly_its_six_public_fields(api, monkeypatch):
+def test_a_sorter_carries_exactly_its_seven_public_fields(api, monkeypatch):
     Services(monkeypatch)
 
     response = api.get("/api/organizations/acme", headers=COOKIE)
 
     for sorter in response.json()["sorters"]:
-        assert list(sorter) == ["slug", "name", "host_branch", "status", "collector_count", "onboarding_status"]
+        assert list(sorter) == ["slug", "name", "host_branch", "status", "collector_count", "onboarding_status",
+                                "bin_layout"]
         assert list(sorter["host_branch"]) == ["slug", "name"]
     _assert_no_internal_or_operational_identifier(response)
     for leaked in ("hostname", "collector_version", "installation_id", "token", "enrollment", "last_seen", "installed_at"):
@@ -659,7 +675,7 @@ def test_each_sorter_says_whether_its_site_is_ready_or_still_waiting_for_its_fir
 def test_a_stored_onboarding_status_reaches_the_browser_as_ready_or_pending_only(api, monkeypatch, stored, presented):
     """Through the REAL inventory read: whatever text is stored, the browser is told one of two words."""
     results = _detail_results()
-    results[-1] = FakeQueryResult(all_rows=[{**INSTALLATION_ROWS[0], "onboarding_status": stored}])
+    results[-2] = FakeQueryResult(all_rows=[{**INSTALLATION_ROWS[0], "onboarding_status": stored}])
     _real_core(monkeypatch, results)
 
     response = api.get("/api/organizations/acme", headers=COOKIE)
@@ -745,3 +761,66 @@ def test_the_organization_list_carries_no_sorters(api, monkeypatch):
 
     assert "sorters" not in response.text
     assert "list_sorter_sites" not in services.names()
+
+
+# =====================================================================================================================
+# UI2 v6: a sorter's bin layout
+# =====================================================================================================================
+
+SEVEN_BINS = BinLayout(end="0", columns=(("6", "5"), ("4", "3"), ("2", "1")))
+
+
+def test_a_sorter_with_a_configured_layout_carries_it_and_the_others_carry_null(api, monkeypatch):
+    Services(monkeypatch, sorters=[_site("main", "Main AMH", "Main"), _site("east", "East AMH", "East")],
+             layouts={"main": SEVEN_BINS})
+
+    sorters = api.get("/api/organizations/acme", headers=COOKIE).json()["sorters"]
+
+    assert [(sorter["slug"], sorter["bin_layout"]) for sorter in sorters] == [
+        ("main", {"end": "0", "columns": [["6", "5"], ["4", "3"], ["2", "1"]]}),
+        ("east", None),
+    ]
+
+
+def test_a_layout_for_a_branch_that_is_not_a_sorter_is_never_sent(api, monkeypatch):
+    Services(monkeypatch, layouts={"east": SEVEN_BINS})
+
+    body = api.get("/api/organizations/acme", headers=COOKIE).json()
+
+    assert [(sorter["slug"], sorter["bin_layout"]) for sorter in body["sorters"]] == [("main", None)]
+
+
+def test_an_organization_with_no_sorter_does_not_read_layouts(api, monkeypatch):
+    services = Services(monkeypatch, sorters=[], layouts={"main": SEVEN_BINS})
+
+    assert api.get("/api/organizations/acme", headers=COOKIE).json()["sorters"] == []
+    assert "read_bin_layouts" not in services.names()
+
+
+def test_an_invalid_stored_layout_is_null_and_the_organization_still_loads(api, monkeypatch, caplog):
+    """The real read, on a document whose layout names a bin twice: logged, sent as null, nothing else fails."""
+    engine = _real_core(monkeypatch, _detail_results()[:-1] + [
+        FakeQueryResult(all_rows=[{"branch_slug": "main",
+                                   "bin_layout": {"end": "0", "columns": [["6", "6"]], "note": "CANARY-VALUE"}}]),
+    ])
+
+    with caplog.at_level("WARNING", logger="sortview.bin_layouts"):
+        response = api.get("/api/organizations/acme", headers=COOKIE)
+
+    assert response.status_code == 200
+    assert response.json()["sorters"] == SORTERS_JSON
+    assert len(engine.calls) == 8
+    assert [record.getMessage() for record in caplog.records] == ["bin layout ignored: org=acme sorter=main reason=wrong_fields"]
+    assert "CANARY-VALUE" not in caplog.text
+
+
+def test_a_valid_stored_layout_reaches_the_browser_through_the_real_read(api, monkeypatch):
+    _real_core(monkeypatch, _detail_results()[:-1] + [
+        FakeQueryResult(all_rows=[{"branch_slug": "main", "bin_layout": json.dumps(
+            {"end": "0", "columns": [["6", "5"], ["4", "3"], ["2", "1"]]})}]),
+    ])
+
+    response = api.get("/api/organizations/acme", headers=COOKIE)
+
+    assert response.json()["sorters"][0]["bin_layout"] == {"end": "0", "columns": [["6", "5"], ["4", "3"], ["2", "1"]]}
+    _assert_no_internal_or_operational_identifier(response)

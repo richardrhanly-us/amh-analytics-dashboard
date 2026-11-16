@@ -2394,3 +2394,134 @@ describe('the sort line’s end bin', () => {
     expect(line).toContain('padding-right: 0.75rem;')
   })
 })
+
+describe('a sorter with a configured bin layout', () => {
+  const LAYOUT_SORTER = '/organizations/riverside/sorters/main'
+  const SEVEN_BINS = { end: '0', columns: [['6', '5'], ['4', '3'], ['2', '1']] }
+  /** Riverside's sorter, given a configured layout by the API -- Bins 0 to 6 -- and the day's figures in `fixture`. */
+  const withLayout = (fixture: LiveFixture, binLayout: unknown = SEVEN_BINS) => ({
+    'GET /api/organizations/riverside': () =>
+      jsonResponse(200, { ...RIVERSIDE_DETAIL, sorters: [{ ...RIVERSIDE_DETAIL.sorters[0], bin_layout: binLayout }] }),
+    ...liveRoutes('riverside', 'main', fixture),
+  })
+  const drawing = () => screen.getByRole('region', { name: 'Sorter at a glance' })
+  const cells = () => Array.from(drawing().querySelectorAll<HTMLElement>('.bin-cell'))
+  /** Each bin cell in list order, as [bin, count, where it is drawn on the line]. */
+  const placed = () =>
+    cells().map((cell) => [
+      cell.querySelector('.bin-cell-name')?.textContent,
+      cell.querySelector('.bin-cell-count')?.textContent,
+      ['bin-cell-end', 'bin-cell-upper', 'bin-cell-lower'].find((side) => cell.classList.contains(side)),
+    ])
+  const binsList = () => within(drawing()).getByRole('list', { name: 'Bins on this sorter, in their places along the machine' })
+
+  it('draws all seven bins in their physical places, a bin with no check-ins today with 0', async () => {
+    serve(withLayout(live({ bins: [['1', 30], ['4', 50], ['6', 40]] })))
+    renderApp(LAYOUT_SORTER)
+    await loaded()
+
+    await waitFor(() => expect(placed()).toHaveLength(7))
+    // Bin 0 alone at the left end; then, column by column from the left, the bin above the belt and the one below:
+    // 6 over 5, 4 over 3, 2 over 1 -- not ascending order.
+    expect(placed()).toEqual([
+      ['Bin 0', '0 check-ins', 'bin-cell-end'],
+      ['Bin 6', '40 check-ins', 'bin-cell-upper'],
+      ['Bin 5', '0 check-ins', 'bin-cell-lower'],
+      ['Bin 4', '50 check-ins', 'bin-cell-upper'],
+      ['Bin 3', '0 check-ins', 'bin-cell-lower'],
+      ['Bin 2', '0 check-ins', 'bin-cell-upper'],
+      ['Bin 1', '30 check-ins', 'bin-cell-lower'],
+    ])
+    const upper = cells().filter((cell) => cell.classList.contains('bin-cell-upper'))
+    const lower = cells().filter((cell) => cell.classList.contains('bin-cell-lower'))
+    expect(upper.map((cell) => cell.querySelector('.bin-cell-name')?.textContent)).toEqual(['Bin 6', 'Bin 4', 'Bin 2'])
+    expect(lower.map((cell) => cell.querySelector('.bin-cell-name')?.textContent)).toEqual(['Bin 5', 'Bin 3', 'Bin 1'])
+    // Bin 0 is first, read and drawn: the left end of the machine, upright on the belt.
+    expect(binsList().firstElementChild).toBe(drawing().querySelector('.bin-cell-end'))
+    expect(drawing().querySelector('.bin-cell-end')).toHaveTextContent('Bin 0')
+  })
+
+  it('shades only by observed check-ins: an empty bin is lightest and unfilled, the busiest observed bin is full', async () => {
+    serve(withLayout(live({ bins: [['1', 30], ['4', 50], ['6', 40]] })))
+    renderApp(LAYOUT_SORTER)
+    await loaded()
+
+    await waitFor(() => expect(cells()).toHaveLength(7))
+    // In list order: 0, 6, 5, 4, 3, 2, 1. Against the busiest observed bin (Bin 4, 50).
+    expect(cells().map((cell) => cell.style.getPropertyValue('--heat'))).toEqual(['0.000', '0.800', '0.000', '1.000', '0.000', '0.000', '0.600'])
+    expect(cells().map((cell) => cell.style.getPropertyValue('--fill'))).toEqual(['0%', '80%', '0%', '100%', '0%', '0%', '60%'])
+    expect(drawing().querySelectorAll('.bin-cell-fill[aria-hidden="true"]')).toHaveLength(7)
+    expect(drawing()).toHaveTextContent('each bin’s check-ins against the busiest bin’s')
+    // The bins drawn with 0 are not check-ins: today's figures and the bin volume report are as the API gave them.
+    expect(metric('Bins observed')).toHaveTextContent(/^3$/)
+    fireEvent.click(screen.getByRole('button', { name: 'Show table: Check-ins by bin today' }))
+    expect(rows('Check-ins by bin today').map((row) => row[0])).toEqual(['Bin 1', 'Bin 4', 'Bin 6'])
+  })
+
+  it('draws every bin with 0 on a day with no check-ins, and says nothing reached a bin', async () => {
+    serve(withLayout(live({ hours: hoursWith({}), reasons: [0, 0, 0, 0, 0, 0, 0, 0] })))
+    renderApp(LAYOUT_SORTER)
+    await loaded()
+
+    await waitFor(() => expect(placed()).toHaveLength(7))
+    expect(placed().map(([name, figure]) => [name, figure])).toEqual(
+      ['0', '6', '5', '4', '3', '2', '1'].map((key) => [`Bin ${key}`, '0 check-ins']),
+    )
+    expect(cells().every((cell) => cell.style.getPropertyValue('--heat') === '0.000' && cell.style.getPropertyValue('--fill') === '0%')).toBe(true)
+    expect(drawing()).toHaveTextContent('Nothing has reached a bin yet today.')
+    expect(drawing()).not.toHaveTextContent(/busiest|%|NaN|Infinity/)
+  })
+
+  it('still draws a bin the layout does not name, after the machine’s own, rather than dropping its check-ins', async () => {
+    serve(withLayout(live({ bins: [['1', 60], ['9', 60]] })))
+    renderApp(LAYOUT_SORTER)
+    await loaded()
+
+    await waitFor(() => expect(placed()).toHaveLength(8))
+    expect(placed()[7]).toEqual(['Bin 9', '60 check-ins', 'bin-cell-upper'])
+  })
+
+  /** Only the bins observed today, in bin order: a bin that received nothing is not known to exist. */
+  const expectObservedOnly = () => {
+    expect(placed()).toEqual([
+      ['Bin 1', '30 check-ins', 'bin-cell-upper'],
+      ['Bin 4', '50 check-ins', 'bin-cell-lower'],
+      ['Bin 6', '40 check-ins', 'bin-cell-upper'],
+    ])
+    expect(within(drawing()).getByRole('list', { name: 'Bins that received check-ins today, in bin order' })).toBeInTheDocument()
+    expect(within(drawing()).queryByRole('list', { name: /Bins on this sorter/ })).not.toBeInTheDocument()
+  }
+
+  it('draws a sorter the API gives no layout from its check-ins alone, as before', async () => {
+    // Riverside's sorter as the API lists it without a layout (bin_layout left out), and as null.
+    serve({}, live({ bins: [['1', 30], ['4', 50], ['6', 40]] }))
+    renderApp(LAYOUT_SORTER)
+    await loaded()
+    await waitFor(() => expect(placed()).toHaveLength(3))
+    expectObservedOnly()
+  })
+
+  it('gives no other sorter the layout: each sorter is drawn by its own', async () => {
+    serve({ ...withLayout(LIVE) }, live({ bins: [['1', 30], ['4', 50], ['6', 40]] }))
+    renderApp(CENTRAL)
+    await loaded()
+    await waitFor(() => expect(placed()).toHaveLength(3))
+    expectObservedOnly()
+  })
+
+  it.each([
+    ['null', null],
+    ['a bin named twice', { end: '0', columns: [['6', '6']] }],
+    ['an unknown field', { ...SEVEN_BINS, rows: [] }],
+    ['a bin with a leading zero', { end: '0', columns: [['06', '5']] }],
+    ['a column that is not a pair', { end: '0', columns: [['6']] }],
+    ['no columns', { end: '0', columns: [] }],
+    ['a number for a bin', { end: 0, columns: [['6', '5']] }],
+  ])('falls back to the observed bins, and loads the page, when the layout is %s', async (_, binLayout) => {
+    serve(withLayout(live({ bins: [['1', 30], ['4', 50], ['6', 40]] }), binLayout))
+    renderApp(LAYOUT_SORTER)
+    await loaded()
+    await waitFor(() => expect(placed()).toHaveLength(3))
+    expectObservedOnly()
+  })
+})

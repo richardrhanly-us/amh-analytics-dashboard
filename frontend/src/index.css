@@ -1011,8 +1011,8 @@ button[aria-disabled='true'] {
 /*
  * The sort line. On a narrow screen, and for a long machine, the bins are a compact grid in bin order, the width of
  * the column. On a wide screen they are one compact machine, only as wide as its bins: Bin 0 upright at the left
- * end, then the rest in ascending order, alternating sides of a belt that runs under them and a little past the
- * last, each joined to it by a short stub. Which side a bin is drawn on is layout, not where it stands.
+ * end, then the rest in list order, alternating sides of a belt that runs under them and a little past the last,
+ * each joined to it by a short stub. List order is ascending bin order, or a sorter's own layout where it is known.
  */
 .machine-bins {
   display: grid;

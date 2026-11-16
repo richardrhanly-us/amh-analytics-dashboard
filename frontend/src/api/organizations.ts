@@ -44,6 +44,15 @@ export const ONBOARDING_STATUSES = ['pending', 'ready'] as const
 export type OnboardingStatus = (typeof ONBOARDING_STATUSES)[number]
 
 /**
+ * Every bin of one sorter and where it stands: `end`, the bin alone at the left end of the line; `columns`, from that
+ * end along the belt, each [the bin above the belt, the bin below it]. Configured for one machine by an operator.
+ */
+export interface BinLayout {
+  end: string
+  columns: Array<[string, string]>
+}
+
+/**
  * One sorting machine the organization runs SortView on -- a registered
  * installation, never a branch that merely exists or a place items are routed
  * to. More exactly it is a sorter SITE: the API gives one entry per host
@@ -61,6 +70,8 @@ export interface SorterSummary {
   collector_count: number
   /** The site's setup progress. Only the organization's own list says it; its reports do not. */
   onboarding_status: OnboardingStatus
+  /** The machine's configured bins, or null: its bins are then known only from its check-ins. */
+  bin_layout: BinLayout | null
 }
 
 export interface SubscriptionSummary {
@@ -152,7 +163,7 @@ export function parseSorterIdentity(value: unknown): Pick<SorterSummary, 'slug' 
 }
 
 /** What the organization and its reports both say about a sorter. */
-export function parseSorter(value: unknown): Omit<SorterSummary, 'onboarding_status'> {
+export function parseSorter(value: unknown): Omit<SorterSummary, 'onboarding_status' | 'bin_layout'> {
   const { status, collector_count } = record(value)
   if (
     !SORTER_STATUSES.includes(status as SorterStatus) ||
@@ -165,13 +176,43 @@ export function parseSorter(value: unknown): Omit<SorterSummary, 'onboarding_sta
   return { ...parseSorterIdentity(value), status: status as SorterStatus, collector_count }
 }
 
-/** A sorter as the organization lists it, with its setup progress. */
+// A bin as the reports key it: one to four ASCII digits, no leading zero.
+const BIN_KEY = /^(0|[1-9][0-9]{0,3})$/
+const MAX_COLUMNS = 32
+
+/**
+ * A sorter's bin layout, as the API's own check allows it -- or null. Unlike the rest of the response, a layout that
+ * is not one is not a failure: it only says how to draw the bins, so the sorter is drawn without it, from its
+ * check-ins, as a sorter with none is. Left out (an API from before layouts) is none.
+ */
+function parseBinLayout(value: unknown): BinLayout | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return null
+  }
+  const { end, columns, ...rest } = value as Record<string, unknown>
+  const isBin = (key: unknown): key is string => typeof key === 'string' && BIN_KEY.test(key)
+  if (
+    Object.keys(rest).length > 0 ||
+    !isBin(end) ||
+    !Array.isArray(columns) ||
+    columns.length === 0 ||
+    columns.length > MAX_COLUMNS ||
+    !columns.every((column) => Array.isArray(column) && column.length === 2 && column.every(isBin))
+  ) {
+    return null
+  }
+  const pairs = columns as Array<[string, string]>
+  const bins = [end, ...pairs.flat()]
+  return new Set(bins).size === bins.length ? { end, columns: pairs.map(([upper, lower]) => [upper, lower]) } : null
+}
+
+/** A sorter as the organization lists it, with its setup progress and its bin layout. */
 function parseOrganizationSorter(value: unknown): SorterSummary {
-  const { onboarding_status } = record(value)
+  const { onboarding_status, bin_layout } = record(value)
   if (!ONBOARDING_STATUSES.includes(onboarding_status as OnboardingStatus)) {
     throw unexpectedResponse(200)
   }
-  return { ...parseSorter(value), onboarding_status: onboarding_status as OnboardingStatus }
+  return { ...parseSorter(value), onboarding_status: onboarding_status as OnboardingStatus, bin_layout: parseBinLayout(bin_layout) }
 }
 
 /**

@@ -1015,6 +1015,7 @@ One line each, dated. Pick up only when a milestone needs it, or when it is prom
 - 2026-10-19 — The tracked `docs/accessibility-conformance-report.md` (WCAG 2.1) predates the VPAT draft: it still rates 3.1.1 Partially Supports and has older 2.2.1/3.3.4 wording. Reconcile when B resumes (priority 4).
 - 2026-10-01 — `ruleset_id`: `docs/contract-v2-design.md` §5 contradicts the deliberate code behavior; fix the doc or the code.
 - 2026-10-27 — The G3 test installation (`SortView G3 Installer Test`, installation 7) is still `active` while its task is disabled, so the scheduled pipeline-health check fails on its stale heartbeat. Fix: set that installation to Inactive in React admin; no code change (**verify** whether done).
+- 2026-11-16 — Bin-layout management UI (UI2 v6 follow-up): a sorter's `bin_layout` (`branch_settings.settings_json`) can only be set by an operator with `scripts/set_sorter_bin_layout.py` (procedure: `docs/sorter-bin-layout-procedure.md`). A Super Admin / React admin screen to view, set and clear a sorter's layout, reusing `services.bin_layout` validation, writing only that key, with an audit of who changed it. Also undecided: sorters with an odd number of bins along the belt (a layout column is exactly two bins today).
 
 ---
 

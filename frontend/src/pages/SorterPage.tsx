@@ -42,6 +42,7 @@ export function SorterPage() {
           branchSlug={sorter.host_branch.slug}
           transits={hasTransits(organization)}
           holds={hasHolds(organization)}
+          binLayout={sorter.bin_layout}
         />
       )}
     </>

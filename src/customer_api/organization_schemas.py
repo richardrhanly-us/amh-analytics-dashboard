@@ -51,6 +51,14 @@ SorterStatus = Literal["active", "provisioning", "inactive"]
 OnboardingStatus = Literal["pending", "ready"]
 
 
+class SorterBinLayout(_ResponseModel):
+    """Every bin of one sorter and where it stands (services.bin_layout): `end`, the bin alone at the left end of the
+    line; `columns`, from that end along the belt, each [the bin above the belt, the bin below it]. Bin numbers only."""
+
+    end: str
+    columns: list[tuple[str, str]]
+
+
 class SorterSummary(_ResponseModel):
     """One SortView sorter site of the organization (services.sorter_inventory_service).
 
@@ -59,7 +67,10 @@ class SorterSummary(_ResponseModel):
     machine's registered name. `collector_count` is how many collectors can
     report for the site: above one, their figures are combined and cannot be
     separated. `onboarding_status` is the host branch's setup progress: it is
-    information, and the site's reads are open whichever it is.
+    information, and the site's reads are open whichever it is. `bin_layout`
+    is the machine's configured bins (services.bin_layout_service), or null
+    for a sorter with none, or with one that is not valid: its bins are then
+    known only from its check-ins.
 
     No installation id, hostname, collector version, credential or onboarding
     message has a field here. A place a sorter merely routes items TO is not a
@@ -71,6 +82,7 @@ class SorterSummary(_ResponseModel):
     status: SorterStatus
     collector_count: int
     onboarding_status: OnboardingStatus
+    bin_layout: SorterBinLayout | None
 
 
 class SubscriptionSummary(_ResponseModel):
