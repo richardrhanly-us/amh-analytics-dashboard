@@ -3,9 +3,9 @@
 These routes describe what the user may reach, in SaaS terms only: an
 organization and a branch are identified by slug. They read the uncached core
 services (services.access_service, services.entitlement_service) and
-services.sorter_inventory_service, so membership,
-role, organization status and the organization's sorting machines are looked
-up fresh on every request. They run no SQL of their own, set no tenant
+services.sorter_inventory_service and services.bin_layout_service, so
+membership, role, organization status and the organization's sorting machines
+are looked up fresh on every request. They run no SQL of their own, set no tenant
 context and read no operational table.
 """
 
@@ -23,11 +23,18 @@ from customer_api.organization_schemas import (
     FeatureEntitlement,
     OrganizationDetail,
     OrganizationSummary,
+    SorterBinLayout,
     SorterHostBranch,
     SorterSummary,
     SubscriptionSummary,
 )
-from services import access_service, entitlement_service, sorter_inventory_service
+from services import (
+    access_service,
+    bin_layout_service,
+    entitlement_service,
+    sorter_inventory_service,
+)
+from services.bin_layout import serialize_bin_layout
 
 CurrentUser = Annotated[dict[str, Any], Depends(require_current_user)]
 
@@ -113,6 +120,9 @@ def create_organization_router() -> APIRouter:
             raise _organization_not_found()
 
         subscription = context["subscription"]
+        branches = access_service.get_org_branches(org_slug)
+        sites = sorter_inventory_service.list_sorter_sites(org_slug)
+        layouts = bin_layout_service.read_bin_layouts(org_slug) if sites else {}
         detail = OrganizationDetail(
             slug=membership["organization_slug"],
             name=membership["organization_name"],
@@ -122,11 +132,12 @@ def create_organization_router() -> APIRouter:
             # primary first -- the same set the dashboard offers.
             branches=[
                 BranchSummary(slug=branch["branch_slug"], name=branch["branch_name"], is_primary=branch["is_primary"])
-                for branch in access_service.get_org_branches(org_slug)
+                for branch in branches
             ],
             # The machines the organization runs SortView on: registered
             # installations, one entry per host branch. Never derived from the
-            # branch list above or from routing destinations.
+            # branch list above or from routing destinations. A site's bin
+            # layout is looked up by its own slug; most sorters have none.
             sorters=[
                 SorterSummary(
                     slug=site.slug,
@@ -135,8 +146,11 @@ def create_organization_router() -> APIRouter:
                     status=site.status,
                     collector_count=site.collector_count,
                     onboarding_status=site.onboarding_status,
+                    bin_layout=None if (layout := layouts.get(site.slug)) is None else SorterBinLayout(
+                        **serialize_bin_layout(layout)
+                    ),
                 )
-                for site in sorter_inventory_service.list_sorter_sites(org_slug)
+                for site in sites
             ],
             subscription=None if subscription is None else SubscriptionSummary(
                 plan_code=subscription["plan_code"],

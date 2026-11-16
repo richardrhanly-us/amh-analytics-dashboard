@@ -1,5 +1,7 @@
 import type { CSSProperties, ReactNode } from 'react'
 
+import type { BinLayout } from '../api/organizations.ts'
+import type { BinVolumeBin } from '../api/reports.ts'
 import { binLabel } from '../reports/binText.ts'
 import { formatHourRange } from '../time/productTime.ts'
 import { busiestHour } from './metrics.ts'
@@ -8,9 +10,10 @@ import type { LiveToday, Section } from './useLiveToday.ts'
 
 /**
  * Today on one panel laid out like the sorter's own monitor: the intake end on the left (induction), then the sort
- * line -- one compact machine, centred, with Bin 0 standing alone at its left end and the other bins that received
- * check-ins today in sequence along both sides of the belt -- and on the right the rail where the day's items left
- * the machine: routed home or in transit, and held. A summary of the day drawn after the machine, not a live mimic
+ * line -- one compact machine, centred, with its end bin standing alone at its left end and the other bins along both
+ * sides of the belt: every bin in its place for a sorter with a configured layout, else those that received check-ins
+ * today in sequence -- and on the right the rail where the day's items left the machine: routed home or in transit,
+ * and held. A summary of the day drawn after the machine, not a live mimic
  * of it: nothing here moves, and every figure is one the page already reads. Rejects are in Today's figures above.
  *
  * The bins and the routing rail are never wired together. A bin is where an item was logged on the sorter; a
@@ -32,8 +35,22 @@ const share = (part: number, whole: number) => {
 }
 /** A machine with more bins than this is set as a compact grid, not as one two-sided line: the line would be too fine. */
 const LONGEST_LINE = 16
-/** The bin at the left end of the line, on its own, as the sorter's screen draws it. */
+/** Without a configured layout, the bin at the left end of the line, on its own, as the sorter's screen draws it. */
 const END_BIN = '0'
+
+/**
+ * The bins to draw. With the sorter's configured layout: every bin of the machine in its place, a bin with no
+ * check-ins today drawn with 0 -- a bin, not a check-in record, so no figure changes -- and any bin the layout does
+ * not name after them, never dropped. Without one: the bins that received check-ins.
+ */
+function binsOnLine(bins: BinVolumeBin[], layout: BinLayout | null): BinVolumeBin[] {
+  if (layout === null) {
+    return bins
+  }
+  const keys = [layout.end, ...layout.columns.flat()]
+  const placed = keys.map((key) => bins.find((bin) => bin.key === key) ?? { key, checkin_count: 0, hours: Array<number>(24).fill(0) })
+  return [...placed, ...bins.filter((bin) => !keys.includes(bin.key))]
+}
 
 /** A part whose read has not answered, or could not be read: words, never a placeholder figure. */
 function Pending({ section }: { section: Section<unknown> }) {
@@ -82,20 +99,27 @@ function Induction({ live }: { live: LiveToday }) {
   )
 }
 
-/** The sort line: the bins that received check-ins today, in bin order along both sides of the conveyor. */
-function SortLine({ live }: { live: LiveToday }) {
+/**
+ * The sort line along both sides of the conveyor: a sorter with a known layout, every bin in its place; any other,
+ * the bins that received check-ins today, in bin order.
+ */
+function SortLine({ live, layout }: { live: LiveToday; layout: BinLayout | null }) {
   const { binVolume } = live
   if (binVolume.status !== 'ready') {
     return <Pending section={binVolume} />
   }
-  const { bins, unknown_bin_count: unknown } = binVolume.data
-  if (bins.length === 0 && unknown === 0) {
+  const { unknown_bin_count: unknown } = binVolume.data
+  if (layout === null && binVolume.data.bins.length === 0 && unknown === 0) {
     return <p className="machine-quiet">Nothing has reached a bin yet today.</p>
   }
-  const most = Math.max(0, ...bins.map((bin) => bin.checkin_count))
-  // In ascending bin order, as the API client guarantees. Bin 0 is the end bin: it stands alone at the left end of
-  // the line, as on the sorter's own screen, and the rest follow in pairs, one on each side of the belt.
-  const along = bins.filter((bin) => bin.key !== END_BIN)
+  // Shading is against the busiest bin's check-ins; a bin drawn with 0 changes nothing.
+  const most = Math.max(0, ...binVolume.data.bins.map((bin) => bin.checkin_count))
+  // In list order, the grid fills each column above the belt, then below. Without a layout that is ascending bin
+  // order, as the API client guarantees. The end bin (the layout's, else Bin 0) stands alone at the left end of the
+  // line, as on the sorter's own screen, and the rest follow in pairs, one on each side of the belt.
+  const bins = binsOnLine(binVolume.data.bins, layout)
+  const end = layout?.end ?? END_BIN
+  const along = bins.filter((bin) => bin.key !== end)
   const classes = ['machine-bins']
   if (bins.length > LONGEST_LINE) {
     classes.push('machine-bins-long')
@@ -107,10 +131,13 @@ function SortLine({ live }: { live: LiveToday }) {
     // The machine, centred in its column: the bins, the belt they stand on (drawn by the list), and a line under it.
     <div className="machine-stage">
       {bins.length > 0 && (
-        <ol className={classes.join(' ')} aria-label="Bins that received check-ins today, in bin order">
+        <ol
+          className={classes.join(' ')}
+          aria-label={layout === null ? 'Bins that received check-ins today, in bin order' : 'Bins on this sorter, in their places along the machine'}
+        >
           {bins.map((bin) => {
             const relative = most > 0 ? bin.checkin_count / most : 0
-            const side = bin.key === END_BIN ? 'bin-cell-end' : along.indexOf(bin) % 2 === 0 ? 'bin-cell-upper' : 'bin-cell-lower'
+            const side = bin.key === end ? 'bin-cell-end' : along.indexOf(bin) % 2 === 0 ? 'bin-cell-upper' : 'bin-cell-lower'
             return (
               <li
                 key={bin.key}
@@ -133,7 +160,11 @@ function SortLine({ live }: { live: LiveToday }) {
         </ol>
       )}
       <p className="machine-quiet">
-        {bins.length > 0 && <>Shading and fill: each bin&rsquo;s check-ins against the busiest bin&rsquo;s. </>}
+        {most > 0 ? (
+          <>Shading and fill: each bin&rsquo;s check-ins against the busiest bin&rsquo;s. </>
+        ) : (
+          bins.length > 0 && unknown === 0 && <>Nothing has reached a bin yet today.</>
+        )}
         {unknown > 0 && <>No bin recorded for {checkIns(unknown)}.</>}
       </p>
     </div>
@@ -180,8 +211,21 @@ function Holds({ live }: { live: LiveToday }) {
   return holds.status === 'ready' ? <HoldsCounts holds={holds.data} /> : <Pending section={holds} />
 }
 
-/** `transits` and `holds`: what the organization's plan includes. A part the plan does not have is not drawn. */
-export function SorterAtAGlance({ live, transits, holds }: { live: LiveToday; transits: boolean; holds: boolean }) {
+/**
+ * `transits` and `holds`: what the organization's plan includes. A part the plan does not have is not drawn.
+ * `binLayout`: the sorter's own configured bins, or null.
+ */
+export function SorterAtAGlance({
+  live,
+  transits,
+  holds,
+  binLayout,
+}: {
+  live: LiveToday
+  transits: boolean
+  holds: boolean
+  binLayout: BinLayout | null
+}) {
   const rail = transits || holds
   return (
     <section className="panel sorter-map" aria-labelledby="sorter-map-heading">
@@ -198,7 +242,7 @@ export function SorterAtAGlance({ live, transits, holds }: { live: LiveToday; tr
         </div>
         <div className="machine-line">
           <Part name="bins" heading="Sort line">
-            <SortLine live={live} />
+            <SortLine live={live} layout={binLayout} />
           </Part>
         </div>
         {rail && (

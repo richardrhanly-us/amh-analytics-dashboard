@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 
 import type { CheckinsByDestination } from '../api/liveToday.ts'
+import type { BinLayout } from '../api/organizations.ts'
 import { ErrorMessage } from '../components/ErrorMessage.tsx'
 import { formatCalendarDate, formatHourRange, formatInstant } from '../time/productTime.ts'
 import { HourlyCheckins } from './HourlyCheckins.tsx'
@@ -271,18 +272,21 @@ function problem(live: LiveTodayData): string | null {
 
 /**
  * The Live Today dashboard for one sorter the user can see. `branchSlug` is the sorter's host branch: the scope
- * the operational API reads by. `holds`: the organization's plan includes holds, so today's are shown.
+ * the operational API reads by. `holds`: the organization's plan includes holds, so today's are shown. `binLayout`:
+ * the sorter's configured bins, or null.
  */
 export function LiveToday({
   orgSlug,
   branchSlug,
   transits,
   holds,
+  binLayout,
 }: {
   orgSlug: string
   branchSlug: string
   transits: boolean
   holds: boolean
+  binLayout: BinLayout | null
 }) {
   const live = useLiveToday(orgSlug, branchSlug, transits, holds)
 
@@ -348,7 +352,7 @@ export function LiveToday({
       </div>
       <Today live={live} transits={transits} />
       {/* The day on a drawing of the sorter: in at the induction point, out to the bins, routed or rejected. */}
-      <SorterAtAGlance live={live} transits={transits} holds={holds} />
+      <SorterAtAGlance live={live} transits={transits} holds={holds} binLayout={binLayout} />
       <div className="live-detail">
         <HourlyCheckins checkinsByHour={live.checkinsByHour} currentHour={live.currentHour} timeZone={live.timeZone} />
         <RejectReasons rejectsByReason={live.rejectsByReason} />

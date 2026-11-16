@@ -236,6 +236,7 @@ describe('the sorters of an organization', () => {
         status: 'active',
         collector_count: 1,
         onboarding_status: 'ready',
+        bin_layout: null,
       },
       {
         slug: 'east-side',
@@ -244,6 +245,7 @@ describe('the sorters of an organization', () => {
         status: 'active',
         collector_count: 1,
         onboarding_status: 'ready',
+        bin_layout: null,
       },
     ])
     // Three branches, two sorters: a branch is not made a sorter, and a sorter is not made from a branch.
@@ -283,6 +285,48 @@ describe('the sorters of an organization', () => {
     expect(detail.sorters[0]).toMatchObject({ slug: 'amh-1', host_branch: { slug: 'central' } })
   })
 
+  const SEVEN_BINS = { end: '0', columns: [['6', '5'], ['4', '3'], ['2', '1']] }
+
+  it('keeps a sorter’s configured bin layout exactly as sent, in its physical order', async () => {
+    const detail = await withSorters([{ ...central, bin_layout: SEVEN_BINS }, { ...NORTHBRIDGE_DETAIL.sorters[1], bin_layout: null }])
+
+    expect(detail.sorters.map((sorter) => sorter.bin_layout)).toStrictEqual([SEVEN_BINS, null])
+  })
+
+  it('reads a sorter with no bin_layout field, from an API before layouts, as having none', async () => {
+    const before: Record<string, unknown> = { ...central }
+    delete before.bin_layout
+
+    expect((await withSorters([before])).sorters[0]).toStrictEqual({ ...central, bin_layout: null })
+  })
+
+  it.each<[string, unknown]>([
+    ['a list', [['6', '5']]],
+    ['text', '{"end": "0"}'],
+    ['a missing end', { columns: [['6', '5']] }],
+    ['missing columns', { end: '0' }],
+    ['an unknown field', { ...SEVEN_BINS, rows: [] }],
+    ['no columns', { end: '0', columns: [] }],
+    ['a column of one bin', { end: '0', columns: [['6']] }],
+    ['a column of three bins', { end: '0', columns: [['6', '5', '4']] }],
+    ['a bin named twice', { end: '0', columns: [['6', '5'], ['5', '4']] }],
+    ['the end bin named again', { end: '0', columns: [['0', '1']] }],
+    ['a bin with a leading zero', { end: '0', columns: [['06', '5']] }],
+    ['a number for a bin', { end: 0, columns: [['6', '5']] }],
+    ['a bin of five digits', { end: '0', columns: [['12345', '5']] }],
+    ['33 columns', { end: '0', columns: Array.from({ length: 33 }, (_, index) => [String(2 * index + 1), String(2 * index + 2)]) }],
+  ])('treats a bin layout with %s as none, and still reads the organization', async (_, bin_layout) => {
+    const detail = await withSorters([{ ...central, bin_layout }])
+
+    expect(detail.sorters[0]).toStrictEqual({ ...central, bin_layout: null })
+  })
+
+  it('accepts 32 columns, the most a layout may have', async () => {
+    const columns = Array.from({ length: 32 }, (_, index) => [String(2 * index + 1), String(2 * index + 2)])
+
+    expect((await withSorters([{ ...central, bin_layout: { end: '0', columns } }])).sorters[0].bin_layout?.columns).toHaveLength(32)
+  })
+
   it('drops fields the contract does not have, such as a hostname or an id', async () => {
     const detail = await withSorters([
       {
@@ -296,7 +340,7 @@ describe('the sorters of an organization', () => {
       },
     ])
 
-    expect(detail.sorters).toStrictEqual([central])
+    expect(detail.sorters).toStrictEqual([{ ...central, bin_layout: null }])
     expect(JSON.stringify(detail)).not.toMatch(/hostname|NBPL-AMH-PC|1\.0\.13|secret|installation_id|operational_branch_id|41/)
   })
 
