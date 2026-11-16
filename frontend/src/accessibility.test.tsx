@@ -91,6 +91,11 @@ describe('the structure of a page', () => {
       'H4 Operations',
       'H4 Routing',
       'H4 Rejects',
+      'H3 Sorter at a glance',
+      'H4 Induction',
+      'H4 Bins',
+      'H4 Routed',
+      'H4 Reject chute',
       'H3 Hourly check-ins',
       'H3 Top reject reasons',
       'H3 Bin volume today',
@@ -121,16 +126,17 @@ describe('the structure of a page', () => {
     expect(screen.getAllByRole('main')).toHaveLength(1)
     // The header's two account actions, the breadcrumb, and the sorter's own two views.
     expect(screen.getAllByRole('navigation').map((nav) => nav.getAttribute('aria-label'))).toEqual(['Account', 'Breadcrumb', 'Sorter views'])
-    // The dashboard's five parts are the only named regions; the page itself is <main>. (Holds today is a sixth
+    // The dashboard's six parts are the only named regions; the page itself is <main>. (Holds today is a seventh
     // where the plan includes holds; Northbridge's does not.)
     expect(screen.getAllByRole('region').map((region) => region.getAttribute('aria-labelledby'))).toEqual([
       'pipeline-heading',
       'today-heading',
+      'sorter-map-heading',
       'hourly-heading',
       'reasons-heading',
       'today-bins-heading',
     ])
-    expect(within(main()).getAllByRole('region')).toHaveLength(5)
+    expect(within(main()).getAllByRole('region')).toHaveLength(6)
   })
 
   it('gives the breadcrumb a name, links for the pages above and the current page marked as such', async () => {

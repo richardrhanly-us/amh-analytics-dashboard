@@ -8,6 +8,7 @@ import { MetricCard, type Figure } from './MetricCard.tsx'
 import { busiestHour, checkinsInHour, formatRate, rejectRate } from './metrics.ts'
 import { PipelinePanel } from './PipelinePanel.tsx'
 import { RejectReasons } from './RejectReasons.tsx'
+import { SorterAtAGlance } from './SorterAtAGlance.tsx'
 import { TodayBinVolume } from './TodayBinVolume.tsx'
 import { TodayHolds } from './TodayHolds.tsx'
 import { REFRESH_INTERVAL_MS, useLiveToday, type LiveToday as LiveTodayData, type Section } from './useLiveToday.ts'
@@ -346,6 +347,8 @@ export function LiveToday({
         <PipelinePanel pipeline={live.pipeline.data} />
       </div>
       <Today live={live} transits={transits} />
+      {/* The day on a drawing of the sorter: in at the induction point, out to the bins, routed or rejected. */}
+      <SorterAtAGlance live={live} transits={transits} holds={holds} />
       <div className="live-detail">
         <HourlyCheckins checkinsByHour={live.checkinsByHour} currentHour={live.currentHour} timeZone={live.timeZone} />
         <RejectReasons rejectsByReason={live.rejectsByReason} />
