@@ -2359,14 +2359,20 @@ describe('the sort line’s end bin', () => {
   }
   const LINE = '.machine-bins:not(.machine-bins-long)'
 
-  it('stands the end bin upright: across both rows and the belt, in a column narrower than the others', () => {
+  it('stands the end bin upright: a bin’s rectangle turned on end, centred on the belt, not stretched', () => {
+    const line = rule(LINE)
+    // The two sides of a bin, named once: across and high for a bin on the line; high and across for the end bin.
+    expect(line).toContain('--bin-long: 5.5rem;')
+    expect(line).toContain('--bin-short: 3.5rem;')
+    expect(line).toContain('grid-auto-columns: minmax(0, var(--bin-long));')
+    expect(rule(`.machine-bins-with-end${LINE.replace('.machine-bins', '')}`)).toContain('grid-template-columns: var(--bin-short);')
     const end = rule(`${LINE} > .bin-cell-end`)
+    expect(end).toContain('height: var(--bin-long);')
+    // At the left end, across the two rows -- but centred on the belt between them, never stretched to fill them.
     expect(end).toContain('grid-row: 1 / span 2;')
     expect(end).toContain('grid-column: 1;')
-    // It stretches to the height of both rows (no alignment of its own), in its own narrow column.
-    expect(end).not.toContain('align-self')
-    expect(rule(`.machine-bins-with-end${LINE.replace('.machine-bins', '')}`)).toContain('grid-template-columns: 3.5rem;')
-    expect(rule(LINE)).toContain('grid-auto-columns: minmax(0, 5.5rem);')
+    expect(end).toContain('align-self: center;')
+    expect(end).not.toContain('stretch')
     // Its fill rises from the bottom, by the same --fill the other bins use across.
     expect(rule(`${LINE} > .bin-cell-end .bin-cell-fill > span`)).toContain('height: var(--fill, 0%);')
     expect(rule('.bin-cell-fill > span')).toContain('width: var(--fill, 0%);')
