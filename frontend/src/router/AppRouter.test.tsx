@@ -617,7 +617,8 @@ describe('a branch page', () => {
 
     renderApp('/organizations/northbridge/sorters/central')
     await heading('Central Library AMH')
-    await screen.findByRole('heading', { level: 3, name: 'Top reject reasons' })
+    // The reject reasons have answered: their top reason is under Rejects today.
+    await screen.findByText(/^Top reason: /)
 
     expect(liveRequests(fetchMock)).toHaveLength(7)
     expect(liveRequests(fetchMock).every((url) => url.startsWith('/api/organizations/northbridge/branches/central/'))).toBe(true)

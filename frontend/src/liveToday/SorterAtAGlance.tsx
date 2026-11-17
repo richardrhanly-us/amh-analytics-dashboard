@@ -10,7 +10,7 @@ import type { LiveToday, Section } from './useLiveToday.ts'
  * the left end and the other bins along both sides of the belt -- every bin in its place for a sorter with a
  * configured layout, else those that received check-ins today in sequence. A summary of the day drawn after the
  * machine, not a live mimic of it: nothing here moves. The day's induction, routing and holds figures are in Today's
- * figures above and Holds today below.
+ * figures above.
  *
  * Everything that carries meaning is text: each bin says its own count, and the panel keeps its name as a heading for
  * assistive technology. The shading and fill that picture a bin against the busiest bin are decoration, as is the

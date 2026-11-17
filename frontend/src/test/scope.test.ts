@@ -318,12 +318,11 @@ describe('scope of this block', () => {
     expect(binVolume).not.toMatch(/admin|owner|capacity|destination|exception|overflow/i)
     // Holds (R8K) is two counts, read in one module and shown in the report's section and -- for today alone -- on
     // Live Today, only where the plan has it: the plan's feature is looked at in one place, and no hold is shown by
-    // patron, item or destination. On Live Today the same two counts, from the same read, are also today's Holds
-    // zone (LiveToday.tsx) -- a summary of Holds today, not another figure.
+    // patron, item or destination. On Live Today the two counts, for today alone, are the Holds zone of today's
+    // summary (LiveToday.tsx).
     expect(offenders(/public_hold_count|ill_hold_count/).sort()).toEqual([
       '../api/reports.ts',
       '../liveToday/LiveToday.tsx',
-      '../liveToday/TodayHolds.tsx',
       '../reports/HoldsSection.tsx',
     ])
     expect(offenders(/internal_workflow/)).toEqual(['../pages/capabilities.ts'])

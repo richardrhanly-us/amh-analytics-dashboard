@@ -698,6 +698,8 @@ button[aria-disabled='true'] {
 
 .live-today .metric-note {
   font-size: 0.9375rem;
+  /* A long note -- a reject reason's name -- wraps within its card rather than widening it. */
+  overflow-wrap: anywhere;
 }
 
 /* Words where a figure would be stay the size of words. */
@@ -817,14 +819,7 @@ button[aria-disabled='true'] {
   margin-bottom: 0.5rem;
 }
 
-@media (min-width: 60rem) {
-  .live-detail {
-    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-    align-items: start;
-  }
-}
-
-/* Below the day's volume: today's holds, then bin volume, each full width at every size. */
+/* Below the day's volume: bin volume, full width at every size. */
 .live-today-more {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
