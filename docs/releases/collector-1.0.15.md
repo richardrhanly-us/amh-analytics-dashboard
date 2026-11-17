@@ -5,7 +5,8 @@
 - Release: `1.0.15` (planned)
 - `collector.__version__`: `1.0.15`
 - Canonical release artifact: **not built.** No bundle, setup program package or hash exists for 1.0.15 yet.
-- Implementation: on the working tree, **not committed, merged or released**. Automated validation is recorded in
+- Source: **merged to `main`** in PR #303 (merge commit `c1b161e`, 2026-11-16). Merged source is **not a release**:
+  no 1.0.15 bundle has been built, hashed, stored, rehearsed or approved. Automated validation is recorded in
   `docs/PROJECT_MANIFEST.md` (section 4, C, *NBPL 1.0.13 → 1.0.15 upgrade status*).
 - Security tests: `tests/test_collector_backup_security.py` all passed on LIB-L26, 2026-11-16: 40 non-elevated, plus
   3 elevated in 19.33 s, 0 failed, 0 skipped. These are unit and integration tests in temporary folders, **not** an

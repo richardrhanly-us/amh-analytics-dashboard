@@ -469,7 +469,7 @@ planning come first and decide which C milestones they cover. Nothing below is r
   2026-10-24 and is **not yet published**; that record's "Before this release is published" checks are still open.
 - **Collector 1.0.15 (planned, 2026-11-16):** it supersedes 1.0.14 for upgrading existing installations (NBPL), with
   restricted, verified upgrade backups and a verified rollback.
-  - Implemented on the working tree; **not built or released**.
+  - Merged to `main` (PR #303, `c1b161e`); **not built, rehearsed or released**.
   - Record: `docs/releases/collector-1.0.15.md`.
   - Status and blockers: *NBPL 1.0.13 → 1.0.15 upgrade status* below.
 - **G3, real-API GUI installation, passed 2026-10-25** on a fresh Windows 10 LTSC 2019 VM: all seven stages, SYSTEM
@@ -856,7 +856,7 @@ deployment, not a fresh install. What remains unverified above must not be assum
 
 **Planned release 1.0.15 (decided 2026-11-16, product owner): it supersedes 1.0.14 as the release for NBPL's upgrade.**
 It carries the backup-permissions fix (blocker 3 below). Release notes: `docs/releases/collector-1.0.15.md`.
-- **Implemented on the working tree 2026-11-16, not committed, merged, built or released. No 1.0.15 artifact or hash
+- **Merged to `main` (PR #303, merge `c1b161e`, 2026-11-16); not built or released. No 1.0.15 artifact or hash
   exists.**
 - `collector.__version__` is `1.0.15`.
 - **What changed:**
@@ -940,7 +940,8 @@ its `tools\update.ps1` has the backup vulnerability.
     assemblies are not installed on this PC. That is the known gap in the .NET 4.7.2 section above, in the WPF
     installer build tests (`test_installer_*`, unchanged C# code).
   - **Expected until commit (1 failure):** `test_installer_release_packaging.py::test_the_committed_record_is_read_from_head_and_names_the_commit`.
-    The packager reads `docs/releases/collector-1.0.15.md` only from `HEAD`, by design.
+    The packager reads `docs/releases/collector-1.0.15.md` only from `HEAD`, by design. The record is committed as of
+    `c1b161e`; this test has not been re-run since.
 - `ruff check collector tests src`: clean. `mypy collector/build_release.py collector/__init__.py`: clean.
 - All four changed or new PowerShell scripts parse with no errors under Windows PowerShell 5.1.
 - **Not run here (need an elevated session or the representative VM):**
@@ -1035,8 +1036,16 @@ its `tools\update.ps1` has the backup vulnerability.
      (`tests/test_installer_*`) error or fail there. Run them on a machine with the targeting pack, or install it, before
      packaging.
    - `test_installer_release_packaging.py::test_the_committed_record_is_read_from_head_and_names_the_commit` passes
-     only once `docs/releases/collector-1.0.15.md` is committed.
+     only once `docs/releases/collector-1.0.15.md` is committed. It is committed as of `c1b161e`; the test has not
+     been re-run since. It gates only a setup program package, which NBPL does not need (blocker 4).
    - The 1.0.15 bundle must be built on the documented build machine and toolchain, with its hashes recorded.
+     **Build machine and toolchain (found 2026-11-16, previously undocumented):** 1.0.14 was built on
+     `DESKTOP-DORG9IO` under `C:\SortView\ReleaseBuilds\1.0.14\` with `.pyinstaller-venv` (CPython 3.14.6,
+     PyInstaller 6.22.3, hooks-contrib 2026.8; the runtime pins of `docs/releases/collector-1.0.14.md`). That venv
+     is unchanged there. The ZIP and extracted-copy verification step (`Compress-Archive` in Windows PowerShell 5.1,
+     `Expand-Archive` into `_verify\`, then `version`, every subcommand's `--help`, `install.ps1 -VerifyBundleOnly` and
+     a no-extra-files count) exists only as that machine's `_build\package_and_verify.ps1` and
+     `BUILD-RECORD.json`, not in this repository. **Not yet in `docs/release-process.md`.**
 
 **Milestones:**
 
@@ -1148,6 +1157,11 @@ its `tools\update.ps1` has the backup vulnerability.
 ---
 
 ## 5. Done recently (newest first)
+
+- 2026-11-16 — Collector 1.0.15 backup security **merged to `main`** (PR #303, merge commit `c1b161e`). The entries
+  below describe the working tree before that merge. Merged source is not a release: **no 1.0.15 bundle is built,
+  hashed, stored or rehearsed**, and NBPL stays on 1.0.13. Release readiness for 1.0.15 passed at `c1b161e` on
+  `DESKTOP-DORG9IO`; the build machine and toolchain are recorded under section 4, C, blocker 7.
 
 - 2026-11-16 — Collector 1.0.15 elevated security tests **passed** on LIB-L26 (elevated Windows PowerShell 5.1,
   Python 3.11.9, pytest 8.4.2): 3 passed in 19.33 s, 0 failed, 0 skipped. Those were the symbolic-link refusal, the
