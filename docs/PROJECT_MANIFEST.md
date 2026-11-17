@@ -470,7 +470,7 @@ planning come first and decide which C milestones they cover. Nothing below is r
 - **Collector 1.0.15 (planned, 2026-11-16):** it supersedes 1.0.14 for upgrading existing installations (NBPL), with
   restricted, verified upgrade backups and a verified rollback.
   - Merged to `main` (PR #303, `c1b161e`). Canonical bundle **built and verified 2026-11-17** from `2565b95` (ZIP
-    SHA-256 `6b358993…9ec8`); **not stored, rehearsed or released**.
+    SHA-256 `6b358993…9ec8`), stored in `sortview-artifacts` at `09130bd…`; **not rehearsed or released**.
   - Record: `docs/releases/collector-1.0.15.md`.
   - Status and blockers: *NBPL 1.0.13 → 1.0.15 upgrade status* below.
 - **G3, real-API GUI installation, passed 2026-10-25** on a fresh Windows 10 LTSC 2019 VM: all seven stages, SYSTEM
@@ -862,7 +862,9 @@ It carries the backup-permissions fix (blocker 3 below). Release notes: `docs/re
   `SortViewCollector-1.0.15.zip`, SHA-256 `6b3589938b5c255dd74e2a89537a9e1c1db63d84728f605e7e8495789dc59ec8`;
   `MANIFEST.json` SHA-256 `50eac4ca…eddab`; 1394 entries. Hashes, script checks and the secrets inspection (0 findings)
   are in `docs/releases/collector-1.0.15.md`, *Canonical release artifact*.
-- **Not yet stored** in `sortview-artifacts`, **not rehearsed, not released.** NBPL stays on 1.0.13.
+- **Stored 2026-11-17** in `sortview-artifacts`: `collector/1.0.15/SortViewCollector-1.0.15.zip` with its
+  `ARTIFACT-RECORD.md`, commit `09130bde1c45076028482a1fb0d63cbb63873523`. Storage is not approval.
+- **Not rehearsed, not released, not production-ready.** NBPL stays on 1.0.13.
 - `collector.__version__` is `1.0.15`.
 - **What changed:**
   - `tools\update.ps1` (`collector/deploy/update-release.ps1`): the backup folder is created already restricted,
@@ -1029,7 +1031,8 @@ its `tools\update.ps1` has the backup vulnerability.
    - **Still open separately:** the wider `C:\SortView` parent-folder review (profile above).
 4. **Canonical 1.0.15 bundle:**
    - [x] build it and record its hashes in `docs/releases/collector-1.0.15.md` -- **done 2026-11-17** (`6b358993…9ec8`);
-   - [ ] store it in `sortview-artifacts` `collector/1.0.15/` (`docs/release-process.md`) and record the `- Stored:` line;
+   - [x] store it in `sortview-artifacts` `collector/1.0.15/` (`docs/release-process.md`) and record the `- Stored:` line
+     -- **done 2026-11-17**, commit `09130bde1c45076028482a1fb0d63cbb63873523`;
    - [ ] retrieve it from `sortview-artifacts` on the machine that will carry it to the VM and to NBPL, and verify it
      there;
    - decide whether a 1.0.15 setup program (G2-style) package is needed. NBPL does not need one.
@@ -1167,6 +1170,14 @@ its `tools\update.ps1` has the backup vulnerability.
 ---
 
 ## 5. Done recently (newest first)
+
+- 2026-11-17 — Collector 1.0.15 canonical ZIP **stored** in `sortview-artifacts` (`collector/1.0.15/`, with its
+  `ARTIFACT-RECORD.md`), commit `09130bde1c45076028482a1fb0d63cbb63873523` on `origin/main`. The ZIP read from that
+  commit matches the release record (SHA-256 `6b358993…9ec8`, 36,555,502 bytes). Release record updated with the
+  `- Stored:` line.
+  - **Still not production-ready.** Open: retrieval and verification on the machine that carries it to the VM, the
+    1.0.13 → 1.0.15 upgrade rehearsal and the rollback rehearsal (section 4, C, blockers 1, 2 and 4). NBPL stays on
+    1.0.13.
 
 - 2026-11-17 — Collector 1.0.15 canonical bundle **built and verified** on `DESKTOP-DORG9IO` from `2565b95` (same
   toolchain and procedure as 1.0.14): ZIP SHA-256 `6b3589938b5c255dd74e2a89537a9e1c1db63d84728f605e7e8495789dc59ec8`,
