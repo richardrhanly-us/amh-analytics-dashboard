@@ -4,8 +4,9 @@
 
 - Release: `1.0.15` (planned)
 - `collector.__version__`: `1.0.15`
-- Canonical release artifact: **built and verified 2026-11-17 on `DESKTOP-DORG9IO`; not stored, published, rehearsed
-  or approved** (see *Canonical release artifact* below). No setup program package exists for 1.0.15.
+- Canonical release artifact: **built and verified 2026-11-17 on `DESKTOP-DORG9IO`, and stored in the private artifact
+  repository; not published, rehearsed or approved** (see *Canonical release artifact* below). Storage is internal and
+  is not release or customer approval. No setup program package exists for 1.0.15.
 - Source: **merged to `main`** in PR #303 (merge commit `c1b161e`, 2026-11-16); the bundle was built from `2565b95`,
   which differs from `c1b161e` only in documentation. A built bundle is **not a qualified release**: the upgrade and
   rollback rehearsal below is still outstanding. Automated validation is recorded in `docs/PROJECT_MANIFEST.md`
@@ -31,7 +32,7 @@ on `DESKTOP-DORG9IO` under `C:\SortView\ReleaseBuilds\1.0.15\`, by the 1.0.14 pr
 - `runtime\SortViewCollector.exe` SHA-256: `6b0f568b615885df9e68fdb8ce1ef04bda54587a47043a95d5da13e4bdf277a3` (10,713,652 bytes)
 - Build: CPython 3.14.6 (`.pyinstaller-venv`), PyInstaller 6.22.3 (hooks-contrib 2026.8); requests 2.33.1, urllib3 2.6.3,
   pandas 2.3.3, numpy 2.5.3 -- the same toolchain as 1.0.14
-- Stored: **not yet** -- to be copied into `sortview-artifacts` `collector/1.0.15/` per `docs/release-process.md`
+- Stored: `sortview-artifacts` `collector/1.0.15/SortViewCollector-1.0.15.zip`, commit `09130bde1c45076028482a1fb0d63cbb63873523`
 - Unsigned (code signing, C1, is open)
 
 *Verification, 2026-11-17, on `DESKTOP-DORG9IO`:*
@@ -145,8 +146,11 @@ To be performed and recorded here:
 
 - [x] Build the canonical 1.0.15 bundle, and record its ZIP, `MANIFEST.json` and executable SHA-256. **Built and
       verified 2026-11-17** (see *Canonical release artifact*).
-  - [ ] Store it in `sortview-artifacts` and record the `- Stored:` line; then retrieve it on the machine that will
-        carry it to the rehearsal VM (and later NBPL) and verify it there against this record.
+  - [x] Store it in `sortview-artifacts` and record the `- Stored:` line. **Stored 2026-11-17** at
+        `collector/1.0.15/SortViewCollector-1.0.15.zip`, commit `09130bde1c45076028482a1fb0d63cbb63873523` (on
+        `origin/main`); the ZIP read from that commit has the SHA-256 and size above, with its `ARTIFACT-RECORD.md`.
+  - [ ] Retrieve it on the machine that will carry it to the rehearsal VM (and later NBPL) and verify it there against
+        this record (`docs/release-process.md`, *Retrieve and verify on another machine*).
 - [x] Run the three tests of `tests/test_collector_backup_security.py` that skip without elevation, in an elevated
       session on LIB-L26. **Passed 2026-11-16: 3 passed in 19.33 s, 0 failed, 0 skipped** (Windows PowerShell 5.1
       elevated, Python 3.11.9, pytest 8.4.2). The rest of the file had passed non-elevated: 40 passed.
