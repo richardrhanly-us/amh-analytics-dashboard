@@ -1,17 +1,15 @@
 import { useState, type ReactNode } from 'react'
 
-import type { CheckinsByDestination } from '../api/liveToday.ts'
+import type { CheckinsByDestination, RejectsByReason } from '../api/liveToday.ts'
 import type { BinLayout } from '../api/organizations.ts'
 import { ErrorMessage } from '../components/ErrorMessage.tsx'
 import { formatCalendarDate, formatHourRange, formatInstant } from '../time/productTime.ts'
 import { HourlyCheckins } from './HourlyCheckins.tsx'
 import { MetricCard, type Figure } from './MetricCard.tsx'
-import { busiestHour, checkinsInHour, formatRate, rejectRate } from './metrics.ts'
+import { busiestHour, checkinsInHour, formatRate, reasonLabel, rejectRate, topRejectReasons } from './metrics.ts'
 import { PipelinePanel } from './PipelinePanel.tsx'
-import { RejectReasons } from './RejectReasons.tsx'
 import { SorterAtAGlance } from './SorterAtAGlance.tsx'
 import { TodayBinVolume } from './TodayBinVolume.tsx'
-import { TodayHolds } from './TodayHolds.tsx'
 import { REFRESH_INTERVAL_MS, useLiveToday, type LiveToday as LiveTodayData, type Section } from './useLiveToday.ts'
 
 const UNAVAILABLE = 'Live dashboard data is not available for this sorter yet.'
@@ -130,6 +128,19 @@ function routed(part: number, total: number): Figure {
   return { ...count(part), note: total > 0 ? shareOfToday(part, total) : 'No check-ins yet' }
 }
 
+/**
+ * The line under Rejects today: today's most common reject reason and its count, from the day's reasons by count --
+ * the first of equals, in the API's order. Nothing while the reasons load, or on a day with no reasons; the full
+ * breakdown is in Reports, Reliability.
+ */
+function topReasonNote(reasons: Section<RejectsByReason>): string | undefined {
+  if (reasons.status === 'error') {
+    return 'Top reason could not be loaded'
+  }
+  const [top] = reasons.status === 'ready' ? topRejectReasons(reasons.data.reasons) : []
+  return top === undefined ? undefined : `Top reason: ${reasonLabel(top.reason)} (${top.reject_count.toLocaleString('en-US')})`
+}
+
 /** One named group of figures within today's summary. A group, not a landmark: the page has enough of those. */
 function SummaryGroup({ name, heading, children }: { name: string; heading: string; children: ReactNode }) {
   return (
@@ -183,7 +194,7 @@ function Routing({ routing }: { routing: Section<CheckinsByDestination> }) {
  * nor drawn.
  */
 function Today({ live, transits, holds }: { live: LiveTodayData; transits: boolean; holds: boolean }) {
-  const { checkinCount, checkinsByHour, checkinsByDestination, rejectCount, currentHour } = live
+  const { checkinCount, checkinsByHour, checkinsByDestination, rejectCount, rejectsByReason, currentHour } = live
   const dateText = live.date === null ? null : formatCalendarDate(live.date)
 
   return (
@@ -232,7 +243,10 @@ function Today({ live, transits, holds }: { live: LiveTodayData; transits: boole
         )}
         <SummaryGroup name="rejects" heading="Rejects">
           <dl className="metrics">
-            <MetricCard label="Rejects today" {...figure(rejectCount, (data) => count(data.reject_count))} />
+            <MetricCard
+              label="Rejects today"
+              {...figure(rejectCount, (data) => ({ ...count(data.reject_count), note: topReasonNote(rejectsByReason) }))}
+            />
             <MetricCard
               label="Reject rate"
               {...figure(rejectCount, (rejects) =>
@@ -247,8 +261,8 @@ function Today({ live, transits, holds }: { live: LiveTodayData; transits: boole
           </dl>
         </SummaryGroup>
         {/*
-          Only when the plan includes holds: otherwise they are not asked for either. The same two counts, from the
-          same read, as Holds today below -- a summary of it, not another figure.
+          Only when the plan includes holds: otherwise they are not asked for either. Today's two counts, by the same
+          rules as the Operations report's Holds for today alone; the detail is in Reports.
         */}
         {holds && (
           <SummaryGroup name="holds" heading="Holds">
@@ -373,13 +387,15 @@ export function LiveToday({
       <Today live={live} transits={transits} holds={holds} />
       {/* The day's check-ins on a drawing of the sorter's bins. */}
       <SorterAtAGlance live={live} binLayout={binLayout} />
+      {/*
+        The day by the hour, full width. Today's holds are the Holds zone above, and the reject reasons are its top
+        reason under Rejects today; the full reason breakdown is in Reports, Reliability.
+      */}
       <div className="live-detail">
         <HourlyCheckins checkinsByHour={live.checkinsByHour} currentHour={live.currentHour} timeZone={live.timeZone} />
-        <RejectReasons rejectsByReason={live.rejectsByReason} />
       </div>
-      {/* Below the day's volume: today's holds (when the plan has them), then where today's check-ins were binned. */}
+      {/* Below the day's volume: where today's check-ins were binned. */}
       <div className="live-today-more">
-        {holds && <TodayHolds holds={live.holds} />}
         <TodayBinVolume binVolume={live.binVolume} />
       </div>
     </div>

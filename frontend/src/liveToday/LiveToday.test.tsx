@@ -267,7 +267,8 @@ describe('the figures', () => {
     expect(metric('Busiest hour')).toHaveTextContent(/^40$/)
     expect(note('Busiest hour')).toBe('11 AM–12 PM')
     expect(note('Check-ins today')).toBeNull()
-    expect(note('Rejects today')).toBeNull()
+    // Rejects today keeps its count, with the day's most common reason under it; Reject rate is unchanged.
+    expect(note('Rejects today')).toBe('Top reason: Item not found (3)')
     expect(note('Reject rate')).toBeNull()
     expect(screen.getAllByRole('term').map((term) => term.textContent)).toEqual([
       'Status',
@@ -280,7 +281,7 @@ describe('the figures', () => {
       'Library Express',
       'Rejects today',
       'Reject rate',
-      // Bin volume today, below the hourly chart and the reject reasons.
+      // Bin volume today, below the hourly chart.
       'Known-bin check-ins',
       'Bins observed',
       'Bin coverage',
@@ -354,28 +355,53 @@ describe('the figures', () => {
     expect(hourly.filter(([hour]) => hour.includes('current hour'))).toHaveLength(1)
   })
 
-  it('lists the reject reasons that occurred, most frequent first, by plain name', async () => {
+  it('puts the most common reject reason, by plain name, under Rejects today, and no reason breakdown on the page', async () => {
     serve()
 
     renderApp(CENTRAL)
     await loaded()
 
-    expect(rows('Top reject reasons')).toEqual([
-      ['Item not found', '3'],
-      ['Communication error', '2'],
-      ['RFID collision', '1'],
-    ])
-    expect(main()).not.toHaveTextContent(/item_not_found|rfid_collision/)
+    // Item not found 3, Communication error 2, RFID collision 1: the first is the top reason.
+    expect(note('Rejects today')).toBe('Top reason: Item not found (3)')
+    // A line under the count, set as a note -- smaller than the figure -- in the same card, not a third card.
+    const rejects = screen.getByRole('group', { name: 'Rejects' })
+    expect(within(rejects).getAllByRole('term').map((term) => term.textContent)).toEqual(['Rejects today', 'Reject rate'])
+    expect(metric('Rejects today').nextElementSibling).toHaveClass('metric-note')
+    // The full breakdown is in Reports (Reliability), not here.
+    expect(screen.queryByRole('heading', { name: 'Top reject reasons' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('table', { name: 'Top reject reasons' })).not.toBeInTheDocument()
+    expect(main()).not.toHaveTextContent(/item_not_found|rfid_collision|Communication error/)
   })
 
-  it('says there were no rejects instead of showing an empty table', async () => {
+  it('names the first of equally common reasons, in the API’s order', async () => {
+    // Reasons in API order: item not found, ILS/ACS failure, RFID collision, ... -- two at 2, the first wins.
+    serve({}, live({ reasons: [1, 2, 2, 0, 0, 0, 0, 0] }))
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    expect(note('Rejects today')).toBe('Top reason: ILS/ACS failure (2)')
+  })
+
+  it('gives no top reason on a day with no rejects', async () => {
     serve({}, live({ reasons: [0, 0, 0, 0, 0, 0, 0, 0] }))
 
     renderApp(CENTRAL)
     await loaded()
 
-    expect(screen.getByText('No rejects today.')).toBeInTheDocument()
-    expect(screen.queryByRole('table', { name: 'Top reject reasons' })).not.toBeInTheDocument()
+    expect(metric('Rejects today')).toHaveTextContent(/^0$/)
+    expect(note('Rejects today')).toBeNull()
+    expect(main()).not.toHaveTextContent(/Top reason|No rejects today/)
+  })
+
+  it('writes a large top-reason count in full, and lets a long reason name wrap within its card', async () => {
+    serve({}, live({ reasons: [0, 0, 0, 0, 0, 1234, 0, 0] }))
+
+    renderApp(CENTRAL)
+    await loaded()
+
+    expect(note('Rejects today')).toBe('Top reason: Communication error (1,234)')
+    expect(styles).toMatch(/\.live-today \.metric-note \{[^}]*overflow-wrap: anywhere;/)
   })
 })
 
@@ -410,7 +436,7 @@ describe('refreshing', () => {
     expect(metric('Status')).toHaveTextContent(/^Degraded$/)
     expect(metric('Current hour')).toHaveTextContent(/^30$/)
     expect(metric('Rejects today')).toHaveTextContent(/^10$/)
-    expect(rows('Top reject reasons')[0]).toEqual(['Unknown', '4'])
+    expect(note('Rejects today')).toBe('Top reason: Unknown (4)')
   })
 
   it('keeps refreshing, interval after interval', async () => {
@@ -793,9 +819,8 @@ describe('failures', () => {
     expect(metric('Rejects today')).toHaveTextContent(/^6$/)
     expect(metric('Reject rate')).toHaveTextContent(/^5\.0%$/)
     expect(hourlyRows()).toHaveLength(24)
-    const reasons = screen.getByRole('heading', { level: 3, name: 'Top reject reasons' }).parentElement as HTMLElement
-    expect(reasons).toHaveTextContent('Could not load.')
-    expect(screen.queryByRole('table', { name: 'Top reject reasons' })).not.toBeInTheDocument()
+    // Rejects today keeps its count; only its top reason, from the failed read, says it could not be loaded.
+    expect(note('Rejects today')).toBe('Top reason could not be loaded')
     expect(screen.getAllByRole('alert')).toHaveLength(1)
   })
 
@@ -816,7 +841,7 @@ describe('failures', () => {
     expect(screen.queryByRole('img', { name: HOURLY_CHART })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Show hourly table' })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 3, name: 'Hourly check-ins' }).parentElement).toHaveTextContent('Could not load.')
-    expect(rows('Top reject reasons')).toHaveLength(3)
+    expect(note('Rejects today')).toBe('Top reason: Item not found (3)')
   })
 
   it('recovers the failed section on the next refresh', async () => {
@@ -828,7 +853,7 @@ describe('failures', () => {
     await screen.findByRole('alert')
     await person.click(refreshButton())
 
-    await waitFor(() => expect(rows('Top reject reasons')).toHaveLength(3))
+    await waitFor(() => expect(note('Rejects today')).toBe('Top reason: Item not found (3)'))
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
   })
 
@@ -1560,7 +1585,7 @@ describe('routing', () => {
     expect(screen.getByRole('status')).toBeEmptyDOMElement()
   })
 
-  it('leaves the chart, the pipeline panel and the reject reasons as they were', async () => {
+  it('leaves the chart, the pipeline panel and the top reject reason as they were', async () => {
     serve()
 
     renderApp(CENTRAL)
@@ -1573,11 +1598,7 @@ describe('routing', () => {
     )
     expect(metric('Status')).toHaveTextContent(/^OK$/)
     expect(metric('Last reported')).toHaveTextContent(/Oct 5, 2026, 1:45\sPM CDT/)
-    expect(rows('Top reject reasons')).toEqual([
-      ['Item not found', '3'],
-      ['Communication error', '2'],
-      ['RFID collision', '1'],
-    ])
+    expect(note('Rejects today')).toBe('Top reason: Item not found (3)')
   })
 })
 
@@ -1709,13 +1730,13 @@ describe('the routing read', () => {
     expect(metric('Total transit')).toHaveTextContent(/^Could not load$/)
     expect(routing()).not.toHaveTextContent(/\d|Traceback|customer_id|Failed to fetch|Rate limit|Kept at|%/)
     expect(within(routing()).getAllByRole('term')).toHaveLength(1)
-    // Operations, Rejects, the chart and the reasons are untouched.
+    // Operations, Rejects (with its top reason) and the chart are untouched.
     expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
     expect(metric('Current hour')).toHaveTextContent(/^17$/)
     expect(metric('Rejects today')).toHaveTextContent(/^6$/)
     expect(metric('Reject rate')).toHaveTextContent(/^5\.0%$/)
     expect(barHeights()).toHaveLength(24)
-    expect(rows('Top reject reasons')).toHaveLength(3)
+    expect(note('Rejects today')).toBe('Top reason: Item not found (3)')
     expect(main()).not.toHaveTextContent(UNAVAILABLE)
   })
 
@@ -1919,19 +1940,18 @@ describe('the Holds zone in today’s summary', () => {
     expect(wide).toMatch(/\.summary-group-holds \{\n\s+--zone: var\(--zone-holds\);/)
   })
 
-  it('shows the same public and ILL counts, from the same read, as Holds today below', async () => {
+  it('shows today’s public and ILL counts from the holds read, and is the only holds section on the page', async () => {
     const fetchMock = serve(WITH_HOLDS, live({ holds: { public: 14, ill: 3 } }))
     renderApp(CENTRAL)
     await loaded()
 
     await waitFor(() => expect(card('Holds')).toHaveTextContent(/^14$/))
     expect(card('ILL')).toHaveTextContent(/^3$/)
-    expect(metric('Public holds today')).toHaveTextContent(/^14$/)
-    expect(metric('Interlibrary loan (ILL) holds today')).toHaveTextContent(/^3$/)
-    // No read of its own: holds are asked for once, for today, as before.
+    // Holds are asked for once, for today, as before.
     expect(liveRequests(fetchMock).filter((url) => url.includes('/reports/holds?'))).toEqual([`${API}/reports/holds?from=${TODAY}&to=${TODAY}`])
-    // The detailed section stays.
-    expect(screen.getByRole('heading', { level: 3, name: 'Holds today' })).toBeInTheDocument()
+    // The detailed Holds today section is gone: the zone is today's holds on Live Today; the detail is in Reports.
+    expect(screen.queryByRole('heading', { name: 'Holds today' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Public holds today')).not.toBeInTheDocument()
   })
 
   it('is not drawn, and Routing keeps the full row, when the plan does not include holds', async () => {
@@ -2004,7 +2024,7 @@ describe('the Holds zone in today’s summary', () => {
   })
 })
 
-describe('holds and bin volume today', () => {
+describe('bin volume today, and the holds read', () => {
   /** Northbridge with the plan's holds feature on. */
   const WITH_HOLDS = {
     'GET /api/organizations/northbridge': () =>
@@ -2019,17 +2039,24 @@ describe('holds and bin volume today', () => {
     return rows('Check-ins by bin today')
   }
 
-  it('comes after the hourly check-ins and the reject reasons: holds, then bin volume', async () => {
+  it('puts bin volume after the hourly check-ins, with no reject-reason or holds section between them', async () => {
     serve(WITH_HOLDS)
 
     renderApp(CENTRAL)
     await loaded()
-    await screen.findByText('Public holds today')
+    await waitFor(() => expect(metric('Holds')).toHaveTextContent(/^9$/))
 
-    const order = ['Today', 'Hourly check-ins', 'Top reject reasons', 'Holds today', 'Bin volume today'].map(heading)
+    const order = ['Today', 'Hourly check-ins', 'Bin volume today'].map(heading)
     order.slice(1).forEach((later, index) => {
       expect(order[index].compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     })
+    expect(screen.getAllByRole('heading', { level: 3 }).map((section) => section.textContent)).toEqual([
+      'Pipeline',
+      'Today',
+      'Sorter at a glance',
+      'Hourly check-ins',
+      'Bin volume today',
+    ])
   })
 
   it("asks for today's holds and bins as the Operations report does, for today alone, with the other reads' date", async () => {
@@ -2051,19 +2078,8 @@ describe('holds and bin volume today', () => {
     await pass(REFRESH_INTERVAL_MS)
 
     expect(asked(fetchMock, 'reports/holds')).toEqual([])
-    expect(screen.queryByRole('heading', { name: 'Holds today' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Holds' })).not.toBeInTheDocument()
     expect(heading('Bin volume today')).toBeInTheDocument()
-  })
-
-  it("shows today's public and interlibrary loan holds, with which holds they are", async () => {
-    serve(WITH_HOLDS, live({ holds: { public: 14, ill: 3 } }))
-
-    renderApp(CENTRAL)
-    await loaded()
-
-    await waitFor(() => expect(metric('Public holds today')).toHaveTextContent(/^14$/))
-    expect(metric('Interlibrary loan (ILL) holds today')).toHaveTextContent(/^3$/)
-    expect(panel('Holds today')).toHaveTextContent('Holds for library patrons.')
   })
 
   it('shows the bin summary, and each bin as a share of the known-bin check-ins', async () => {
@@ -2126,7 +2142,7 @@ describe('holds and bin volume today', () => {
     await waitFor(() => expect(panel('Bin volume today')).toHaveTextContent('No check-ins yet today.'))
     expect(screen.queryByText('Bin coverage')).not.toBeInTheDocument()
     expect(screen.queryByRole('img', { name: /observed bin/ })).not.toBeInTheDocument()
-    expect(metric('Public holds today')).toHaveTextContent(/^0$/)
+    expect(metric('Holds')).toHaveTextContent(/^0$/)
     expect(main()).not.toHaveTextContent(/NaN|Infinity/)
   })
 
@@ -2148,24 +2164,21 @@ describe('holds and bin volume today', () => {
     serve({ ...WITH_HOLDS, [BINS]: () => bins.promise })
 
     renderApp(CENTRAL)
-    await waitFor(() => expect(metric('Public holds today')).toHaveTextContent(/^9$/))
+    await waitFor(() => expect(metric('Holds')).toHaveTextContent(/^9$/))
 
     expect(panel('Bin volume today')).toHaveTextContent(/^Bin volume todayLoading…$/)
     bins.resolve(jsonResponse(200, liveBody.binVolume(LIVE, TODAY, TODAY)))
     await waitFor(() => expect(metric('Bins observed')).toHaveTextContent(/^3$/))
   })
 
-  it.each([
-    ['bin volume', BINS, 'Bin volume today', 'Holds today'],
-    ['holds', HOLDS, 'Holds today', 'Bin volume today'],
-  ])('shows a %s failure in that section alone, and says so above the figures', async (_, route, failed, fine) => {
-    serve({ ...WITH_HOLDS, [route]: SERVER_ERROR })
+  it('shows a bin volume failure in that section alone, and says so above the figures', async () => {
+    serve({ ...WITH_HOLDS, [BINS]: SERVER_ERROR })
 
     renderApp(CENTRAL)
     await loaded()
 
-    await waitFor(() => expect(panel(failed)).toHaveTextContent('Could not load.'))
-    expect(panel(fine)).not.toHaveTextContent('Could not load.')
+    await waitFor(() => expect(panel('Bin volume today')).toHaveTextContent('Could not load.'))
+    await waitFor(() => expect(metric('Holds')).toHaveTextContent(/^9$/))
     expect(screen.getByRole('alert')).toHaveTextContent('Some live data could not be loaded. Use Refresh to try again.')
     expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
     expect(barHeights()).toHaveLength(24)
@@ -2181,12 +2194,12 @@ describe('holds and bin volume today', () => {
 
     renderApp(CENTRAL)
     await loaded()
-    await screen.findByText('Public holds today')
+    await waitFor(() => expect(metric('Holds')).toHaveTextContent(/^9$/))
     await person.click(refreshButton())
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/latest refresh failed/))
     expect(metric('Bins observed')).toHaveTextContent(/^3$/)
-    expect(metric('Public holds today')).toHaveTextContent(/^9$/)
+    expect(metric('Holds')).toHaveTextContent(/^9$/)
   })
 
   it('refreshes holds and bins with the rest, by the timer and by the button, and starts no timer of its own', async () => {
@@ -2266,7 +2279,7 @@ describe('the sorter at a glance', () => {
     expect(drawing().querySelectorAll('.machine-part, .outflow-item, .outflow-meter')).toHaveLength(0)
     // The same figures are still on the page: today's check-ins above, and today's holds below.
     expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
-    await waitFor(() => expect(screen.getByRole('region', { name: 'Holds today' })).toHaveTextContent('9'))
+    await waitFor(() => expect(screen.getByRole('group', { name: 'Holds' })).toHaveTextContent('9'))
   })
 
   it('lays out the bins that received check-ins along the sort line in bin order, each with its count, and ranks none', async () => {

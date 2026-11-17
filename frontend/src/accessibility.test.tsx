@@ -55,7 +55,8 @@ const link = (name: string) => within(main()).getByRole('link', { name })
 /** Waits until the branch dashboard has loaded every section. */
 async function dashboard() {
   await screen.findByRole('img', { name: /^Bar chart of check-ins/ })
-  await screen.findByRole('table', { name: 'Top reject reasons' })
+  // The reject reasons are read for the top reason under Rejects today.
+  await screen.findByText(/^Top reason: /)
   await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).not.toHaveAttribute('aria-disabled', 'true'))
 }
 /** Everything in the app that Tab stops at, in order, by accessible name. The test's own browser buttons are left out. */
@@ -93,7 +94,6 @@ describe('the structure of a page', () => {
       'H4 Rejects',
       'H3 Sorter at a glance',
       'H3 Hourly check-ins',
-      'H3 Top reject reasons',
       'H3 Bin volume today',
       'H4 Check-ins by bin today',
     ])
@@ -122,17 +122,15 @@ describe('the structure of a page', () => {
     expect(screen.getAllByRole('main')).toHaveLength(1)
     // The header's two account actions, the breadcrumb, and the sorter's own two views.
     expect(screen.getAllByRole('navigation').map((nav) => nav.getAttribute('aria-label'))).toEqual(['Account', 'Breadcrumb', 'Sorter views'])
-    // The dashboard's six parts are the only named regions; the page itself is <main>. (Holds today is a seventh
-    // where the plan includes holds; Northbridge's does not.)
+    // The dashboard's five parts are the only named regions; the page itself is <main>.
     expect(screen.getAllByRole('region').map((region) => region.getAttribute('aria-labelledby'))).toEqual([
       'pipeline-heading',
       'today-heading',
       'sorter-map-heading',
       'hourly-heading',
-      'reasons-heading',
       'today-bins-heading',
     ])
-    expect(within(main()).getAllByRole('region')).toHaveLength(6)
+    expect(within(main()).getAllByRole('region')).toHaveLength(5)
   })
 
   it('gives the breadcrumb a name, links for the pages above and the current page marked as such', async () => {

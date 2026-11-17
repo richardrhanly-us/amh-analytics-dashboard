@@ -1171,6 +1171,21 @@ its `tools\update.ps1` has the backup vulnerability.
 
 ## 5. Done recently (newest first)
 
+- 2026-11-17 — UI2 (priority 2), Live Today rejects and cleanup. **Implemented on branch
+  `feature/ui2-live-today-rejects-cleanup` (from `main` at `831337a`); not committed, merged or deployed.**
+  - **Rejects today:** the card keeps its count and gains a smaller note, "Top reason: <reason> (<count>)", from the
+    existing reasons-by-count read (first of equals in API order). There is no note on a day with no rejects, and
+    "Top reason could not be loaded" if that read fails. Reject rate is unchanged, and there are still two cards.
+  - **Removed from Live Today:** the "Holds today" section (the Holds zone in Today's summary carries the same two
+    counts from the same read) and the "Top reject reasons" table. `TodayHolds.tsx` and `RejectReasons.tsx` were
+    deleted. The hourly chart is now full width.
+  - **Reports gap check: none.**
+    - Sorter Reports › Reliability has the full "Reject reasons" table (reason, rejects, share) with CSV.
+    - Organization Reports › System reliability has the same, across sorters.
+    - Today's breakdown alone is a one-day range there.
+  - **Tests:** lint, the CI audit gate, both builds and Vitest (58 files, 2,787 tests) pass. Not yet checked visually in
+    a browser.
+
 - 2026-11-17 — UI2 (priority 2), Live Today Holds summary zone. **Implemented on branch
   `feature/ui2-live-today-holds-kpis` (from `main` at `703c477`); not committed, merged or deployed.**
   - **What it adds:** a "Holds" zone with two cards, **Holds** (public) and **ILL**, beside Routing and under Rejects on

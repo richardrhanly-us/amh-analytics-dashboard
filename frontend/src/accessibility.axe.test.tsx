@@ -155,10 +155,9 @@ describe('axe finds no violation on', () => {
         }),
     })
     renderApp(LIVE_PAGE)
-    await screen.findByText('Public holds today')
+    // Today's summary has its Holds zone, so it is checked with the rest.
+    await screen.findByRole('group', { name: 'Holds' })
     await waitFor(() => expect(main()).not.toHaveTextContent('Loading'))
-    // Today's summary has its Holds zone too, so it is checked with the rest.
-    expect(screen.getByRole('group', { name: 'Holds' })).toBeInTheDocument()
     await userEvent
       .setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) })
       .click(screen.getByRole('button', { name: 'Show table: Check-ins by bin today' }))
