@@ -1940,6 +1940,40 @@ describe('the Holds zone in today’s summary', () => {
     expect(wide).toMatch(/\.summary-group-holds \{\n\s+--zone: var\(--zone-holds\);/)
   })
 
+  it('keeps the Holds and ILL cards at a card’s own height, and their size and type the same as every other zone’s', async () => {
+    serve(WITH_HOLDS)
+    renderApp(CENTRAL)
+    await loaded()
+    await waitFor(() => expect(card('Holds')).toHaveTextContent(/^9$/))
+
+    const css = styles.replace(/\r\n/g, '\n')
+    /** A rule's declarations, by its exact selector at the start of a line. */
+    const rule = (selector: string) => {
+      const at = css.indexOf(`\n${selector} {`)
+      expect(at, selector).toBeGreaterThan(-1)
+      return css.slice(at, css.indexOf('}', at))
+    }
+    // Every zone's cards still take up the zone's spare height (so Rejects' and Routing's are unchanged)...
+    expect(rule('.summary-zones > .summary-group > .metrics')).toContain('flex: 1;')
+    // ...except Holds': its zone keeps Routing's height, but its cards are not stretched to fill it.
+    expect(rule('.summary-zones > .summary-group-holds > .metrics')).toContain('flex: none;')
+    expect(css.indexOf('\n.summary-zones > .summary-group-holds > .metrics {')).toBeGreaterThan(
+      css.indexOf('\n.summary-zones > .summary-group > .metrics {'),
+    )
+    // No fixed height anywhere on Holds, and no padding or type of its own: its cards are the ordinary Live Today card.
+    const holdsRules = css.match(/^[^\n{}]*summary-group-holds[^\n{]*\{[^}]*\}/gm) ?? []
+    expect(holdsRules.length).toBeGreaterThan(0)
+    for (const text of holdsRules) {
+      expect(text).not.toMatch(/(^|[\s;{])(height|min-height|max-height|padding|font-size|line-height)\s*:/)
+      expect(text).not.toMatch(/\.metric\b/)
+    }
+    // Two side by side in one row of cards, each the same card element as Operations' and Rejects'.
+    for (const label of ['Holds', 'ILL']) {
+      expect(within(zone()).getByText(label, { selector: 'dt' }).closest('.metric')?.parentElement).toHaveClass('metrics')
+    }
+    expect(rule('.live-today .metrics')).toContain('grid-template-columns: repeat(auto-fit, minmax(min(100%, 11.5rem), 1fr));')
+  })
+
   it('shows today’s public and ILL counts from the holds read, and is the only holds section on the page', async () => {
     const fetchMock = serve(WITH_HOLDS, live({ holds: { public: 14, ill: 3 } }))
     renderApp(CENTRAL)
