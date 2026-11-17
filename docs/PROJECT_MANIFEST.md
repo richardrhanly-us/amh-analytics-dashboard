@@ -3,7 +3,7 @@
 The big picture, kept in one place so a single task does not swallow the plan. Read this before starting any
 non-trivial task, and check the task against it before widening scope.
 
-Last reviewed: 2026-11-16 (NBPL production sorter profile, Collector 1.0.15 backup security and the upgrade status; G2 qualification entries
+Last reviewed: 2026-11-17 (Collector 1.0.15 canonical bundle built; NBPL production sorter profile, Collector 1.0.15 backup security and the upgrade status; G2 qualification entries
 2026-11-12; the rest as of 2026-10-28). Facts marked **(verify)** were not confirmed against production or the person who
 knows; everything else was checked in the repository on that date.
 
@@ -469,7 +469,8 @@ planning come first and decide which C milestones they cover. Nothing below is r
   2026-10-24 and is **not yet published**; that record's "Before this release is published" checks are still open.
 - **Collector 1.0.15 (planned, 2026-11-16):** it supersedes 1.0.14 for upgrading existing installations (NBPL), with
   restricted, verified upgrade backups and a verified rollback.
-  - Merged to `main` (PR #303, `c1b161e`); **not built, rehearsed or released**.
+  - Merged to `main` (PR #303, `c1b161e`). Canonical bundle **built and verified 2026-11-17** from `2565b95` (ZIP
+    SHA-256 `6b358993…9ec8`); **not stored, rehearsed or released**.
   - Record: `docs/releases/collector-1.0.15.md`.
   - Status and blockers: *NBPL 1.0.13 → 1.0.15 upgrade status* below.
 - **G3, real-API GUI installation, passed 2026-10-25** on a fresh Windows 10 LTSC 2019 VM: all seven stages, SYSTEM
@@ -856,8 +857,12 @@ deployment, not a fresh install. What remains unverified above must not be assum
 
 **Planned release 1.0.15 (decided 2026-11-16, product owner): it supersedes 1.0.14 as the release for NBPL's upgrade.**
 It carries the backup-permissions fix (blocker 3 below). Release notes: `docs/releases/collector-1.0.15.md`.
-- **Merged to `main` (PR #303, merge `c1b161e`, 2026-11-16); not built or released. No 1.0.15 artifact or hash
-  exists.**
+- **Merged to `main` (PR #303, merge `c1b161e`, 2026-11-16).**
+- **Canonical bundle built and verified 2026-11-17** on `DESKTOP-DORG9IO` from `2565b95` (docs-only after `c1b161e`):
+  `SortViewCollector-1.0.15.zip`, SHA-256 `6b3589938b5c255dd74e2a89537a9e1c1db63d84728f605e7e8495789dc59ec8`;
+  `MANIFEST.json` SHA-256 `50eac4ca…eddab`; 1394 entries. Hashes, script checks and the secrets inspection (0 findings)
+  are in `docs/releases/collector-1.0.15.md`, *Canonical release artifact*.
+- **Not yet stored** in `sortview-artifacts`, **not rehearsed, not released.** NBPL stays on 1.0.13.
 - `collector.__version__` is `1.0.15`.
 - **What changed:**
   - `tools\update.ps1` (`collector/deploy/update-release.ps1`): the backup folder is created already restricted,
@@ -886,7 +891,7 @@ its `tools\update.ps1` has the backup vulnerability.
 
 *Upgrade path:*
 - For an existing install it is `tools\update.ps1` (= `collector/deploy/update-release.ps1`) from the canonical
-  bundle: the **1.0.15** bundle once built.
+  bundle: the **1.0.15** bundle (built 2026-11-17, ZIP SHA-256 `6b358993…9ec8`), once the rehearsal passes.
 - Release notes, *Compatibility*: it keeps an existing Contract v2 install's config, secret, rules and cursor.
 - 1.0.15's `tools\update.ps1` refuses a frozen install without `MANIFEST.json` and `MANIFEST.installed.json`. NBPL
   has both.
@@ -1022,9 +1027,11 @@ its `tools\update.ps1` has the backup vulnerability.
      link, restricted backup, rollback failure recovery); see *1.0.15 test additions* below. The fix is still not
      released or rehearsed, so blocker 3 stays open until 1 and 2 pass.
    - **Still open separately:** the wider `C:\SortView` parent-folder review (profile above).
-4. **Build the canonical 1.0.15 bundle:**
-   - record its hashes and storage in `docs/releases/collector-1.0.15.md`;
-   - retrieve it from `sortview-artifacts` on the machine that will carry it to NBPL and verify it there;
+4. **Canonical 1.0.15 bundle:**
+   - [x] build it and record its hashes in `docs/releases/collector-1.0.15.md` -- **done 2026-11-17** (`6b358993…9ec8`);
+   - [ ] store it in `sortview-artifacts` `collector/1.0.15/` (`docs/release-process.md`) and record the `- Stored:` line;
+   - [ ] retrieve it from `sortview-artifacts` on the machine that will carry it to the VM and to NBPL, and verify it
+     there;
    - decide whether a 1.0.15 setup program (G2-style) package is needed. NBPL does not need one.
 5. Decide which of the release's *Before this release is published* checks gate an NBPL upgrade (those of
    `docs/releases/collector-1.0.14.md` carry over to 1.0.15). The SYSTEM-context preflight is relevant. Resume,
@@ -1046,6 +1053,9 @@ its `tools\update.ps1` has the backup vulnerability.
      `Expand-Archive` into `_verify\`, then `version`, every subcommand's `--help`, `install.ps1 -VerifyBundleOnly` and
      a no-extra-files count) exists only as that machine's `_build\package_and_verify.ps1` and
      `BUILD-RECORD.json`, not in this repository. **Not yet in `docs/release-process.md`.**
+     **Done 2026-11-17:** 1.0.15 was built there with that toolchain and that script (version string changed only).
+     `build_frozen.ps1` needs `-RepoRoot` when run through `powershell.exe -File`: Windows PowerShell 5.1 leaves
+     `$PSScriptRoot` empty in `param()` defaults there (the first 1.0.15 attempt stopped before PyInstaller for this).
 
 **Milestones:**
 
@@ -1157,6 +1167,15 @@ its `tools\update.ps1` has the backup vulnerability.
 ---
 
 ## 5. Done recently (newest first)
+
+- 2026-11-17 — Collector 1.0.15 canonical bundle **built and verified** on `DESKTOP-DORG9IO` from `2565b95` (same
+  toolchain and procedure as 1.0.14): ZIP SHA-256 `6b3589938b5c255dd74e2a89537a9e1c1db63d84728f605e7e8495789dc59ec8`,
+  `MANIFEST.json` SHA-256 `50eac4ca11675debf470d928fdfb664e950199d0c74808c22e47d37dab2eddab`, executable SHA-256
+  `6b0f568b…77a3`, 1394 entries.
+  - The extracted copy matched its manifest (0 missing, 0 extra). The four backup-security scripts match source and
+    manifest. The secrets and library-data inspection found nothing.
+  - **Not stored, not rehearsed, not production-ready.** Next: store it in `sortview-artifacts`, then the 1.0.13 →
+    1.0.15 upgrade and rollback rehearsal on a representative VM (section 4, C, blockers 1 and 2). NBPL stays on 1.0.13.
 
 - 2026-11-16 — Collector 1.0.15 backup security **merged to `main`** (PR #303, merge commit `c1b161e`). The entries
   below describe the working tree before that merge. Merged source is not a release: **no 1.0.15 bundle is built,
