@@ -4,15 +4,67 @@
 
 - Release: `1.0.15` (planned)
 - `collector.__version__`: `1.0.15`
-- Canonical release artifact: **not built.** No bundle, setup program package or hash exists for 1.0.15 yet.
-- Source: **merged to `main`** in PR #303 (merge commit `c1b161e`, 2026-11-16). Merged source is **not a release**:
-  no 1.0.15 bundle has been built, hashed, stored, rehearsed or approved. Automated validation is recorded in
-  `docs/PROJECT_MANIFEST.md` (section 4, C, *NBPL 1.0.13 → 1.0.15 upgrade status*).
+- Canonical release artifact: **built and verified 2026-11-17 on `DESKTOP-DORG9IO`; not stored, published, rehearsed
+  or approved** (see *Canonical release artifact* below). No setup program package exists for 1.0.15.
+- Source: **merged to `main`** in PR #303 (merge commit `c1b161e`, 2026-11-16); the bundle was built from `2565b95`,
+  which differs from `c1b161e` only in documentation. A built bundle is **not a qualified release**: the upgrade and
+  rollback rehearsal below is still outstanding. Automated validation is recorded in `docs/PROJECT_MANIFEST.md`
+  (section 4, C, *NBPL 1.0.13 → 1.0.15 upgrade status*).
 - Security tests: `tests/test_collector_backup_security.py` all passed on LIB-L26, 2026-11-16: 40 non-elevated, plus
   3 elevated in 19.33 s, 0 failed, 0 skipped. These are unit and integration tests in temporary folders, **not** an
   upgrade or rollback rehearsal.
 - Production: NBPL's sorter (`NEWBRAUNFELSSOR`) runs **1.0.13**. 1.0.15 is **not ready for its upgrade** until a real
   1.0.13 → 1.0.15 upgrade and rollback rehearsal passes (see *Before this release is used for an upgrade*).
+
+## Canonical release artifact
+
+Built from `2565b9576346271bf722ef843162d19490da6846` (PR #304 merge; Collector code as merged in PR #303, `c1b161e`)
+on `DESKTOP-DORG9IO` under `C:\SortView\ReleaseBuilds\1.0.15\`, by the 1.0.14 procedure: `collector/freeze/build_frozen.ps1`
+(release readiness PASS, executable `version` 1.0.15 verified), `python -m collector.build_release --frozen-runtime`, then
+`_build\package_and_verify.ps1` (the 1.0.14 script with only the version changed: `Compress-Archive` in Windows PowerShell
+5.1, then checks on an extracted copy in `_verify\`):
+
+- Release ZIP: `SortViewCollector-1.0.15.zip` (36,555,502 bytes)
+- Release ZIP SHA-256: `6b3589938b5c255dd74e2a89537a9e1c1db63d84728f605e7e8495789dc59ec8`
+- Bundle `MANIFEST.json` SHA-256: `50eac4ca11675debf470d928fdfb664e950199d0c74808c22e47d37dab2eddab`
+- Manifest entries: `1394`; frozen runtime files: `1378`; manifest `built_at` `2026-11-17T03:30:32.299643Z`
+- `runtime\SortViewCollector.exe` SHA-256: `6b0f568b615885df9e68fdb8ce1ef04bda54587a47043a95d5da13e4bdf277a3` (10,713,652 bytes)
+- Build: CPython 3.14.6 (`.pyinstaller-venv`), PyInstaller 6.22.3 (hooks-contrib 2026.8); requests 2.33.1, urllib3 2.6.3,
+  pandas 2.3.3, numpy 2.5.3 -- the same toolchain as 1.0.14
+- Stored: **not yet** -- to be copied into `sortview-artifacts` `collector/1.0.15/` per `docs/release-process.md`
+- Unsigned (code signing, C1, is open)
+
+*Verification, 2026-11-17, on `DESKTOP-DORG9IO`:*
+
+- **Build-time (`package_and_verify.log`):** on the extracted copy, `version` printed `1.0.15` (exit 0); `--help` of
+  run, preflight, bootstrap, support-info, task-xml, identity-collision-diag, v2-key and api-token all exited 0; an unknown
+  subcommand exited 2; `install.ps1 -VerifyBundleOnly` verified 1394 files with no unlisted files; 0 files beyond the
+  manifest.
+- **Independent re-check (read-only):**
+  - The ZIP size and SHA-256, the `MANIFEST.json` SHA-256 and the executable SHA-256 above recomputed from disk. The
+    `MANIFEST.json` and the executable are identical in the build folder and the extracted copy, and the executable
+    matches the PyInstaller output and its manifest entry.
+  - All 1394 manifest entries in the extracted copy match their SHA-256 and size; 0 missing, 0 extra.
+  - The ZIP holds 1415 entries under the single folder `SortViewCollector-1.0.15`, with no absolute or `..` paths.
+  - `pilot\classification_rules.json`, `tools\prepare_v2_pilot.ps1` and `requirements.txt` are absent.
+- **Backup-security scripts:** each is present in the bundle and listed in its manifest, and its SHA-256 equals both its
+  manifest entry and its source at `2565b95` (no local changes); each parses with no errors in Windows PowerShell 5.1:
+
+  | Bundle file | Source | SHA-256 |
+  |---|---|---|
+  | `tools\CollectorBackup.ps1` | `collector/deploy/CollectorBackup.ps1` | `77c5eb5ef8097db7ed02503b6a761700eca1f6860b30736ea6d2e18f76fd9c5b` |
+  | `tools\restore-backup.ps1` | `collector/deploy/restore-backup.ps1` | `16ede81da9151f842c279344ac0e0e9d0fa504e70d57af2a904257c19c90d24e` |
+  | `tools\update.ps1` | `collector/deploy/update-release.ps1` | `5db760a81b8ecf45d3f4536eda2b5225fc7fe4bdffcf563f2229cd7fff5e06b4` |
+  | `tools\CollectorManifest.ps1` | `collector/deploy/CollectorManifest.ps1` | `037b4a17469dbb741578f15c9a9ef29c9a576ea27f3605cdd5d599e4d9c86567` |
+
+  `tools\update.ps1` dot-sources `CollectorBackup.ps1`; `tools\restore-backup.ps1` takes `-ExpectedManifestSha256` and
+  `-TrustedManifestPath`; `CollectorBackup.ps1` defines `New-ProtectedCollectorDirectory`; `CollectorManifest.ps1`
+  defines `Get-CollectorInstalledLayout`.
+- **Secrets and library-data inspection** (`docs/release-process.md`, *Before copying*), on the ZIP: **0 name findings,
+  0 content findings** (32 text entries under 1 MB scanned). The only `.pem` entry is
+  `runtime\_internal\certifi\cacert.pem` (public certificate authorities, excluded by design).
+- **Not verified by this:** an installation, an upgrade, a rollback, a Scheduled Task run or an upload. Those are the
+  rehearsal below.
 
 1.0.15 supersedes 1.0.14 as the release intended for NBPL's upgrade. 1.0.14's canonical bundle
 (`75e7830a…`) and G2 package (`6f91da7d…`) and their records in `docs/releases/collector-1.0.14.md` are unchanged:
@@ -91,8 +143,10 @@ New files: `tools\CollectorBackup.ps1` (the shared library) and `tools\restore-b
 
 To be performed and recorded here:
 
-- [ ] Build the canonical 1.0.15 bundle, and record its ZIP, `MANIFEST.json` and executable SHA-256 and its artifact
-      storage.
+- [x] Build the canonical 1.0.15 bundle, and record its ZIP, `MANIFEST.json` and executable SHA-256. **Built and
+      verified 2026-11-17** (see *Canonical release artifact*).
+  - [ ] Store it in `sortview-artifacts` and record the `- Stored:` line; then retrieve it on the machine that will
+        carry it to the rehearsal VM (and later NBPL) and verify it there against this record.
 - [x] Run the three tests of `tests/test_collector_backup_security.py` that skip without elevation, in an elevated
       session on LIB-L26. **Passed 2026-11-16: 3 passed in 19.33 s, 0 failed, 0 skipped** (Windows PowerShell 5.1
       elevated, Python 3.11.9, pytest 8.4.2). The rest of the file had passed non-elevated: 40 passed.
