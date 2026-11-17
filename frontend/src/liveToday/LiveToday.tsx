@@ -178,7 +178,11 @@ function Routing({ routing }: { routing: Section<CheckinsByDestination> }) {
   )
 }
 
-function Today({ live, transits }: { live: LiveTodayData; transits: boolean }) {
+/**
+ * `transits` and `holds`: what the organization's plan includes. A zone the plan does not have is neither asked for
+ * nor drawn.
+ */
+function Today({ live, transits, holds }: { live: LiveTodayData; transits: boolean; holds: boolean }) {
   const { checkinCount, checkinsByHour, checkinsByDestination, rejectCount, currentHour } = live
   const dateText = live.date === null ? null : formatCalendarDate(live.date)
 
@@ -192,8 +196,11 @@ function Today({ live, transits }: { live: LiveTodayData; transits: boolean }) {
           </p>
         )}
       </div>
-      {/* Three zones, each its own band. In reading order here; a wide screen sets Rejects beside Operations. */}
-      <div className="summary-zones">
+      {/*
+        The zones, each its own band. In reading order here; a wide screen sets Rejects beside Operations, and Holds
+        beside Routing, under Rejects.
+      */}
+      <div className={holds ? 'summary-zones summary-zones-with-holds' : 'summary-zones'}>
         <SummaryGroup name="operations" heading="Operations">
           <dl className="metrics">
             <MetricCard label="Check-ins today" {...figure(checkinCount, (data) => count(data.checkin_count))} />
@@ -239,6 +246,19 @@ function Today({ live, transits }: { live: LiveTodayData; transits: boolean }) {
             />
           </dl>
         </SummaryGroup>
+        {/*
+          Only when the plan includes holds: otherwise they are not asked for either. The same two counts, from the
+          same read, as Holds today below -- a summary of it, not another figure.
+        */}
+        {holds && (
+          <SummaryGroup name="holds" heading="Holds">
+            <p className="summary-caption">Today&rsquo;s public and interlibrary loan (ILL) holds.</p>
+            <dl className="metrics">
+              <MetricCard label="Holds" {...figure(live.holds, (data) => count(data.public_hold_count))} />
+              <MetricCard label="ILL" {...figure(live.holds, (data) => count(data.ill_hold_count))} />
+            </dl>
+          </SummaryGroup>
+        )}
       </div>
     </section>
   )
@@ -350,7 +370,7 @@ export function LiveToday({
         <ErrorMessage message={problem(live)} />
         <PipelinePanel pipeline={live.pipeline.data} />
       </div>
-      <Today live={live} transits={transits} />
+      <Today live={live} transits={transits} holds={holds} />
       {/* The day's check-ins on a drawing of the sorter's bins. */}
       <SorterAtAGlance live={live} binLayout={binLayout} />
       <div className="live-detail">

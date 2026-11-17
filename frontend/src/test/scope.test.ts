@@ -318,9 +318,11 @@ describe('scope of this block', () => {
     expect(binVolume).not.toMatch(/admin|owner|capacity|destination|exception|overflow/i)
     // Holds (R8K) is two counts, read in one module and shown in the report's section and -- for today alone -- on
     // Live Today, only where the plan has it: the plan's feature is looked at in one place, and no hold is shown by
-    // patron, item or destination.
+    // patron, item or destination. On Live Today the same two counts, from the same read, are also today's Holds
+    // zone (LiveToday.tsx) -- a summary of Holds today, not another figure.
     expect(offenders(/public_hold_count|ill_hold_count/).sort()).toEqual([
       '../api/reports.ts',
+      '../liveToday/LiveToday.tsx',
       '../liveToday/TodayHolds.tsx',
       '../reports/HoldsSection.tsx',
     ])
@@ -488,13 +490,15 @@ describe('how the dashboard is drawn', () => {
     expect(allSources['../pages/BranchPage.tsx']).toBeUndefined()
   })
 
-  it('groups today as three named groups without adding landmarks', () => {
+  it('groups today as named groups -- three, and Holds where the plan has it -- without adding landmarks', () => {
     const liveToday = shipped.find(([path]) => path === '../liveToday/LiveToday.tsx')?.[1] ?? ''
     expect(liveToday.match(/<SummaryGroup name="(\w+)"/g)).toEqual([
       '<SummaryGroup name="operations"',
       '<SummaryGroup name="routing"',
       '<SummaryGroup name="rejects"',
+      '<SummaryGroup name="holds"',
     ])
+    expect(css).toMatch(/--zone-holds: light-dark\(/)
     expect(liveToday).toMatch(/role="group" aria-labelledby=/)
     expect(css).toMatch(/\.metric dt \{[^}]*overflow-wrap: anywhere/)
     // The zones are bands with an accent each, and the pipeline's state is a pill in its own colour. Every one of

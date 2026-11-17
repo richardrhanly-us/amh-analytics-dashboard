@@ -1171,6 +1171,17 @@ its `tools\update.ps1` has the backup vulnerability.
 
 ## 5. Done recently (newest first)
 
+- 2026-11-17 — UI2 (priority 2), Live Today Holds summary zone. **Implemented on branch
+  `feature/ui2-live-today-holds-kpis` (from `main` at `703c477`); not committed, merged or deployed.**
+  - **What it adds:** a "Holds" zone with two cards, **Holds** (public) and **ILL**, beside Routing and under Rejects on
+    wide screens (≥75rem). The second row becomes `routing | holds` on the same 3fr/2fr columns, and the zones stack on
+    narrow screens. It is shown only where the plan includes holds.
+  - **Data:** the same `live.holds` read and counts as Holds today, which stays. No new endpoint.
+  - **Styling:** a new accent token `--zone-holds`.
+  - **Tests:** 8 new tests (placement, counts, no-plan, holds without transits, loading, error, zero, accessibility).
+    The two scope guards were updated to allow the new zone. Lint, both builds and Vitest (58 files, 2,787 tests)
+    pass. Not yet checked visually in a browser.
+
 - 2026-11-17 — UI2 (priority 2), Live Today "Sorter at a glance" reduced to the sort-line diagram alone. **Implemented
   on branch `feature/ui2-sorter-diagram-focus` (from `main` at `d2b36de`); not committed, merged or deployed.**
   - **Removed:** the visible header and caption, the Induction, Routed and Holds panels, the "Sort line" label and the
@@ -1466,6 +1477,10 @@ One line each, dated. Pick up only when a milestone needs it, or when it is prom
     - **To remove:** when a fixed picomatch is published (the gate itself then fails), update the lockfile to it, delete
       the script and test, and restore the workflow step to `npm audit --audit-level=high`. Whatever happens, act by
       2026-12-17.
+- 2026-11-17 — Flaky frontend test:
+  `src/account/PasswordReset.test.tsx` › "names the sign-in form, and the forgot-password form that replaces it" failed
+  once in a full Vitest run (file took 6.4 s) and passed alone and in the next full run. Timing-sensitive under load;
+  not related to the change in progress.
 
 ---
 
