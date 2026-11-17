@@ -40,9 +40,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Blocking: a high or critical advisory in any installed package fails the build.
+      # Blocking: a high or critical advisory in any installed package fails the build -- `npm audit --audit-level=high`,
+      # with ONE temporary exception: picomatch GHSA-fc5q-39xc-vjpf (no patched release; development tools only),
+      # until 2026-12-17. The gate fails if it reaches a production dependency, if a fixed picomatch is published, after
+      # it expires, or if the audit cannot be read. To remove it, see the top of frontend/scripts/audit-gate.mjs and
+      # put this step back to `npm audit --audit-level=high`.
       - name: Audit dependencies
-        run: npm audit --audit-level=high
+        run: node scripts/audit-gate.mjs
 
       - name: Run tests
         run: npm run test:run

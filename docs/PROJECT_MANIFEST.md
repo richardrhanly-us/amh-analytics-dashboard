@@ -1171,6 +1171,18 @@ its `tools\update.ps1` has the backup vulnerability.
 
 ## 5. Done recently (newest first)
 
+- 2026-11-17 — UI2 (priority 2), Live Today "Sorter at a glance" reduced to the sort-line diagram alone. **Implemented
+  on branch `feature/ui2-sorter-diagram-focus` (from `main` at `d2b36de`); not committed, merged or deployed.**
+  - **Removed:** the visible header and caption, the Induction, Routed and Holds panels, the "Sort line" label and the
+    shading legend. Those figures remain in Today's figures and Holds today. The panel's name stays a visually hidden
+    heading for screen readers.
+  - **Changed:** the line now fills the panel, centred, capped per column by `--columns` so a short machine is not
+    stretched. Bins, belt, labels, counts and fills are larger.
+  - **Unchanged:** bin order, layout mapping, heat and fill calculations, colours, the narrow-screen grid, and
+    backend/API.
+  - **Tests:** frontend lint, both type-checked production builds and Vitest (57 files, 2,730 tests) pass. Not yet
+    checked visually in a browser.
+
 - 2026-11-17 — Collector 1.0.15 canonical ZIP **stored** in `sortview-artifacts` (`collector/1.0.15/`, with its
   `ARTIFACT-RECORD.md`), commit `09130bde1c45076028482a1fb0d63cbb63873523` on `origin/main`. The ZIP read from that
   commit matches the release record (SHA-256 `6b358993…9ec8`, 36,555,502 bytes). Release record updated with the
@@ -1424,6 +1436,36 @@ One line each, dated. Pick up only when a milestone needs it, or when it is prom
   so a folder planted there would be reused. The frozen path (all customer installs, NBPL included) was fixed in
   1.0.15; the source path is developer/QA only. Use `New-ProtectedCollectorDirectory` there too if source installs
   ever reach a customer.
+- 2026-11-17 — **Frontend CI `npm audit --audit-level=high` fails on every branch, `main` included.**
+  - **Cause:** picomatch GHSA-fc5q-39xc-vjpf (high, ReDoS via crafted extglobs), advisory updated 2026-11-17.
+    **No patched release exists**: picomatch 4.0.7 is both the latest and the last vulnerable version.
+  - **Exposure:** dev-only. picomatch reaches the frontend only through build and test tools (Vite, Vitest,
+    tinyglobby/fdir, typescript-eslint), with glob patterns from our own config. `npm audit --omit=dev` finds 0
+    vulnerabilities, so it is not in the shipped app.
+  - **Fixed on `feature/ui2-sorter-diagram-focus`:** in-range lockfile updates (ESLint 10.12.0 → 10.15.0,
+    typescript-eslint 8.71.1 → 8.73.0) remove minimatch GHSA-g3hv-75wg-m249 (moderate) everywhere except
+    `eslint-plugin-jsx-a11y-x` 0.2.0. That is the plugin's latest version and it still requires minimatch `^10`.
+  - **Remaining:** 14 findings (2 moderate, 12 high), all from those two advisories. npm's only offered "fixes" are
+    downgrades (Vite 6.2.7, Vitest 3.1.4, jsx-a11y-x 0.1.1): rejected.
+  - **Decided and implemented 2026-11-17 (product owner): a temporary CI exception for GHSA-fc5q-39xc-vjpf only.** On
+    `feature/ui2-sorter-diagram-focus`; not committed or merged.
+    - **How it works:** `frontend/scripts/audit-gate.mjs` replaces `npm audit --audit-level=high` in
+      `.github/workflows/frontend-ci.yml`. It allows only picomatch `<=4.0.7`, until **2026-12-17** (UTC), and only
+      while every package the advisory reaches has `dev: true` in `package-lock.json`.
+    - **It fails on:**
+      - any other high or critical advisory;
+      - the advisory reaching a production or optional dependency;
+      - a change to the advisory's package or range;
+      - a published picomatch release outside `<=4.0.7`;
+      - expiry;
+      - any `npm audit`, `npm view`, lockfile or output failure, or incomplete advisory data (fails closed).
+    - **Tests:** 49 in `frontend/scripts/audit-gate.test.mjs`.
+    - **On the current tree it passes:** the high advisory is allowed, development-only, across 12 packages; the
+      moderate minimatch advisory is listed but does not block. Plain `npm audit --audit-level=high` still exits 1
+      (14 findings: 2 moderate, 12 high).
+    - **To remove:** when a fixed picomatch is published (the gate itself then fails), update the lockfile to it, delete
+      the script and test, and restore the workflow step to `npm audit --audit-level=high`. Whatever happens, act by
+      2026-12-17.
 
 ---
 

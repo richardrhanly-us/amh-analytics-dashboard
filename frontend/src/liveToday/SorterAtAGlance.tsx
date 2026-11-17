@@ -1,38 +1,24 @@
-import type { CSSProperties, ReactNode } from 'react'
+import type { CSSProperties } from 'react'
 
 import type { BinLayout } from '../api/organizations.ts'
 import type { BinVolumeBin } from '../api/reports.ts'
 import { binLabel } from '../reports/binText.ts'
-import { formatHourRange } from '../time/productTime.ts'
-import { busiestHour } from './metrics.ts'
-import { HoldsCounts } from './TodayHolds.tsx'
 import type { LiveToday, Section } from './useLiveToday.ts'
 
 /**
- * Today on one panel laid out like the sorter's own monitor: the intake end on the left (induction), then the sort
- * line -- one compact machine, centred, with its end bin standing alone at its left end and the other bins along both
- * sides of the belt: every bin in its place for a sorter with a configured layout, else those that received check-ins
- * today in sequence -- and on the right the rail where the day's items left the machine: routed home or in transit,
- * and held. A summary of the day drawn after the machine, not a live mimic
- * of it: nothing here moves, and every figure is one the page already reads. Rejects are in Today's figures above.
+ * Today's sort line, drawn on its own across the panel like the sorter's own monitor: the end bin standing alone at
+ * the left end and the other bins along both sides of the belt -- every bin in its place for a sorter with a
+ * configured layout, else those that received check-ins today in sequence. A summary of the day drawn after the
+ * machine, not a live mimic of it: nothing here moves. The day's induction, routing and holds figures are in Today's
+ * figures above and Holds today below.
  *
- * The bins and the routing rail are never wired together. A bin is where an item was logged on the sorter; a
- * destination is where it was routed; the logs do not say which bin served which destination, so the drawing
- * does not either -- the line runs into the rail as a whole, never from one bin to one destination.
- *
- * Everything that carries meaning is text: headings, lists and words. Each bin says its own count; the shading and
- * fill that picture it against the busiest bin are decoration, as are the conveyor and the routing bars, hidden
- * from assistive technology and never the only sign of anything.
+ * Everything that carries meaning is text: each bin says its own count, and the panel keeps its name as a heading for
+ * assistive technology. The shading and fill that picture a bin against the busiest bin are decoration, as is the
+ * conveyor, hidden from assistive technology and never the only sign of anything.
  */
 
 const count = (value: number) => value.toLocaleString('en-US')
 const checkIns = (value: number) => `${count(value)} ${value === 1 ? 'check-in' : 'check-ins'}`
-/** A share of the day, only for a day that has check-ins: a share of nothing is not a number. */
-const percent = (part: number, whole: number) => (whole > 0 ? (part / whole) * 100 : null)
-const share = (part: number, whole: number) => {
-  const value = percent(part, whole)
-  return value === null ? null : `${value.toFixed(1)}%`
-}
 /** A machine with more bins than this is set as a compact grid, not as one two-sided line: the line would be too fine. */
 const LONGEST_LINE = 16
 /** Without a configured layout, the bin at the left end of the line, on its own, as the sorter's screen draws it. */
@@ -55,48 +41,6 @@ function binsOnLine(bins: BinVolumeBin[], layout: BinLayout | null): BinVolumeBi
 /** A part whose read has not answered, or could not be read: words, never a placeholder figure. */
 function Pending({ section }: { section: Section<unknown> }) {
   return section.status === 'loading' ? <p className="machine-pending">Loading…</p> : <p className="machine-pending machine-failed">Could not load</p>
-}
-
-/** One labelled part of the machine. Its heading is small and set like a label on the machine; it is a real heading. */
-function Part({ name, heading, children }: { name: string; heading: string; children: ReactNode }) {
-  return (
-    <div className={`machine-part machine-part-${name}`}>
-      <h4>{heading}</h4>
-      {children}
-    </div>
-  )
-}
-
-function Induction({ live }: { live: LiveToday }) {
-  const { checkinCount, checkinsByHour, currentHour } = live
-  if (checkinCount.status !== 'ready') {
-    return <Pending section={checkinCount} />
-  }
-  const peak = checkinsByHour.status === 'ready' ? busiestHour(checkinsByHour.data.hours) : null
-  const now =
-    checkinsByHour.status === 'ready' && currentHour !== null
-      ? (checkinsByHour.data.hours.find((entry) => entry.hour === currentHour)?.checkin_count ?? 0)
-      : null
-  return (
-    <>
-      <p className="machine-figure">
-        {count(checkinCount.data.checkin_count)}
-        <span className="machine-unit"> checked in</span>
-      </p>
-      <ul className="machine-facts">
-        {now !== null && currentHour !== null && (
-          <li>
-            This hour ({formatHourRange(currentHour)}): {count(now)}
-          </li>
-        )}
-        {peak !== null && (
-          <li>
-            Peak hour so far: {formatHourRange(peak.hour)}, {count(peak.checkin_count)}
-          </li>
-        )}
-      </ul>
-    </>
-  )
 }
 
 /**
@@ -127,12 +71,16 @@ function SortLine({ live, layout }: { live: LiveToday; layout: BinLayout | null 
   if (along.length < bins.length) {
     classes.push('machine-bins-with-end')
   }
+  // How many columns of bins stand along the belt: the line's width is capped by it, so a short machine is not
+  // stretched across a wide panel.
+  const columns = Math.max(1, Math.ceil(along.length / 2))
   return (
-    // The machine, centred in its column: the bins, the belt they stand on (drawn by the list), and a line under it.
+    // The machine, centred across the panel: the bins, the belt they stand on (drawn by the list), and a line under it.
     <div className="machine-stage">
       {bins.length > 0 && (
         <ol
           className={classes.join(' ')}
+          style={{ '--columns': columns } as CSSProperties}
           aria-label={layout === null ? 'Bins that received check-ins today, in bin order' : 'Bins on this sorter, in their places along the machine'}
         >
           {bins.map((bin) => {
@@ -159,109 +107,26 @@ function SortLine({ live, layout }: { live: LiveToday; layout: BinLayout | null 
           })}
         </ol>
       )}
+      {/* What the bins cannot show: a day with nothing binned yet, and check-ins logged without a bin. */}
       <p className="machine-quiet">
-        {most > 0 ? (
-          <>Shading and fill: each bin&rsquo;s check-ins against the busiest bin&rsquo;s. </>
-        ) : (
-          bins.length > 0 && unknown === 0 && <>Nothing has reached a bin yet today.</>
-        )}
+        {most === 0 && bins.length > 0 && unknown === 0 && <>Nothing has reached a bin yet today.</>}
         {unknown > 0 && <>No bin recorded for {checkIns(unknown)}.</>}
       </p>
     </div>
   )
 }
 
-function Routed({ live }: { live: LiveToday }) {
-  const routing = live.checkinsByDestination
-  if (routing.status !== 'ready') {
-    return <Pending section={routing} />
-  }
-  const { checkin_count: total, home, transit, other_count: other } = routing.data
-  const outcomes = [
-    { key: 'home', name: `Kept at ${home.label}`, value: home.checkin_count, kind: 'home' },
-    ...transit.map((destination) => ({ key: destination.key, name: destination.label, value: destination.checkin_count, kind: 'transit' })),
-    ...(other > 0 ? [{ key: 'other', name: 'Other routing', value: other, kind: 'other' }] : []),
-  ]
-  return (
-    <ul className="outflow-list">
-      {outcomes.map((outcome) => {
-        const part = share(outcome.value, total)
-        return (
-          <li key={outcome.key} className={`outflow-item outflow-item-${outcome.kind}`}>
-            <span className="outflow-name">{outcome.name}</span>
-            <span className="outflow-count">
-              {count(outcome.value)}
-              {part !== null && <span className="outflow-share"> · {part}</span>}
-            </span>
-            {total > 0 && (
-              // The outcome's share of the day, as a bar under its row.
-              <span className="outflow-meter" aria-hidden="true">
-                <span style={{ width: `${(percent(outcome.value, total) ?? 0).toFixed(1)}%` }} />
-              </span>
-            )}
-          </li>
-        )
-      })}
-    </ul>
-  )
-}
-
-function Holds({ live }: { live: LiveToday }) {
-  const { holds } = live
-  return holds.status === 'ready' ? <HoldsCounts holds={holds.data} /> : <Pending section={holds} />
-}
-
 /**
- * `transits` and `holds`: what the organization's plan includes. A part the plan does not have is not drawn.
- * `binLayout`: the sorter's own configured bins, or null.
+ * The sort line alone, across the panel. Its name stays a real heading for assistive technology, visually hidden:
+ * the drawing is the panel. `binLayout`: the sorter's own configured bins, or null.
  */
-export function SorterAtAGlance({
-  live,
-  transits,
-  holds,
-  binLayout,
-}: {
-  live: LiveToday
-  transits: boolean
-  holds: boolean
-  binLayout: BinLayout | null
-}) {
-  const rail = transits || holds
+export function SorterAtAGlance({ live, binLayout }: { live: LiveToday; binLayout: BinLayout | null }) {
   return (
     <section className="panel sorter-map" aria-labelledby="sorter-map-heading">
-      <div className="sorter-map-head">
-        <h3 id="sorter-map-heading">Sorter at a glance</h3>
-        <p className="sorter-map-caption">Today, laid out like the sorter&rsquo;s own screen. A summary of the day, not a live view.</p>
-      </div>
-      <div className={rail ? 'machine' : 'machine machine-no-rail'}>
-        {/* The intake end: where items are checked in. */}
-        <div className="machine-intake">
-          <Part name="induction" heading="Induction">
-            <Induction live={live} />
-          </Part>
-        </div>
-        <div className="machine-line">
-          <Part name="bins" heading="Sort line">
-            <SortLine live={live} layout={binLayout} />
-          </Part>
-        </div>
-        {rail && (
-          // Where the day's items left the machine, counted by outcome -- never per bin.
-          <div className="machine-rail">
-            {transits && (
-              <Part name="routed" heading="Routed">
-                <Routed live={live} />
-                <p className="machine-quiet">Counted by destination, apart from the bins: the logs do not link the two.</p>
-              </Part>
-            )}
-            {holds && (
-              <Part name="holds" heading="Holds">
-                <Holds live={live} />
-              </Part>
-            )}
-          </div>
-        )}
-      </div>
+      <h3 id="sorter-map-heading" className="visually-hidden">
+        Sorter at a glance
+      </h3>
+      <SortLine live={live} layout={binLayout} />
     </section>
   )
 }
