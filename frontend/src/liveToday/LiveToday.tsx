@@ -351,8 +351,8 @@ export function LiveToday({
         <PipelinePanel pipeline={live.pipeline.data} />
       </div>
       <Today live={live} transits={transits} />
-      {/* The day on a drawing of the sorter: in at the induction point, out to the bins, routed or rejected. */}
-      <SorterAtAGlance live={live} transits={transits} holds={holds} binLayout={binLayout} />
+      {/* The day's check-ins on a drawing of the sorter's bins. */}
+      <SorterAtAGlance live={live} binLayout={binLayout} />
       <div className="live-detail">
         <HourlyCheckins checkinsByHour={live.checkinsByHour} currentHour={live.currentHour} timeZone={live.timeZone} />
         <RejectReasons rejectsByReason={live.rejectsByReason} />

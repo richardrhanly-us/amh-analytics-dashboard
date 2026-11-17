@@ -812,158 +812,18 @@ button[aria-disabled='true'] {
 }
 
 /*
- * Sorter at a glance: today on one panel laid out like the sorter's own monitor. On a wide screen it is one machine
- * in three columns, divided by hairlines -- the intake end (induction), the sort line (one compact machine, centred
- * in its column both ways), and the outflow rail (routed, holds). On a narrow screen the same parts stack in the
- * same order. Each part is labelled like a part of a machine: a small heading with a marker in its accent. Nothing
- * moves; the shading, fills and bars sit beside the figures they picture.
+ * Sorter at a glance: today's sort line alone, across the panel and centred in it, laid out like the sorter's own
+ * monitor. Nothing moves; the shading, fills and belt sit beside the figures they picture.
  */
 .sorter-map {
   margin-top: 1.5rem;
-  padding: 0;
-}
-
-.sorter-map-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.25rem 1rem;
-  padding: 0.625rem 1rem;
-  border-bottom: 1px solid var(--line);
-}
-
-.sorter-map-head h3 {
-  margin: 0;
-  font-size: 1.125rem;
-}
-
-.sorter-map-caption {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.875rem;
-}
-
-.machine {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.machine-rail {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
-}
-
-.machine > * {
-  border-bottom: 1px solid var(--line);
-}
-
-.machine > :last-child {
-  border-bottom: 0;
-}
-
-@media (min-width: 60rem) {
-  .machine {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 2.6fr) minmax(0, 1.3fr);
-  }
-
-  .machine-no-rail {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 3.9fr);
-  }
-
-  .machine > * {
-    border-bottom: 0;
-  }
-
-  .machine-rail {
-    grid-template-columns: minmax(0, 1fr);
-    align-content: start;
-  }
-
-  .machine-intake {
-    border-right: 1px solid var(--line);
-  }
-
-  .machine-rail {
-    border-left: 1px solid var(--line);
-  }
-}
-
-.machine-part {
-  padding: 0.625rem 0.875rem 0.75rem;
-}
-
-.machine-rail > .machine-part + .machine-part {
-  border-top: 1px solid var(--line);
-}
-
-.machine-part h4 {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin: 0 0 0.375rem;
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-/* The part's marker, in its accent, beside its name: the name says which part it is. */
-.machine-part h4::before {
-  content: '';
-  flex: none;
-  width: 0.5rem;
-  height: 0.5rem;
-  background: var(--part, var(--border));
-}
-
-.machine-part-induction {
-  --part: var(--zone-operations);
-}
-
-.machine-part-bins {
-  --part: var(--chart-bar);
-}
-
-.machine-part-routed {
-  --part: var(--zone-routing);
-}
-
-.machine-part-holds {
-  --part: var(--accent);
-}
-
-.machine-figure {
-  margin: 0;
-  font-size: 2rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 1.1;
-  font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
-}
-
-.machine-unit {
-  color: var(--muted);
-  font-size: 0.875rem;
-  font-weight: 400;
-  letter-spacing: 0;
-}
-
-.machine-facts {
-  margin: 0.375rem 0 0;
-  padding: 0;
-  list-style: none;
-  color: var(--muted);
-  font-size: 0.8125rem;
-  font-variant-numeric: tabular-nums;
+  padding: 1.5rem 1rem;
 }
 
 .machine-quiet {
-  margin: 0.5rem 0 0;
+  margin: 0;
   color: var(--muted);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
 }
 
 .machine-quiet:empty {
@@ -973,6 +833,7 @@ button[aria-disabled='true'] {
 .machine-pending {
   margin: 0;
   color: var(--muted);
+  text-align: center;
 }
 
 .machine-failed {
@@ -980,45 +841,31 @@ button[aria-disabled='true'] {
   font-weight: 600;
 }
 
-/*
- * The sort line's column: its label at the top, and the machine centred in the rest of it, across and down, so that
- * it sits balanced between the intake and the rail however many bins it has.
- */
-.machine-line {
-  display: flex;
-}
-
-.machine-part-bins {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-}
-
+/* The machine, centred across the panel, with what the bins cannot show set under it. */
 .machine-stage {
   display: flex;
-  flex: 1;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
+  gap: 0.75rem;
 }
 
 .machine-stage > .machine-quiet {
-  margin: 0;
   text-align: center;
 }
 
 /*
- * The sort line. On a narrow screen, and for a long machine, the bins are a compact grid in bin order, the width of
- * the column. On a wide screen they are one compact machine, only as wide as its bins: Bin 0 upright at the left
- * end, then the rest in list order, alternating sides of a belt that runs under them and a little past the last,
- * each joined to it by a short stub. List order is ascending bin order, or a sorter's own layout where it is known.
+ * The sort line. On a narrow screen, and for a long machine, the bins are a grid in bin order, the width of the
+ * panel. On a wide screen they are one machine across the panel: the end bin upright at the left end, then the rest
+ * in list order, alternating sides of a belt that runs under them and a little past the last, each joined to it by a
+ * short stub. Its columns share the panel's width, up to --bin-max each (--columns, set by the list, is how many
+ * columns stand along the belt), so a short machine is not stretched thin. List order is ascending bin order, or a
+ * sorter's own layout where it is known.
  */
 .machine-bins {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 5rem), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 6.5rem), 1fr));
   align-self: stretch;
-  gap: 0.375rem;
+  gap: 0.5rem;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1026,24 +873,26 @@ button[aria-disabled='true'] {
 
 @media (min-width: 75rem) {
   /*
-   * A bin on the line is --bin-long across and about --bin-short high (its label, count and fill set its height);
+   * A bin on the line takes its column's width and about --bin-short of height (its label, count and fill set it);
    * the end bin is the same rectangle stood on end: --bin-short across and --bin-long high.
    */
   .machine-bins:not(.machine-bins-long) {
-    --bin-long: 5.5rem;
-    --bin-short: 3.5rem;
+    --bin-long: 8rem;
+    --bin-short: 5rem;
+    --bin-max: 11rem;
 
     position: relative;
     grid-template-columns: none;
     grid-template-rows: auto auto;
-    grid-auto-columns: minmax(0, var(--bin-long));
+    grid-auto-columns: minmax(0, 1fr);
     grid-auto-flow: column;
     align-self: center;
-    gap: 1.25rem 0.375rem;
-    width: fit-content;
-    max-width: 100%;
+    gap: 2rem 0.625rem;
+    box-sizing: border-box;
+    width: 100%;
+    max-width: calc(var(--columns, 8) * (var(--bin-max) + 0.625rem) + var(--bin-short) + 1.25rem);
     /* Room for the belt to run on a little past the last bin. */
-    padding-right: 0.75rem;
+    padding-right: 1.25rem;
   }
 
   /* The end bin's own column: narrower than the others, which take the automatic columns after it. */
@@ -1058,10 +907,10 @@ button[aria-disabled='true'] {
     top: 50%;
     right: 0;
     left: 0;
-    height: 0.5rem;
+    height: 0.875rem;
     border-top: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
-    background: repeating-linear-gradient(90deg, var(--line) 0 0.375rem, var(--surface) 0.375rem 0.75rem);
+    background: repeating-linear-gradient(90deg, var(--line) 0 0.625rem, var(--surface) 0.625rem 1.25rem);
     transform: translateY(-50%);
   }
 
@@ -1071,7 +920,7 @@ button[aria-disabled='true'] {
     position: absolute;
     left: 50%;
     width: 2px;
-    height: 0.375rem;
+    height: 0.5625rem;
     background: var(--border);
   }
 
@@ -1084,9 +933,9 @@ button[aria-disabled='true'] {
   }
 
   /*
-   * Bin 0, the end bin: at the left end of the machine, a bin's rectangle turned upright -- as narrow as the others
-   * are high, and as high as they are wide -- centred on the belt, which it stands on, so it has no stub. Its label
-   * and count are set to fit its width, and its fill rises from the bottom instead of running across.
+   * The end bin: at the left end of the machine, a bin's rectangle turned upright, centred on the belt, which it
+   * stands on, so it has no stub. Its label and count are set to fit its width, and its fill rises from the bottom
+   * instead of running across.
    */
   .machine-bins:not(.machine-bins-long) > .bin-cell-end {
     grid-row: 1 / span 2;
@@ -1096,7 +945,7 @@ button[aria-disabled='true'] {
     box-sizing: border-box;
     height: var(--bin-long);
     justify-items: center;
-    padding: 0.375rem 0.3125rem;
+    padding: 0.5rem 0.375rem;
     text-align: center;
   }
 
@@ -1105,21 +954,21 @@ button[aria-disabled='true'] {
   }
 
   .machine-bins:not(.machine-bins-long) > .bin-cell-end .bin-cell-name {
-    font-size: 0.625rem;
+    font-size: 0.8125rem;
   }
 
   .machine-bins:not(.machine-bins-long) > .bin-cell-end .bin-cell-count {
-    font-size: 0.9375rem;
+    font-size: 1.25rem;
     overflow-wrap: anywhere;
   }
 
   .machine-bins:not(.machine-bins-long) > .bin-cell-end .bin-cell-fill {
     display: flex;
     align-items: flex-end;
-    width: 0.375rem;
+    width: 0.5rem;
     height: auto;
-    min-height: 0.75rem;
-    margin-top: 0.375rem;
+    min-height: 1rem;
+    margin-top: 0.5rem;
   }
 
   .machine-bins:not(.machine-bins-long) > .bin-cell-end .bin-cell-fill > span {
@@ -1142,9 +991,9 @@ button[aria-disabled='true'] {
     'count'
     'fill';
   align-content: start;
-  padding: 0.3125rem 0.4375rem 0.375rem;
+  padding: 0.5rem 0.625rem 0.5625rem;
   border: 1px solid var(--line);
-  border-radius: 0.1875rem;
+  border-radius: 0.25rem;
   background: color-mix(in srgb, var(--chart-bar) calc(var(--heat, 0) * 24%), var(--surface));
 }
 
@@ -1152,13 +1001,13 @@ button[aria-disabled='true'] {
   grid-area: name;
   color: var(--muted);
   font-family: var(--font-mono);
-  font-size: 0.6875rem;
+  font-size: 0.875rem;
   white-space: nowrap;
 }
 
 .bin-cell-count {
   grid-area: count;
-  font-size: 1.0625rem;
+  font-size: 1.5rem;
   font-weight: 600;
   line-height: 1.25;
   font-variant-numeric: tabular-nums;
@@ -1166,8 +1015,8 @@ button[aria-disabled='true'] {
 
 .bin-cell-fill {
   grid-area: fill;
-  height: 0.1875rem;
-  margin-top: 0.25rem;
+  height: 0.375rem;
+  margin-top: 0.375rem;
   background: var(--chart-band);
 }
 
@@ -1176,79 +1025,6 @@ button[aria-disabled='true'] {
   width: var(--fill, 0%);
   height: 100%;
   background: var(--chart-bar);
-}
-
-/* The outflow rail: each outcome a row -- swatch and name, count and share -- with its share of the day as a bar. */
-.outflow-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  font-size: 0.875rem;
-}
-
-.outflow-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: baseline;
-  gap: 0.125rem 0.75rem;
-  padding: 0.3125rem 0;
-  border-bottom: 1px solid var(--line);
-}
-
-.outflow-item:last-child {
-  border-bottom: 0;
-}
-
-.outflow-name {
-  overflow-wrap: anywhere;
-}
-
-.outflow-count {
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.outflow-share {
-  color: var(--muted);
-  font-weight: 400;
-}
-
-.outflow-meter {
-  grid-column: 1 / -1;
-  height: 0.1875rem;
-  background: var(--chart-band);
-}
-
-.outflow-meter > span {
-  display: block;
-  height: 100%;
-}
-
-.outflow-item-home .outflow-name::before,
-.outflow-item-transit .outflow-name::before,
-.outflow-item-other .outflow-name::before {
-  content: '';
-  display: inline-block;
-  width: 0.5rem;
-  height: 0.5rem;
-  margin-right: 0.5rem;
-  border-radius: 0.125rem;
-}
-
-.outflow-item-home .outflow-name::before,
-.outflow-item-home .outflow-meter > span {
-  background: var(--border);
-}
-
-.outflow-item-transit .outflow-name::before,
-.outflow-item-transit .outflow-meter > span {
-  background: var(--zone-routing);
-}
-
-.outflow-item-other .outflow-name::before,
-.outflow-item-other .outflow-meter > span {
-  background: var(--muted);
 }
 
 /*

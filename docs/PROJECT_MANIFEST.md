@@ -1171,6 +1171,18 @@ its `tools\update.ps1` has the backup vulnerability.
 
 ## 5. Done recently (newest first)
 
+- 2026-11-17 — UI2 (priority 2), Live Today "Sorter at a glance" reduced to the sort-line diagram alone. **Implemented
+  on branch `feature/ui2-sorter-diagram-focus` (from `main` at `d2b36de`); not committed, merged or deployed.**
+  - **Removed:** the visible header and caption, the Induction, Routed and Holds panels, the "Sort line" label and the
+    shading legend. Those figures remain in Today's figures and Holds today. The panel's name stays a visually hidden
+    heading for screen readers.
+  - **Changed:** the line now fills the panel, centred, capped per column by `--columns` so a short machine is not
+    stretched. Bins, belt, labels, counts and fills are larger.
+  - **Unchanged:** bin order, layout mapping, heat and fill calculations, colours, the narrow-screen grid, and
+    backend/API.
+  - **Tests:** frontend lint, both type-checked production builds and Vitest (57 files, 2,730 tests) pass. Not yet
+    checked visually in a browser.
+
 - 2026-11-17 — Collector 1.0.15 canonical ZIP **stored** in `sortview-artifacts` (`collector/1.0.15/`, with its
   `ARTIFACT-RECORD.md`), commit `09130bde1c45076028482a1fb0d63cbb63873523` on `origin/main`. The ZIP read from that
   commit matches the release record (SHA-256 `6b358993…9ec8`, 36,555,502 bytes). Release record updated with the

@@ -2098,69 +2098,48 @@ describe('holds and bin volume today', () => {
 
 describe('the sorter at a glance', () => {
   const drawing = () => screen.getByRole('region', { name: 'Sorter at a glance' })
-  /** One station of the drawing: the stretch of the drawing under its heading. */
-  const station = (name: string) => within(drawing()).getByRole('heading', { level: 4, name }).parentElement as HTMLElement
   /** The sort line's bin cells, each as [bin, count]. */
   const tiles = () =>
     Array.from(drawing().querySelectorAll('.bin-cell')).map((cell) =>
       ['.bin-cell-name', '.bin-cell-count'].map((part) => cell.querySelector(part)?.textContent ?? ''),
     )
-  /** A station's outlets, each as [name, figure]. */
-  const outlets = (name: string) =>
-    Array.from(station(name).querySelectorAll('.outflow-item')).map((item) => [
-      item.querySelector('.outflow-name')?.textContent,
-      item.querySelector('.outflow-count')?.textContent,
-    ])
+  /** Northbridge with holds and transit routing both on: every panel the drawing used to carry would be drawn. */
   const WITH_HOLDS = {
     'GET /api/organizations/northbridge': () =>
       jsonResponse(200, { ...NORTHBRIDGE_DETAIL, entitlements: { ...NORTHBRIDGE_DETAIL.entitlements, internal_workflow: { enabled: true, limit_value: null } } }),
   }
-  /** Northbridge with holds on and transit routing off. */
-  const HOLDS_WITHOUT_TRANSITS = {
-    'GET /api/organizations/northbridge': () =>
-      jsonResponse(200, {
-        ...NORTHBRIDGE_DETAIL,
-        entitlements: {
-          ...NORTHBRIDGE_DETAIL.entitlements,
-          internal_workflow: { enabled: true, limit_value: null },
-          transits: { enabled: false, limit_value: null },
-        },
-      }),
-  }
 
-  it('comes after today’s figures and before the hourly check-ins, as one machine laid out like the sorter’s screen', async () => {
+  it('comes after today’s figures and before the hourly check-ins, and is the sort line alone', async () => {
     serve()
     renderApp(CENTRAL)
     await loaded()
-    await waitFor(() => expect(station('Routed')).toHaveTextContent(/Kept at Main/))
+    await waitFor(() => expect(tiles().length).toBeGreaterThan(0))
 
     const today = screen.getByRole('region', { name: 'Today' })
     const hourly = screen.getByRole('region', { name: 'Hourly check-ins' })
     expect(today.compareDocumentPosition(drawing()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(drawing().compareDocumentPosition(hourly) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(within(drawing()).getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent)).toEqual([
-      'Induction',
-      'Sort line',
-      'Routed',
-    ])
-    expect(drawing()).toHaveTextContent('A summary of the day, not a live view.')
-    // One machine: the intake end (induction), the sort line, and the outflow rail. Rejects are Today's, above.
+    // Its name is still a heading for assistive technology, hidden from sight: the drawing is the panel.
+    expect(within(drawing()).getByRole('heading', { level: 3, name: 'Sorter at a glance' })).toHaveClass('visually-hidden')
+    // No header caption, no part labels ("Sort line"), no legend under the bins.
+    expect(within(drawing()).queryAllByRole('heading', { level: 4 })).toHaveLength(0)
+    expect(drawing()).not.toHaveTextContent('A summary of the day')
+    expect(drawing()).not.toHaveTextContent(/Shading and fill/)
+    // Rejects are Today's, above.
     expect(drawing()).not.toHaveTextContent(/reject/i)
-    expect(Array.from(drawing().querySelectorAll('.machine > *')).map((part) => part.className)).toEqual([
-      'machine-intake',
-      'machine-line',
-      'machine-rail',
-    ])
   })
 
-  it('shows the day’s check-ins at the induction point, with this hour and the peak hour so far', async () => {
-    serve()
+  it('draws no induction, routing or holds panels, even for a plan with transits and holds: those figures are elsewhere', async () => {
+    serve(WITH_HOLDS)
     renderApp(CENTRAL)
     await loaded()
+    await waitFor(() => expect(tiles().length).toBeGreaterThan(0))
 
-    await waitFor(() => expect(station('Induction')).toHaveTextContent('120 checked in'))
-    expect(station('Induction')).toHaveTextContent('This hour (1–2 PM): 17')
-    expect(station('Induction')).toHaveTextContent('Peak hour so far: 11 AM–12 PM, 40')
+    expect(drawing()).not.toHaveTextContent(/checked in|Peak hour|Kept at Main|Westside|Interlibrary loan|Public/)
+    expect(drawing().querySelectorAll('.machine-part, .outflow-item, .outflow-meter')).toHaveLength(0)
+    // The same figures are still on the page: today's check-ins above, and today's holds below.
+    expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Holds today' })).toHaveTextContent('9'))
   })
 
   it('lays out the bins that received check-ins along the sort line in bin order, each with its count, and ranks none', async () => {
@@ -2177,8 +2156,7 @@ describe('the sorter at a glance', () => {
       ['Bin 10', '20 check-ins'],
     ])
     // No bin is ranked or badged: its count says how busy it was, and the shading pictures that.
-    // (The one "busiest" left is the legend's: "against the busiest bin's".)
-    expect(drawing()).not.toHaveTextContent(/\b(1st|2nd|3rd)\b|busiest(?! bin)/)
+    expect(drawing()).not.toHaveTextContent(/\b(1st|2nd|3rd)\b|busiest/)
     expect(drawing().querySelectorAll('.bin-cell-rank, .bin-cell-top')).toHaveLength(0)
     // Each bin's fill and shading are its count against the busiest bin's: a picture of the figure in it, hidden from reading.
     const fills = Array.from(drawing().querySelectorAll('.bin-cell-fill'))
@@ -2193,7 +2171,8 @@ describe('the sorter at a glance', () => {
       '0.160',
       '0.400',
     ])
-    expect(station('Sort line')).toHaveTextContent('each bin’s check-ins against the busiest bin’s')
+    // Five bins along the belt, none at the end: three columns, which cap how wide the line is drawn.
+    expect(drawing().querySelector<HTMLElement>('.machine-bins')?.style.getPropertyValue('--columns')).toBe('3')
     // Every check-in had a bin: nothing without one to mention.
     expect(drawing()).not.toHaveTextContent('No bin recorded')
   })
@@ -2203,83 +2182,27 @@ describe('the sorter at a glance', () => {
     renderApp(CENTRAL)
     await loaded()
 
-    await waitFor(() => expect(station('Sort line')).toHaveTextContent('No bin recorded for 6 check-ins.'))
+    await waitFor(() => expect(drawing()).toHaveTextContent('No bin recorded for 6 check-ins.'))
     expect(tiles()).toHaveLength(3)
   })
 
-  it('shows where the day was routed, each outcome with its share', async () => {
-    serve()
-    renderApp(CENTRAL)
-    await loaded()
-
-    await waitFor(() => expect(outlets('Routed')).toHaveLength(3))
-    // 106 kept + 12 + 2 in transit = the 120 checked in.
-    expect(outlets('Routed')).toEqual([
-      ['Kept at Main', '106 · 88.3%'],
-      ['Westside', '12 · 10.0%'],
-      ['Library Express', '2 · 1.7%'],
-    ])
-    // Routing is drawn beside the bins, never wired to them: the logs do not link the two.
-    expect(station('Routed')).toHaveTextContent('the logs do not link the two')
-    // Rejects are not drawn here. Today's reject figures are still above, as they were.
-    expect(within(drawing()).queryByRole('heading', { name: 'Reject chute' })).not.toBeInTheDocument()
-    expect(metric('Rejects today')).toHaveTextContent(/^6$/)
-    expect(metric('Reject rate')).toHaveTextContent(/^5\.0%$/)
-  })
-
-  it('draws holds only where the plan has them, and routing only where the plan has transits', async () => {
-    serve(HOLDS_WITHOUT_TRANSITS)
-    renderApp(CENTRAL)
-    await loaded()
-
-    await waitFor(() =>
-      expect(outlets('Holds')).toEqual([
-        ['Public', '9'],
-        ['Interlibrary loan', '2'],
-      ]),
-    )
-    expect(within(drawing()).getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent)).toEqual([
-      'Induction',
-      'Sort line',
-      'Holds',
-    ])
-  })
-
-  it('draws routing and holds both for a plan that has both, in that order', async () => {
-    serve(WITH_HOLDS)
-    renderApp(CENTRAL)
-    await loaded()
-
-    await waitFor(() => expect(outlets('Holds')).toHaveLength(2))
-    expect(within(drawing()).getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent)).toEqual([
-      'Induction',
-      'Sort line',
-      'Routed',
-      'Holds',
-    ])
-  })
-
-  it('shows no shares, no rate and no peak on a day with no check-ins, and says nothing reached a bin', async () => {
+  it('shows no shares or rates on a day with no check-ins, and says nothing reached a bin', async () => {
     serve({}, live({ hours: hoursWith({}), reasons: [0, 0, 0, 0, 0, 0, 0, 0] }))
     renderApp(CENTRAL)
     await loaded()
 
-    await waitFor(() => expect(station('Sort line')).toHaveTextContent('Nothing has reached a bin yet today.'))
-    expect(station('Induction')).toHaveTextContent('0 checked in')
-    expect(station('Induction')).not.toHaveTextContent('Peak hour')
-    await waitFor(() => expect(outlets('Routed')[0]).toEqual(['Kept at Main', '0']))
-    expect(drawing().querySelector('.outflow-meter')).toBeNull()
+    await waitFor(() => expect(drawing()).toHaveTextContent('Nothing has reached a bin yet today.'))
     expect(drawing()).not.toHaveTextContent(/%|NaN|Infinity/)
   })
 
-  it('says a station could not load where it is, and leaves the others drawn', async () => {
+  it('says the drawing could not load where it is, and leaves the rest of the page drawn', async () => {
     serve({ [BINS]: SERVER_ERROR })
     renderApp(CENTRAL)
     await loaded()
 
-    await waitFor(() => expect(station('Sort line')).toHaveTextContent('Could not load'))
+    await waitFor(() => expect(drawing()).toHaveTextContent('Could not load'))
     expect(tiles()).toEqual([])
-    expect(station('Induction')).toHaveTextContent('120 checked in')
+    expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
     expect(screen.getAllByRole('alert')).toHaveLength(1)
   })
 
@@ -2287,14 +2210,14 @@ describe('the sorter at a glance', () => {
     serve()
     renderApp(CENTRAL)
     await loaded()
-    await waitFor(() => expect(station('Routed')).toHaveTextContent(/Kept at Main/))
+    await waitFor(() => expect(tiles().length).toBeGreaterThan(0))
 
     for (const role of ['link', 'button', 'img', 'term', 'status', 'alert']) {
       expect(within(drawing()).queryByRole(role)).not.toBeInTheDocument()
     }
     expect(drawing().querySelectorAll('a, button, [tabindex], [aria-live]')).toHaveLength(0)
-    // The fills and the routing bars are drawing only; the conveyor and the stubs are pseudo-elements, not content.
-    const drawn = Array.from(drawing().querySelectorAll('.bin-cell-fill, .outflow-meter'))
+    // The fills are drawing only; the conveyor and the stubs are pseudo-elements, not content.
+    const drawn = Array.from(drawing().querySelectorAll('.bin-cell-fill'))
     expect(drawn.length).toBeGreaterThan(0)
     expect(drawn.every((part) => part.getAttribute('aria-hidden') === 'true')).toBe(true)
     expect(within(drawing()).getByRole('list', { name: 'Bins that received check-ins today, in bin order' })).toBeInTheDocument()
@@ -2362,9 +2285,9 @@ describe('the sort line’s end bin', () => {
   it('stands the end bin upright: a bin’s rectangle turned on end, centred on the belt, not stretched', () => {
     const line = rule(LINE)
     // The two sides of a bin, named once: across and high for a bin on the line; high and across for the end bin.
-    expect(line).toContain('--bin-long: 5.5rem;')
-    expect(line).toContain('--bin-short: 3.5rem;')
-    expect(line).toContain('grid-auto-columns: minmax(0, var(--bin-long));')
+    expect(line).toContain('--bin-long: 8rem;')
+    expect(line).toContain('--bin-short: 5rem;')
+    expect(line).toContain('grid-auto-columns: minmax(0, 1fr);')
     expect(rule(`.machine-bins-with-end${LINE.replace('.machine-bins', '')}`)).toContain('grid-template-columns: var(--bin-short);')
     const end = rule(`${LINE} > .bin-cell-end`)
     expect(end).toContain('height: var(--bin-long);')
@@ -2378,20 +2301,30 @@ describe('the sort line’s end bin', () => {
     expect(rule('.bin-cell-fill > span')).toContain('width: var(--fill, 0%);')
   })
 
-  it('draws one compact machine, centred, with a belt only as long as its bins', () => {
-    // The machine is as wide as its bins (never wider than its column), centred both ways in the sort line's column.
+  it('draws the machine across the panel, centred, its columns capped so a short machine is not stretched thin', () => {
+    // The line takes the panel's width, shared by its columns, but never more than --bin-max per column (--columns,
+    // set by the list); centred in the panel.
     const line = rule(LINE)
-    expect(line).toContain('width: fit-content;')
-    expect(line).toContain('max-width: 100%;')
+    expect(line).toContain('width: 100%;')
+    expect(line).toContain('--bin-max: 11rem;')
+    expect(line).toContain('max-width: calc(var(--columns, 8) * (var(--bin-max) + 0.625rem) + var(--bin-short) + 1.25rem);')
     expect(line).toContain('align-self: center;')
-    const stage = rule('.machine-stage')
-    expect(stage).toContain('align-items: center;')
-    expect(stage).toContain('justify-content: center;')
-    // The belt runs from the machine's left end to just past its last bin -- not across the column.
+    expect(rule('.machine-stage')).toContain('align-items: center;')
+    // The belt runs from the machine's left end to just past its last bin.
     const belt = rule(`${LINE}::before`)
     expect(belt).toContain('left: 0;')
     expect(belt).toContain('right: 0;')
-    expect(line).toContain('padding-right: 0.75rem;')
+    expect(belt).toContain('height: 0.875rem;')
+    expect(line).toContain('padding-right: 1.25rem;')
+  })
+
+  it('sets the bins, their labels, counts and fills larger, and keeps the narrow-screen grid', () => {
+    expect(rule('.bin-cell-name')).toContain('font-size: 0.875rem;')
+    expect(rule('.bin-cell-count')).toContain('font-size: 1.5rem;')
+    expect(rule('.bin-cell-fill')).toContain('height: 0.375rem;')
+    // Below the wide-screen breakpoint, and for a long machine, the bins wrap as a grid the width of the panel.
+    expect(rule('.machine-bins')).toContain('grid-template-columns: repeat(auto-fill, minmax(min(100%, 6.5rem), 1fr));')
+    expect(styles).toContain('@media (min-width: 75rem)')
   })
 })
 
@@ -2451,7 +2384,8 @@ describe('a sorter with a configured bin layout', () => {
     expect(cells().map((cell) => cell.style.getPropertyValue('--heat'))).toEqual(['0.000', '0.800', '0.000', '1.000', '0.000', '0.000', '0.600'])
     expect(cells().map((cell) => cell.style.getPropertyValue('--fill'))).toEqual(['0%', '80%', '0%', '100%', '0%', '0%', '60%'])
     expect(drawing().querySelectorAll('.bin-cell-fill[aria-hidden="true"]')).toHaveLength(7)
-    expect(drawing()).toHaveTextContent('each bin’s check-ins against the busiest bin’s')
+    // Three columns of bins along the belt (6/5, 4/3, 2/1) beside the end bin: the cap on the line's width.
+    expect(drawing().querySelector<HTMLElement>('.machine-bins')?.style.getPropertyValue('--columns')).toBe('3')
     // The bins drawn with 0 are not check-ins: today's figures and the bin volume report are as the API gave them.
     expect(metric('Bins observed')).toHaveTextContent(/^3$/)
     fireEvent.click(screen.getByRole('button', { name: 'Show table: Check-ins by bin today' }))
