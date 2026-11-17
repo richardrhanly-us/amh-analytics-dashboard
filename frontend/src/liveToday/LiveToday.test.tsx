@@ -1877,6 +1877,133 @@ describe('the dashboard at a glance', () => {
   })
 })
 
+describe('the Holds zone in today’s summary', () => {
+  /** Northbridge with the plan's holds feature on (transit routing stays on, as the fixture has it). */
+  const WITH_HOLDS = {
+    'GET /api/organizations/northbridge': () =>
+      jsonResponse(200, { ...NORTHBRIDGE_DETAIL, entitlements: { ...NORTHBRIDGE_DETAIL.entitlements, internal_workflow: { enabled: true, limit_value: null } } }),
+  }
+  /** Northbridge with holds on and transit routing off. */
+  const HOLDS_WITHOUT_TRANSITS = {
+    'GET /api/organizations/northbridge': () =>
+      jsonResponse(200, {
+        ...NORTHBRIDGE_DETAIL,
+        entitlements: {
+          ...NORTHBRIDGE_DETAIL.entitlements,
+          internal_workflow: { enabled: true, limit_value: null },
+          transits: { enabled: false, limit_value: null },
+        },
+      }),
+  }
+  const zone = () => screen.getByRole('group', { name: 'Holds' })
+  /** A card's figure in the Holds zone, by its label. */
+  const card = (label: string) => within(zone()).getByText(label, { selector: 'dt' }).nextElementSibling as HTMLElement
+  const zoneOrder = () => Array.from(document.querySelectorAll('.summary-zones > .summary-group')).map((group) => group.querySelector('h4')?.textContent)
+
+  it('adds Holds after Rejects, with Routing, and gives the zones the two-row layout with Holds under Rejects', async () => {
+    serve(WITH_HOLDS)
+    renderApp(CENTRAL)
+    await loaded()
+    await waitFor(() => expect(card('Holds')).toHaveTextContent(/^9$/))
+
+    expect(zoneOrder()).toEqual(['Operations', 'Routing', 'Rejects', 'Holds'])
+    expect(document.querySelector('.summary-zones')).toHaveClass('summary-zones', 'summary-zones-with-holds')
+    // Two cards, side by side in one row of cards, as every zone's are: Holds (public) then ILL.
+    const cards = Array.from(zone().querySelectorAll('.metrics > .metric dt')).map((term) => term.textContent)
+    expect(cards).toEqual(['Holds', 'ILL'])
+    expect(zone().querySelectorAll('.metrics')).toHaveLength(1)
+    // Its place on a wide screen: Routing left and Holds right on the second row, on Operations' and Rejects' columns.
+    const wide = styles.replace(/\r\n/g, '\n')
+    expect(wide).toMatch(/\.summary-zones-with-holds \{\n\s+grid-template-areas:\n\s+'operations rejects'\n\s+'routing holds';/)
+    expect(wide).toMatch(/\.summary-group-holds \{\n\s+grid-area: holds;/)
+    expect(wide).toMatch(/\.summary-group-holds \{\n\s+--zone: var\(--zone-holds\);/)
+  })
+
+  it('shows the same public and ILL counts, from the same read, as Holds today below', async () => {
+    const fetchMock = serve(WITH_HOLDS, live({ holds: { public: 14, ill: 3 } }))
+    renderApp(CENTRAL)
+    await loaded()
+
+    await waitFor(() => expect(card('Holds')).toHaveTextContent(/^14$/))
+    expect(card('ILL')).toHaveTextContent(/^3$/)
+    expect(metric('Public holds today')).toHaveTextContent(/^14$/)
+    expect(metric('Interlibrary loan (ILL) holds today')).toHaveTextContent(/^3$/)
+    // No read of its own: holds are asked for once, for today, as before.
+    expect(liveRequests(fetchMock).filter((url) => url.includes('/reports/holds?'))).toEqual([`${API}/reports/holds?from=${TODAY}&to=${TODAY}`])
+    // The detailed section stays.
+    expect(screen.getByRole('heading', { level: 3, name: 'Holds today' })).toBeInTheDocument()
+  })
+
+  it('is not drawn, and Routing keeps the full row, when the plan does not include holds', async () => {
+    serve()
+    renderApp(CENTRAL)
+    await loaded()
+
+    expect(zoneOrder()).toEqual(['Operations', 'Routing', 'Rejects'])
+    expect(screen.queryByRole('group', { name: 'Holds' })).not.toBeInTheDocument()
+    expect(document.querySelector('.summary-zones')).not.toHaveClass('summary-zones-with-holds')
+  })
+
+  it('still sits under Rejects for a plan with holds but no transit routing', async () => {
+    serve(HOLDS_WITHOUT_TRANSITS)
+    renderApp(CENTRAL)
+    await loaded()
+    await waitFor(() => expect(card('ILL')).toHaveTextContent(/^2$/))
+
+    expect(zoneOrder()).toEqual(['Operations', 'Rejects', 'Holds'])
+    expect(document.querySelector('.summary-zones')).toHaveClass('summary-zones-with-holds')
+  })
+
+  it('says Loading… in both cards until holds answer, never a placeholder figure', async () => {
+    const holds = deferred<Response>()
+    serve({ ...WITH_HOLDS, [HOLDS]: () => holds.promise })
+    renderApp(CENTRAL)
+    await waitFor(() => expect(metric('Check-ins today')).toHaveTextContent(/^120$/))
+
+    expect(card('Holds')).toHaveTextContent(/^Loading…$/)
+    expect(card('ILL')).toHaveTextContent(/^Loading…$/)
+    holds.resolve(jsonResponse(200, liveBody.holds(LIVE, TODAY, TODAY)))
+    await waitFor(() => expect(card('Holds')).toHaveTextContent(/^9$/))
+    expect(card('ILL')).toHaveTextContent(/^2$/)
+  })
+
+  it('says Could not load in both cards when holds fail, and leaves the other zones drawn', async () => {
+    serve({ ...WITH_HOLDS, [HOLDS]: SERVER_ERROR })
+    renderApp(CENTRAL)
+    await loaded()
+
+    await waitFor(() => expect(card('Holds')).toHaveTextContent(/^Could not load$/))
+    expect(card('ILL')).toHaveTextContent(/^Could not load$/)
+    expect(metric('Check-ins today')).toHaveTextContent(/^120$/)
+    expect(metric('Rejects today')).toHaveTextContent(/^6$/)
+    expect(screen.getByRole('alert')).toHaveTextContent('Some live data could not be loaded. Use Refresh to try again.')
+  })
+
+  it('shows 0 for a day with no holds yet, never a blank or NaN', async () => {
+    serve(WITH_HOLDS, live({ holds: { public: 0, ill: 0 } }))
+    renderApp(CENTRAL)
+    await loaded()
+
+    await waitFor(() => expect(card('Holds')).toHaveTextContent(/^0$/))
+    expect(card('ILL')).toHaveTextContent(/^0$/)
+    expect(zone()).not.toHaveTextContent(/NaN|undefined/)
+  })
+
+  it('is a named group with a real heading, its counts as terms and values, says what ILL is, and adds nothing to tab to', async () => {
+    serve(WITH_HOLDS)
+    renderApp(CENTRAL)
+    await loaded()
+    await waitFor(() => expect(card('Holds')).toHaveTextContent(/^9$/))
+
+    expect(within(zone()).getByRole('heading', { level: 4, name: 'Holds' })).toBeInTheDocument()
+    expect(zone()).toHaveAttribute('aria-labelledby', 'holds-heading')
+    expect(zone()).toHaveTextContent('Today’s public and interlibrary loan (ILL) holds.')
+    expect(within(zone()).getAllByRole('term').map((term) => term.textContent)).toEqual(['Holds', 'ILL'])
+    expect(within(zone()).getAllByRole('definition').map((value) => value.textContent)).toEqual(['9', '2'])
+    expect(zone().querySelectorAll('a, button, input, [tabindex]')).toHaveLength(0)
+  })
+})
+
 describe('holds and bin volume today', () => {
   /** Northbridge with the plan's holds feature on. */
   const WITH_HOLDS = {
