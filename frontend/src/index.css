@@ -592,6 +592,14 @@ button[aria-disabled='true'] {
   flex: 1;
 }
 
+/*
+ * Except Holds: set beside the taller Routing, its zone still takes the row's height (so the two stay aligned), but
+ * its two cards keep their own height, as a card does elsewhere, instead of stretching to fill it.
+ */
+.summary-zones > .summary-group-holds > .metrics {
+  flex: none;
+}
+
 .summary-group-operations {
   --zone: var(--zone-operations);
 }
