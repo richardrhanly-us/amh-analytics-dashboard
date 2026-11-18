@@ -1935,47 +1935,49 @@ describe('the Holds zone in today’s summary', () => {
     expect(zone().querySelectorAll('.metrics')).toHaveLength(1)
     // Its place on a wide screen: Routing left and Holds right on the second row, on Operations' and Rejects' columns.
     const wide = styles.replace(/\r\n/g, '\n')
-    expect(wide).toMatch(/\.summary-zones-with-holds \{\n\s+grid-template-areas:\n\s+'operations rejects'\n\s+'routing holds';/)
+    expect(wide).toMatch(/\.summary-zones-with-holds \{\n\s+grid-template-areas:\n\s+'operations rejects'\n\s+'routing holds'\n/)
     expect(wide).toMatch(/\.summary-group-holds \{\n\s+grid-area: holds;/)
     expect(wide).toMatch(/\.summary-group-holds \{\n\s+--zone: var\(--zone-holds\);/)
   })
 
-  it('keeps the Holds and ILL cards at a card’s own height, and their size and type the same as every other zone’s', async () => {
+  it('lines the Holds and ILL cards up in one row with Routing’s, the same height, by layout and not by a set height', async () => {
     serve(WITH_HOLDS)
     renderApp(CENTRAL)
     await loaded()
     await waitFor(() => expect(card('Holds')).toHaveTextContent(/^9$/))
 
     const css = styles.replace(/\r\n/g, '\n')
-    /** A rule's declarations, by its exact selector at the start of a line. */
+    /** A rule's declarations, by its exact selector at the start of a line (indented, inside a media query, too). */
     const rule = (selector: string) => {
-      const at = css.indexOf(`\n${selector} {`)
+      const at = [`\n${selector} {`, `\n  ${selector} {`].map((form) => css.indexOf(form)).find((index) => index > -1) ?? -1
       expect(at, selector).toBeGreaterThan(-1)
       return css.slice(at, css.indexOf('}', at))
     }
-    // Every zone's cards still take up the zone's spare height (so Rejects' and Routing's are unchanged)...
-    expect(rule('.summary-zones > .summary-group > .metrics')).toContain('flex: 1;')
-    // ...except Holds': its zone keeps Routing's height, but its cards are not stretched to fill it.
-    expect(rule('.summary-zones > .summary-group-holds > .metrics')).toContain('flex: none;')
-    expect(css.indexOf('\n.summary-zones > .summary-group-holds > .metrics {')).toBeGreaterThan(
-      css.indexOf('\n.summary-zones > .summary-group > .metrics {'),
+    // On a wide screen Routing and Holds share the second band's rows -- heading, caption, cards, Routing's closing
+    // line -- so the two zones' cards stand in one row, as high as its tallest card.
+    const shared = rule('.summary-zones-with-holds > .summary-group-routing,\n  .summary-zones-with-holds > .summary-group-holds')
+    expect(shared).toContain('display: grid;')
+    expect(shared).toContain('grid-template-rows: subgrid;')
+    expect(shared).toContain('gap: 0;')
+    expect(rule('.summary-zones-with-holds')).toContain(
+      "'operations rejects'\n      'routing holds'\n      'routing holds'\n      'routing holds'\n      'routing holds';",
     )
-    // A floor, never a fixed height: at least a card's label, figure and one note line -- the height of the cards
-    // beside it, which carry a note -- built from the same sizes and line heights as Live Today's card.
-    const floor = rule('.summary-zones > .summary-group-holds .metric')
-    expect(floor).toContain('min-height: calc(0.875rem * 1.5 + 2.5rem * 1.15 + 0.9375rem * 1.5);')
-    expect(rule('.live-today .metric dt')).toContain('font-size: 0.875rem;')
-    expect(rule('.live-today .metric-value')).toMatch(/font-size: 2\.5rem;[\s\S]*line-height: 1\.15;/)
-    expect(rule('.live-today .metric-note')).toContain('font-size: 0.9375rem;')
-    expect(css).toMatch(/^:root \{[^}]*line-height: 1\.5;/)
-    // Nothing else of its own: no fixed or maximum height, no padding or type -- the ordinary Live Today card.
+    // Each zone's parts in the order the shared rows expect: heading, caption, then the cards.
+    for (const name of ['Holds', 'Routing']) {
+      const group = screen.getByRole('group', { name })
+      expect(Array.from(group.children).slice(0, 3).map((part) => part.tagName.toLowerCase() + (part.className ? `.${part.className}` : ''))).toEqual([
+        'h4',
+        'p.summary-caption',
+        'dl.metrics',
+      ])
+    }
+    // Every other zone's cards still take its spare height, as before.
+    expect(rule('.summary-zones > .summary-group > .metrics')).toContain('flex: 1;')
+    // No height of any kind set on Holds, its cards or their list, and no padding or type of its own.
     const holdsRules = css.match(/^[^\n{}]*summary-group-holds[^\n{]*\{[^}]*\}/gm) ?? []
     expect(holdsRules.length).toBeGreaterThan(0)
     for (const text of holdsRules) {
-      expect(text).not.toMatch(/(^|[\s;{])(height|max-height|padding|font-size|line-height)\s*:/)
-      if (!text.startsWith('.summary-zones > .summary-group-holds .metric {')) {
-        expect(text).not.toMatch(/min-height|\.metric\b/)
-      }
+      expect(text).not.toMatch(/height|padding|font-size|line-height|flex:|\.metric/)
     }
     // Two side by side in one row of cards, each the same card element as Operations' and Rejects'.
     for (const label of ['Holds', 'ILL']) {
