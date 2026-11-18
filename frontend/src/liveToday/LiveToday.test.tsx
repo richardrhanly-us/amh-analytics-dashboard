@@ -1960,12 +1960,22 @@ describe('the Holds zone in today’s summary', () => {
     expect(css.indexOf('\n.summary-zones > .summary-group-holds > .metrics {')).toBeGreaterThan(
       css.indexOf('\n.summary-zones > .summary-group > .metrics {'),
     )
-    // No fixed height anywhere on Holds, and no padding or type of its own: its cards are the ordinary Live Today card.
+    // A floor, never a fixed height: at least a card's label, figure and one note line -- the height of the cards
+    // beside it, which carry a note -- built from the same sizes and line heights as Live Today's card.
+    const floor = rule('.summary-zones > .summary-group-holds .metric')
+    expect(floor).toContain('min-height: calc(0.875rem * 1.5 + 2.5rem * 1.15 + 0.9375rem * 1.5);')
+    expect(rule('.live-today .metric dt')).toContain('font-size: 0.875rem;')
+    expect(rule('.live-today .metric-value')).toMatch(/font-size: 2\.5rem;[\s\S]*line-height: 1\.15;/)
+    expect(rule('.live-today .metric-note')).toContain('font-size: 0.9375rem;')
+    expect(css).toMatch(/^:root \{[^}]*line-height: 1\.5;/)
+    // Nothing else of its own: no fixed or maximum height, no padding or type -- the ordinary Live Today card.
     const holdsRules = css.match(/^[^\n{}]*summary-group-holds[^\n{]*\{[^}]*\}/gm) ?? []
     expect(holdsRules.length).toBeGreaterThan(0)
     for (const text of holdsRules) {
-      expect(text).not.toMatch(/(^|[\s;{])(height|min-height|max-height|padding|font-size|line-height)\s*:/)
-      expect(text).not.toMatch(/\.metric\b/)
+      expect(text).not.toMatch(/(^|[\s;{])(height|max-height|padding|font-size|line-height)\s*:/)
+      if (!text.startsWith('.summary-zones > .summary-group-holds .metric {')) {
+        expect(text).not.toMatch(/min-height|\.metric\b/)
+      }
     }
     // Two side by side in one row of cards, each the same card element as Operations' and Rejects'.
     for (const label of ['Holds', 'ILL']) {
@@ -2456,15 +2466,18 @@ describe('the sort line’s end bin', () => {
   }
   const LINE = '.machine-bins:not(.machine-bins-long)'
 
-  it('stands the end bin upright: a bin’s rectangle turned on end, centred on the belt, not stretched', () => {
+  it('draws every bin on the line square, the end bin too, centred on the belt and not stretched', () => {
     const line = rule(LINE)
-    // The two sides of a bin, named once: across and high for a bin on the line; high and across for the end bin.
-    expect(line).toContain('--bin-long: 8rem;')
-    expect(line).toContain('--bin-short: 5rem;')
+    // Every bin is as high as it is wide: its column's width, the same for every column, the end bin's included.
     expect(line).toContain('grid-auto-columns: minmax(0, 1fr);')
-    expect(rule(`.machine-bins-with-end${LINE.replace('.machine-bins', '')}`)).toContain('grid-template-columns: var(--bin-short);')
+    const square = rule(`${LINE} > .bin-cell`)
+    expect(square).toContain('aspect-ratio: 1;')
+    expect(square).toContain('box-sizing: border-box;')
+    // The end bin has no narrower column of its own any more: only its count towards the machine's width.
+    expect(rule(`.machine-bins-with-end${LINE.replace('.machine-bins', '')}`)).toContain('--ends: 1;')
+    expect(styles).not.toMatch(/--bin-long|--bin-short/)
     const end = rule(`${LINE} > .bin-cell-end`)
-    expect(end).toContain('height: var(--bin-long);')
+    expect(end).not.toMatch(/(^|[\s;{])(height|width|aspect-ratio)\s*:/)
     // At the left end, across the two rows -- but centred on the belt between them, never stretched to fill them.
     expect(end).toContain('grid-row: 1 / span 2;')
     expect(end).toContain('grid-column: 1;')
@@ -2480,15 +2493,20 @@ describe('the sort line’s end bin', () => {
     // set by the list); centred in the panel.
     const line = rule(LINE)
     expect(line).toContain('width: 100%;')
-    expect(line).toContain('--bin-max: 11rem;')
-    expect(line).toContain('max-width: calc(var(--columns, 8) * (var(--bin-max) + 0.625rem) + var(--bin-short) + 1.25rem);')
+    expect(line).toContain('--bin-max: 7rem;')
+    expect(line).toContain('max-width: calc((var(--columns, 8) + var(--ends, 0)) * (var(--bin-max) + 0.625rem) + 1.25rem);')
     expect(line).toContain('align-self: center;')
     expect(rule('.machine-stage')).toContain('align-items: center;')
-    // The belt runs from the machine's left end to just past its last bin.
+    // The belt runs from the machine's left end to just past its last bin, wide, with a stub's length clear on each
+    // side between the two rows, so each bin's stub just meets it.
     const belt = rule(`${LINE}::before`)
     expect(belt).toContain('left: 0;')
     expect(belt).toContain('right: 0;')
-    expect(belt).toContain('height: 0.875rem;')
+    expect(line).toContain('--belt: 1.25rem;')
+    expect(line).toContain('--stub: 0.625rem;')
+    expect(belt).toContain('height: var(--belt);')
+    expect(rule(`${LINE} > .bin-cell::after`)).toContain('height: var(--stub);')
+    expect(line).toContain('gap: calc(var(--belt) + 2 * var(--stub)) 0.625rem;')
     expect(line).toContain('padding-right: 1.25rem;')
   })
 
