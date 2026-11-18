@@ -2485,9 +2485,42 @@ describe('the sort line’s end bin', () => {
     expect(end).toContain('grid-column: 1;')
     expect(end).toContain('align-self: center;')
     expect(end).not.toContain('stretch')
-    // Its fill rises from the bottom, by the same --fill the other bins use across.
-    expect(rule(`${LINE} > .bin-cell-end .bin-cell-fill > span`)).toContain('height: var(--fill, 0%);')
+  })
+
+  it('formats the end bin exactly as every other bin: label and count at the top left, the fill bar along the bottom', () => {
+    // One layout for every bin on the line: label, count, then the fill bar pushed to the bottom edge.
+    const square = rule(`${LINE} > .bin-cell`)
+    expect(square).toContain('grid-template-rows: auto auto 1fr;')
+    expect(rule(`${LINE} > .bin-cell > .bin-cell-fill`)).toContain('align-self: end;')
+    // The end bin's own rules say only where it stands -- nothing about its text, padding or fill.
+    const end = rule(`${LINE} > .bin-cell-end`)
+    expect(end).not.toMatch(/padding|text-align|justify|font|grid-template|margin|line-height/)
+    const endRules = styles.replace(/\r\n/g, '\n').match(/^[^\n{}]*bin-cell-end[^\n{]*\{/gm) ?? []
+    expect(endRules.map((selector) => selector.trim())).toEqual([
+      `${LINE} > .bin-cell-end {`,
+      `${LINE} > .bin-cell-end::after {`,
+    ])
+    // The fill bar is the shared horizontal one, --fill wide, as for the other bins.
     expect(rule('.bin-cell-fill > span')).toContain('width: var(--fill, 0%);')
+    expect(styles).not.toMatch(/height: var\(--fill/)
+  })
+
+  it('draws the end bin with the same parts, in the same order, and the same fill and shading calculation', async () => {
+    serve({}, live({ bins: [['0', 30], ['1', 60], ['2', 12]] }))
+    renderApp(CENTRAL)
+    await loaded()
+    await waitFor(() => expect(drawing().querySelector('.bin-cell-end')).not.toBeNull())
+
+    const parts = (cell: Element) => Array.from(cell.children).map((part) => part.className)
+    const end = drawing().querySelector('.bin-cell-end') as HTMLElement
+    const other = drawing().querySelector('.bin-cell-upper') as HTMLElement
+    expect(parts(end)).toEqual(['bin-cell-name', 'bin-cell-count', 'bin-cell-fill'])
+    expect(parts(end)).toEqual(parts(other))
+    // 30 of the busiest bin's 60: half filled and half shaded, by the same calculation as every bin.
+    expect(end.style.getPropertyValue('--fill')).toBe('50%')
+    expect(end.style.getPropertyValue('--heat')).toBe('0.500')
+    expect(other.style.getPropertyValue('--fill')).toBe('100%')
+    expect(end.querySelector('.bin-cell-fill')).toHaveAttribute('aria-hidden', 'true')
   })
 
   it('draws the machine across the panel, centred, its columns capped so a short machine is not stretched thin', () => {

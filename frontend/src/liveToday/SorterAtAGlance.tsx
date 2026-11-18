@@ -91,7 +91,7 @@ function SortLine({ live, layout }: { live: LiveToday; layout: BinLayout | null 
                 key={bin.key}
                 className={`bin-cell ${side}`}
                 // Shading and fill: the bin's count against the busiest bin's -- a picture of the figure in it, not of
-                // capacity. --fill is a width for a bin on the line and a height for the upright end bin.
+                // capacity. --fill is the fill bar's width, for every bin alike.
                 style={{ '--heat': relative.toFixed(3), '--fill': `${Math.round(relative * 100)}%` } as CSSProperties}
               >
                 <span className="bin-cell-name">{binLabel(bin)}</span>

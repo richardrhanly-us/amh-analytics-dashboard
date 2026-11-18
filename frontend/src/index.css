@@ -886,7 +886,7 @@ button[aria-disabled='true'] {
 
 /*
  * The sort line. On a narrow screen, and for a long machine, the bins are a grid in bin order, the width of the
- * panel. On a wide screen they are one machine across the panel: the end bin upright at the left end, then the rest
+ * panel. On a wide screen they are one machine across the panel: the end bin at the left end, then the rest
  * in list order, alternating sides of a belt that runs under them and a little past the last, each joined to it by a
  * short stub. Its columns share the panel's width, up to --bin-max each (--columns, set by the list, is how many
  * columns stand along the belt), so a short machine is not stretched thin. List order is ascending bin order, or a
@@ -931,9 +931,15 @@ button[aria-disabled='true'] {
     --ends: 1;
   }
 
+  /* Every bin on the line, the end bin included, the same: label and count at the top, the fill bar along the bottom. */
   .machine-bins:not(.machine-bins-long) > .bin-cell {
     box-sizing: border-box;
     aspect-ratio: 1;
+    grid-template-rows: auto auto 1fr;
+  }
+
+  .machine-bins:not(.machine-bins-long) > .bin-cell > .bin-cell-fill {
+    align-self: end;
   }
 
   /* The conveyor: a belt of chevrons between the two rows, from the left end of the machine to just past its last bin. */
@@ -969,44 +975,17 @@ button[aria-disabled='true'] {
   }
 
   /*
-   * The end bin: at the left end of the machine, a square like the others, centred on the belt, which it stands on,
-   * so it has no stub. Its label and count are centred, and its fill rises from the bottom instead of running across.
+   * The end bin: only its place differs. It stands at the left end of the machine, across both rows and centred on
+   * the belt, which it stands on, so it has no stub. Inside, it is a bin like every other.
    */
   .machine-bins:not(.machine-bins-long) > .bin-cell-end {
     grid-row: 1 / span 2;
     grid-column: 1;
-    grid-template-rows: auto auto 1fr;
     align-self: center;
-    justify-items: center;
-    padding: 0.5rem 0.375rem;
-    text-align: center;
   }
 
   .machine-bins:not(.machine-bins-long) > .bin-cell-end::after {
     content: none;
-  }
-
-  .machine-bins:not(.machine-bins-long) > .bin-cell-end .bin-cell-name {
-    font-size: 0.8125rem;
-  }
-
-  .machine-bins:not(.machine-bins-long) > .bin-cell-end .bin-cell-count {
-    font-size: 1.25rem;
-    overflow-wrap: anywhere;
-  }
-
-  .machine-bins:not(.machine-bins-long) > .bin-cell-end .bin-cell-fill {
-    display: flex;
-    align-items: flex-end;
-    width: 0.5rem;
-    height: auto;
-    min-height: 1rem;
-    margin-top: 0.5rem;
-  }
-
-  .machine-bins:not(.machine-bins-long) > .bin-cell-end .bin-cell-fill > span {
-    width: 100%;
-    height: var(--fill, 0%);
   }
 }
 
