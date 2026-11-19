@@ -136,11 +136,13 @@ def test_upgrade_enforces_the_closed_state_and_the_shape_of_each_state_in_the_da
                      r"and is_branch_services is null and is_collection_services is null and ruleset_id is null", sql)
 
 
-def test_the_states_in_the_database_are_exactly_the_apis_closed_enum():
+def test_the_states_in_the_database_were_the_apis_closed_enum_of_that_time():
+    # 5813f1df32a0 later widened both constraints for unknown_alert (tests/test_acs_unknown_alert_migration.py compares
+    # the CURRENT constraint with the API); this revision's set is everything else.
     sql = _render("upgrade")
     match = re.search(r"check \(state in \(([^)]*)\)\)", sql)
 
-    assert match and set(re.findall(r"'([^']*)'", match.group(1))) == set(models.ACS_ITEM_STATES)
+    assert match and set(re.findall(r"'([^']*)'", match.group(1))) == set(models.ACS_ITEM_STATES) - {"unknown_alert"}
 
 
 def test_upgrade_replaces_the_item_index_with_the_latest_record_per_item_shape():

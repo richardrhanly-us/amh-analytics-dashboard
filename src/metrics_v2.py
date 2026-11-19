@@ -57,6 +57,9 @@ def _empty_summary_v2():
         "ill_total": 0,
         "programming_total": 0,
         "collection_services_total": 0,
+        "unknown_alert_total": 0,
+        "ambiguous_hold_total": 0,
+        "hold_items_total": 0,
         "ill_main": 0,
         "ill_by_branch": {},
         "items_df": pd.DataFrame(),
@@ -86,12 +89,19 @@ def _empty_summary_v2():
 #               transit_labels - List of configured transit branch labels
 #                                (the SAME dashboard configuration v1's
 #                                build_acs_item_summary receives).
+#               ambiguous_destinations - Destinations whose PUBLIC holds
+#                                cannot be told from transits (hold-count
+#                                accuracy, phase B: {"westside"} before a
+#                                branch's corrected-from date). Such a hold
+#                                is left out of holds_total and counted in
+#                                ambiguous_hold_total; ILL and service-account
+#                                holds are unaffected.
 #
 #  Returns:     dict - Same key shape as build_acs_item_summary.
 #
 #***************************************************************
 
-def build_acs_item_summary_v2(acs_items_df, transit_labels):
+def build_acs_item_summary_v2(acs_items_df, transit_labels, ambiguous_destinations=frozenset()):
     if acs_items_df is None or len(acs_items_df) == 0:
         return _empty_summary_v2()
 
@@ -106,11 +116,13 @@ def build_acs_item_summary_v2(acs_items_df, transit_labels):
     if "destination" not in df.columns:
         df["destination"] = ""
 
-    # Only hold and non-hold-101 records are "items" in v1's sense (raw_message
-    # starting with "101"); other_code10 rows are excluded the same way v1
-    # excludes any raw_message that does not start with "101".
+    # Only hold, non-hold-101 and unknown-alert records are "items" in v1's
+    # sense (raw_message starting with "101"); other_code10 rows are excluded
+    # the same way v1 excludes any raw_message that does not start with "101".
+    # An unknown_alert (D4) takes part in the latest-record rule: as an item's
+    # latest record it is neither a hold nor a non-hold, but uncertain.
     if "state" in df.columns:
-        items = df[df["state"].isin(["hold", "non_hold_101"])].copy()
+        items = df[df["state"].isin(["hold", "non_hold_101", "unknown_alert"])].copy()
     else:
         items = df.iloc[0:0].copy()
 
@@ -131,6 +143,7 @@ def build_acs_item_summary_v2(acs_items_df, transit_labels):
     items = items.drop_duplicates(subset=["item_key"], keep="last")
 
     items["is_hold"] = items["state"] == "hold"
+    unknown_alert_total = int((items["state"] == "unknown_alert").sum())
 
     for col in ("is_ill", "is_branch_services", "is_collection_services"):
         if col not in items.columns:
@@ -150,6 +163,12 @@ def build_acs_item_summary_v2(acs_items_df, transit_labels):
         | holds_df["is_collection_services"]
     )
     public_holds_df = holds_df[~internal_mask].copy()
+
+    # A public hold at an ambiguous destination may be a transit: not counted,
+    # and reported, so the caller can label the day partial. Never estimated.
+    ambiguous_mask = public_holds_df["destination"].isin(set(ambiguous_destinations))
+    ambiguous_hold_total = int(ambiguous_mask.sum())
+    public_holds_df = public_holds_df[~ambiguous_mask].copy()
 
     # ILL-by-branch: map each configured transit_label to the v2 slug it
     # would normalize to (Part 4 of the government-readiness audit), then
@@ -174,6 +193,9 @@ def build_acs_item_summary_v2(acs_items_df, transit_labels):
         "ill_total": len(ill_df),
         "programming_total": len(programming_df),
         "collection_services_total": len(collection_services_df),
+        "unknown_alert_total": unknown_alert_total,
+        "ambiguous_hold_total": ambiguous_hold_total,
+        "hold_items_total": len(holds_df),
         "ill_main": ill_main_count,
         "ill_by_branch": ill_by_branch,
         "items_df": _summary_frame_v2(items),

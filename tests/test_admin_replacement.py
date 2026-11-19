@@ -204,10 +204,13 @@ def _script_directory():
     return ScriptDirectory.from_config(config)
 
 
-def test_the_migration_is_the_single_head_directly_after_m1():
+def test_the_migration_is_directly_after_m1_on_a_history_with_a_single_head():
     script = _script_directory()
 
-    assert script.get_heads() == [REVISION]
+    # Not pinned as THE head: later migrations (5813f1df32a0, hold-count accuracy) extend the chain. It must still be
+    # on the one line, with no fork.
+    assert len(script.get_heads()) == 1
+    assert REVISION in {r.revision for r in script.walk_revisions()}
     assert script.get_revision(REVISION).down_revision == PREVIOUS_HEAD
 
 

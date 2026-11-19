@@ -656,6 +656,33 @@ def _summary_frame(frame):
     return frame[[c for c in _SUMMARY_FRAME_COLUMNS if c in frame.columns]].copy()
 
 
+# Hold-count accuracy (docs/hold-count-accuracy.md, section 3). `101YNY` is a check-in with an ALERT; the alert type CV
+# decides: CV01 (local hold) and CV02 (hold for another destination) are holds, CV04 is a transit, no CV is a hold (the
+# approved fallback), and any other CV is an UNKNOWN alert -- neither a confirmed hold nor a confirmed non-hold.
+_CV = re.compile(r"\|CV(\d\d)")
+_CY = re.compile(r"\|CY([^|]*)")
+_AJ = re.compile(r"\|AJ[^|]*")
+_HOLD_CV = {"01", "02"}
+_TRANSIT_CV = {"04"}
+
+
+def hold_patron_id(raw_message, patron_id):
+    """The hold's patron: CY (the hold patron) from the raw message, else the item record's AA (`patron_id`)."""
+    found = _CY.search(raw_message) if isinstance(raw_message, str) else None
+    hold_patron = found.group(1).strip() if found else ""
+    return hold_patron if hold_patron else patron_id
+
+
+def _alert_kind(raw_message):
+    """'hold', 'unknown_alert' or '' (not a hold) for an item record (`101...`)."""
+    if not raw_message.startswith("101YNY"):
+        return ""
+    found = _CV.search(raw_message)
+    if found is None or found.group(1) in _HOLD_CV:
+        return "hold"
+    return "" if found.group(1) in _TRANSIT_CV else "unknown_alert"
+
+
 def build_acs_item_summary(
     acs_df,
     transit_labels,
@@ -670,6 +697,7 @@ def build_acs_item_summary(
             "ill_total": 0,
             "programming_total": 0,
             "collection_services_total": 0,
+            "unknown_alert_total": 0,
             "ill_main": 0,
             "ill_by_branch": {},
             "items_df": pd.DataFrame(),
@@ -699,6 +727,7 @@ def build_acs_item_summary(
             "ill_total": 0,
             "programming_total": 0,
             "collection_services_total": 0,
+            "unknown_alert_total": 0,
             "ill_main": 0,
             "ill_by_branch": {},
             "items_df": pd.DataFrame(),
@@ -713,8 +742,16 @@ def build_acs_item_summary(
         items = items.sort_values("datetime")
     items = items.drop_duplicates(subset=["barcode"], keep="last")
 
-    # Hold item records are identified by the 101YNY prefix.
-    items["is_hold"] = items["raw_message"].str.startswith("101YNY", na=False)
+    # A hold is a 101YNY alert whose CV says hold (or has no CV); see _alert_kind. An unknown alert type is counted
+    # apart, in neither the public nor the ILL total.
+    alert_kind = items["raw_message"].map(_alert_kind)
+    items["is_hold"] = alert_kind.eq("hold")
+    unknown_alert_total = int(alert_kind.eq("unknown_alert").sum())
+
+    # The hold patron (CY), falling back to the item record's patron (AA) only when CY is absent.
+    items["hold_patron_id"] = [
+        hold_patron_id(raw, aa) for raw, aa in zip(items["raw_message"], items["patron_id"])
+    ]
 
     # Patron records use message code 64. These records provide patron
     # names and patron types that are joined back onto item records.
@@ -741,9 +778,11 @@ def build_acs_item_summary(
     else:
         patrons = pd.DataFrame(columns=["patron_id", "patron_name", "patron_type"])
 
-    # Add patron name and patron type details to each item record.
+    # Add the HOLD patron's name and patron type to each item record.
     items = items.merge(
-        patrons[["patron_id", "patron_name", "patron_type"]], on="patron_id", how="left"
+        patrons[["patron_id", "patron_name", "patron_type"]].rename(columns={"patron_id": "hold_patron_id"}),
+        on="hold_patron_id",
+        how="left",
     )
 
     items["patron_name"] = items["patron_name"].fillna("").astype(str).str.strip()
@@ -789,7 +828,9 @@ def build_acs_item_summary(
     ]
 
     # Identify ILL items using patron type, destination text, patron name,
-    # and raw ACS message patterns.
+    # and raw ACS message patterns -- the raw message WITHOUT its title field
+    # (AJ), so a title containing the word "Ill" never makes a hold ILL (D2).
+    raw_upper_without_title = items["raw_upper"].str.replace(_AJ, "", regex=True)
     items["is_ill"] = (
         items["patron_type_upper"].eq("ILL")
         | items["destination_upper"].str.contains(
@@ -798,7 +839,7 @@ def build_acs_item_summary(
         | items["patron_name_upper"].str.contains(
             r"\bILL\b|INTERLIBRARY", regex=True, na=False
         )
-        | items["raw_upper"].str.contains(
+        | raw_upper_without_title.str.contains(
             r"\bILL\b|INTERLIBRARY|\|DAILL\b|\|AEILL\b|\|PTILL\b",
             regex=True,
             na=False,
@@ -863,6 +904,7 @@ def build_acs_item_summary(
         "ill_total": len(ill_df),
         "programming_total": len(programming_df),
         "collection_services_total": len(collection_services_df),
+        "unknown_alert_total": unknown_alert_total,
         "ill_main": ill_main_count,
         "ill_by_branch": ill_by_branch,
         "items_df": _summary_frame(items),

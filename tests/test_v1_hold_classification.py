@@ -6,8 +6,8 @@ by accident. The number they protect is the PUBLIC HOLDS count: every hold, less
 that number.
 
 Every name, account and title here is synthetic. A "patron record" is a SIP2 message 64 (`|AE` name, `|PT` type) joined
-to an item by patron_id; an "item record" is a message 10 whose raw text starts `101`, and a HOLD is one that starts
-`101YNY`.
+to an item by its hold patron (`CY`, else patron_id); an "item record" is a message 10 whose raw text starts `101`, and
+a HOLD is one that starts `101YNY` with alert type CV01/CV02 or no CV (the CV cases are in test_hold_cv_regression.py).
 """
 
 from __future__ import annotations
@@ -203,17 +203,25 @@ def test_an_ill_hold_for_a_configured_account_counts_as_both_and_is_not_public()
     assert counts(summary(rows, collection=[ACCOUNT])) == (1, 1, 0, 1)
 
 
-@pytest.mark.parametrize("where", ["patron-type", "destination", "patron-name", "title"])
+@pytest.mark.parametrize("where", ["patron-type", "destination", "patron-name", "hold-patron-name"])
 def test_ill_is_decided_by_fixed_rules_and_not_by_the_lists(where):
     rows = {
         "patron-type": [patron("p1", PATRON, patron_type="ILL"), item("b1", "p1")],
         "destination": [item("b1", destination="ILL Office")],
         "patron-name": [patron("p1", "INTERLIBRARY LOAN DESK"), item("b1", "p1")],
-        # The known quirk: the whole raw message is searched, so a title with the word "Ill" in it is ILL.
-        "title": [{**item("b1"), "raw_message": "101YNY20260905    120000|AO1|ABb1|AJThe Ill-Made Synthetic Knight|"}],
+        # The raw message is still searched, outside its title: here the hold patron's name field (DA).
+        "hold-patron-name": [item("b1", extra="|DAILL SYNTHETIC LIBRARY")],
     }[where]
 
     assert counts(summary(rows)) == (0, 1, 0, 0)
+
+
+def test_a_title_with_the_word_ill_does_not_make_a_hold_ill():
+    # Formerly a pinned quirk: the whole raw message, title included, was searched. The title (AJ) is left out (D2,
+    # docs/hold-count-accuracy.md).
+    rows = [{**item("b1"), "raw_message": "101YNY20260905    120000|AO1|ABb1|AJThe Ill-Made Synthetic Knight|"}]
+
+    assert counts(summary(rows)) == (1, 0, 0, 0)
 
 
 # =====================================================================================================================

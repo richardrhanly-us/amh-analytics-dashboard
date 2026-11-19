@@ -563,9 +563,10 @@ def test_the_only_thing_ever_generated_is_a_random_uuid_label():
 
 # --- ACS item events: the closed derived state and the two shapes ---------------------------------------------------------
 
-def test_the_acs_item_state_enum_is_exactly_hold_non_hold_101_other_code10():
-    assert models.ACS_ITEM_STATES == ("hold", "non_hold_101", "other_code10")
-    assert models.NON_HOLD_STATES == ("non_hold_101", "other_code10")
+def test_the_acs_item_state_enum_is_exactly_hold_non_hold_101_other_code10_unknown_alert():
+    # unknown_alert (hold-count accuracy D4) is accepted by the server before any collector sends it.
+    assert models.ACS_ITEM_STATES == ("hold", "non_hold_101", "other_code10", "unknown_alert")
+    assert models.NON_HOLD_STATES == ("non_hold_101", "other_code10", "unknown_alert")
     assert get_args(AcsHoldEvent.model_fields["state"].annotation) == ("hold",)
     assert get_args(AcsNonHoldEvent.model_fields["state"].annotation) == models.NON_HOLD_STATES  # the tuple and the type agree
 
@@ -578,9 +579,10 @@ def test_a_hold_carries_its_derived_fields_and_a_non_hold_carries_only_what_retr
 
 def test_each_state_is_accepted_and_lands_on_its_own_shape():
     request = UploadV2Request.model_validate(upload(checkins=[], acs_items=[
-        acs_hold(1), acs_non_hold(2, "non_hold_101"), acs_non_hold(3, "other_code10")]))
+        acs_hold(1), acs_non_hold(2, "non_hold_101"), acs_non_hold(3, "other_code10"), acs_non_hold(4, "unknown_alert")]))
 
-    hold, non_hold_101, other = request.acs_items
+    hold, non_hold_101, other, unknown = request.acs_items
+    assert isinstance(unknown, AcsNonHoldEvent) and unknown.state == "unknown_alert"
     assert isinstance(hold, AcsHoldEvent) and hold.state == "hold"
     assert isinstance(non_hold_101, AcsNonHoldEvent) and non_hold_101.state == "non_hold_101"
     assert isinstance(other, AcsNonHoldEvent) and other.state == "other_code10"

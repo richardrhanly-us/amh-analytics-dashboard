@@ -177,6 +177,52 @@ describe('axe finds no violation on', () => {
     expect(await axeViolations()).toEqual([])
   })
 
+  // Hold-count accuracy (phase D): the Partial and ILL labels and the notes, all at once, on both pages that show holds.
+  const WITH_HOLDS_PLAN = {
+    'GET /api/organizations/northbridge': () =>
+      jsonResponse(200, {
+        ...NORTHBRIDGE_DETAIL,
+        role: 'owner',
+        entitlements: { ...NORTHBRIDGE_DETAIL.entitlements, internal_workflow: { enabled: true, limit_value: null } },
+      }),
+    'GET /api/organizations/northbridge/branches/central/reports/holds?from=*&to=*': (url: string) => {
+      const params = new URL(url, 'http://test.invalid').searchParams
+      const [from, to] = [params.get('from'), params.get('to')]
+      const days = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000 + 1
+      return jsonResponse(200, {
+        range: { from, to, days, timezone: 'America/Chicago', includes_today: to === '2026-10-05' },
+        public_hold_count: 14,
+        ill_hold_count: 3,
+        days_with_data: days,
+        public_holds_partial_days: 1,
+        ill_uncertain_days: 1,
+        unknown_alert_count: 2,
+      })
+    },
+  }
+
+  it("a sorter's Live Today whose holds are partial, ILL-uncertain and have unrecognized alerts", async () => {
+    serve(WITH_HOLDS_PLAN)
+    renderApp(LIVE_PAGE)
+    await screen.findByRole('group', { name: 'Holds' })
+    await screen.findByText('Partial')
+    await waitFor(() => expect(main()).not.toHaveTextContent('Loading'))
+    await settle()
+
+    expect(await axeViolations()).toEqual([])
+  })
+
+  it("a sorter's reports whose Holds are partial, ILL-uncertain and have unrecognized alerts", async () => {
+    serve(WITH_HOLDS_PLAN)
+    renderApp(`${LIVE_PAGE}/reports`)
+    await screen.findByRole('img', { name: /^Bar chart of rejects/ })
+    await screen.findByText('Partial')
+    await waitFor(() => expect(main()).not.toHaveTextContent('Loading…'))
+    await settle()
+
+    expect(await axeViolations()).toEqual([])
+  })
+
   it("the organization's reports", async () => {
     serve()
     renderApp('/organizations/northbridge/reports')

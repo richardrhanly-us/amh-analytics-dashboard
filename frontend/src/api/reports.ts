@@ -127,6 +127,17 @@ export interface HoldsReport {
   ill_hold_count: number
   /** How many of the range's days had any sorter record to count. Fewer than `range.days`: part of the range has no data. */
   days_with_data: number
+  /**
+   * Days whose public-hold count is PARTIAL: collected before this sorter's collector was corrected, when holds for
+   * pickup at another location could not be told apart from items in transit to it, so they are left out of
+   * `public_hold_count`.
+   * The missing part is unavailable, not zero.
+   */
+  public_holds_partial_days: number
+  /** Days collected before the collector was corrected that had holds: their ILL count may miss or add a few. */
+  ill_uncertain_days: number
+  /** Items whose latest record that day had an alert type that was not recognized: in neither count. */
+  unknown_alert_count: number
 }
 
 export const REPORT_KINDS = ['overview', 'volume', 'routing', 'bins', 'reliability', 'holds'] as const
@@ -401,7 +412,10 @@ export async function getBinVolumeReport(
   return report
 }
 
-/** GET .../reports/holds?from=YYYY-MM-DD&to=YYYY-MM-DD -- exactly the range, two counts and how many days had data. */
+/**
+ * GET .../reports/holds?from=YYYY-MM-DD&to=YYYY-MM-DD -- exactly the range, two confirmed counts, how many days had
+ * data, and what the counts could not include (partial and ILL-uncertain days, unrecognized alerts).
+ */
 export async function getHoldsReport(
   orgSlug: string,
   branchSlug: string,
@@ -416,8 +430,13 @@ export async function getHoldsReport(
     public_hold_count: count(body.public_hold_count),
     ill_hold_count: count(body.ill_hold_count),
     days_with_data: count(body.days_with_data),
+    // Absent from a server older than the hold-accuracy change, which knows none of these: nothing to flag.
+    public_holds_partial_days: body.public_holds_partial_days === undefined ? 0 : count(body.public_holds_partial_days),
+    ill_uncertain_days: body.ill_uncertain_days === undefined ? 0 : count(body.ill_uncertain_days),
+    unknown_alert_count: body.unknown_alert_count === undefined ? 0 : count(body.unknown_alert_count),
   }
-  if (report.days_with_data > report.range.days) {
+  // Flagged days are days with data, and days with data are days of the range.
+  if (Math.max(report.public_holds_partial_days, report.ill_uncertain_days) > report.days_with_data || report.days_with_data > report.range.days) {
     throw unexpectedResponse(200)
   }
   return report

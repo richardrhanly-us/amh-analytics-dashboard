@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 
 import type { CheckinsByDestination, RejectsByReason } from '../api/liveToday.ts'
 import type { BinLayout } from '../api/organizations.ts'
+import type { HoldsReport } from '../api/reports.ts'
 import { ErrorMessage } from '../components/ErrorMessage.tsx'
 import { formatCalendarDate, formatHourRange, formatInstant } from '../time/productTime.ts'
 import { HourlyCheckins } from './HourlyCheckins.tsx'
@@ -26,7 +27,28 @@ function figure<T>(section: Section<T>, read: (data: T) => Figure): Figure {
   }
 }
 
-const count = (value: number): Figure => ({ tone: 'value', text: value.toLocaleString('en-US') })
+const count = (value: number, note?: string): Figure => ({ tone: 'value', text: value.toLocaleString('en-US'), note })
+
+/**
+ * What today's confirmed hold counts could not include (hold-count accuracy, D), a sentence each and only what applies.
+ * The Reports Holds section says the same for any range. Nothing here is a zero or an estimate.
+ */
+function holdsNotes(holds: HoldsReport): string[] {
+  const notes: string[] = []
+  if (holds.public_holds_partial_days > 0) {
+    notes.push(
+      'Holds are partial: this sorter’s collector cannot tell holds for pickup at another location apart from items in transit to it, so those holds are not included. They are not available, not zero.',
+    )
+  }
+  if (holds.ill_uncertain_days > 0) {
+    notes.push('ILL only: until this sorter’s collector update is verified, a few interlibrary loan holds could be missed or added.')
+  }
+  if (holds.unknown_alert_count > 0) {
+    const items = holds.unknown_alert_count
+    notes.push(`${items.toLocaleString('en-US')} ${items === 1 ? 'item had an alert type that was not recognized, so it is' : 'items had an alert type that was not recognized, so they are'} not in either count.`)
+  }
+  return notes
+}
 
 /**
  * What the person just asked for, to be confirmed aloud. Only their own
@@ -268,9 +290,21 @@ function Today({ live, transits, holds }: { live: LiveTodayData; transits: boole
           <SummaryGroup name="holds" heading="Holds">
             <p className="summary-caption">Today&rsquo;s public and interlibrary loan (ILL) holds.</p>
             <dl className="metrics">
-              <MetricCard label="Holds" {...figure(live.holds, (data) => count(data.public_hold_count))} />
-              <MetricCard label="ILL" {...figure(live.holds, (data) => count(data.ill_hold_count))} />
+              <MetricCard
+                label="Holds"
+                {...figure(live.holds, (data) => count(data.public_hold_count, data.public_holds_partial_days > 0 ? 'Partial' : undefined))}
+              />
+              <MetricCard
+                label="ILL"
+                {...figure(live.holds, (data) => count(data.ill_hold_count, data.ill_uncertain_days > 0 ? 'May miss or add a few' : undefined))}
+              />
             </dl>
+            {live.holds.status === 'ready' &&
+              holdsNotes(live.holds.data).map((note) => (
+                <p key={note} className="summary-caption" role="note">
+                  {note}
+                </p>
+              ))}
           </SummaryGroup>
         )}
       </div>

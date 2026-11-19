@@ -14,6 +14,9 @@ const ANSWER: Body = {
   public_hold_count: 41,
   ill_hold_count: 3,
   days_with_data: 6,
+  public_holds_partial_days: 0,
+  ill_uncertain_days: 0,
+  unknown_alert_count: 0,
 }
 
 const read = () => getHoldsReport('northbridge', 'central', FROM, TO)
@@ -92,6 +95,40 @@ describe('the answer', () => {
     expect((await changed((body) => void (body.days_with_data = 7))).days_with_data).toBe(7)
   })
 
+  it('keeps what the confirmed counts could not include: partial and ILL-uncertain days, unrecognized alerts', async () => {
+    const report = await changed((body) => {
+      body.public_holds_partial_days = 4
+      body.ill_uncertain_days = 6
+      body.unknown_alert_count = 250
+    })
+
+    expect([report.public_holds_partial_days, report.ill_uncertain_days, report.unknown_alert_count]).toEqual([4, 6, 250])
+    // The confirmed counts are as the server gave them: nothing is added for what is missing.
+    expect([report.public_hold_count, report.ill_hold_count]).toEqual([41, 3])
+  })
+
+  it('accepts every day of data being partial and ILL-uncertain, and an unknown-alert count above the days', async () => {
+    const report = await changed((body) => {
+      body.public_holds_partial_days = 6
+      body.ill_uncertain_days = 6
+      body.unknown_alert_count = 9
+    })
+
+    expect([report.public_holds_partial_days, report.ill_uncertain_days, report.unknown_alert_count]).toEqual([6, 6, 9])
+  })
+
+  it('reads a server that predates the accuracy fields as having nothing to flag', async () => {
+    // The frontend may be deployed before the backend (docs/hold-count-accuracy.md, deployment prerequisites):
+    // that backend knows none of these, and its figures carry no partial day.
+    const report = await changed((body) => {
+      delete body.public_holds_partial_days
+      delete body.ill_uncertain_days
+      delete body.unknown_alert_count
+    })
+
+    expect(report).toStrictEqual(ANSWER)
+  })
+
   it('drops fields the contract does not have', async () => {
     const result = await changed((body) => {
       body.customer_id = 41
@@ -115,6 +152,17 @@ describe('the answer', () => {
     ['days with data that are missing', (body: Body) => void delete body.days_with_data],
     ['more days with data than the range has', (body: Body) => void (body.days_with_data = 8)],
     ['days with data that are not whole', (body: Body) => void (body.days_with_data = 2.5)],
+    ['partial days that are negative', (body: Body) => void (body.public_holds_partial_days = -1)],
+    ['partial days that are not whole', (body: Body) => void (body.public_holds_partial_days = 0.5)],
+    ['partial days that are a string', (body: Body) => void (body.public_holds_partial_days = '1')],
+    ['partial days that are null', (body: Body) => void (body.public_holds_partial_days = null)],
+    ['more partial days than days with data', (body: Body) => void (body.public_holds_partial_days = 7)],
+    ['ILL-uncertain days that are negative', (body: Body) => void (body.ill_uncertain_days = -2)],
+    ['ILL-uncertain days that are not a number', (body: Body) => void (body.ill_uncertain_days = true)],
+    ['more ILL-uncertain days than days with data', (body: Body) => void (body.ill_uncertain_days = 7)],
+    ['an unknown-alert count that is negative', (body: Body) => void (body.unknown_alert_count = -1)],
+    ['an unknown-alert count that is not whole', (body: Body) => void (body.unknown_alert_count = 1.25)],
+    ['an unknown-alert count that is a string', (body: Body) => void (body.unknown_alert_count = '0')],
   ])('refuses %s', async (_label, change) => {
     await expect(changed(change)).rejects.toMatchObject(UNEXPECTED)
   })

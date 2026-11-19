@@ -2068,6 +2068,104 @@ describe('the Holds zone in today’s summary', () => {
     expect(within(zone()).getAllByRole('definition').map((value) => value.textContent)).toEqual(['9', '2'])
     expect(zone().querySelectorAll('a, button, input, [tabindex]')).toHaveLength(0)
   })
+
+  /*
+   * Hold-count accuracy (phase D): today's two figures are CONFIRMED holds. What they could not include is said in the
+   * zone -- never estimated, and never shown as zero. The words are the Reports Holds section's, for today alone.
+   */
+  const notes = () => within(zone()).queryAllByRole('note').map((note) => note.textContent)
+  const cardNotes = (label: string) =>
+    Array.from(within(zone()).getByText(label, { selector: 'dt' }).parentElement?.querySelectorAll('dd.metric-note') ?? []).map(
+      (note) => note.textContent,
+    )
+  const PARTIAL =
+    'Holds are partial: this sorter’s collector cannot tell holds for pickup at another location apart from items in transit to it, so those holds are not included. They are not available, not zero.'
+  const ILL_UNCERTAIN = 'ILL only: until this sorter’s collector update is verified, a few interlibrary loan holds could be missed or added.'
+
+  it('says nothing more on a confirmed day: no label and no note', async () => {
+    serve(WITH_HOLDS)
+    renderApp(CENTRAL)
+    await loaded()
+    await waitFor(() => expect(card('Holds')).toHaveTextContent(/^9$/))
+
+    expect([cardNotes('Holds'), cardNotes('ILL')]).toEqual([[], []])
+    expect(notes()).toEqual([])
+  })
+
+  it('labels Holds Partial when today is partial, keeps the confirmed figure, and says why', async () => {
+    serve(WITH_HOLDS, live({ holds: { public: 14, ill: 3, partialDays: 1 } }))
+    renderApp(CENTRAL)
+    await loaded()
+    await waitFor(() => expect(cardNotes('Holds')).toEqual(['Partial']))
+
+    expect(card('Holds')).toHaveTextContent(/^14$/)
+    expect(cardNotes('ILL')).toEqual([])
+    expect(notes()).toEqual([PARTIAL])
+  })
+
+  it('never shows a partial zero as a bare zero', async () => {
+    serve(WITH_HOLDS, live({ holds: { public: 0, ill: 0, partialDays: 1 } }))
+    renderApp(CENTRAL)
+    await loaded()
+    await waitFor(() => expect(cardNotes('Holds')).toEqual(['Partial']))
+
+    expect(card('Holds')).toHaveTextContent(/^0$/)
+    expect(notes()).toEqual([PARTIAL])
+  })
+
+  it('puts the ILL note on the ILL figure only', async () => {
+    serve(WITH_HOLDS, live({ holds: { public: 14, ill: 3, illUncertainDays: 1 } }))
+    renderApp(CENTRAL)
+    await loaded()
+    await waitFor(() => expect(cardNotes('ILL')).toEqual(['May miss or add a few']))
+
+    expect(cardNotes('Holds')).toEqual([])
+    expect(notes()).toEqual([ILL_UNCERTAIN])
+  })
+
+  it.each([
+    [1, '1 item had an alert type that was not recognized, so it is not in either count.'],
+    [12, '12 items had an alert type that was not recognized, so they are not in either count.'],
+  ])('says %i unrecognized alert(s) were left out of both counts, without labelling either', async (unknownAlerts, sentence) => {
+    serve(WITH_HOLDS, live({ holds: { public: 14, ill: 3, unknownAlerts } }))
+    renderApp(CENTRAL)
+    await loaded()
+    await waitFor(() => expect(notes()).toEqual([sentence]))
+
+    expect([cardNotes('Holds'), cardNotes('ILL')]).toEqual([[], []])
+    expect([card('Holds').textContent, card('ILL').textContent]).toEqual(['14', '3'])
+  })
+
+  it('says no label or note while loading or when holds fail', async () => {
+    const holds = deferred<Response>()
+    serve({ ...WITH_HOLDS, [HOLDS]: () => holds.promise }, live({ holds: { public: 14, ill: 3, partialDays: 1, illUncertainDays: 1, unknownAlerts: 2 } }))
+    renderApp(CENTRAL)
+    await waitFor(() => expect(metric('Check-ins today')).toHaveTextContent(/^120$/))
+
+    expect(card('Holds')).toHaveTextContent(/^Loading…$/)
+    expect([cardNotes('Holds'), cardNotes('ILL'), notes()]).toEqual([[], [], []])
+    holds.resolve(SERVER_ERROR())
+    await waitFor(() => expect(card('Holds')).toHaveTextContent(/^Could not load$/))
+    expect([cardNotes('Holds'), cardNotes('ILL'), notes()]).toEqual([[], [], []])
+  })
+
+  it('reads in order for a screen reader, and a timed refresh does not announce the labels', async () => {
+    serve(WITH_HOLDS, live({ holds: { public: 14, ill: 3, partialDays: 1, illUncertainDays: 1, unknownAlerts: 2 } }))
+    renderApp(CENTRAL)
+    await loaded()
+    await waitFor(() => expect(cardNotes('Holds')).toEqual(['Partial']))
+
+    // Each card: its term, its figure, then its label: "Holds, 14, Partial"; "ILL, 3, May miss or add a few".
+    expect(within(zone()).getAllByRole('definition').map((value) => value.textContent)).toEqual(['14', 'Partial', '3', 'May miss or add a few'])
+    // Then the explanations, as notes after the figures, in the order of the figures.
+    expect(notes()).toEqual([PARTIAL, ILL_UNCERTAIN, '2 items had an alert type that was not recognized, so they are not in either count.'])
+    for (const note of within(zone()).getAllByRole('note')) {
+      expect(note).not.toHaveAttribute('aria-live')
+    }
+    // Only the person's own actions are announced (the page's status line), as before.
+    expect(screen.getByRole('status')).not.toHaveTextContent(/partial|recognized|missed/i)
+    expect(zone().querySelectorAll('a, button, input, [tabindex]')).toHaveLength(0)
+  })
 })
 
 describe('bin volume today, and the holds read', () => {

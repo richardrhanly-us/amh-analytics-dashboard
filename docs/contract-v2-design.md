@@ -47,7 +47,7 @@ bound installation usable). `POST /v2/upload`:
 | `CheckinEvent` | `event_key`, `event_time`, optional `item_key`, `destination`, `bin` |
 | `RejectEvent` | `event_key`, `event_time`, `error_class`, optional `item_key` |
 | `AcsItemEvent`, `state = hold` | `state`, `event_key`, `event_time`, `item_key`, `destination`, `is_ill`, `is_branch_services`, `is_collection_services`, optional `ruleset_id` |
-| `AcsItemEvent`, `state = non_hold_101` or `other_code10` | `state`, `event_key`, `event_time`, `item_key` **only** |
+| `AcsItemEvent`, `state = non_hold_101`, `other_code10` or `unknown_alert` | `state`, `event_key`, `event_time`, `item_key` **only** |
 
 | Field | Rule |
 |---|---|
@@ -291,6 +291,7 @@ cannot represent that: the cloud would never learn of the later record. Message-
 |---|---|---|
 | `hold` | a `101` record that is hold-positive (`101YNY`) | `state`, `event_key`, `event_time`, `item_key`, `destination`, `is_ill`, `is_branch_services`, `is_collection_services`, optional `ruleset_id` |
 | `non_hold_101` | a `101` record that is not a hold | `state`, `event_key`, `event_time`, `item_key` |
+| `unknown_alert` | a `101` alert record of an alert type the collector does not recognise (`docs/hold-count-accuracy.md`, D4): neither a confirmed hold nor a confirmed non-hold; as an item's latest record it is counted as uncertain. **Accepted by the server (migration `5813f1df32a0`, not yet deployed); sent by no collector before 1.0.16** | `state`, `event_key`, `event_time`, `item_key` |
 | `other_code10` | any other code-10 record: ignored by Overview, but takes part in Live Today's latest-wins rule | `state`, `event_key`, `event_time`, `item_key` |
 
 The request model is a discriminated union on `state`. A non-hold carries **no** destination, flag or ruleset, and `extra="forbid"`

@@ -226,9 +226,12 @@ def _transform_acs(lines: list[str], ctx: TransformContext) -> tuple[list[SafeEv
         if v2_classify.profile_outcome(cache.lookup(pk), rules) != after:  # only a change in the classification outcome can matter
             events.extend(_corrections(ctx, pk, after, counters))
         cache.stage(pk, name_k=info.name_k, type_ill=info.type_ill, name_ill=info.name_ill, profile=True)
-    for _when, code, _barcode, patron_id, _destination, _raw in records:
-        if code != "64" and patron_id:
-            cache.stage(v2_identity.patron_id_hmac(keys, patron_id))  # a sighting: the sliding TTL moves; a profile is never replaced
+    for _when, code, _barcode, patron_id, _destination, raw in records:
+        if code != "64":
+            # A sighting of each patron the message quotes -- the item record's (AA) and the hold's (CY): the sliding TTL moves, and the
+            # patron-card guard knows both. A profile is never replaced.
+            for quoted in {patron_id, v2_classify.hold_patron(raw, "")} - {""}:
+                cache.stage(v2_identity.patron_id_hmac(keys, quoted))
 
     # pass 2 -- item records (code 10) become events; message-64 records produce NOTHING for the cloud.
     for when, code, barcode, patron_id, destination, raw in records:
@@ -248,7 +251,8 @@ def _transform_acs(lines: list[str], ctx: TransformContext) -> tuple[list[SafeEv
         item_key = v2_identity.item_key(keys, barcode)
         existing = cache.hold_get(item_key)
         if state == "hold":
-            patron_pk = v2_identity.patron_id_hmac(keys, patron_id) if patron_id else None
+            hold_patron = v2_classify.hold_patron(raw, patron_id)  # CY, else AA: the patron whose profile classifies the hold
+            patron_pk = v2_identity.patron_id_hmac(keys, hold_patron) if hold_patron else None
             static = v2_classify.static_flags(raw_message=raw, destination_raw=destination, rules=rules)
             flags = v2_classify.combine(static, v2_classify.profile_outcome(cache.lookup(patron_pk) if patron_pk else None, rules))
             slug = v2_normalize.normalize_destination(destination, rules)
@@ -266,10 +270,11 @@ def _transform_acs(lines: list[str], ctx: TransformContext) -> tuple[list[SafeEv
                 cache.hold_delete(item_key)  # the item's latest hold has no patron: nothing left that a profile could correct
         else:
             events.append(v2_identity.build_acs_item(keys, event_time=instant, item_key=item_key, state=state))
-            if existing is not None and ((state == "non_hold_101" and stamp >= existing.event_time)
+            if existing is not None and ((state in ("non_hold_101", "unknown_alert") and stamp >= existing.event_time)
                                          or (state == "other_code10" and stamp == existing.event_time)):
-                # A later 101 record retracts the hold. An other-code-10 record only does so when it shares the hold's second (then a
-                # correction, inserted later, could wrongly outrank it); a strictly later one leaves the Overview hold standing.
+                # A later 101 record (a CV04 transit is one) retracts the hold, and so does a later unknown alert (the item is then
+                # uncertain, not a hold). An other-code-10 record only does so when it shares the hold's second (then a correction, inserted
+                # later, could wrongly outrank it); a strictly later one leaves the Overview hold standing.
                 cache.hold_delete(item_key)
         counters.acs_states[state] += 1
         counters.events[KIND_ACS_ITEMS] += 1

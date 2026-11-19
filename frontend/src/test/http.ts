@@ -161,7 +161,7 @@ export interface LiveFixture {
    */
   bins?: Array<[key: string, checkinCount: number]>
   /** The day's holds. Left out, 9 public and 2 interlibrary loan. */
-  holds?: { public: number; ill: number }
+  holds?: { public: number; ill: number; partialDays?: number; illUncertainDays?: number; unknownAlerts?: number }
 }
 
 const hoursWith = (counts: Record<number, number>) => Array.from({ length: 24 }, (_, hour) => counts[hour] ?? 0)
@@ -240,6 +240,9 @@ export const liveBody = {
     public_hold_count: live.holds?.public ?? 9,
     ill_hold_count: live.holds?.ill ?? 2,
     days_with_data: 1,
+    public_holds_partial_days: live.holds?.partialDays ?? 0,
+    ill_uncertain_days: live.holds?.illUncertainDays ?? 0,
+    unknown_alert_count: live.holds?.unknownAlerts ?? 0,
   }),
 }
 

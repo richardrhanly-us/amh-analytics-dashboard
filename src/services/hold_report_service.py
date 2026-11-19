@@ -38,6 +38,15 @@ two integers. The classifier's supporting frames, the rows, the rules and the in
 Services, Collection Services) are not returned, kept or logged. The transit destinations are not read: neither
 number depends on them.
 
+CONFIRMED, PARTIAL AND UNCERTAIN (docs/hold-count-accuracy.md, phase B). The two counts are CONFIRMED holds only.
+Collectors before 1.0.16 sent a Westside transit as a Westside hold, so on a v2 day before the branch's
+`hold_classification.corrected_from` date (branch settings; absent or unreadable = no day is corrected) a public hold at
+`westside` is not counted, and a day that had one is counted in `public_holds_partial_days`: the Westside part of that
+day is UNAVAILABLE, never estimated and never zero. Such a day with any hold is also in `ill_uncertain_days` (the ILL
+flag then followed the item record's patron, not the hold patron). An item-day whose latest record is an unknown alert
+type is in `unknown_alert_count`, in neither count, in either era. Legacy days are always complete (corrected from the
+stored raw messages), and so is a v2 day from `corrected_from`.
+
 Framework-neutral: no Streamlit, no FastAPI, no caching, no engine. Every read takes a connection the caller
 supplies -- already scoped to the tenant by row level security -- and database errors propagate: one era's count is
 never returned as the whole.
@@ -47,9 +56,10 @@ from __future__ import annotations
 
 import bisect
 import itertools
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any
 
 import pandas as pd
@@ -58,6 +68,7 @@ from sqlalchemy.engine import Connection
 
 import metrics
 import metrics_v2
+from services.hold_classification import HOLD_CLASSIFICATION_KEY, parse_corrected_from
 from services.hold_rules import INTERNAL_ROUTING_KEY, V1HoldRules, v1_hold_rules
 from services.operational_report_service import ReportWindow
 from services.settings_merge import merge_settings
@@ -125,14 +136,36 @@ _V1_RULES = text("""
 """)
 
 
+# The site's hold-classification marker (services.hold_classification), read only when the current era owns part of
+# the range. The branch's own document only: the marker is per branch, never inherited from the organization.
+_HOLD_CLASSIFICATION = text("""
+    SELECT bs.settings_json -> 'hold_classification' AS hold_classification
+    FROM organizations o
+    JOIN branches b
+      ON b.organization_id = o.id
+    LEFT JOIN branch_settings bs
+      ON bs.branch_id = b.id
+    WHERE o.operational_customer_id = :customer_id
+      AND b.operational_branch_id = :branch_id
+    LIMIT 2
+""")
+
+# Before a branch's corrected-from date, a public v2 hold at these destinations may be a transit (decision D1: Westside
+# only; Library Express holds are confirmed).
+AMBIGUOUS_V2_DESTINATIONS = frozenset({"westside"})
+
+
 @dataclass(frozen=True, slots=True)
 class HoldsReport:
-    """A sorter site's two hold counts over a range, and on how many of its days there was anything to count. Nothing
-    else of what was read."""
+    """A sorter site's two CONFIRMED hold counts over a range, on how many of its days there was anything to count, and
+    how many days or item-days are incomplete or uncertain (module docstring). Nothing else of what was read."""
 
     public_hold_count: int
     ill_hold_count: int
     days_with_data: int
+    public_holds_partial_days: int = 0
+    ill_uncertain_days: int = 0
+    unknown_alert_count: int = 0
 
 
 # At most this many days' rows are read at once. A day is classified on its own and its rows are dropped, so memory is
@@ -183,6 +216,23 @@ def legacy_hold_rules(conn: Connection, tenant: ResolvedOperationalTenant) -> V1
     return v1_hold_rules(effective.get(INTERNAL_ROUTING_KEY))
 
 
+def hold_corrected_from(conn: Connection, tenant: ResolvedOperationalTenant) -> date | None:
+    """The site's corrected-from date, or None (every v2 day uncorrected) when there is no valid marker. A resolved
+    tenant has exactly one such row; anything else is an internal fault, never "no marker"."""
+    rows = conn.execute(
+        _HOLD_CLASSIFICATION, {"customer_id": tenant.operational_customer_id, "branch_id": tenant.operational_branch_id}
+    ).mappings().all()
+    if len(rows) != 1:
+        raise RuntimeError("The hold classification marker of the resolved tenant could not be read as exactly one row.")
+    stored = rows[0][HOLD_CLASSIFICATION_KEY]
+    if isinstance(stored, (str, bytes)):                     # PostgreSQL hands JSONB back parsed; a text driver does not
+        try:
+            stored = json.loads(stored)
+        except ValueError:
+            return None
+    return parse_corrected_from(stored)
+
+
 def _days_of(span: tuple[Any, Any], boundaries: tuple[Any, ...]) -> list[tuple[int, Any, Any]]:
     """The local days of the range, each cut to the era's span: (the day's index in the range, start, end), in order,
     each [start, end). A day the span does not reach is left out; the cutover's day is cut at the cutover, its other
@@ -200,6 +250,11 @@ def _is_v1_patron(row: Any) -> bool:
     return str(row[1] or "").strip() == "64"
 
 
+# What each day contributes to a report: confirmed public and ILL holds, unknown-alert item-days, and whether the day is
+# partial (an unavailable Westside part) or ILL-uncertain (0 or 1 each).
+_DAY_TOTALS = ("public", "ill", "unknown_alerts", "partial_day", "ill_uncertain_day")
+
+
 def _count_days(
     conn: Connection,
     tenant: ResolvedOperationalTenant,
@@ -210,8 +265,9 @@ def _count_days(
     counted: set[int],
     *,
     patron_lookback: timedelta | None = None,
-) -> tuple[int, int]:
-    """Public and ILL holds summed over `days`, each day classified alone by `classify`. Rows are read a block of
+) -> dict[str, int]:
+    """The day totals (_DAY_TOTALS) summed over `days`, each day classified alone by `classify(frame, index)`, which
+    returns them for that day. Rows are read a block of
     DAYS_PER_READ days at a time and split at the day boundaries, so no more than one block is held at once and no row
     is read twice. The range index of each day that had any row of its own is added to `counted`.
 
@@ -220,7 +276,7 @@ def _count_days(
     record a one-day report of that day would find, so a day is classified alike in every range. The records before the
     first day are read ONCE (patron records only); after that, each patron's latest record is carried forward from the
     days already read. Only one record per patron is kept, and none is returned."""
-    public = ill = 0
+    totals = dict.fromkeys(_DAY_TOTALS, 0)
     latest: dict[Any, Any] = {}                              # patron id -> that patron's latest patron record so far
     if patron_lookback is not None and days:
         first_start = days[0][1]
@@ -237,34 +293,38 @@ def _count_days(
             counted.add(index)
             before = []
             if patron_lookback is not None:
-                named = {row[4] for row in today if not _is_v1_patron(row)}
+                # The patron an item names is its HOLD patron (CY), else its own record's patron (AA): the one the
+                # classifier looks up (metrics.hold_patron_id).
+                named = {metrics.hold_patron_id(row[5], row[4]) for row in today if not _is_v1_patron(row)}
                 before = [latest[patron] for patron in named
                           if patron in latest and latest[patron][0] >= start - patron_lookback]
-            summary = classify(_frame(before + today, columns))
-            public, ill = public + int(summary["holds_total"]), ill + int(summary["ill_total"])
+            day = classify(_frame(before + today, columns), index)
+            for name in _DAY_TOTALS:
+                totals[name] += int(day[name])
             if patron_lookback is not None:
                 for row in today:
                     if _is_v1_patron(row):
                         latest[row[4]] = row
-    return public, ill
+    return totals
 
 
 def get_holds_report(conn: Connection, tenant: ResolvedOperationalTenant, window: ReportWindow) -> HoldsReport:
-    """The site's public and ILL holds over the window: the SUM OF ITS DAYS. Each local calendar day is classified on
-    its own, exactly as a one-day report of that day is (Live Today's "Holds today" is one), and the days' counts are
-    added. An item held on several days counts on each; corrections within a day still count once.
+    """The site's CONFIRMED public and ILL holds over the window: the SUM OF ITS DAYS, with how many of those days are
+    partial or ILL-uncertain and how many item-days had an unknown alert type (module docstring). Each local calendar
+    day is classified on its own, exactly as a one-day report of that day is (Live Today's "Holds today" is one), and
+    the days' figures are added. An item held on several days counts on each; corrections within a day still count once.
 
     A day of the cutover is two parts, each its own era's, classified alone. `days_with_data` is how many of the range's
     days had at least one record of either era to count."""
-    public = ill = 0
+    totals = dict.fromkeys(_DAY_TOTALS, 0)
     counted: set[int] = set()
     local = window.local_range
 
     if window.v1_span is not None:
         rules = legacy_hold_rules(conn, tenant)
 
-        def legacy(frame: pd.DataFrame) -> Mapping[str, Any]:
-            return metrics.build_acs_item_summary(
+        def legacy(frame: pd.DataFrame, index: int) -> Mapping[str, int]:
+            summary = metrics.build_acs_item_summary(
                 frame,
                 [],  # transit labels: they only split ILL by destination, which this report does not give
                 rules.branch_services_names,
@@ -272,16 +332,39 @@ def get_holds_report(conn: Connection, tenant: ResolvedOperationalTenant, window
                 rules.branch_services_da_patterns,
                 rules.collection_services_da_patterns,
             )
+            # Legacy days are corrected from the stored raw messages: never partial, never ILL-uncertain.
+            return {"public": summary["holds_total"], "ill": summary["ill_total"],
+                    "unknown_alerts": summary["unknown_alert_total"], "partial_day": 0, "ill_uncertain_day": 0}
 
         days = _days_of(window.v1_span, local.v1_day_boundaries_local)
         era = _count_days(conn, tenant, _V1_ROWS, _V1_COLUMNS, days, legacy, counted, patron_lookback=V1_PATRON_LOOKBACK)
-        public, ill = public + era[0], ill + era[1]
+        totals = {name: totals[name] + era[name] for name in _DAY_TOTALS}
 
     if window.v2_span is not None:
-        days = _days_of(window.v2_span, local.v2_day_boundaries_utc)
-        era = _count_days(
-            conn, tenant, _V2_ROWS, _V2_COLUMNS, days, lambda frame: metrics_v2.build_acs_item_summary_v2(frame, []), counted
-        )
-        public, ill = public + era[0], ill + era[1]
+        corrected_from = hold_corrected_from(conn, tenant)
 
-    return HoldsReport(public_hold_count=public, ill_hold_count=ill, days_with_data=len(counted))
+        def current(frame: pd.DataFrame, index: int) -> Mapping[str, int]:
+            # A day is corrected only from the marker's date on; a day with data of an older collector (the upgrade day,
+            # a rollback) is before it by definition (decision D5), so it is uncorrected as a whole.
+            corrected = corrected_from is not None and local.dates[index] >= corrected_from
+            summary = metrics_v2.build_acs_item_summary_v2(
+                frame, [], frozenset() if corrected else AMBIGUOUS_V2_DESTINATIONS)
+            return {"public": summary["holds_total"], "ill": summary["ill_total"],
+                    "unknown_alerts": summary["unknown_alert_total"],
+                    "partial_day": int(summary["ambiguous_hold_total"] > 0),
+                    "ill_uncertain_day": int(not corrected and summary["hold_items_total"] > 0)}
+
+        days = _days_of(window.v2_span, local.v2_day_boundaries_utc)
+        era = _count_days(conn, tenant, _V2_ROWS, _V2_COLUMNS, days, current, counted)
+        totals = {name: totals[name] + era[name] for name in _DAY_TOTALS}
+
+    # A cutover day's two parts are one day: its partial / ILL-uncertain flag comes from its v2 part only, so it is
+    # counted at most once.
+    return HoldsReport(
+        public_hold_count=totals["public"],
+        ill_hold_count=totals["ill"],
+        days_with_data=len(counted),
+        public_holds_partial_days=totals["partial_day"],
+        ill_uncertain_days=totals["ill_uncertain_day"],
+        unknown_alert_count=totals["unknown_alerts"],
+    )

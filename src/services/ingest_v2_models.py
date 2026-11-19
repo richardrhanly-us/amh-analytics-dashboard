@@ -69,9 +69,14 @@ LastErrorClass = Literal[
 #   hold          a 101 record that is hold-positive (`101YNY`)
 #   non_hold_101  a 101 record that is not a hold
 #   other_code10  any other code-10 record: ignored by Overview, but it takes part in Live Today's latest-record-wins rule
+#   unknown_alert a 101 alert record of an alert type the collector does not recognise (docs/hold-count-accuracy.md, D4):
+#                 NEITHER a confirmed hold NOR a confirmed non-hold. As an item's latest record it is counted as
+#                 uncertain, in no hold total. Sent only by a collector from 1.0.16; the server accepts it first.
 # (Message-64 patron records are never events at all.)
-ACS_ITEM_STATES = ("hold", "non_hold_101", "other_code10")
-NON_HOLD_STATES = ("non_hold_101", "other_code10")
+ACS_ITEM_STATES = ("hold", "non_hold_101", "other_code10", "unknown_alert")
+# The states with the NON-HOLD SHAPE: no destination, no classification flag, no ruleset (not "confirmed non-holds":
+# unknown_alert is uncertain).
+NON_HOLD_STATES = ("non_hold_101", "other_code10", "unknown_alert")
 
 MAX_COUNTER = 10_000_000
 
@@ -177,7 +182,7 @@ class AcsNonHoldEvent(_V2Model):
     classification flag and no ruleset here -- and `extra="forbid"` means none can be sent, so no dummy value is ever
     invented to fit the hold shape."""
 
-    state: Literal["non_hold_101", "other_code10"]
+    state: Literal["non_hold_101", "other_code10", "unknown_alert"]
     event_key: HmacKey
     event_time: AwareTimestamp
     item_key: HmacKey
