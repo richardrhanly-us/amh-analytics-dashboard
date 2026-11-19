@@ -3,7 +3,7 @@
 The big picture, kept in one place so a single task does not swallow the plan. Read this before starting any
 non-trivial task, and check the task against it before widening scope.
 
-Last reviewed: 2026-11-17 (Collector 1.0.15 canonical bundle built; NBPL production sorter profile, Collector 1.0.15 backup security and the upgrade status; G2 qualification entries
+Last reviewed: 2026-11-19 (hold-count accuracy phases A–D implemented locally and integration-reviewed, staged for commit, section 5); 2026-11-18 (hold-count accuracy findings and production verification); 2026-11-17 (Collector 1.0.15 canonical bundle built; NBPL production sorter profile, Collector 1.0.15 backup security and the upgrade status; G2 qualification entries
 2026-11-12; the rest as of 2026-10-28). Facts marked **(verify)** were not confirmed against production or the person who
 knows; everything else was checked in the repository on that date.
 
@@ -1170,6 +1170,131 @@ its `tools\update.ps1` has the backup vulnerability.
 ---
 
 ## 5. Done recently (newest first)
+
+- 2026-11-18 — UI2 (priority 2) holds reporting: **hold-count accuracy — investigation and production verification
+  complete; correction (phases A–D) implemented locally and integration-reviewed 2026-11-19, staged, not committed or
+  deployed. The production defect is UNRESOLVED until it is deployed: production Holds figures (Live Today and Sorter
+  Reports, every range) are still overstated, and ILL slightly off.** Full
+  record, plan, tests and queries: `docs/hold-count-accuracy.md`. Working branch `fix/hold-count-accuracy` (from
+  `docs/hold-count-accuracy-plan` at `b915469`, carrying its uncommitted docs); nothing committed.
+  - **Production verification Q0–Q5 completed (2026-11-18, read-only, run by the product owner).** CV01 local holds,
+    CV02 destination holds (Westside, Library Express), CV04 transits confirmed; **no CV04 to Library Express** (so D1 is
+    settled); August 2026: 5,627 hold candidates under the current rule, 2,381 of them CV04 transits (reported as
+    deduplicated; the producing query's unit is to be confirmed); **345 legacy item-days with an ILL hold patron
+    (`CY`), 9 with no `AA`**; legacy records keep CV/`CY`; existing v2 rows cannot separate Westside holds from
+    transits. Records vs item-days are kept apart in the doc (section 1.4).
+  - **Regression tests added (stage 1):** `tests/test_hold_cv_regression.py`. At stage 1: 15 passing and 16 strict
+    expected failures for phases A, C and D4; **each marker was removed as its phase landed, and none remains** (the
+    figures below are stage 1's). Existing hold/Collector/release-manifest suites: 423 passed. Full suite on LIB-L26:
+    10,505 passed, 16 xfailed; the
+    only failures are environmental — `tests/test_installer_*` (the .NET Framework 4.7.2 Developer Pack is missing, so
+    the setup wizard does not build) and two `tests/test_collector_setup.py` token-wrapper cases (UTF-8 BOM on
+    PowerShell stdin).
+  - **Confirmed defect: transits counted as holds.** Every hold classifier (legacy `src/metrics.py`, Collector v2
+    `collector/v2_classify.py`, so Live Today Holds and Sorter Reports Holds in every range) treats `101YNY` as a hold.
+    Its `Y` is the SIP2 *alert* flag, raised for transits too; the alert type `CV` separates them (CV01 Main hold, CV02
+    other-branch hold, CV04 transit). Shown by five controlled NBPL tests on 2026-11-18 and the April 2026 NBPL logs,
+    where about 46% more holds were counted than real (Westside transits).
+  - **ILL defect (small).** The ILL indicator is the **hold patron's** patron type `ILL` (message 64, `PT`). Both
+    classifiers read the item record's `AA` patron instead of the hold patron `CY`, and also match "ILL" in titles.
+    April: 34 of 36 ILL holds found, 2 missed, 1 false positive.
+  - **Data limits.** Legacy history (to the 2026-09-28 cutover) is fully correctable: `acs_events.raw_message` keeps CV
+    and `CY`, and `checkins.flag_2` the sorter's hold flag. **Contract v2 data since the cutover cannot separate
+    Westside holds from Westside transits**; Main and Library Express holds are recoverable (Library Express confirmed
+    by Q2).
+  - **Approved reporting policy (product owner, 2026-11-18):** Holds = confirmed ordinary patron holds incl.
+    staff/employee; excludes ILL, service-account holds, transits, rejects, exceptions. ILL counted separately.
+    Service-account holds stay a separate classification. Unrecoverable v2 Westside holds: an explicitly labelled
+    partial count, never an estimate shown as accurate and never zero. Latest record per item per local day.
+  - **Phases (planned at stage 1; all four implemented locally since, below):** A legacy correction (backend); B v2 confirmed/partial/uncertain reporting —
+    three new response fields (`public_holds_partial_days`, `ill_uncertain_days`, `unknown_alert_count`) and a
+    per-branch, audited `corrected_from` marker in branch settings (first full day of verified corrected collection;
+    cleared on rollback; no schema change); C Collector **1.0.16** CV-aware states and `CY`-based ILL (1.0.15 and its
+    artifact unchanged); D frontend labelling and tests.
+  - **Decisions (2026-11-18):** D1 Library Express counted as accurate (settled: Q2 found no CV04 to it); D2 title heuristic
+    removed (approved); D3 scoped v2 ILL accuracy note (approved); D4 a distinct v2 state `unknown_alert`, never a
+    confirmed hold or non-hold, backend/database first (approved in principle); D5 branch settings marker (provisional;
+    back-dating settled 2026-11-19, below).
+  - **Phase A (legacy classifier) implemented locally, under review — not committed or deployed.** `src/metrics.py`:
+    CV-aware hold (CV01/CV02/no CV hold, CV04 not, other CV → `unknown_alert_total`), hold patron `CY` else `AA`,
+    ILL raw match without the title (`AJ`). `src/services/hold_report_service.py`: lookback names the hold patron.
+    API responses unchanged. Tests: phase A markers removed; `test_v1_hold_classification.py` title case rewritten;
+    new lookback test; one Collector parity scenario (title) is a strict expected failure until phase C (the Collector
+    is unchanged this phase — a recorded deviation from "A and C together"). Results: hold/privacy/parity suites 856
+    passed, 7 xfailed; broad suite (excluding the environment-broken installer and token-wrapper files) 10,410 passed,
+    7 xfailed, 0 failed. Opt-in PostgreSQL holds-report tests were skipped (`SORTVIEW_TEST_POSTGRES_URL` not set).
+  - **More production evidence (2026-11-18):** the August figure is item-months (latest response per barcode in the
+    month; 3,226 CV01/CV02), not item-days; Q4: 5,276 ambiguous v2 Westside hold **events**; Q2: no CV other than
+    01/02/04 or none on legacy `101YNY`.
+  - **Phase B implemented locally, under review — not committed, migrated or deployed** (A provisionally accepted).
+    v2 summary: `ambiguous_destinations` (`{"westside"}` before `corrected_from`) and `unknown_alert`
+    latest-record handling; holds report + API: `public_holds_partial_days`, `ill_uncertain_days`,
+    `unknown_alert_count` (original four fields unchanged; frontend drops unknown fields); marker
+    `branch_settings.hold_classification.corrected_from` (`src/services/hold_classification.py`), set/cleared only by
+    `scripts/set_hold_corrected_from.py` (dry run default, audited in `auth_audit_log` in the same transaction,
+    refuses today-or-earlier dates — a D5 interpretation awaiting confirmation); server enum + migration
+    **`5813f1df32a0`** (new head after `b8e2d4f61a07`: widens the two `acs_item_events` CHECK constraints, 5 s lock
+    timeout, downgrade refuses while an `unknown_alert` row exists). Tests: full suite with local PostgreSQL enabled
+    (127.0.0.1 disposable instance; installer and token-wrapper files excluded as environment-broken) 11,598 passed,
+    8 xfailed after one freshness-guard annotation fix; PostgreSQL holds/marker/ingest/bin-layout suites 200 passed.
+    Collector source and 1.0.15 artifacts unchanged.
+  - **Deployment prerequisites for A+B (none done):** migration `5813f1df32a0` to production first (the schema guard
+    enforces it), before any 1.0.16 collector; phase D frontend labels with or before this backend (otherwise
+    uncorrected v2 Holds figures drop by the Westside part with no "Partial" label); no production marker set.
+  - **Phase C (Collector 1.0.16 source) implemented locally, under review — not committed, built, published or
+    installed** (A and B provisionally reviewed). `collector/v2_classify.py`: CV-aware `item_state` (CV01/CV02/no
+    CV → `hold`, CV04 → `non_hold_101`, other CV → `unknown_alert`), `hold_patron` (CY, else AA), ILL match without
+    `AJ`; `collector/v2_events.py`: `unknown_alert` (non-hold shape; Collector and server state tuples equal again);
+    `collector/v2_transform.py`: hold patron keys profile lookup and ledger, AA and CY both cache sightings (guard),
+    a later `unknown_alert` clears the ledger row; `__version__ = "1.0.16"`; `docs/releases/collector-1.0.16.md`
+    (planned; **no artifact built** — built later from a merged commit by the 1.0.15 procedure on the release build
+    machine). 1.0.15 source of record, its artifact and its release note unchanged. `check_release_readiness.py
+    --expect-version 1.0.16`: Ready. Tests: new `tests/test_collector_v2_hold_cv.py` (26); every phase xfail removed
+    (0 remain); full suite with local PostgreSQL (installer and token-wrapper files excluded as environment-broken)
+    **11,645 passed, 0 failed, 8 skipped** — skips are Windows limits on LIB-L26 (2 need elevation, 3 symlink
+    privilege, 1 ACL apply, 2 off-Windows branches), not passes. `tests/test_installer_release_packaging.py` reads
+    the release note from the committed HEAD, so it can pass only after the user commits.
+  - **Phase D (frontend labels) implemented locally, under review — not committed, deployed or published** (C
+    provisionally reviewed). `frontend/src/api/reports.ts`: `public_holds_partial_days`, `ill_uncertain_days`,
+    `unknown_alert_count` validated as nonnegative integers; absent → 0 (a pre-B backend; lets D ship with or before
+    B); flagged days above `days_with_data` refuse the answer. `frontend/src/reports/HoldsSection.tsx`: "Partial" on
+    Public holds, "May miss or add a few" on ILL only, one `role="note"` with the day counts and unknown alerts;
+    `HOLDS_EXPLANATION` says transits are not holds. `frontend/src/liveToday/LiveToday.tsx`: the same labels and notes
+    for today, only once the read is ready. `frontend/src/index.css`: spacing for the note's sentences.
+    `frontend/src/test/http.ts`: the Live Today holds fixture takes the three fields. **Deviation (product owner
+    approved 2026-11-18):** no wording names Westside — `src/test/scope.test.ts` forbids a branch name in the frontend;
+    the notes say "holds for pickup at another location". Tests: `api/holds.test.ts`, `reports/HoldsSection.test.tsx`
+    (13 new), `liveToday/LiveToday.test.tsx` (8 new), `accessibility.axe.test.tsx` (2 new). On LIB-L26: `tsc -b`
+    clean, `eslint .` clean, `npm run build` OK (`dist/` ignored, not deployed), full Vitest **2,823 passed, 0
+    failed** (58 files). Vitest must be run from PowerShell here: from Git Bash (`C:` vs `c:` drive case) every file
+    fails with "failed to find the current suite", including untouched ones. Backend holds suites rerun: 154 passed;
+    no backend, Collector or migration file changed in D.
+  - **Final integration review (2026-11-19, review only) — no correctness defect.** Full backend suite with local
+    PostgreSQL (127.0.0.1 disposable instance) **11,645 passed, 0 failed**, 8 skipped (Windows limits on LIB-L26, not
+    passes: 2 elevation, 3 symlink privilege, 1 ACL apply, 2 off-Windows branches); frontend `tsc -b`, `eslint .`,
+    `npm run build` clean, Vitest (incl. axe) **2,823 passed, 0 failed**; **no expected failure remains**;
+    `check_release_readiness.py --expect-version 1.0.16` Ready; test freshness OK. **Unverified on this machine:**
+    `tests/test_installer_*` (no .NET 4.7.2 Developer Pack), `tests/test_collector_setup.py` (its PowerShell
+    token-wrapper cases hang here; the file was excluded), `test_installer_release_packaging.py` (needs the commit).
+    **Manual accessibility verification** (contrast, real screen readers) is outstanding. The frozen 1.0.15 ZIP was not
+    re-hashed here (the local `sortview-artifacts` checkout lacks it); nothing in A–D writes to it.
+  - **Rollback order (required):** (1) clear the branch's `corrected_from` (`scripts/set_hold_corrected_from.py clear`,
+    audited); (2) roll the Collector back below 1.0.16; (3) only then roll the backend below phase B — an older backend
+    refuses `unknown_alert` events, which 1.0.16 sends; (4) only then downgrade migration `5813f1df32a0`, which refuses
+    while any `unknown_alert` row exists. A frontend-only rollback is harmless.
+  - **NBPL-specific limitation:** the historical Westside handling (`AMBIGUOUS_V2_DESTINATIONS = {"westside"}` in
+    `src/services/hold_report_service.py`) applies to every tenant's uncorrected v2 days. It is right only while NBPL is
+    the only Contract v2 customer: another customer with a `westside` destination would have those holds excluded and
+    labelled partial, and another customer's own transit destinations would not be labelled at all. Revisit (per-branch
+    configuration) before a second customer runs Contract v2.
+  - **D5 decided (product owner, 2026-11-19): `corrected_from` must not be back-dated.** The script's refusal of a date
+    of today or earlier (product time zone) stays as implemented.
+  - **Staged for commit 2026-11-19 (not committed):** the A–D files only; `rehearsal/` and `docs/accessibility/` left
+    untracked. The user commits.
+  - **Outstanding:** commit and merge (user); then the deployment order in `docs/releases/collector-1.0.16.md`
+    (migration `5813f1df32a0` → A+B backend with D frontend, or frontend first → 1.0.16 build and 1.0.13 → 1.0.16
+    rehearsal (NBPL still runs 1.0.13) → install → verified `corrected_from`); manual accessibility check; evidence gaps
+    G2–G5 (a controlled ILL hold test, CV00/03/99 meaning, the two no-CV holds, the raw 2026-11-18 records).
 
 - 2026-11-17 — UI2 (priority 2), Live Today rejects and cleanup. **Implemented on branch
   `feature/ui2-live-today-rejects-cleanup` (from `main` at `831337a`); not committed, merged or deployed.**

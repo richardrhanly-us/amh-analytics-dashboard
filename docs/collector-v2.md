@@ -14,7 +14,7 @@ server-side: a heartbeat from a token bound to an installation keeps that instal
 |---|---|
 | `checkins` | `event_key`, `event_time` (UTC), `item_key` (optional), `destination` (slug or `unknown`), `bin` (numeric code or `unknown`) |
 | `rejects` | `event_key`, `event_time`, `error_class` (closed enum), `item_key` (optional) |
-| `acs_items` | `state` = `hold` \| `non_hold_101` \| `other_code10`, `event_key`, `event_time`, `item_key`; a **hold** also has `destination`, `is_ill`, `is_branch_services`, `is_collection_services`, `ruleset_id` |
+| `acs_items` | `state` = `hold` \| `non_hold_101` \| `other_code10` \| `unknown_alert` (1.0.16), `event_key`, `event_time`, `item_key`; a **hold** also has `destination`, `is_ill`, `is_branch_services`, `is_collection_services`, `ruleset_id` |
 | status | `status` (`healthy`\|`degraded`\|`error`), `last_error_class` (enum), `pending_outbox_count` (always 0), `quarantined_count`, two timestamps |
 
 Never leaves: barcode, patron ID/name/type/address, title, call number, collection/shelf codes, raw SIP2 or reject text, staff names,
@@ -88,14 +88,22 @@ in bounded chunks of complete lines; a chunk's cursor **and** its patron-cache c
 delivered or safely quarantined. On any delivery failure nothing of that chunk is committed and the run stops; the source files are the
 durable queue, so the next run re-reads and resends the identical events (the server dedups by `event_key`). There is no outbox.
 
-* **ACS.** Code-10 records become `hold` (`101YNY…`), `non_hold_101` (other `101…`) or `other_code10`. Message-64 records only populate
-  the local patron cache and produce no event. The classifier reproduces the dashboard's, **including its ILL-title quirk** (a title
-  containing the word "Ill" marks a hold ILL); a parity test compares it with `src/metrics.py`. The rules file is local and
+* **ACS.** Code-10 records become `hold`, `non_hold_101`, `unknown_alert` or `other_code10`. From **1.0.16** (`docs/hold-count-accuracy.md`)
+  the alert type CV decides a `101YNY`: CV01/CV02 or no CV is `hold`, CV04 (transit) is `non_hold_101`, any other CV is `unknown_alert`
+  (neither a hold nor a non-hold; the server accepts it from migration `5813f1df32a0`). Other `101…` records are `non_hold_101`, other
+  code-10 records `other_code10`. A hold is classified by its **hold patron** — `CY`, else `AA` — and the title (`AJ`) is no longer part of
+  the ILL match. Message-64 records only populate the local patron cache and produce no event. The classifier is the dashboard's legacy
+  classifier's; a parity test compares it with `src/metrics.py`. The rules file is local and
   is held as name HMACs at runtime, but it is seeded from a copy of the dashboard's settings, whose own lists remain in the cloud
   (see "Where the hold classification rules live" above). `ruleset_id` is a random UUID minted per rules
   fingerprint — it has no relationship to the rules.
+
+  > **Before 1.0.16 (found 2026-11-18):** every `101YNY` was sent as `hold` (CV04 transits included), ILL was decided from the item
+  > record's `AA` patron, and a title containing "Ill" marked a hold ILL. Data from those releases is reported as uncorrected (Westside
+  > partial) until a site's `corrected_from` date. 1.0.16 is local only (not merged, built or deployed); see
+  > `docs/releases/collector-1.0.16.md`.
 * **A patron profile that arrives after the hold.** The dashboard classifies a window all at once and applies the **latest** message-64 record
-  of the item's patron in that window to every hold, whichever side of the hold it falls on. Only three flags can depend on it — `is_ill`
+  of the hold's patron (`CY`, else `AA`, from 1.0.16) in that window to every hold, whichever side of the hold it falls on. Only three flags can depend on it — `is_ill`
   (patron type or name says ILL), `is_branch_services` and `is_collection_services` (the name is a configured account); the hold's own
   destination, raw-message ILL keywords and `|DA...|` patterns never do. A streaming collector has already sent the hold, so it **corrects**
   it: a small local *hold ledger* (in the patron cache file) keeps, for the latest hold of each item that has a patron, only the item's

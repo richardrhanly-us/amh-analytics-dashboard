@@ -266,7 +266,8 @@ def _counts(api, org="acme", user=OWNER, params=JUNE_8_TO_12) -> tuple[int, int]
     response = _get(api, org, user, params)
     assert response.status_code == 200, response.text
     body = response.json()
-    assert set(body) == {"range", "public_hold_count", "ill_hold_count", "days_with_data"}
+    assert set(body) == {"range", "public_hold_count", "ill_hold_count", "days_with_data", "public_holds_partial_days",
+                         "ill_uncertain_days", "unknown_alert_count"}
     return body["public_hold_count"], body["ill_hold_count"]
 
 
@@ -345,3 +346,58 @@ def test_a_one_day_range_finds_its_holds_patron_records_from_earlier_days_on_the
     # 9 June alone: b3's ILL patron and b4's department were recorded on the 8th, before the range. They are found by
     # the patron-only lookback read, so b3 is ILL and b4 is not public -- as in any longer range containing the 9th.
     assert _counts(api, params={"from": "2026-06-09", "to": "2026-06-09"}) == (0, 1)
+
+
+
+# --- hold-count accuracy phase B: confirmed, partial and uncertain, with the marker read under row level security ---
+
+def _v2_item(conn, n, instant, state="hold", destination="westside", item=None):
+    hold = state == "hold"
+    conn.execute(
+        text("INSERT INTO acs_item_events (customer_id, branch_id, key_id, event_key, event_time, state, item_key, destination, "
+             "is_ill, is_branch_services, is_collection_services, ruleset_id) "
+             "VALUES (:c, :b, :k, :ek, CAST(:t AS timestamptz), :state, :item, :dest, :f, :f, :f, NULL)"),
+        {"c": ACME, "b": ACME_MAIN, "k": KEY_ACME, "ek": _key("phase-b", n), "t": instant, "state": state,
+         "item": item or _key("item", ACME, n), "dest": destination if hold else None, "f": False if hold else None},
+    )
+
+
+def _marker(conn, branch, corrected_from):
+    conn.execute(text("INSERT INTO branch_settings (branch_id, settings_json) VALUES (:b, CAST(:doc AS JSONB)) "
+                      "ON CONFLICT (branch_id) DO UPDATE SET settings_json = branch_settings.settings_json || CAST(:doc AS JSONB)"),
+                 {"b": branch, "doc": json.dumps({"hold_classification": {"corrected_from": corrected_from}})})
+
+
+def _phase_b(api, user=OWNER, org="acme", params=JUNE_8_TO_12) -> tuple[int, int, int, int, int]:
+    response = _get(api, org, user, params)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    return (body["public_hold_count"], body["ill_hold_count"], body["public_holds_partial_days"], body["ill_uncertain_days"],
+            body["unknown_alert_count"])
+
+
+def test_westside_holds_before_the_marker_are_left_out_and_their_days_partial_on_the_real_database(api, owner):
+    with owner.begin() as conn:
+        _v2_item(conn, 11, "2026-06-11T16:00:00+00:00")
+        _v2_item(conn, 12, "2026-06-12T16:00:00+00:00")
+
+    # No marker: public 3 (the Westside ones left out), ILL 2; partial on the 11th and 12th; ILL uncertain on every v2
+    # day with a hold (the cutover day's v2 part, the 11th, the 12th).
+    assert _phase_b(api) == (3, 2, 2, 3, 0)
+
+    with owner.begin() as conn:
+        _marker(conn, BETA_MAIN, "2026-06-01")                  # another tenant's marker changes nothing here
+    assert _phase_b(api) == (3, 2, 2, 3, 0)
+
+    with owner.begin() as conn:
+        _marker(conn, ACME_MAIN, "2026-06-12")                  # read by the RLS-bound runtime role
+    assert _phase_b(api) == (4, 2, 1, 2, 0)
+    assert _phase_b(api, user=VIEWER) == (4, 2, 1, 2, 0)
+
+
+def test_an_unknown_alert_retracts_an_earlier_hold_and_is_counted_only_as_uncertain_on_the_real_database(api, owner):
+    with owner.begin() as conn:
+        _v2_item(conn, 30, "2026-06-11T18:00:00+00:00", state="unknown_alert", item=_key("item", ACME, 3))
+
+    # Item 3 (public, the 11th) ends the day as an unknown alert: public 3 - 1 = 2, and one unknown alert.
+    assert _phase_b(api) == (2, 2, 0, 2, 1)

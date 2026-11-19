@@ -29,8 +29,10 @@ ERROR_CLASSES = (
     "item_not_found", "ils_acs_failure", "rfid_collision", "configuration_error",
     "routing_error", "communication_error", "other", "unknown",
 )
-ACS_ITEM_STATES = ("hold", "non_hold_101", "other_code10")
-NON_HOLD_STATES = ("non_hold_101", "other_code10")
+# unknown_alert (1.0.16; docs/hold-count-accuracy.md, D4): a 101 alert of an unrecognised alert type -- neither a hold nor a non-hold. The
+# server accepts it from migration 5813f1df32a0 on. NON_HOLD_STATES is the non-hold SHAPE (no destination, flags or ruleset).
+ACS_ITEM_STATES = ("hold", "non_hold_101", "other_code10", "unknown_alert")
+NON_HOLD_STATES = ("non_hold_101", "other_code10", "unknown_alert")
 
 HEALTH_STATUSES = ("healthy", "degraded", "error")
 LAST_ERROR_CLASSES = (

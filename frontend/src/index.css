@@ -1537,6 +1537,15 @@ button[aria-disabled='true'] {
   margin: 1rem 0 0;
 }
 
+/* Holds: what the confirmed figures could not include, a sentence each. */
+.holds-accuracy > p {
+  margin: 0;
+}
+
+.holds-accuracy > p + p {
+  margin-top: 0.5rem;
+}
+
 /*
  * A bar for each observed bin, sideways: its name, the bar, its count and share. Every bin keeps its own label
  * however many there are. The name and figure columns are as wide as the widest of each, so the bars all start

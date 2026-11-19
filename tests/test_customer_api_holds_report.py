@@ -64,7 +64,8 @@ class Counts:
 
     def __init__(self, monkeypatch):
         self.asked: list[tuple] = []
-        self.answer = HoldsReport(public_hold_count=12, ill_hold_count=3, days_with_data=4)
+        self.answer = HoldsReport(public_hold_count=12, ill_hold_count=3, days_with_data=4, public_holds_partial_days=2,
+                                  ill_uncertain_days=1, unknown_alert_count=5)
         monkeypatch.setattr(holds_report_routes, "get_holds_report", self.report)
 
     def report(self, conn, tenant, window):
@@ -95,12 +96,14 @@ def _refused(response, status, body):
 # The answer
 # =====================================================================================================================
 
-def test_the_answer_is_the_range_the_two_counts_and_the_days_with_data_and_nothing_else(api, db, plan, counts):
+def test_the_answer_is_the_range_the_counts_and_the_days_with_data_and_nothing_else(api, db, plan, counts):
     response = _get(api)
 
     assert response.status_code == 200, response.text
     assert response.headers["cache-control"] == "no-store"
-    assert response.json() == {"range": RANGE, "public_hold_count": 12, "ill_hold_count": 3, "days_with_data": 4}
+    # Each figure reaches its own field (distinct values, so none is swapped with another).
+    assert response.json() == {"range": RANGE, "public_hold_count": 12, "ill_hold_count": 3, "days_with_data": 4,
+                               "public_holds_partial_days": 2, "ill_uncertain_days": 1, "unknown_alert_count": 5}
     # Asked about the site in the address, for the range in the request -- nothing else.
     assert counts.asked == [("acme", "main", organization_reports.ACME, date(2026, 6, 8), date(2026, 6, 12))]
 
@@ -108,7 +111,8 @@ def test_the_answer_is_the_range_the_two_counts_and_the_days_with_data_and_nothi
 def test_zero_is_an_answer_like_any_other(api, db, plan, counts):
     counts.answer = HoldsReport(public_hold_count=0, ill_hold_count=0, days_with_data=0)
 
-    assert _get(api).json() == {"range": RANGE, "public_hold_count": 0, "ill_hold_count": 0, "days_with_data": 0}
+    assert _get(api).json() == {"range": RANGE, "public_hold_count": 0, "ill_hold_count": 0, "days_with_data": 0,
+                                "public_holds_partial_days": 0, "ill_uncertain_days": 0, "unknown_alert_count": 0}
 
 
 def test_today_is_a_range_of_one_day_that_says_it_includes_today(api, db, plan, counts):
@@ -120,8 +124,11 @@ def test_today_is_a_range_of_one_day_that_says_it_includes_today(api, db, plan, 
                                         "includes_today": True}
 
 
-def test_the_response_model_has_exactly_the_four_fields_and_refuses_any_other():
-    assert set(holds_report_schemas.HoldsReportResponse.model_fields) == {"range", "public_hold_count", "ill_hold_count", "days_with_data"}
+def test_the_response_model_has_exactly_its_fields_and_refuses_any_other():
+    # The original four, unchanged (existing consumers keep working), and the three of hold-count accuracy phase B.
+    assert set(holds_report_schemas.HoldsReportResponse.model_fields) == {
+        "range", "public_hold_count", "ill_hold_count", "days_with_data", "public_holds_partial_days", "ill_uncertain_days",
+        "unknown_alert_count"}
     with pytest.raises(ValueError):
         holds_report_schemas.HoldsReportResponse(range=organization_reports_range(), public_hold_count=1, ill_hold_count=0, days_with_data=1, programming_total=1)
 
@@ -136,7 +143,8 @@ def test_no_answer_holds_an_internal_category_a_destination_or_anything_private(
     text = _get(api).text
 
     for forbidden in ("programming", "branch_services", "collection", "internal", "ill_main", "ill_by_branch", "destination", "source_era",
-                      "v1", "v2", "patron", "raw_message", "rules", "total_hold", "8101", "customer_id", "branch_id"):
+                      "v1", "v2", "patron", "raw_message", "rules", "total_hold", "8101", "customer_id", "branch_id",
+                      "hold_classification", "corrected_from", "westside", "ambiguous"):
         assert forbidden not in text, forbidden
 
 

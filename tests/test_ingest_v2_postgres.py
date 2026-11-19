@@ -813,19 +813,22 @@ def _insert_item(conn, **overrides):
 NON_HOLD_SHAPE = {"dest": None, "ill": None, "bs": None, "cs": None, "rs": None}
 
 
-def test_the_database_accepts_a_hold_and_both_non_hold_states_in_their_own_shape(engine):
+def test_the_database_accepts_a_hold_and_every_non_hold_shaped_state_in_its_own_shape(engine):
     with engine.begin() as conn:
         _insert_item(conn, e=hmac_like(1))
         _insert_item(conn, e=hmac_like(2), state="non_hold_101", **NON_HOLD_SHAPE)
         _insert_item(conn, e=hmac_like(3), state="other_code10", **NON_HOLD_SHAPE)
+        _insert_item(conn, e=hmac_like(4), state="unknown_alert", **NON_HOLD_SHAPE)   # 5813f1df32a0 (D4)
 
     assert rows(engine, "SELECT state, destination, is_ill, ruleset_id FROM acs_item_events ORDER BY id") == [
-        ("hold", "main", False, None), ("non_hold_101", None, None, None), ("other_code10", None, None, None)]
+        ("hold", "main", False, None), ("non_hold_101", None, None, None), ("other_code10", None, None, None),
+        ("unknown_alert", None, None, None)]
 
 
 @pytest.mark.parametrize("override", [
     {"state": "64", **NON_HOLD_SHAPE}, {"state": "patron", **NON_HOLD_SHAPE}, {"state": "message_64", **NON_HOLD_SHAPE},
     {"state": "hold "}, {"state": "HOLD"}, {"state": "non_hold", **NON_HOLD_SHAPE}, {"state": "10"}, {"state": ""}, {"state": None},
+    {"state": "unknown", **NON_HOLD_SHAPE}, {"state": "unknown_alert "}, {"state": "UNKNOWN_ALERT", **NON_HOLD_SHAPE},
 ])
 def test_the_database_rejects_a_state_outside_the_closed_enum(engine, override):
     with pytest.raises(IntegrityError), engine.begin() as conn:
@@ -834,7 +837,7 @@ def test_the_database_rejects_a_state_outside_the_closed_enum(engine, override):
 
 @pytest.mark.parametrize("field,value", [("dest", "unknown"), ("dest", "main"), ("ill", False), ("ill", True), ("bs", False),
                                          ("cs", False), ("rs", "0a1b2c3d-4e5f-4a6b-9c7d-8e9f0a1b2c3d")])
-@pytest.mark.parametrize("state", ["non_hold_101", "other_code10"])
+@pytest.mark.parametrize("state", ["non_hold_101", "other_code10", "unknown_alert"])
 def test_the_database_rejects_a_non_hold_that_carries_a_dummy_hold_field(engine, state, field, value):
     with pytest.raises(IntegrityError) as caught, engine.begin() as conn:
         _insert_item(conn, state=state, **{**NON_HOLD_SHAPE, field: value})
@@ -1031,6 +1034,41 @@ def test_the_downgrade_refuses_while_a_non_hold_row_exists_and_leaves_everything
         assert rows(engine, "SELECT * FROM acs_item_events ORDER BY id") == before  # nothing destroyed
         assert scalar(engine, "SELECT version_num FROM alembic_version") == HEAD
         assert scalar(engine, "SELECT to_regclass('acs_hold_events')") is None
+        engine.dispose()
+
+
+UNKNOWN_ALERT_PREVIOUS = "b8e2d4f61a07"   # the head before 5813f1df32a0 (hold-count accuracy D4)
+
+
+def test_the_unknown_alert_downgrade_refuses_while_one_exists_and_round_trips_cleanly_without():
+    with Throwaway("head") as db:
+        engine = create_engine(db.url)
+        _seed_tenants(engine)
+        with engine.begin() as conn:
+            _insert_item(conn, e=hmac_like(1))
+            _insert_item(conn, e=hmac_like(2), state="unknown_alert", **NON_HOLD_SHAPE)
+        before = rows(engine, "SELECT * FROM acs_item_events ORDER BY id")
+
+        refused = _alembic(db.url, "downgrade", UNKNOWN_ALERT_PREVIOUS)
+        assert refused.returncode != 0 and "cannot downgrade" in refused.stderr
+        assert rows(engine, "SELECT * FROM acs_item_events ORDER BY id") == before
+        assert scalar(engine, "SELECT version_num FROM alembic_version") == HEAD
+
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM acs_item_events WHERE state = 'unknown_alert'"))
+        down = _alembic(db.url, "downgrade", UNKNOWN_ALERT_PREVIOUS)
+        assert down.returncode == 0, down.stderr[-2000:]
+        with pytest.raises(IntegrityError), engine.begin() as conn:     # the previous constraint is back
+            _insert_item(conn, e=hmac_like(3), state="unknown_alert", **NON_HOLD_SHAPE)
+        with engine.begin() as conn:                                    # and still takes every earlier state
+            _insert_item(conn, e=hmac_like(4), state="non_hold_101", **NON_HOLD_SHAPE)
+
+        up = _alembic(db.url, "upgrade", "head")
+        assert up.returncode == 0, up.stderr[-2000:]
+        with engine.begin() as conn:
+            _insert_item(conn, e=hmac_like(5), state="unknown_alert", **NON_HOLD_SHAPE)
+        assert [r[0] for r in rows(engine, "SELECT state FROM acs_item_events ORDER BY id")] == [
+            "hold", "non_hold_101", "unknown_alert"]
         engine.dispose()
 
 

@@ -75,12 +75,15 @@ def create_holds_report_router() -> APIRouter:
         with open_customer_tenant_connection(tenant) as conn:
             report = get_holds_report(conn, tenant, report_window(conn, tenant, requested.local_range))
 
-        # The connection is closed. Three counts: nothing that was read to work them out.
+        # The connection is closed. Counts only: nothing that was read to work them out.
         body = HoldsReportResponse(
             range=requested.response(),
             public_hold_count=report.public_hold_count,
             ill_hold_count=report.ill_hold_count,
             days_with_data=report.days_with_data,
+            public_holds_partial_days=report.public_holds_partial_days,
+            ill_uncertain_days=report.ill_uncertain_days,
+            unknown_alert_count=report.unknown_alert_count,
         )
         return JSONResponse(content=body.model_dump(mode="json", by_alias=True), headers=NO_STORE_HEADERS)
 

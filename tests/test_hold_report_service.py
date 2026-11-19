@@ -81,10 +81,11 @@ class _Result:
 
 
 class Connection:
-    """Answers the service's three statements with the rows given, and records what each was asked."""
+    """Answers the service's statements with the rows given, and records what each was asked."""
 
-    def __init__(self, *, v1=(), v2=(), rules=(RULES, True, None, False)):
+    def __init__(self, *, v1=(), v2=(), rules=(RULES, True, None, False), marker=None):
         self.v1, self.v2 = list(v1), list(v2)
+        self.marker = [{"hold_classification": marker}]
         organization_rules, organization_has, branch_rules, branch_has = rules
         self.rules = [{"organization_rules": organization_rules, "organization_has_rules": organization_has,
                        "branch_rules": branch_rules, "branch_has_rules": branch_has}]
@@ -109,6 +110,9 @@ class Connection:
         if statement is hold_report_service._V1_RULES:
             self.asked.append(("rules", parameters))
             return _Result(self.rules)
+        if statement is hold_report_service._HOLD_CLASSIFICATION:
+            self.asked.append(("marker", parameters))
+            return _Result(self.marker)
         raise AssertionError("the service ran a statement that is not one of its own")
 
 
@@ -142,7 +146,8 @@ def test_a_current_only_range_reads_only_the_current_rows_and_never_the_legacy_r
     report = get_holds_report(conn, TENANT, window(v1=False))
 
     assert counts(report) == (1, 1)
-    assert conn.asked == [("v2", {"customer_id": 8101, "branch_id": 11, "span_start": V2_SPAN[0], "span_end": V2_SPAN[1]})]
+    assert conn.asked == [("marker", {"customer_id": 8101, "branch_id": 11}),
+                          ("v2", {"customer_id": 8101, "branch_id": 11, "span_start": V2_SPAN[0], "span_end": V2_SPAN[1]})]
 
 
 def test_a_range_across_the_cutover_counts_each_era_by_its_own_classifier_and_adds_them():
@@ -155,7 +160,7 @@ def test_a_range_across_the_cutover_counts_each_era_by_its_own_classifier_and_ad
 
     # Legacy: b2 public, b3 ILL. Current: 1 and 2 public, 4 ILL.
     assert counts(report) == (3, 2)
-    assert [what for what, _ in conn.asked] == ["rules", "v1 patrons", "v1", "v2"]
+    assert [what for what, _ in conn.asked] == ["rules", "v1 patrons", "v1", "marker", "v2"]
 
 
 def test_the_legacy_rules_reach_legacy_holds_only():
@@ -308,6 +313,21 @@ def test_a_legacy_hold_is_classified_by_its_patrons_record_from_an_earlier_day_a
     assert month == (1, 1) == tuple(map(sum, zip(*one_day, strict=True)))
 
 
+def test_the_lookback_finds_the_hold_patron_cy_not_the_item_record_patron_aa():
+    # docs/hold-count-accuracy.md, phase A. The patron records are days before the holds, so only the lookback finds
+    # them, and p71 is named by a CY only: a lookback that followed AA would never read it.
+    def hold_for(barcode, aa, cy, when):
+        return (when, "10", barcode, "Main", aa, f"101YNY20260920    090000|AO1|AB{barcode}|AJSynthetic Title|AA{aa}|CV01|CY{cy}|")
+
+    rows = [v1_patron("p71", "SAMPLE BORROWING LIBRARY", kind="ILL", when=wall(2026, 9, 1, 8)),
+            v1_patron("p72", "SAMPLE BORROWING LIBRARY 2", kind="ILL", when=wall(2026, 9, 1, 8)),
+            hold_for("b1", "p73", "p71", wall(2026, 9, 20, 9)),                # the hold patron is ILL: ILL
+            hold_for("b2", "p72", "p74", wall(2026, 9, 20, 10))]               # AA is ILL, the hold patron not: public
+    day = get_holds_report(Connection(v1=rows), TENANT, _span_window(date(2026, 9, 20), date(2026, 9, 20)))
+
+    assert counts(day) == (1, 1)
+
+
 def test_a_patron_record_older_than_the_lookback_is_not_used_and_patron_records_never_count_as_a_day_with_data():
     lookback = hold_report_service.V1_PATRON_LOOKBACK
     rows = [v1_patron("p1", "SAMPLE PATRON", kind="ILL", when=wall(2026, 9, 20, 8) - lookback - timedelta(days=1)),
@@ -387,12 +407,14 @@ def test_a_resolved_tenant_without_exactly_one_settings_row_is_a_fault_not_an_em
 # What comes out
 # =====================================================================================================================
 
-def test_the_report_is_three_integers_and_nothing_else_read():
+def test_the_report_is_integers_and_nothing_else_read():
     conn = Connection(v1=[v1_patron("p1", ACCOUNT), v1_hold("b1", "p1"), v1_hold("b2")], v2=[v2_hold(1, is_branch_services=True)])
 
     report = get_holds_report(conn, TENANT, window())
 
-    assert [field.name for field in dataclasses.fields(HoldsReport)] == ["public_hold_count", "ill_hold_count", "days_with_data"]
+    assert [field.name for field in dataclasses.fields(HoldsReport)] == [
+        "public_hold_count", "ill_hold_count", "days_with_data", "public_holds_partial_days", "ill_uncertain_days",
+        "unknown_alert_count"]
     assert all(type(value) is int for value in dataclasses.astuple(report))
     text = repr(report)
     for private in (ACCOUNT, "p1", "b2", "101YNY", "Synthetic Title", "programming", "collection", "branch_services", "0" * 63):
@@ -422,3 +444,159 @@ def test_the_service_reads_only_the_columns_and_tables_it_needs_and_logs_nothing
     # The two dashboard classifiers, used as they are: nothing of either is rewritten here.
     assert "metrics.build_acs_item_summary(" in code and "metrics_v2.build_acs_item_summary_v2(" in code
     assert isinstance(legacy_hold_rules(Connection(), TENANT), V1HoldRules)
+
+
+# =====================================================================================================================
+# Phase B (docs/hold-count-accuracy.md): confirmed, partial and uncertain v2 days, and the corrected-from marker
+# =====================================================================================================================
+
+NBPL_CUTOVER = datetime(2026, 9, 28, 23, 3, 41, tzinfo=UTC)                       # 18:03:41 in Chicago
+
+
+def at(month, day, hour=15, minute=0):
+    """An instant on a local day in Chicago (15:00 UTC is mid-morning there, any time of year)."""
+    return datetime(2026, month, day, hour, minute, tzinfo=UTC)
+
+
+def v2_item(n, when, *, state="hold", destination="main", row_id=None, **flags):
+    if state != "hold":
+        return (when, f"{n:064x}", state, None, None, None, None, n if row_id is None else row_id)
+    hold = v2_hold(n, when, row_id, **flags)
+    return (*hold[:3], destination, *hold[4:])
+
+
+def phase_b(report: HoldsReport) -> tuple[int, int, int, int, int]:
+    """(public, ILL, partial days, ILL-uncertain days, unknown-alert item-days)."""
+    return (report.public_hold_count, report.ill_hold_count, report.public_holds_partial_days, report.ill_uncertain_days,
+            report.unknown_alert_count)
+
+
+def one_day(conn, day: date) -> HoldsReport:
+    return get_holds_report(conn, TENANT, _span_window(day, day, cutover=NBPL_CUTOVER))
+
+
+def test_before_correction_a_westside_public_hold_is_left_out_and_its_day_is_partial_and_ill_uncertain():
+    rows = [v2_item(1, at(10, 5), destination="unknown"), v2_item(2, at(10, 5, 16), destination="westside"),
+            v2_item(3, at(10, 5, 17), destination="library_express")]
+
+    # Main ("unknown": a CV01 hold has no CT) and Library Express (D1) are confirmed; Westside is unavailable.
+    assert phase_b(one_day(Connection(v2=rows), date(2026, 10, 5))) == (2, 0, 1, 1, 0)
+
+
+def test_a_day_without_a_westside_hold_is_complete_but_its_ill_is_uncertain_and_a_day_with_no_hold_is_neither():
+    rows = [v2_item(1, at(10, 5)), v2_item(2, at(10, 6), state="non_hold_101")]
+
+    assert phase_b(one_day(Connection(v2=rows), date(2026, 10, 5))) == (1, 0, 0, 1, 0)
+    assert phase_b(one_day(Connection(v2=rows), date(2026, 10, 6))) == (0, 0, 0, 0, 0)
+
+
+def test_ill_and_service_account_holds_at_westside_are_counted_as_before_and_do_not_make_the_day_partial():
+    rows = [v2_item(1, at(10, 5), destination="westside", is_ill=True),
+            v2_item(2, at(10, 5, 16), destination="westside", is_collection_services=True)]
+
+    assert phase_b(one_day(Connection(v2=rows), date(2026, 10, 5))) == (0, 1, 0, 1, 0)
+
+
+def test_the_2026_11_18_test_day_before_and_after_correction():
+    # As stored today: A Secret Affair (CV01, no CT), The High Season (CV02 Westside) and Tom and Jerry (CV04 Westside
+    # transit), all three sent as holds. Holds 1, partial.
+    today = [v2_item(1, at(11, 18), destination="unknown"), v2_item(2, at(11, 18, 16), destination="westside"),
+             v2_item(3, at(11, 18, 17), destination="westside")]
+    assert phase_b(one_day(Connection(v2=today), date(2026, 11, 18))) == (1, 0, 1, 1, 0)
+
+    # From corrected_from, 1.0.16 sends the transit as non_hold_101: Holds 2, complete.
+    corrected = [*today[:2], v2_item(3, at(11, 18, 17), state="non_hold_101")]
+    marker = {"corrected_from": "2026-11-18"}
+    assert phase_b(one_day(Connection(v2=corrected, marker=marker), date(2026, 11, 18))) == (2, 0, 0, 0, 0)
+
+
+def test_a_range_across_the_cutover_and_the_corrected_from_date_sums_its_days_and_counts_the_partial_ones():
+    v1 = [v1_hold("b1", when=wall(2026, 9, 28, 9))]                                  # legacy part of the cutover day
+    v2 = [v2_item(1, datetime(2026, 9, 29, 0, tzinfo=UTC), destination="westside"),  # cutover day (19:00 Chicago)
+          v2_item(2, at(10, 1), destination="westside"), v2_item(3, at(10, 1, 16)),  # uncorrected, partial
+          v2_item(4, at(10, 2)),                                                     # uncorrected, complete
+          v2_item(5, at(10, 3), destination="westside"),                             # corrected: counted
+          v2_item(6, at(10, 4), destination="westside")]                             # corrected: counted
+    conn = Connection(v1=v1, v2=v2, marker={"corrected_from": "2026-10-03"})
+    days = [date(2026, 9, 27) + timedelta(days=n) for n in range(8)]
+
+    whole = get_holds_report(conn, TENANT, _span_window(days[0], days[-1], cutover=NBPL_CUTOVER))
+    each = [phase_b(one_day(conn, day)) for day in days]
+
+    # b1 legacy; 3 and 4 confirmed v2; 5 and 6 corrected Westside. Partial: the cutover day (its v2 part) and Oct 1.
+    assert phase_b(whole) == (5, 0, 2, 3, 0) == tuple(map(sum, zip(*each, strict=True)))
+    assert each[1] == (1, 0, 1, 1, 0)                                                # the cutover day, counted once
+    after = get_holds_report(conn, TENANT, _span_window(date(2026, 10, 3), date(2026, 10, 4), cutover=NBPL_CUTOVER))
+    assert phase_b(after) == (2, 0, 0, 0, 0)
+    before = get_holds_report(conn, TENANT, _span_window(date(2026, 9, 1), date(2026, 9, 27), cutover=NBPL_CUTOVER))
+    assert phase_b(before) == (0, 0, 0, 0, 0)                                       # legacy only: never partial
+
+
+@pytest.mark.parametrize("marker", [
+    None, {}, {"corrected_from": None}, {"corrected_from": ""}, {"corrected_from": "2026-10-32"},
+    {"corrected_from": "10/03/2026"}, {"corrected_from": "2026-10-03T00:00:00"}, {"corrected_from": 20261003},
+    {"corrected_from": "2026-10-03", "by": "someone"}, "2026-10-03", ["2026-10-03"], "not json {",
+])
+def test_an_absent_or_unreadable_marker_means_every_v2_day_is_uncorrected(marker):
+    rows = [v2_item(1, at(10, 5), destination="westside"), v2_item(2, at(10, 5, 16))]
+
+    assert phase_b(one_day(Connection(v2=rows, marker=marker), date(2026, 10, 5))) == (1, 0, 1, 1, 0)
+
+
+def test_a_marker_stored_as_json_text_is_read_like_a_parsed_one():
+    rows = [v2_item(1, at(10, 5), destination="westside")]
+    marker = '{"corrected_from": "2026-10-05"}'
+
+    assert phase_b(one_day(Connection(v2=rows, marker=marker), date(2026, 10, 5))) == (1, 0, 0, 0, 0)
+
+
+def test_the_upgrade_day_with_old_and_new_collector_data_is_uncorrected_as_a_whole():
+    # Upgraded mid-morning on Oct 5: an old-collector Westside "hold" (maybe a transit), then a 1.0.16 retraction of
+    # another item, then a 1.0.16 Westside hold. corrected_from is the first FULL day after verification: Oct 6.
+    rows = [v2_item(1, at(10, 5, 14), destination="westside"), v2_item(2, at(10, 5, 15)),
+            v2_item(2, at(10, 5, 18), state="non_hold_101"), v2_item(3, at(10, 5, 19), destination="westside")]
+    conn = Connection(v2=rows, marker={"corrected_from": "2026-10-06"})
+
+    assert phase_b(one_day(conn, date(2026, 10, 5))) == (0, 0, 1, 1, 0)
+
+
+def test_a_cleared_marker_makes_every_v2_day_uncorrected_again():
+    rows = [v2_item(1, at(10, 7), destination="westside"), v2_item(2, at(10, 7, 16))]
+
+    corrected = Connection(v2=rows, marker={"corrected_from": "2026-10-06"})
+    cleared = Connection(v2=rows, marker=None)
+    assert phase_b(one_day(corrected, date(2026, 10, 7))) == (2, 0, 0, 0, 0)
+    assert phase_b(one_day(cleared, date(2026, 10, 7))) == (1, 0, 1, 1, 0)
+
+
+@pytest.mark.parametrize("corrected", [None, {"corrected_from": "2026-10-01"}])
+def test_an_unknown_alert_is_latest_record_wins_and_counted_only_as_uncertain(corrected):
+    rows = [v2_item(1, at(10, 5), row_id=1), v2_item(1, at(10, 5, 16), state="unknown_alert", row_id=2),  # hold, then unknown
+            v2_item(2, at(10, 5), state="unknown_alert", row_id=3), v2_item(2, at(10, 5, 16), row_id=4),   # unknown, then hold
+            v2_item(3, at(10, 5, 17), state="unknown_alert", row_id=5)]
+
+    report = one_day(Connection(v2=rows, marker=corrected), date(2026, 10, 5))
+
+    assert (report.public_hold_count, report.ill_hold_count, report.unknown_alert_count) == (1, 0, 2)
+
+
+def test_an_unknown_alert_and_an_ill_hold_tied_in_time_are_decided_by_the_database_id():
+    rows = [v2_item(1, at(10, 5), row_id=7, is_ill=True), v2_item(1, at(10, 5), state="unknown_alert", row_id=8)]
+
+    assert phase_b(one_day(Connection(v2=rows), date(2026, 10, 5))) == (0, 0, 0, 0, 1)
+    assert phase_b(one_day(Connection(v2=list(reversed(rows))), date(2026, 10, 5))) == (0, 0, 0, 0, 1)
+
+
+def test_a_legacy_unknown_alert_type_is_counted_in_the_same_figure():
+    unknown = (wall(2026, 9, 3, 10), "10", "b1", "Main", "", "101YNY20260903    100000|AO1|ABb1|AJSynthetic Title|CV03|")
+    conn = Connection(v1=[unknown, v1_hold("b2")])
+
+    assert phase_b(get_holds_report(conn, TENANT, _span_window(date(2026, 9, 3), date(2026, 9, 3)))) == (1, 0, 0, 0, 1)
+
+
+def test_the_marker_is_read_only_when_the_current_era_owns_part_of_the_range():
+    conn = Connection(v1=[v1_hold("b1")], marker={"corrected_from": "2026-10-03"})
+
+    get_holds_report(conn, TENANT, window(v2=False))
+
+    assert "marker" not in [what for what, _ in conn.asked]

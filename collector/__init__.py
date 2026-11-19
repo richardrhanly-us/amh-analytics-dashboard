@@ -186,4 +186,12 @@ from __future__ import annotations
 # MANIFEST.json matches a trusted hash from outside it. Deployment tooling
 # only: the runtime, wire contracts and data root are unchanged. See
 # docs/releases/collector-1.0.15.md.
-__version__ = "1.0.15"
+# 1.0.16 corrects Contract v2 hold classification (docs/hold-count-accuracy.md,
+# phase C). `101YNY` is a check-in with an ALERT, and the alert type CV now
+# decides: CV01/CV02 (or no CV) is `hold`, CV04 (transit) is `non_hold_101`,
+# any other CV is the new state `unknown_alert` (the server accepts it from
+# migration 5813f1df32a0, which must be applied first). A hold is classified
+# by its HOLD patron (CY, else AA), and the item title no longer makes a hold
+# ILL. CV, CY and AA stay on the machine; the payload shape and the event
+# identity algorithm are unchanged. See docs/releases/collector-1.0.16.md.
+__version__ = "1.0.16"

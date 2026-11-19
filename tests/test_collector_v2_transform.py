@@ -80,7 +80,8 @@ def test_acs_codes_map_to_hold_non_hold_101_and_other_code10_and_message_64_make
     events, counters = run("acs", lines, ctx)
     assert sorted(e.state for e in events) == ["hold", "non_hold_101", "other_code10"]
     assert counters.patron_records == 1
-    assert counters.events["acs_items"] == 3 and counters.acs_states == {"hold": 1, "non_hold_101": 1, "other_code10": 1}
+    assert counters.events["acs_items"] == 3 and counters.acs_states == {"hold": 1, "non_hold_101": 1, "other_code10": 1,
+                                                                   "unknown_alert": 0}
     assert all(isinstance(e, ev.AcsItemV2) for e in events)          # nothing is emitted for the message-64 record
 
 
@@ -167,8 +168,8 @@ PARITY_SCENARIOS = {
     "name has ILL only inside a word": {"name": "SKILLED WORKER", "ptype": "ADULT", "dest": "Main", "prefix": "101YNY"},
     "destination has ILL": {"name": "CANARY-NAME ONE", "ptype": "ADULT", "dest": "ILL Westside", "prefix": "101YNY"},
     "destination has interlibrary": {"name": "CANARY-NAME ONE", "ptype": "ADULT", "dest": "interlibrary loan", "prefix": "101YNY"},
-    "TITLE quirk: a title containing the word Ill marks ILL": {"name": "CANARY-NAME ONE", "ptype": "ADULT", "dest": "Main",
-                                                                   "prefix": "101YNY", "title": "The Ill-Made Knight"},
+    "a title containing the word Ill is not ILL (D2)": {"name": "CANARY-NAME ONE", "ptype": "ADULT", "dest": "Main",
+                                                         "prefix": "101YNY", "title": "The Ill-Made Knight"},
     "title with a word merely containing ill": {"name": "CANARY-NAME ONE", "ptype": "ADULT", "dest": "Main", "prefix": "101YNY",
                                                     "title": "Skillful Bills"},
     "raw |DAILL": {"name": "CANARY-NAME ONE", "ptype": "ADULT", "dest": "Main", "prefix": "101YNY", "extra": "|DAILL"},
@@ -183,6 +184,15 @@ PARITY_SCENARIOS = {
                                                                      "extra": f"|{PATTERN_COLL}"},
     "ILL and collection services together": {"name": NAME_COLL, "ptype": "ILL", "dest": "Main", "prefix": "101YNY"},
     "no message-64 for the patron": {"name": None, "ptype": None, "dest": "Main", "prefix": "101YNY"},
+    # 1.0.16 / phase A: the alert type and the hold patron (CY). Both classifiers read CY first and AA only without it.
+    "CV01 hold": {"name": "CANARY-NAME ONE", "ptype": "ADULT", "dest": "Main", "prefix": "101YNY", "extra": "|CV01"},
+    "CV02 hold for Westside": {"name": "CANARY-NAME ONE", "ptype": "ADULT", "dest": "Westside", "prefix": "101YNY", "extra": "|CV02"},
+    "the AA patron is ILL but the CY hold patron is another, unknown one": {"name": "CANARY-NAME TWO", "ptype": "ILL", "dest": "Main",
+                                                                             "prefix": "101YNY", "extra": "|CV01|CYCANARY-OTHER-PATRON"},
+    "CY names the AA patron itself": {"name": "CANARY-NAME TWO", "ptype": "ILL", "dest": "Main", "prefix": "101YNY",
+                                      "extra": f"|CV01|CY{PATRON_ADULT}"},
+    "CY names a configured service account": {"name": NAME_COLL, "ptype": "STAFF", "dest": "Main", "prefix": "101YNY",
+                                              "extra": f"|CV02|CY{PATRON_ADULT}"},
 }
 
 
@@ -208,11 +218,12 @@ def test_hold_classification_matches_the_dashboard_classifier(tmp_path, scenario
     assert theirs["public"] == int(not (event.is_ill or event.is_branch_services or event.is_collection_services))
 
 
-def test_the_ill_title_quirk_is_reproduced_on_purpose(ctx):
+def test_a_title_containing_the_word_ill_no_longer_makes_a_hold_ill(ctx):
+    # 1.0.16 (decision D2): the title field (AJ) is left out of the raw-message ILL match. Before, this was a pinned quirk.
     lines = [acs_line(BASE, patron_message(PATRON_ADULT, NAME_ADULT, "ADULT")),
              acs_line(BASE + timedelta(seconds=1), item_message(BARCODE_HOLD, PATRON_ADULT, "Main", title="The Ill-Made Knight"))]
     (event,), _ = run("acs", lines, ctx)
-    assert event.is_ill is True
+    assert event.state == "hold" and event.is_ill is False
 
 
 def test_non_hold_records_are_never_classified(ctx):
