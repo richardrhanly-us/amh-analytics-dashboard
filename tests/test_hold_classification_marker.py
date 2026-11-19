@@ -14,7 +14,11 @@ from pathlib import Path
 
 import pytest
 
-from services.hold_classification import HOLD_CLASSIFICATION_KEY, marker_block, parse_corrected_from
+from services.hold_classification import (
+    HOLD_CLASSIFICATION_KEY,
+    marker_block,
+    parse_corrected_from,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
@@ -36,7 +40,7 @@ def test_anything_else_is_no_marker(stored):
 
 
 def _sql_statements(path: Path) -> list[str]:
-    return re.findall(r'text\(\s*"""(.*?)"""', path.read_text(encoding="utf-8"), flags=re.S)
+    return re.findall(r'text\(\s*"""(.*?)"""', path.read_text(encoding="utf-8"), flags=re.DOTALL)
 
 
 def test_no_application_code_names_the_marker_except_its_reader():

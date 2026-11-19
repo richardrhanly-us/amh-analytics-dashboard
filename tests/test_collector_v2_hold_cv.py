@@ -11,7 +11,15 @@ import json
 from datetime import timedelta
 
 import pytest
-from collector_v2_support import NAME_ADULT, PATRON_ADULT, acs_line, checkin_line, item_message, make_context, naive, patron_message
+from collector_v2_support import (
+    NAME_ADULT,
+    acs_line,
+    checkin_line,
+    item_message,
+    make_context,
+    naive,
+    patron_message,
+)
 
 from collector import v2_identity
 from collector import v2_transform as tf

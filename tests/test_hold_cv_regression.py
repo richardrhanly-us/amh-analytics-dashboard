@@ -21,7 +21,6 @@ from collector import v2_classify
 from collector.v2_rules import Rules
 from metrics import build_acs_item_summary
 
-
 WESTSIDE = "Westside (Synthetic Branch)"
 LIBRARY_EXPRESS = "Library Express"
 
