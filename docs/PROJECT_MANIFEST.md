@@ -1289,12 +1289,24 @@ its `tools\update.ps1` has the backup vulnerability.
     configuration) before a second customer runs Contract v2.
   - **D5 decided (product owner, 2026-11-19): `corrected_from` must not be back-dated.** The script's refusal of a date
     of today or earlier (product time zone) stays as implemented.
-  - **Staged for commit 2026-11-19 (not committed):** the A–D files only; `rehearsal/` and `docs/accessibility/` left
-    untracked. The user commits.
-  - **Outstanding:** commit and merge (user); then the deployment order in `docs/releases/collector-1.0.16.md`
-    (migration `5813f1df32a0` → A+B backend with D frontend, or frontend first → 1.0.16 build and 1.0.13 → 1.0.16
-    rehearsal (NBPL still runs 1.0.13) → install → verified `corrected_from`); manual accessibility check; evidence gaps
-    G2–G5 (a controlled ILL hold test, CV00/03/99 meaning, the two no-CV holds, the raw 2026-11-18 records).
+  - **Committed 2026-11-19 as `ae45f6c` on branch `fix/hold-count-accuracy`** (by the user): phases A–D, the A–D files
+    only (41 files). `rehearsal/` and `docs/accessibility/` remain intentionally untracked. Not merged, pushed, built or
+    deployed.
+  - **Accessibility review of commit `ae45f6c` (2026-11-19, source review and automated tests only).** Targeted
+    accessibility and holds suites (`accessibility.axe.test.tsx`, `accessibility.test.tsx`, `HoldsSection.test.tsx`,
+    `LiveToday.test.tsx`, `api/holds.test.ts`, `test/scope.test.ts`): **324 passed, 0 failed**. Live Today and Sorter
+    Reports (Holds) were checked by axe with the Partial, ILL-uncertain and unknown-alert conditions all visible: no
+    violations. **No release-blocking accessibility defect identified** by source review and automated testing: each
+    condition is visible text, never colour alone; the labels are `<dd>`s of their card's `<dt>`; the explanations are
+    `role="note"` after the figures; nothing new is focusable or a live region. **Automated axe does not evaluate colour
+    contrast in jsdom** (the rule is off in `frontend/src/test/axe.ts`). **Unverified (not performed):** manual NVDA
+    reading of the cards and notes, colour contrast, 400% zoom / reflow, Windows high-contrast (forced colours).
+  - **Done:** the implementation commit `ae45f6c` (phases A–D). **Outstanding:** (1) commit of this verification record
+    in the manifest; (2) merge of `fix/hold-count-accuracy` into `main` (user); (3) the deployment order in
+    `docs/releases/collector-1.0.16.md`: migration `5813f1df32a0` → A+B backend with D frontend, or frontend first →
+    1.0.16 release build from the merged commit and 1.0.13 → 1.0.16 rehearsal (NBPL still runs 1.0.13) → install →
+    verified `corrected_from`; (4) the manual accessibility checks above; (5) evidence gaps G2–G5 (a controlled ILL
+    hold test, CV00/03/99 meaning, the two no-CV holds, the raw 2026-11-18 records).
 
 - 2026-11-17 — UI2 (priority 2), Live Today rejects and cleanup. **Implemented on branch
   `feature/ui2-live-today-rejects-cleanup` (from `main` at `831337a`); not committed, merged or deployed.**
