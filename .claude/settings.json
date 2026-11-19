@@ -1,0 +1,53 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git merge:*)",
+      "Bash(git rebase:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(alembic upgrade:*)",
+      "Bash(alembic downgrade:*)",
+      "Bash(alembic stamp:*)",
+      "Bash(aws s3 cp:*)",
+      "Bash(aws s3 sync:*)",
+      "Bash(aws s3 mv:*)",
+      "Bash(aws s3 rm:*)",
+      "Bash(aws cloudfront create-invalidation:*)",
+      "Bash(doctl apps create-deployment:*)",
+      "Bash(doctl apps update:*)",
+      "PowerShell(git commit:*)",
+      "PowerShell(git push:*)",
+      "PowerShell(git merge:*)",
+      "PowerShell(git rebase:*)",
+      "PowerShell(alembic upgrade:*)",
+      "PowerShell(aws s3 cp:*)",
+      "PowerShell(aws s3 sync:*)",
+      "PowerShell(aws cloudfront create-invalidation:*)",
+      "PowerShell(doctl apps create-deployment:*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_facts.py\" || echo \"WARNING: SortView session facts could not be loaded (Python missing or failed). Treat production state as UNKNOWN and read docs/PROJECT_MANIFEST.md before any production-affecting action.\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_production.py\" || { echo \"SortView guard could not run (Python missing or failed), so this tool call is blocked until it can.\" >&2; exit 2; }"
+          }
+        ]
+      }
+    ]
+  }
+}
