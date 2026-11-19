@@ -2,16 +2,23 @@
 
 ## Status
 
-- Release: `1.0.16` (planned)
-- `collector.__version__`: `1.0.16`
-- Source: **local only** on branch `fix/hold-count-accuracy` (2026-11-18): not committed, merged, built or published.
-- Canonical release artifact: **none.** No bundle, frozen runtime, ZIP or setup package has been built. It is built
-  later, from a merged commit, by the 1.0.15 procedure (*Canonical release artifact* in
-  `docs/releases/collector-1.0.15.md`) on the release build machine, and recorded here.
-- Production: NBPL's sorter (`NEWBRAUNFELSSOR`) runs **1.0.13**. 1.0.16 must not be installed anywhere until the
-  prerequisites below are met.
-- 1.0.15's canonical artifact (`SortViewCollector-1.0.15.zip`, SHA-256 `6b3589938b5c…dc59ec8`) and its record are
-  unchanged.
+- Release: `1.0.16` — built and internally preserved; **not production-qualified**.
+- `collector.__version__`: `1.0.16`.
+- Source: merged `main`, commit `c0506b0` (PR #318).
+- Canonical artifact: `SortViewCollector-1.0.16.zip`, built and verified 2026-11-19.
+- Artifact repository: private `richardrhanly-us/sortview-artifacts`.
+- Artifact path: `collector/1.0.16/SortViewCollector-1.0.16.zip`.
+- Artifact commit: `d252e0d`.
+- ZIP size: 35,003,102 bytes.
+- ZIP SHA-256: `89b5b7041b14914cddc32a8a34e6b41d373e8614d28dd3d8718e4f9905fcb878`.
+- Bundle `MANIFEST.json` SHA-256: `d8255794267a8b5cde3c1ad5aa91df9add98e75647a894001ca6c6a686adaf28`.
+- Runtime executable SHA-256: `8a649e1177db24242bd989151b084a24efb3def9b39bef3c6de295bfc76f0e6a`.
+- Manifest entries: 1,350.
+- Build machine: `LIB-L26`, Python 3.14.3, PyInstaller 6.22.3, hooks-contrib 2026.7.
+- Verification: extracted executable reports 1.0.16; all 1,350 manifest entries passed SHA-256 verification; no unlisted files; ZIP security scan returned zero filename and content findings.
+- Known warning: PyInstaller reported `Hidden import "jinja2" not found!`; runtime command verification remains pending.
+- Production: NBPL remains on Collector 1.0.13. The 1.0.13 → 1.0.16 upgrade and rollback rehearsal has not been performed.
+- Approval: internal artifact only; unsigned, unpublished, not customer-approved or production-qualified.
 
 ## Why
 
