@@ -2149,6 +2149,21 @@ describe('the Holds zone in today’s summary', () => {
     expect([cardNotes('Holds'), cardNotes('ILL'), notes()]).toEqual([[], [], []])
   })
 
+  it('keeps every note in one part, so the zone never has more parts than the four rows it shares with Routing', async () => {
+    serve(WITH_HOLDS, live({ holds: { public: 14, ill: 3, partialDays: 1, illUncertainDays: 1, unknownAlerts: 2 } }))
+    renderApp(CENTRAL)
+    await loaded()
+    await waitFor(() => expect(notes()).toHaveLength(3))
+
+    // On a wide screen the zone is a subgrid of four rows -- heading, caption, cards, closing line. A fifth part has
+    // no row of its own and is drawn over the fourth, so the notes would be printed on top of each other.
+    const parts = Array.from(zone().children).map((part) => part.tagName.toLowerCase() + (part.className ? `.${part.className}` : ''))
+    expect(parts).toEqual(['h4', 'p.summary-caption', 'dl.metrics', 'div.holds-notes'])
+    expect(zone().querySelectorAll('.holds-notes > [role="note"]')).toHaveLength(3)
+    const shared = styles.replace(/\r\n/g, '\n')
+    expect(shared).toContain("'routing holds'\n      'routing holds'\n      'routing holds'\n      'routing holds';")
+  })
+
   it('reads in order for a screen reader, and a timed refresh does not announce the labels', async () => {
     serve(WITH_HOLDS, live({ holds: { public: 14, ill: 3, partialDays: 1, illUncertainDays: 1, unknownAlerts: 2 } }))
     renderApp(CENTRAL)
