@@ -218,6 +218,7 @@ function Routing({ routing }: { routing: Section<CheckinsByDestination> }) {
 function Today({ live, transits, holds }: { live: LiveTodayData; transits: boolean; holds: boolean }) {
   const { checkinCount, checkinsByHour, checkinsByDestination, rejectCount, rejectsByReason, currentHour } = live
   const dateText = live.date === null ? null : formatCalendarDate(live.date)
+  const notes = live.holds.status === 'ready' ? holdsNotes(live.holds.data) : []
 
   return (
     <section aria-labelledby="today-heading">
@@ -299,12 +300,17 @@ function Today({ live, transits, holds }: { live: LiveTodayData; transits: boole
                 {...figure(live.holds, (data) => count(data.ill_hold_count, data.ill_uncertain_days > 0 ? 'May miss or add a few' : undefined))}
               />
             </dl>
-            {live.holds.status === 'ready' &&
-              holdsNotes(live.holds.data).map((note) => (
-                <p key={note} className="summary-caption" role="note">
-                  {note}
-                </p>
-              ))}
+            {/* One part for all the notes: on a wide screen the zone shares Routing's four rows, and a fifth part would
+                be drawn over the fourth. */}
+            {notes.length > 0 && (
+              <div className="holds-notes">
+                {notes.map((note) => (
+                  <p key={note} className="summary-caption" role="note">
+                    {note}
+                  </p>
+                ))}
+              </div>
+            )}
           </SummaryGroup>
         )}
       </div>
